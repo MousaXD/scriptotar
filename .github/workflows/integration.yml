@@ -72,11 +72,11 @@ jobs:
       - name: Rustfmt
         run: cargo fmt --all -- --check
       - name: Check workspace
-        run: cargo check --workspace
+        run: cargo check --workspace --locked
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   frontend:
     name: Svelte frontend
@@ -143,9 +143,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Headless local fixture flows
-        run: cargo test -p scriptotar-orchestrator -- --nocapture
+        run: cargo test --locked -p scriptotar-orchestrator -- --nocapture
       - name: Database migration and recovery flows
-        run: cargo test -p scriptotar-db integration -- --nocapture
+        run: cargo test --locked -p scriptotar-db integration -- --nocapture
 
   supply-chain:
     name: Supply chain
@@ -205,4 +205,4 @@ jobs:
         run: cargo install tauri-cli --version '2.11.2' --locked
       - name: Compile integrated desktop app
         working-directory: apps/desktop
-        run: cargo tauri build --no-bundle
+        run: cargo tauri build --no-bundle --locked
