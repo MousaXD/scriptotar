@@ -205,4 +205,4 @@ jobs:
         run: cargo install tauri-cli --version '2.11.2' --locked
       - name: Compile integrated desktop app
         working-directory: apps/desktop
-        run: cargo tauri build --no-bundle --locked
+        run: cargo tauri build --no-bundle -- --locked
