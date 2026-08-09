@@ -41,6 +41,7 @@ class EngineSupervisor:
         self.log_stream = log_stream
         self.proc: subprocess.Popen[str] | None = None
         self.active_job_id: str | None = None
+        self._engine_job_started = False
         self._cancel_in_progress = False
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
@@ -96,6 +97,7 @@ class EngineSupervisor:
             )
             if should_report:
                 self.active_job_id = None
+                self._engine_job_started = False
         if should_report:
             self.writer.emit(
                 "error",
@@ -135,21 +137,38 @@ class EngineSupervisor:
                 self._abort_engine_protocol(proc, f"unknown event type: {event_type!r}")
                 break
             job_id = event.get("job_id")
-            if event_type != "error" and not isinstance(job_id, str):
+            if not isinstance(job_id, str):
                 self._abort_engine_protocol(proc, f"event {event_type!r} is missing a job_id")
                 break
             with self._lock:
                 active_job_id = self.active_job_id
-            if job_id is not None and active_job_id is not None and job_id != active_job_id:
+                job_started = self._engine_job_started
+            if active_job_id is None:
+                self._abort_engine_protocol(proc, f"stale event for inactive job {job_id!r}")
+                break
+            if job_id != active_job_id:
                 self._abort_engine_protocol(
                     proc,
                     f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
                 )
                 break
-            if event_type in {"result", "error"} and job_id:
+            if event_type == "job_started":
+                if job_started:
+                    self._abort_engine_protocol(proc, f"duplicate job_started for {job_id!r}")
+                    break
+                with self._lock:
+                    self._engine_job_started = True
+            elif not job_started:
+                self._abort_engine_protocol(
+                    proc,
+                    f"event {event_type!r} arrived before job_started for {job_id!r}",
+                )
+                break
+            if event_type in {"result", "error"}:
                 with self._lock:
                     if self.active_job_id == job_id:
                         self.active_job_id = None
+                        self._engine_job_started = False
             self.writer.emit(event_type, **event)
 
         rc = proc.wait()
@@ -165,6 +184,7 @@ class EngineSupervisor:
                 self.proc = None
             if should_report:
                 self.active_job_id = None
+                self._engine_job_started = False
         if should_report:
             self.writer.emit(
                 "error",
@@ -201,10 +221,12 @@ class EngineSupervisor:
                 )
             self.ensure_started()
             self.active_job_id = job["id"]
+            self._engine_job_started = False
             try:
                 self._send_internal({"type": "transcribe", "job": job})
             except Exception:
                 self.active_job_id = None
+                self._engine_job_started = False
                 raise
 
     def _terminate_process_group(self, proc: subprocess.Popen[str], grace_seconds: float = 1.5) -> None:
@@ -255,6 +277,7 @@ class EngineSupervisor:
                 if self.proc is proc:
                     self.proc = None
                 self.active_job_id = None
+                self._engine_job_started = False
                 self._cancel_in_progress = False
         self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
 
@@ -275,6 +298,7 @@ class EngineSupervisor:
         with self._lock:
             self.proc = None
             self.active_job_id = None
+            self._engine_job_started = False
 
 
 class SidecarService:
