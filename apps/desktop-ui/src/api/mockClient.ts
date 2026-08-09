@@ -60,10 +60,11 @@ export const mockBootstrap: BootstrapData = {
 
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
+  const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active });
   const client: ScriptotarApi = {
-    async bootstrap() { return { ...structuredClone(mockBootstrap), activeProjectId: active }; },
-    async selectProject(projectId: string) { active = projectId; },
-    async createProject(_name: string) {},
+    async bootstrap() { return snapshot(); },
+    async selectProject(projectId: string) { active = projectId; return snapshot(); },
+    async createProject(_name: string) { return snapshot(); },
     async enqueueLocalMedia(_projectId: string, _path: string) {},
     async enqueueUrl(_projectId: string, _url: string) {},
     async retryJob(_jobId: string) {},
