@@ -9,19 +9,31 @@ permissions:
   contents: read
 
 jobs:
-  regenerate-and-check:
+  normalize-and-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libglib2.0-dev \
+            patchelf
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Regenerate lockfile normally
-        run: cargo generate-lockfile
+      - name: Update lockfile from manifests and check workspace
+        run: cargo check --workspace --all-targets
       - name: Format Rust
         run: cargo fmt --all
-      - name: Check workspace
-        run: cargo check --workspace --all-targets
+      - name: Capture normalization diff
+        if: always()
+        run: |
+          git diff -- Cargo.lock > agent5-lock.diff
+          git diff -- '*.rs' > agent5-rustfmt.diff
       - name: Clippy workspace
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Test workspace
@@ -30,9 +42,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agent5-generated-integration-files
+          name: agent5-normalized-integration-files
           path: |
             Cargo.lock
+            agent5-lock.diff
+            agent5-rustfmt.diff
             apps/desktop/src-tauri/src/**/*.rs
             crates/**/*.rs
           if-no-files-found: error
