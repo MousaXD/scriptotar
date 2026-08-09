@@ -13,3 +13,7 @@ dist/
 .flatpak-builder/
 flatpak-build/
 flatpak-repo/
+apps/desktop/src-tauri/resources/transcription-runtime/
+sidecars/transcription/build/
+sidecars/transcription/dist/
+sidecars/transcription/*.spec
