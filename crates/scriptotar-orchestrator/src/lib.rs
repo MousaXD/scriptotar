@@ -71,7 +71,7 @@ enum Control {
 
 #[derive(Debug)]
 enum ReaderEvent {
-    Protocol(SidecarEvent),
+    Protocol(Box<SidecarEvent>),
     Violation(String),
     Closed,
 }
@@ -122,7 +122,7 @@ impl SidecarHost {
                     Ok(line) if line.trim().is_empty() => {}
                     Ok(line) => match serde_json::from_str::<SidecarEvent>(&line) {
                         Ok(event) => {
-                            if tx.send(ReaderEvent::Protocol(event)).is_err() {
+                            if tx.send(ReaderEvent::Protocol(Box::new(event))).is_err() {
                                 return;
                             }
                         }
@@ -161,25 +161,27 @@ impl SidecarHost {
 
     fn wait_ready(&mut self) -> Result<(), OrchestratorError> {
         match self.events.recv_timeout(Duration::from_secs(10)) {
-            Ok(ReaderEvent::Protocol(SidecarEvent::Ready {
-                protocol,
-                capabilities,
-            })) => {
-                if protocol != SIDECAR_PROTOCOL_VERSION
-                    || !capabilities
-                        .protocol_versions
-                        .contains(&SIDECAR_PROTOCOL_VERSION)
-                {
-                    return Err(OrchestratorError::Protocol(format!(
-                        "sidecar does not support protocol {}",
-                        SIDECAR_PROTOCOL_VERSION
-                    )));
+            Ok(ReaderEvent::Protocol(event)) => match *event {
+                SidecarEvent::Ready {
+                    protocol,
+                    capabilities,
+                } => {
+                    if protocol != SIDECAR_PROTOCOL_VERSION
+                        || !capabilities
+                            .protocol_versions
+                            .contains(&SIDECAR_PROTOCOL_VERSION)
+                    {
+                        return Err(OrchestratorError::Protocol(format!(
+                            "sidecar does not support protocol {}",
+                            SIDECAR_PROTOCOL_VERSION
+                        )));
+                    }
+                    Ok(())
                 }
-                Ok(())
-            }
-            Ok(ReaderEvent::Protocol(other)) => Err(OrchestratorError::Protocol(format!(
-                "expected ready event, got {other:?}"
-            ))),
+                other => Err(OrchestratorError::Protocol(format!(
+                    "expected ready event, got {other:?}"
+                ))),
+            },
             Ok(ReaderEvent::Violation(error)) => Err(OrchestratorError::Protocol(error)),
             Ok(ReaderEvent::Closed) => Err(OrchestratorError::Unavailable(
                 "sidecar exited before ready".to_owned(),
@@ -358,7 +360,7 @@ where
         drain_controls(repository, controls, queue, sidecar, job_id)?;
 
         match sidecar.events.recv_timeout(Duration::from_millis(50)) {
-            Ok(ReaderEvent::Protocol(event)) => match handle_event(repository, &job, event) {
+            Ok(ReaderEvent::Protocol(event)) => match handle_event(repository, &job, *event) {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(error @ OrchestratorError::Protocol(_)) => {
