@@ -31,6 +31,19 @@
     prompt = await api.buildAiPrompt(payload());
     status = 'Prompt built locally. Nothing has been sent to an AI provider.';
   }
+  async function copyText(value: string, label: string) {
+    if (!value) return;
+    if (!navigator.clipboard?.writeText) {
+      status = 'Clipboard access is unavailable in this runtime. Select the text and copy it manually.';
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      status = `${label} copied to the clipboard.`;
+    } catch (error) {
+      status = `Copy failed: ${error instanceof Error ? error.message : 'clipboard access was denied'}`;
+    }
+  }
   async function runAi() {
     if (mode === 'copy') { await buildPrompt(); status = 'Copy Prompt mode is ready for manual use elsewhere.'; return; }
     if (!apiKey.trim()) { status = 'Enter an API key for this session, or switch to Copy Prompt.'; return; }
@@ -48,5 +61,5 @@
 </div>
 <div class="ai-grid"><section class="panel ai-source"><div class="panel-head"><div><span class="eyebrow">Input</span><h2>Source context</h2></div><span class="timer-chip">~{Math.floor(speakingSeconds/60)}:{String(speakingSeconds%60).padStart(2,'0')} spoken</span></div><textarea bind:value={sourceText} placeholder="Paste or load transcript/research text…"></textarea></section><section class="panel ai-prompt"><div class="panel-head"><div><span class="eyebrow">Portable artifact</span><h2>Generated prompt</h2></div></div><textarea bind:value={prompt} placeholder="Build a prompt to preview it here…"></textarea></section></div>
 <section class="panel ai-brief-grid"><label><span>Topic / goal</span><input bind:value={topic} /></label><label><span>Audience</span><input bind:value={audience} /></label><label><span>Target duration</span><input bind:value={duration} /></label><label><span>CTA</span><input bind:value={cta} /></label><label class="wide"><span>Voice / style instructions</span><input bind:value={voice} /></label></section>
-<div class="ai-actions"><button class="button primary" on:click={buildPrompt}>Build prompt</button><button class="button secondary" disabled={!prompt}>Copy prompt</button><button class="button secondary" disabled={busy || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button><span class="status-copy" aria-live="polite">{status}</span></div>
-{#if result}<section class="panel result-card"><div class="panel-head"><h2>AI result</h2><button class="text-button">Copy result</button></div><div class="result-copy">{result}</div></section>{/if}
+<div class="ai-actions"><button class="button primary" on:click={buildPrompt}>Build prompt</button><button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button><button class="button secondary" disabled={busy || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button><span class="status-copy" aria-live="polite">{status}</span></div>
+{#if result}<section class="panel result-card"><div class="panel-head"><h2>AI result</h2><button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button></div><div class="result-copy">{result}</div></section>{/if}
