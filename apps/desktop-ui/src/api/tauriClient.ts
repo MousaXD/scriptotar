@@ -15,6 +15,8 @@ export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
     listJobs: () => invoke<Job[]>('list_jobs'),
     selectProject: (projectId) => invoke<BootstrapData>('select_project', { projectId }),
     createProject: (name) => invoke<BootstrapData>('create_project', { name }),
+    chooseLocalMedia: () => invoke<string | null>('choose_local_media'),
+    chooseOutputDirectory: () => invoke<string | null>('choose_output_directory'),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
     enqueueUrl: (projectId, url) => invoke<BackendJob>('enqueue_url', { projectId, url }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
