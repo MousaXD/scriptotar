@@ -4,6 +4,7 @@
   export let items: ResearchItem[];
   export let onQueue: (ids: string[]) => Promise<void> | void;
   export let onScan: (url: string, limit: number) => Promise<void> | void;
+  export let onSave: (url: string, limit: number) => Promise<void> | void;
 
   let query = '';
   let platform = 'All';
@@ -12,6 +13,7 @@
   let profileUrl = '';
   let limit = 25;
   let scanning = false;
+  let saving = false;
   let status = '';
 
   $: filtered = items
@@ -31,13 +33,21 @@
     scanning = true;
     status = '';
     try { await onScan(profileUrl.trim(), limit); status = 'Research scan completed.'; }
-    catch (error) { status = `Research scan failed: ${error instanceof Error ? error.message : String(error)}`; }
+    catch (error) { status = `Research scan unavailable: ${error instanceof Error ? error.message : String(error)}`; }
     finally { scanning = false; }
+  }
+  async function save() {
+    if (!profileUrl.trim()) return;
+    saving = true;
+    status = '';
+    try { await onSave(profileUrl.trim(), limit); status = 'Watchlist saved locally for this project.'; }
+    catch (error) { status = `Watchlist save failed: ${error instanceof Error ? error.message : String(error)}`; }
+    finally { saving = false; }
   }
   async function queueSelected() {
     status = '';
     try { await onQueue([...selected]); status = 'Selected media queued.'; }
-    catch (error) { status = `Queue failed: ${error instanceof Error ? error.message : String(error)}`; }
+    catch (error) { status = `Queue unavailable: ${error instanceof Error ? error.message : String(error)}`; }
   }
 </script>
 <section class="view-head"><div><span class="eyebrow">Creator intelligence</span><h1>Research</h1><p>Scan public creator profiles, compare performance signals, then queue only the media worth transcribing.</p></div></section>
@@ -45,7 +55,7 @@
   <label><span>Creator / profile URL</span><input bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" /></label>
   <label class="small-field"><span>Limit</span><select bind:value={limit}><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
   <button class="button primary" disabled={scanning || !profileUrl.trim()} on:click={scan}>{scanning ? 'Scanning…' : 'Scan profile'}</button>
-  <button class="button secondary">Save watchlist</button>
+  <button class="button secondary" disabled={saving || !profileUrl.trim()} on:click={save}>{saving ? 'Saving…' : 'Save watchlist'}</button>
 </section>
 {#if status}<p class="status-copy" role="status">{status}</p>{/if}
 <section class="panel research-panel">
