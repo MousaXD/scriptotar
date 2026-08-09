@@ -123,6 +123,8 @@ jobs:
         run: PYTHONPATH=. python -m unittest discover -s tests -v
       - name: Install real engine dependencies
         run: python -m pip install -r sidecars/transcription/requirements-engine.txt
+      - name: Verify installed dependency consistency
+        run: python -m pip check
       - name: Verify engine imports without downloading a model
         run: |
           python - <<'PY'
