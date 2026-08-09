@@ -24,7 +24,7 @@ export const mockBootstrap: BootstrapData = {
     { id: 'j-2', title: 'Local interview take 04.mp4', source: 'Local file', state: 'downloading', stageLabel: 'Preparing media', updatedAt: '1 min ago', detail: 'Local media normalization' },
     { id: 'j-3', title: 'Why this 17-second reveal keeps retention', source: 'YouTube', state: 'queued', stageLabel: 'Queued', updatedAt: '2 min ago' },
     { id: 'j-4', title: 'A/B testing the first sentence', source: 'Instagram', state: 'failed', stageLabel: 'Failed', updatedAt: '12 min ago', detail: 'Extractor returned an authentication error' },
-    { id: 'j-5', title: 'Caption pacing breakdown', source: 'TikTok', state: 'completed', stageLabel: 'Completed', progress: 100, updatedAt: '38 min ago' },
+    { id: 'j-5', title: 'Caption pacing breakdown', source: 'https://example.com/r/4', state: 'completed', stageLabel: 'Completed', progress: 100, updatedAt: '38 min ago' },
     { id: 'j-6', title: 'Interrupted session recovery', source: 'Local file', state: 'interrupted', stageLabel: 'Interrupted', updatedAt: 'Yesterday', detail: 'Application stopped during transcription' }
   ],
   transcripts: [
@@ -47,12 +47,13 @@ export const mockBootstrap: BootstrapData = {
     { id: 'a-2', task: 'Hook ideas', mode: 'byok', provider: 'OpenAI', model: 'gpt-5.2', title: 'Restaurant launch hook set', createdAt: 'Yesterday', status: 'completed' }
   ],
   library: [
-    { id: 'l-1', kind: 'Transcript', title: 'Hook breakdown — Arabic sample', subtitle: 'Arabic · 0:31', projectId: 'p-creator-lab', platform: 'Local', metric: 'Arabic', date: 'Today 07:58' },
-    { id: 'l-2', kind: 'Research', title: 'Three cuts that make a hook feel faster', subtitle: 'Nora Edits', projectId: 'p-creator-lab', platform: 'TikTok', metric: '2.4M views', date: 'Aug 7' },
-    { id: 'l-3', kind: 'AI run', title: 'Caption pacing breakdown', subtitle: 'Viral breakdown · Copy Prompt', projectId: 'p-creator-lab', platform: 'Local', metric: 'Viral breakdown', date: '18 min ago' },
-    { id: 'l-4', kind: 'Creator', title: 'Frame Foundry', subtitle: '@framefoundry', projectId: 'p-creator-lab', platform: 'YouTube', metric: 'Watchlisted', date: '2 h ago' }
+    { id: 'transcript:t-ar', kind: 'Transcript', title: 'Hook breakdown — Arabic sample', subtitle: 'Arabic · 0:31', projectId: 'p-creator-lab', platform: 'Local', metric: 'Arabic', date: 'Today 07:58' },
+    { id: 'research:r-1', kind: 'Research', title: 'Three cuts that make a hook feel faster', subtitle: 'Nora Edits', projectId: 'p-creator-lab', platform: 'TikTok', metric: '2.4M views', date: 'Aug 7' },
+    { id: 'ai:a-1', kind: 'AI run', title: 'Caption pacing breakdown', subtitle: 'Viral breakdown · Copy Prompt', projectId: 'p-creator-lab', platform: 'Local', metric: 'Viral breakdown', date: '18 min ago' },
+    { id: 'creator:c-2', kind: 'Creator', title: 'Frame Foundry', subtitle: '@framefoundry', projectId: 'p-creator-lab', platform: 'YouTube', metric: 'Watchlisted', date: '2 h ago' }
   ],
   settings: {
+    outputDirectory: null,
     whisperModel: 'medium', device: 'auto', language: 'auto', quality: '720p', cookies: 'none', maxDuration: '60 min',
     copyLocalSource: false, translate: false, batched: true, keepFailed: false, autoWatch: false, watchInterval: '60 min', appearance: 'dark'
   }
@@ -73,12 +74,15 @@ function backendJob(projectId: string, kind: 'url' | 'local_file', value: string
 
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
-  const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active });
+  let settings = structuredClone(mockBootstrap.settings);
+  const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active, settings: structuredClone(settings) });
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
     async selectProject(projectId: string) { active = projectId; return snapshot(); },
     async createProject(_name: string) { return snapshot(); },
+    async chooseLocalMedia() { return '/mock/selected-video.mp4'; },
+    async chooseOutputDirectory() { return '/mock/scriptotar-output'; },
     async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
     async enqueueUrl(projectId: string, url: string) { return backendJob(projectId, 'url', url); },
     async retryJob(jobId: string) { return { ...backendJob(active, 'local_file', '/mock/retry.mp4'), id: jobId }; },
@@ -90,8 +94,8 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       return [`Task: ${input.task}`, `Topic: ${input.topic || 'Use source context'}`, `Audience: ${input.audience || 'General audience'}`, '', input.sourceText].join('\n');
     },
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
-    async getSettings() { return structuredClone(mockBootstrap.settings); },
-    async saveSettings(_settings) {},
+    async getSettings() { return structuredClone(settings); },
+    async saveSettings(next) { settings = structuredClone(next); },
     async importLegacyData() {
       return {
         skipped: false,
