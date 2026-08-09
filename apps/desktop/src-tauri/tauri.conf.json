@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "io.github.mousaxd.scriptotar.next",
   "build": {
-    "frontendDist": "./placeholder"
+    "beforeBuildCommand": "npm ci && npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../desktop-ui/dist"
   },
   "app": {
     "windows": [

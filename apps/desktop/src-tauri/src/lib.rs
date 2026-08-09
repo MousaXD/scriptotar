@@ -1,7 +1,8 @@
+mod dto;
 mod services;
 
-use scriptotar_ai::ProviderConfig;
-use scriptotar_core::{ApplicationSettings, Job, JobInput, Project};
+use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiSettings};
+use scriptotar_core::{Job, LegacyImportReport};
 use services::AppServices;
 use tauri::Manager;
 use uuid::Uuid;
@@ -23,34 +24,48 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
 }
 
 #[tauri::command]
-fn create_project(name: String, state: tauri::State<'_, AppServices>) -> Result<Project, String> {
+fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
+    state.bootstrap().map_err(command_error)
+}
+
+#[tauri::command]
+fn select_project(
+    project_id: Uuid,
+    state: tauri::State<'_, AppServices>,
+) -> Result<BootstrapData, String> {
+    state.select_project(project_id).map_err(command_error)
+}
+
+#[tauri::command]
+fn create_project(
+    name: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<BootstrapData, String> {
     state.create_project(name).map_err(command_error)
 }
 
 #[tauri::command]
-fn list_projects(state: tauri::State<'_, AppServices>) -> Result<Vec<Project>, String> {
-    state.list_projects().map_err(command_error)
-}
-
-#[tauri::command]
-fn enqueue_job(
+fn enqueue_local_media(
     project_id: Uuid,
-    input: JobInput,
+    path: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Job, String> {
-    state.enqueue_job(project_id, input).map_err(command_error)
+    state
+        .enqueue_local_media(project_id, path)
+        .map_err(command_error)
 }
 
 #[tauri::command]
-fn list_jobs(
-    project_id: Option<Uuid>,
+fn enqueue_url(
+    project_id: Uuid,
+    url: String,
     state: tauri::State<'_, AppServices>,
-) -> Result<Vec<Job>, String> {
-    state.list_jobs(project_id).map_err(command_error)
+) -> Result<Job, String> {
+    state.enqueue_url(project_id, url).map_err(command_error)
 }
 
 #[tauri::command]
-fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<Job, String> {
+fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.cancel_job(job_id).map_err(command_error)
 }
 
@@ -60,32 +75,49 @@ fn retry_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<Job, 
 }
 
 #[tauri::command]
-fn get_settings(state: tauri::State<'_, AppServices>) -> Result<ApplicationSettings, String> {
+fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
     state.load_settings().map_err(command_error)
 }
 
 #[tauri::command]
 fn save_settings(
-    settings: ApplicationSettings,
+    settings: UiSettings,
     state: tauri::State<'_, AppServices>,
 ) -> Result<(), String> {
-    state.save_settings(&settings).map_err(command_error)
+    state.save_settings(settings).map_err(command_error)
 }
 
 #[tauri::command]
-fn validate_research_url(
-    url: String,
+fn import_legacy_data(
     state: tauri::State<'_, AppServices>,
-) -> Result<String, String> {
-    state.validate_research_url(&url)
+) -> Result<LegacyImportReport, String> {
+    state.import_legacy_data().map_err(command_error)
 }
 
 #[tauri::command]
-fn validate_ai_endpoint(
-    config: ProviderConfig,
+fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    state.scan_creator(query)
+}
+
+#[tauri::command]
+fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    state.queue_research(ids)
+}
+
+#[tauri::command]
+fn build_ai_prompt(
+    input: AiPromptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<String, String> {
-    state.validate_ai_endpoint(&config)
+    state.build_ai_prompt(&input)
+}
+
+#[tauri::command]
+fn run_ai(
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
+    state.run_ai(&input)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,22 +125,26 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
-            let services = AppServices::new(data_dir.join("scriptotar.sqlite3"))?;
+            let services = AppServices::new(data_dir)?;
             app.manage(services);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             backend_health,
+            bootstrap_app,
+            select_project,
             create_project,
-            list_projects,
-            enqueue_job,
-            list_jobs,
+            enqueue_local_media,
+            enqueue_url,
             cancel_job,
             retry_job,
             get_settings,
             save_settings,
-            validate_research_url,
-            validate_ai_endpoint,
+            import_legacy_data,
+            scan_creator,
+            queue_research,
+            build_ai_prompt,
+            run_ai,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Scriptotar desktop shell");
