@@ -22,8 +22,8 @@ export interface AiPromptInput {
 
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
-  selectProject(projectId: string): Promise<void>;
-  createProject(name: string): Promise<void>;
+  selectProject(projectId: string): Promise<BootstrapData>;
+  createProject(name: string): Promise<BootstrapData>;
   enqueueLocalMedia(projectId: string, path: string): Promise<void>;
   enqueueUrl(projectId: string, url: string): Promise<void>;
   retryJob(jobId: string): Promise<void>;
