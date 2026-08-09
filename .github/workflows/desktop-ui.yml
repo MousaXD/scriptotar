@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: desktop-ui-${{ github.workflow }}-${{ github.ref }}
@@ -34,13 +34,17 @@ jobs:
           node-version: '22'
       - name: Resolve dependency lock for migration branch
         run: npm install --package-lock-only --ignore-scripts
-      - name: Capture dependency lock
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-ui-package-lock
-          path: apps/desktop-ui/package-lock.json
-          retention-days: 1
-          if-no-files-found: error
+      - name: Commit dependency lock on branch push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/svelte-desktop-ui'
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'chore(ui): lock frontend dependencies'
+          git push origin HEAD:rewrite/svelte-desktop-ui
       - name: Install dependencies
         run: npm ci
       - name: Type and Svelte checks
