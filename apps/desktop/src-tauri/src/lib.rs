@@ -80,17 +80,12 @@ fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, Stri
 }
 
 #[tauri::command]
-fn save_settings(
-    settings: UiSettings,
-    state: tauri::State<'_, AppServices>,
-) -> Result<(), String> {
+fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.save_settings(settings).map_err(command_error)
 }
 
 #[tauri::command]
-fn import_legacy_data(
-    state: tauri::State<'_, AppServices>,
-) -> Result<LegacyImportReport, String> {
+fn import_legacy_data(state: tauri::State<'_, AppServices>) -> Result<LegacyImportReport, String> {
     state.import_legacy_data().map_err(command_error)
 }
 
@@ -113,10 +108,7 @@ fn build_ai_prompt(
 }
 
 #[tauri::command]
-fn run_ai(
-    input: AiPromptInput,
-    state: tauri::State<'_, AppServices>,
-) -> Result<String, String> {
+fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
     state.run_ai(&input)
 }
 

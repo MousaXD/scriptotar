@@ -280,9 +280,14 @@ where
 
     loop {
         if let Some(job_id) = queue.pop_front() {
-            if let Err(error) =
-                run_job(&repository, &config, &controls, &mut queue, &mut host, job_id)
-            {
+            if let Err(error) = run_job(
+                &repository,
+                &config,
+                &controls,
+                &mut queue,
+                &mut host,
+                job_id,
+            ) {
                 record_runtime_error(&repository, job_id, &error);
             }
             continue;
@@ -440,18 +445,15 @@ where
             }
             Ok(false)
         }
-        SidecarEvent::Result { job_id, result }
-            if event_job_matches(original_job.id, &job_id) =>
-        {
+        SidecarEvent::Result { job_id, result } if event_job_matches(original_job.id, &job_id) => {
             ensure_processing(repository, original_job)?;
             persist_result(repository, original_job, result)?;
             Ok(true)
         }
-        SidecarEvent::Error {
-            job_id, error, ..
-        } if job_id
-            .as_deref()
-            .is_none_or(|job_id| event_job_matches(original_job.id, job_id)) =>
+        SidecarEvent::Error { job_id, error, .. }
+            if job_id
+                .as_deref()
+                .is_none_or(|job_id| event_job_matches(original_job.id, job_id)) =>
         {
             let message = format!("{}: {}", error.code, error.message);
             let current = repository.get_job(original_job.id)?;
@@ -460,9 +462,7 @@ where
             }
             Ok(true)
         }
-        SidecarEvent::Cancelled { job_id, .. }
-            if event_job_matches(original_job.id, &job_id) =>
-        {
+        SidecarEvent::Cancelled { job_id, .. } if event_job_matches(original_job.id, &job_id) => {
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
                 repository.transition_job(original_job.id, JobState::Cancelled)?;
@@ -552,13 +552,10 @@ where
         title: result.source.title,
         created_at: now.clone(),
     };
-    let media_path = result
-        .artifacts
-        .media
-        .unwrap_or_else(|| match &job.input {
-            JobInput::LocalFile(value) => value.clone(),
-            JobInput::Url(_) => result.output_dir.clone(),
-        });
+    let media_path = result.artifacts.media.unwrap_or_else(|| match &job.input {
+        JobInput::LocalFile(value) => value.clone(),
+        JobInput::Url(_) => result.output_dir.clone(),
+    });
     let media = Media {
         id: Uuid::new_v4(),
         source_id: source.id,
@@ -699,7 +696,10 @@ mod tests {
             let job = store.get_job(job_id).unwrap();
             if matches!(
                 job.state,
-                JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+                JobState::Completed
+                    | JobState::Failed
+                    | JobState::Cancelled
+                    | JobState::Interrupted
             ) {
                 return job;
             }
@@ -724,7 +724,10 @@ mod tests {
         let failed = enqueue_file(&store, &orchestrator, &temp.path().join("fail.mp4"));
         let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
         assert_eq!(wait_for_terminal(&store, failed.id).state, JobState::Failed);
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 
     #[test]
@@ -732,18 +735,20 @@ mod tests {
         let (temp, store, orchestrator) = setup();
         let crashed = enqueue_file(&store, &orchestrator, &temp.path().join("crash.mp4"));
         let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
-        assert_eq!(wait_for_terminal(&store, crashed.id).state, JobState::Failed);
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, crashed.id).state,
+            JobState::Failed
+        );
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 
     #[test]
     fn cancellation_keeps_queue_healthy() {
         let (temp, store, orchestrator) = setup();
-        let blocked = enqueue_file(
-            &store,
-            &orchestrator,
-            &temp.path().join("spawn-child.mp4"),
-        );
+        let blocked = enqueue_file(&store, &orchestrator, &temp.path().join("spawn-child.mp4"));
         for _ in 0..200 {
             let job = store.get_job(blocked.id).unwrap();
             if job.state == JobState::Transcribing {
@@ -757,6 +762,9 @@ mod tests {
             wait_for_terminal(&store, blocked.id).state,
             JobState::Cancelled
         );
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 }

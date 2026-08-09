@@ -103,11 +103,7 @@ impl AppServices {
         self.select_project(project.id)
     }
 
-    pub fn enqueue_local_media(
-        &self,
-        project_id: Uuid,
-        path: String,
-    ) -> RepositoryResult<Job> {
+    pub fn enqueue_local_media(&self, project_id: Uuid, path: String) -> RepositoryResult<Job> {
         self.store.get_project(project_id)?;
         let input_path = Path::new(path.trim());
         if !input_path.is_file() {
@@ -134,10 +130,8 @@ impl AppServices {
         let validated = NetworkPolicy
             .validate(url.trim())
             .map_err(|error| RepositoryError::Validation(error.to_string()))?;
-        let job = JobService::new(self.store.clone()).enqueue(
-            project_id,
-            JobInput::Url(validated.as_url().to_string()),
-        )?;
+        let job = JobService::new(self.store.clone())
+            .enqueue(project_id, JobInput::Url(validated.as_url().to_string()))?;
         self.orchestrator
             .enqueue(job.id)
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
@@ -212,7 +206,11 @@ impl AppServices {
         if !input.mode.eq_ignore_ascii_case("byok") {
             return self.build_ai_prompt(input);
         }
-        if input.api_key.as_deref().is_none_or(|key| key.trim().is_empty()) {
+        if input
+            .api_key
+            .as_deref()
+            .is_none_or(|key| key.trim().is_empty())
+        {
             return Err("an API key is required for BYOK mode".to_owned());
         }
         let provider = provider_kind(&input.provider)?;
@@ -241,10 +239,7 @@ impl AppServices {
             .filter(|job| job.project_id == active_project)
             .map(job_to_ui)
             .collect::<Vec<_>>();
-        let ui_transcripts = transcripts
-            .iter()
-            .map(transcript_to_ui)
-            .collect::<Vec<_>>();
+        let ui_transcripts = transcripts.iter().map(transcript_to_ui).collect::<Vec<_>>();
         let ui_projects = projects
             .iter()
             .map(|project| {
@@ -312,8 +307,7 @@ fn runtime_config(fallback_output_root: PathBuf) -> RuntimeConfig {
     let sidecar_script = env::var_os("SCRIPTOTAR_SIDECAR_SCRIPT")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../sidecars/transcription/sidecar.py")
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sidecars/transcription/sidecar.py")
         });
     RuntimeConfig::new(python, sidecar_script, fallback_output_root)
 }
@@ -411,8 +405,14 @@ fn parse_segments(raw: Option<&str>) -> Vec<UiTranscriptSegment> {
                     .and_then(Value::as_u64)
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| index.to_string()),
-                start_seconds: object.get("start").and_then(Value::as_f64).unwrap_or_default(),
-                end_seconds: object.get("end").and_then(Value::as_f64).unwrap_or_default(),
+                start_seconds: object
+                    .get("start")
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default(),
+                end_seconds: object
+                    .get("end")
+                    .and_then(Value::as_f64)
+                    .unwrap_or_default(),
                 text,
             })
         })

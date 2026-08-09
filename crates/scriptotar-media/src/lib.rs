@@ -292,7 +292,9 @@ mod tests {
     #[test]
     fn local_media_extension_and_model_are_validated() {
         let policy = MediaPolicy;
-        assert!(policy.validate_local_input(Path::new("/tmp/video.mp4")).is_ok());
+        assert!(policy
+            .validate_local_input(Path::new("/tmp/video.mp4"))
+            .is_ok());
         assert_eq!(
             policy.validate_local_input(Path::new("/tmp/payload.sh")),
             Err(MediaError::UnsupportedExtension)

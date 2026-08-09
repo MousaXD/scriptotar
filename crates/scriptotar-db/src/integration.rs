@@ -104,7 +104,10 @@ impl SqliteStore {
         Ok(())
     }
 
-    pub fn import_legacy_database(&self, legacy_path: impl AsRef<Path>) -> RepositoryResult<LegacyImportReport> {
+    pub fn import_legacy_database(
+        &self,
+        legacy_path: impl AsRef<Path>,
+    ) -> RepositoryResult<LegacyImportReport> {
         self.run_integration_migrations()?;
         let legacy_path = legacy_path.as_ref();
         if !legacy_path.is_file() {
@@ -171,7 +174,9 @@ impl SqliteStore {
                 .prepare("SELECT name, created_at FROM projects ORDER BY name")
                 .map_err(storage_error)?;
             let rows = statement
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(storage_error)?;
             for row in rows {
                 let (name, created_at) = row.map_err(storage_error)?;
@@ -217,7 +222,11 @@ impl SqliteStore {
                     "local_file"
                 };
                 let state = legacy_job_state(&row.status);
-                let progress = if state == JobState::Completed { Some(1.0_f32) } else { None };
+                let progress = if state == JobState::Completed {
+                    Some(1.0_f32)
+                } else {
+                    None
+                };
                 tx.execute(
                     "INSERT INTO jobs(
                         id, project_id, input_kind, input_value, state, progress, last_error,
@@ -245,11 +254,19 @@ impl SqliteStore {
                 .map_err(storage_error)?;
                 report.jobs += 1;
 
-                if let Some(text) = row.transcript.as_deref().filter(|value| !value.trim().is_empty()) {
+                if let Some(text) = row
+                    .transcript
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                {
                     let source_id = legacy_uuid("source", &row.id);
                     let media_id = legacy_uuid("media", &row.id);
                     let transcript_id = legacy_uuid("transcript", &row.id);
-                    let source_type = if input_kind == "url" { "url" } else { "local_file" };
+                    let source_type = if input_kind == "url" {
+                        "url"
+                    } else {
+                        "local_file"
+                    };
                     tx.execute(
                         "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
                          VALUES(?1, ?2, NULL, ?3, ?4, ?5, ?6)
@@ -464,8 +481,18 @@ impl SqliteStore {
                 })
                 .map_err(storage_error)?;
             for row in rows {
-                let (legacy_id, created_at, project, task, mode, provider, model, source_title, prompt, result) =
-                    row.map_err(storage_error)?;
+                let (
+                    legacy_id,
+                    created_at,
+                    project,
+                    task,
+                    mode,
+                    provider,
+                    model,
+                    source_title,
+                    prompt,
+                    result,
+                ) = row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &project)?;
                 let id = legacy_uuid("ai-run", &legacy_id);
                 let mode = if mode.to_ascii_lowercase().contains("copy") {
@@ -679,7 +706,10 @@ impl ContentRepository for SqliteStore {
         self.get_job(job_id)
     }
 
-    fn list_transcripts(&self, project_id: Option<Uuid>) -> RepositoryResult<Vec<TranscriptBundle>> {
+    fn list_transcripts(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> RepositoryResult<Vec<TranscriptBundle>> {
         let connection = connection(self)?;
         let sql = if project_id.is_some() {
             "SELECT s.project_id, s.id, s.creator_id, s.source_type, s.locator, s.title, s.created_at,
@@ -793,11 +823,7 @@ impl WatchlistRepository for SqliteStore {
 
 fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })
 }
 
@@ -819,7 +845,11 @@ fn legacy_uuid(kind: &str, key: &str) -> Uuid {
 }
 
 fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> RepositoryResult<Uuid> {
-    let normalized = if name.trim().is_empty() { "Inbox" } else { name.trim() };
+    let normalized = if name.trim().is_empty() {
+        "Inbox"
+    } else {
+        name.trim()
+    };
     if let Some(id) = tx
         .query_row(
             "SELECT id FROM projects WHERE name = ?1 COLLATE NOCASE",
@@ -829,8 +859,7 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
         .optional()
         .map_err(storage_error)?
     {
-        return Uuid::parse_str(&id)
-            .map_err(|error| RepositoryError::Storage(error.to_string()));
+        return Uuid::parse_str(&id).map_err(|error| RepositoryError::Storage(error.to_string()));
     }
     let id = legacy_uuid("project", &normalized.to_ascii_lowercase());
     tx.execute(
@@ -917,7 +946,11 @@ mod tests {
         store.run_integration_migrations().unwrap();
         let connection = connection(&store).unwrap();
         let count: u32 = connection
-            .query_row("SELECT COUNT(*) FROM integration_schema_migrations", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM integration_schema_migrations",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(count, LATEST_INTEGRATION_SCHEMA_VERSION);
     }
@@ -931,7 +964,9 @@ mod tests {
         let job = Job::new(project.id, JobInput::LocalFile("/tmp/a.mp4".to_owned()));
         store.insert_job(&job).unwrap();
         store.transition_job(job.id, JobState::Preparing).unwrap();
-        store.transition_job(job.id, JobState::Transcribing).unwrap();
+        store
+            .transition_job(job.id, JobState::Transcribing)
+            .unwrap();
         store.transition_job(job.id, JobState::Processing).unwrap();
         let now = now_rfc3339();
         let source = Source {
