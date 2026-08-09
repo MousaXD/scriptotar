@@ -8,6 +8,10 @@ repository.workspace = true
 [dependencies]
 scriptotar-core = { path = "../scriptotar-core" }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 url.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

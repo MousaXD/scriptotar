@@ -101,11 +101,30 @@ impl SqliteStore {
             last_scan_at,
         })
     }
+
+    pub fn mark_watchlist_scanned_by_profile(
+        &self,
+        project_id: Uuid,
+        profile_url: &str,
+        scanned_at: &str,
+    ) -> RepositoryResult<bool> {
+        self.run_integration_migrations()?;
+        let profile_url = validate_watchlist_text("profile URL", profile_url)?;
+        let scanned_at = validate_watchlist_text("scan timestamp", scanned_at)?;
+        let connection = open_connection(self)?;
+        let updated = connection
+            .execute(
+                "UPDATE watchlists SET last_scan_at = ?1 WHERE project_id = ?2 AND profile_url = ?3",
+                params![scanned_at, project_id.to_string(), profile_url],
+            )
+            .map_err(storage_error)?;
+        Ok(updated > 0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use scriptotar_core::{Project, ProjectRepository, WatchlistRepository};
+    use scriptotar_core::{now_rfc3339, Project, ProjectRepository, WatchlistRepository};
     use tempfile::tempdir;
 
     use super::SqliteStore;
@@ -152,6 +171,17 @@ mod tests {
         assert_eq!(first_project_rows[0].limit_count, 50);
         assert_eq!(first_project_rows[0].project_id, first_project.id);
 
+        let scan_time = now_rfc3339();
+        assert!(store
+            .mark_watchlist_scanned_by_profile(
+                first_project.id,
+                "https://www.youtube.com/@creator",
+                &scan_time,
+            )
+            .unwrap());
+        let scanned = store.list_watchlists(Some(first_project.id)).unwrap();
+        assert_eq!(scanned[0].last_scan_at.as_deref(), Some(scan_time.as_str()));
+
         drop(store);
         let reopened = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
         reopened.run_integration_migrations().unwrap();
@@ -161,6 +191,10 @@ mod tests {
         assert_eq!(
             reopened_rows[0].profile_url,
             "https://www.youtube.com/@creator"
+        );
+        assert_eq!(
+            reopened_rows[0].last_scan_at.as_deref(),
+            Some(scan_time.as_str())
         );
     }
 }
