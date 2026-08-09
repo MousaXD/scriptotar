@@ -107,6 +107,7 @@ pub struct UiLibraryItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiSettings {
+    pub output_directory: Option<String>,
     pub whisper_model: String,
     pub device: String,
     pub language: String,
