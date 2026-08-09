@@ -18,6 +18,22 @@ describe('desktop workstation', () => {
     await fireEvent.change(select, { target: { value: 'p-client-a' } });
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith('p-client-a'));
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+    expect(select).toHaveValue('p-client-a');
+  });
+
+  it('keeps the previous project usable when project switching fails', async () => {
+    const api = createMockClient();
+    vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project unavailable'));
+    await ready(api);
+    const select = screen.getByLabelText('Project');
+    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Project unavailable');
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    await waitFor(() => expect(select).toHaveValue('p-creator-lab'));
+
+    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('renders persisted job states including failure and interruption', async () => {
