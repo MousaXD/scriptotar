@@ -40,7 +40,10 @@ fn sidecar_progress_is_persisted_before_completion() {
             observed = true;
             break;
         }
-        if current.state.is_terminal() {
+        if matches!(
+            current.state,
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+        ) {
             break;
         }
         thread::sleep(Duration::from_millis(10));
