@@ -117,7 +117,10 @@ pub fn validate_ai_input(input: &AiPromptInput) -> Result<(), String> {
         if api_key.len() > MAX_API_KEY_BYTES {
             return Err("API key exceeds the supported size".to_owned());
         }
-        if api_key.contains(['\r', '\n', '\0']) {
+        if api_key
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | '\0'))
+        {
             return Err("API key contains invalid control characters".to_owned());
         }
     }
@@ -132,6 +135,14 @@ fn validate_text_size(label: &str, value: &str, max_bytes: usize) -> Result<(), 
 }
 
 pub fn prepare_legacy_import_bridge(data_dir: &Path) -> Result<Option<String>, String> {
+    let roots = configured_legacy_data_roots();
+    prepare_legacy_import_bridge_from_roots(data_dir, &roots)
+}
+
+fn prepare_legacy_import_bridge_from_roots(
+    data_dir: &Path,
+    roots: &[PathBuf],
+) -> Result<Option<String>, String> {
     let staged = data_dir.join("history.sqlite3");
     if staged.exists() {
         return Ok(Some(
@@ -140,8 +151,7 @@ pub fn prepare_legacy_import_bridge(data_dir: &Path) -> Result<Option<String>, S
         ));
     }
 
-    let roots = configured_legacy_data_roots();
-    let candidates = discover_legacy_databases(&roots)?;
+    let candidates = discover_legacy_databases(roots)?;
     match candidates.as_slice() {
         [] => Ok(None),
         [candidate] => {
@@ -262,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn bridge_copies_one_legacy_database_without_modifying_source() {
+    fn bridge_stages_one_legacy_database_without_modifying_source() {
         let temp = TempDir::new().unwrap();
         let source_root = temp.path().join("source");
         let source = source_root.join("scriptotar/history.sqlite3");
@@ -270,16 +280,49 @@ mod tests {
         let before = fs::read(&source).unwrap();
         let data_dir = temp.path().join("next");
 
-        let found = discover_legacy_databases(&[source_root]).unwrap();
-        assert_eq!(found.len(), 1);
-        validate_sqlite_header(&found[0]).unwrap();
-        fs::create_dir_all(&data_dir).unwrap();
+        let message = prepare_legacy_import_bridge_from_roots(
+            &data_dir,
+            std::slice::from_ref(&source_root),
+        )
+        .unwrap()
+        .unwrap();
         let staged = data_dir.join("history.sqlite3");
-        fs::copy(&found[0], &staged).unwrap();
-        harden_private_file_permissions(&staged).unwrap();
 
+        assert!(message.contains("staged one legacy database"));
         assert_eq!(fs::read(&source).unwrap(), before);
         assert_eq!(fs::read(&staged).unwrap(), before);
+    }
+
+    #[test]
+    fn bridge_refuses_ambiguous_legacy_databases() {
+        let temp = TempDir::new().unwrap();
+        let source_root = temp.path().join("source");
+        fake_sqlite(&source_root.join("scriptotar/history.sqlite3"));
+        fake_sqlite(&source_root.join("wesamboss/history.sqlite3"));
+
+        let error = prepare_legacy_import_bridge_from_roots(
+            &temp.path().join("next"),
+            &[source_root],
+        )
+        .unwrap_err();
+        assert!(error.contains("multiple legacy databases"));
+        assert!(!temp.path().join("next/history.sqlite3").exists());
+    }
+
+    #[test]
+    fn bridge_rejects_non_sqlite_input() {
+        let temp = TempDir::new().unwrap();
+        let source_root = temp.path().join("source");
+        let source = source_root.join("scriptotar/history.sqlite3");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, b"not a sqlite database").unwrap();
+
+        let error = prepare_legacy_import_bridge_from_roots(
+            &temp.path().join("next"),
+            &[source_root],
+        )
+        .unwrap_err();
+        assert!(error.contains("valid SQLite header"));
     }
 
     #[test]
