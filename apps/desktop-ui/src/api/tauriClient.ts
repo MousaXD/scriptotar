@@ -16,6 +16,7 @@ export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
     enqueueUrl: (projectId, url) => invoke<BackendJob>('enqueue_url', { projectId, url }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
+    saveWatchlist: (query: ResearchQuery) => invoke<BootstrapData>('save_watchlist', { query }),
     scanCreator: (query: ResearchQuery) => invoke<void>('scan_creator', { query }),
     queueResearch: (ids) => invoke<void>('queue_research', { ids }),
     cancelJob: (jobId) => invoke<void>('cancel_job', { jobId }),
