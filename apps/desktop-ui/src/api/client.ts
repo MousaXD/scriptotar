@@ -40,6 +40,7 @@ export interface ScriptotarApi {
   retryJob(jobId: string): Promise<BackendJob>;
   saveWatchlist(query: ResearchQuery): Promise<BootstrapData>;
   scanCreator(query: ResearchQuery): Promise<void>;
+  refreshWatchlists(): Promise<number>;
   queueResearch(ids: string[]): Promise<void>;
   cancelJob(jobId: string): Promise<void>;
   buildAiPrompt(input: AiPromptInput): Promise<string>;
