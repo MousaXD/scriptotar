@@ -1,0 +1,27 @@
+[package]
+name = "scriptotar-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "scriptotar_desktop"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+scriptotar-ai = { path = "../../../crates/scriptotar-ai" }
+scriptotar-core = { path = "../../../crates/scriptotar-core" }
+scriptotar-db = { path = "../../../crates/scriptotar-db" }
+scriptotar-jobs = { path = "../../../crates/scriptotar-jobs" }
+scriptotar-media = { path = "../../../crates/scriptotar-media" }
+scriptotar-orchestrator = { path = "../../../crates/scriptotar-orchestrator" }
+scriptotar-research = { path = "../../../crates/scriptotar-research" }
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+uuid.workspace = true

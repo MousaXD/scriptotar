@@ -1,0 +1,63 @@
+name: Transcription Sidecar
+
+on:
+  push:
+    branches:
+      - main
+      - 'rewrite/**'
+    paths:
+      - 'sidecars/transcription/**'
+      - '.github/workflows/transcription-sidecar.yml'
+  pull_request:
+    paths:
+      - 'sidecars/transcription/**'
+      - '.github/workflows/transcription-sidecar.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: transcription-sidecar-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Python protocol and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile sidecar sources
+        working-directory: sidecars/transcription
+        run: PYTHONPATH=. python -m compileall -q .
+      - name: Unit and subprocess protocol tests
+        working-directory: sidecars/transcription
+        run: PYTHONPATH=. python -m unittest discover -s tests -v
+
+  dependency-imports:
+    name: Real engine dependency imports
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecars/transcription/requirements-engine.txt
+      - name: Install pinned engine dependencies
+        run: python -m pip install -r sidecars/transcription/requirements-engine.txt
+      - name: Verify installed dependency consistency
+        run: python -m pip check
+      - name: Verify real imports without model download
+        run: |
+          python - <<'PY'
+          import faster_whisper
+          import yt_dlp
+          print("faster-whisper", faster_whisper.__version__)
+          print("yt-dlp", yt_dlp.version.__version__)
+          PY

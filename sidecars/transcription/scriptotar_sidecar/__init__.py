@@ -1,0 +1,3 @@
+from .version import PROTOCOL_VERSION, SIDECAR_VERSION
+
+__all__ = ["PROTOCOL_VERSION", "SIDECAR_VERSION"]

@@ -1,0 +1,17 @@
+[package]
+name = "scriptotar-orchestrator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scriptotar-core = { path = "../scriptotar-core" }
+scriptotar-media = { path = "../scriptotar-media" }
+serde_json.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+scriptotar-db = { path = "../scriptotar-db" }
+tempfile.workspace = true
