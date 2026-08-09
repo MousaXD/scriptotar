@@ -6,8 +6,8 @@ export type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) =
 export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
   return {
     bootstrap: () => invoke<BootstrapData>('bootstrap_app'),
-    selectProject: (projectId) => invoke<void>('select_project', { projectId }),
-    createProject: (name) => invoke<void>('create_project', { name }),
+    selectProject: (projectId) => invoke<BootstrapData>('select_project', { projectId }),
+    createProject: (name) => invoke<BootstrapData>('create_project', { name }),
     enqueueLocalMedia: (projectId, path) => invoke<void>('enqueue_local_media', { projectId, path }),
     enqueueUrl: (projectId, url) => invoke<void>('enqueue_url', { projectId, url }),
     retryJob: (jobId) => invoke<void>('retry_job', { jobId }),
