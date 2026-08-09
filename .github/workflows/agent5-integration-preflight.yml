@@ -1,0 +1,38 @@
+name: Agent 5 integration preflight
+
+on:
+  pull_request:
+    branches:
+      - improve/scriptotar-next-integration
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate-and-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Regenerate lockfile normally
+        run: cargo generate-lockfile
+      - name: Format Rust
+        run: cargo fmt --all
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+      - name: Clippy workspace
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Upload generated integration files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-generated-integration-files
+          path: |
+            Cargo.lock
+            apps/desktop/src-tauri/src/**/*.rs
+            crates/**/*.rs
+          if-no-files-found: error
