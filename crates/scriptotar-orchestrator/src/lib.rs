@@ -206,6 +206,18 @@ impl SidecarHost {
         Ok(self.child.try_wait()?.is_none())
     }
 
+    fn wait_for_exit_after_stream_close(
+        &mut self,
+    ) -> Result<Option<std::process::ExitStatus>, OrchestratorError> {
+        for _ in 0..20 {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(Some(status));
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        Ok(None)
+    }
+
     fn shutdown(&mut self) {
         let _ = self.send(&SidecarCommand::Shutdown {
             protocol: SIDECAR_PROTOCOL_VERSION,
@@ -346,21 +358,40 @@ where
         drain_controls(repository, controls, queue, sidecar, job_id)?;
 
         match sidecar.events.recv_timeout(Duration::from_millis(50)) {
-            Ok(ReaderEvent::Protocol(event)) => {
-                if handle_event(repository, &job, event)? {
-                    return Ok(());
+            Ok(ReaderEvent::Protocol(event)) => match handle_event(repository, &job, event) {
+                Ok(true) => return Ok(()),
+                Ok(false) => {}
+                Err(error @ OrchestratorError::Protocol(_)) => {
+                    sidecar.shutdown();
+                    return Err(error);
                 }
-            }
+                Err(error) => return Err(error),
+            },
             Ok(ReaderEvent::Violation(error)) => {
                 sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
             }
             Ok(ReaderEvent::Closed) => {
-                let current = repository.get_job(job_id)?;
-                if current.state.is_active() {
-                    repository.transition_job(job_id, JobState::Interrupted)?;
+                match sidecar.wait_for_exit_after_stream_close()? {
+                    Some(status) if !status.success() => {
+                        return Err(OrchestratorError::Unavailable(format!(
+                            "sidecar exited with {status}"
+                        )));
+                    }
+                    Some(_) => {
+                        let current = repository.get_job(job_id)?;
+                        if current.state.is_active() {
+                            repository.transition_job(job_id, JobState::Interrupted)?;
+                        }
+                        return Ok(());
+                    }
+                    None => {
+                        sidecar.shutdown();
+                        return Err(OrchestratorError::Unavailable(
+                            "sidecar stdout closed while the process remained alive".to_owned(),
+                        ));
+                    }
                 }
-                return Ok(());
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
@@ -424,6 +455,7 @@ fn handle_event<R>(
 where
     R: JobRepository + JobRuntimeRepository + ContentRepository,
 {
+    validate_event_for_job(original_job.id, &event)?;
     match event {
         SidecarEvent::Ready { .. }
         | SidecarEvent::Pong { .. }
@@ -431,11 +463,8 @@ where
         | SidecarEvent::JobStarted { .. }
         | SidecarEvent::Shutdown { .. } => Ok(false),
         SidecarEvent::Progress {
-            job_id,
-            stage,
-            percent,
-            ..
-        } if event_job_matches(original_job.id, &job_id) => {
+            stage, percent, ..
+        } => {
             enter_stage(repository, original_job, &stage)?;
             if let Some(percent) = percent {
                 repository.update_job_progress(
@@ -445,18 +474,12 @@ where
             }
             Ok(false)
         }
-        SidecarEvent::Result { job_id, result, .. }
-            if event_job_matches(original_job.id, &job_id) =>
-        {
+        SidecarEvent::Result { result, .. } => {
             ensure_processing(repository, original_job)?;
             persist_result(repository, original_job, result)?;
             Ok(true)
         }
-        SidecarEvent::Error { job_id, error, .. }
-            if job_id
-                .as_deref()
-                .is_none_or(|job_id| event_job_matches(original_job.id, job_id)) =>
-        {
+        SidecarEvent::Error { error, .. } => {
             let message = format!("{}: {}", error.code, error.message);
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
@@ -464,15 +487,54 @@ where
             }
             Ok(true)
         }
-        SidecarEvent::Cancelled { job_id, .. } if event_job_matches(original_job.id, &job_id) => {
+        SidecarEvent::Cancelled { .. } => {
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
                 repository.transition_job(original_job.id, JobState::Cancelled)?;
             }
             Ok(true)
         }
-        _ => Ok(false),
     }
+}
+
+fn validate_event_for_job(job_id: Uuid, event: &SidecarEvent) -> Result<(), OrchestratorError> {
+    let protocol = match event {
+        SidecarEvent::Ready { protocol, .. }
+        | SidecarEvent::Pong { protocol, .. }
+        | SidecarEvent::Accepted { protocol, .. }
+        | SidecarEvent::JobStarted { protocol, .. }
+        | SidecarEvent::Progress { protocol, .. }
+        | SidecarEvent::Result { protocol, .. }
+        | SidecarEvent::Error { protocol, .. }
+        | SidecarEvent::Cancelled { protocol, .. }
+        | SidecarEvent::Shutdown { protocol, .. } => *protocol,
+    };
+    if protocol != SIDECAR_PROTOCOL_VERSION {
+        return Err(OrchestratorError::Protocol(format!(
+            "event protocol mismatch: expected {}, got {protocol}",
+            SIDECAR_PROTOCOL_VERSION
+        )));
+    }
+
+    let sidecar_job_id = match event {
+        SidecarEvent::Accepted { job_id, .. }
+        | SidecarEvent::JobStarted { job_id, .. }
+        | SidecarEvent::Progress { job_id, .. }
+        | SidecarEvent::Result { job_id, .. }
+        | SidecarEvent::Cancelled { job_id, .. } => Some(job_id.as_str()),
+        SidecarEvent::Error { job_id, .. } => job_id.as_deref(),
+        SidecarEvent::Ready { .. } | SidecarEvent::Pong { .. } | SidecarEvent::Shutdown { .. } => {
+            None
+        }
+    };
+    if let Some(sidecar_job_id) = sidecar_job_id {
+        if !event_job_matches(job_id, sidecar_job_id) {
+            return Err(OrchestratorError::Protocol(format!(
+                "event job id mismatch: expected {job_id}, got {sidecar_job_id}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn event_job_matches(job_id: Uuid, sidecar_job_id: &str) -> bool {
