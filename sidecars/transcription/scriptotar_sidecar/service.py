@@ -15,6 +15,25 @@ from .errors import SidecarError
 from .protocol import Command, ProtocolWriter, parse_command_line
 from .version import SIDECAR_VERSION
 
+MAX_COMMAND_LINE_CHARS = 1024 * 1024
+MAX_ENGINE_EVENT_LINE_CHARS = 64 * 1024 * 1024
+
+
+def _read_bounded_line(stream: TextIO, limit: int) -> tuple[str | None, bool]:
+    raw = stream.readline(limit + 1)
+    if raw == "":
+        return None, False
+    if len(raw) <= limit:
+        return raw, False
+
+    ended = raw.endswith("\n")
+    while not ended:
+        remainder = stream.readline(limit + 1)
+        if remainder == "":
+            break
+        ended = remainder.endswith("\n")
+    return "", True
+
 
 class EngineSupervisor:
     def __init__(self, writer: ProtocolWriter, log_stream: TextIO):
@@ -65,24 +84,68 @@ class EngineSupervisor:
             threading.Thread(target=self._read_stdout, args=(self.proc,), daemon=True).start()
             threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True).start()
 
+    def _abort_engine_protocol(self, proc: subprocess.Popen[str], message: str) -> None:
+        self._log(f"[engine protocol] {message}")
+        with self._lock:
+            job_id = self.active_job_id
+            should_report = (
+                proc is self.proc
+                and job_id is not None
+                and not self._cancel_in_progress
+                and not self._closing
+            )
+            if should_report:
+                self.active_job_id = None
+        if should_report:
+            self.writer.emit(
+                "error",
+                job_id=job_id,
+                error={
+                    "code": "ENGINE_PROTOCOL",
+                    "message": "Transcription engine produced invalid protocol output.",
+                    "retryable": True,
+                },
+            )
+        self._terminate_process_group(proc)
+
     def _read_stdout(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stdout is not None
-        for raw in proc.stdout:
+        while True:
+            raw, too_large = _read_bounded_line(proc.stdout, MAX_ENGINE_EVENT_LINE_CHARS)
+            if raw is None:
+                break
+            if too_large:
+                self._abort_engine_protocol(proc, "event exceeded the maximum protocol line size")
+                break
             line = raw.strip()
             if not line:
                 continue
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
-                self._log(f"[engine stdout] {line[:1000]}")
-                continue
+                self._abort_engine_protocol(proc, f"malformed JSON event: {line[:1000]}")
+                break
             if not isinstance(event, dict) or not isinstance(event.get("type"), str):
-                self._log(f"[engine protocol] ignored malformed event: {line[:1000]}")
-                continue
+                self._abort_engine_protocol(proc, f"invalid event shape: {line[:1000]}")
+                break
             event_type = event.pop("type")
             if event_type in {"engine_ready", "engine_shutdown"}:
                 continue
+            if event_type not in {"job_started", "progress", "result", "error"}:
+                self._abort_engine_protocol(proc, f"unknown event type: {event_type!r}")
+                break
             job_id = event.get("job_id")
+            if event_type != "error" and not isinstance(job_id, str):
+                self._abort_engine_protocol(proc, f"event {event_type!r} is missing a job_id")
+                break
+            with self._lock:
+                active_job_id = self.active_job_id
+            if job_id is not None and active_job_id is not None and job_id != active_job_id:
+                self._abort_engine_protocol(
+                    proc,
+                    f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
+                )
+                break
             if event_type in {"result", "error"} and job_id:
                 with self._lock:
                     if self.active_job_id == job_id:
@@ -259,9 +322,20 @@ class SidecarService:
 
     def run(self, stdin: TextIO) -> int:
         self.writer.emit("ready", capabilities=capability_report())
-        for raw_line in stdin:
+        while True:
+            raw_line, too_large = _read_bounded_line(stdin, MAX_COMMAND_LINE_CHARS)
+            if raw_line is None:
+                break
             if self.should_exit:
                 break
+            if too_large:
+                self.emit_error(
+                    SidecarError(
+                        "COMMAND_TOO_LARGE",
+                        "Command exceeds the maximum protocol line size.",
+                    )
+                )
+                continue
             line = raw_line.strip()
             if not line:
                 continue
