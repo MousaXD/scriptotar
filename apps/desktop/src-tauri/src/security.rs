@@ -1,8 +1,9 @@
 use std::{
     collections::HashSet,
     env, fs,
-    io::Read,
+    io::{self, Read},
     path::{Path, PathBuf},
+    process,
 };
 
 use crate::dto::{AiPromptInput, ResearchQuery};
@@ -144,11 +145,27 @@ fn prepare_legacy_import_bridge_from_roots(
     roots: &[PathBuf],
 ) -> Result<Option<String>, String> {
     let staged = data_dir.join("history.sqlite3");
-    if staged.exists() {
-        return Ok(Some(
-            "legacy import staging database already exists; it will be handled idempotently"
-                .to_owned(),
-        ));
+    match fs::symlink_metadata(&staged) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(
+                    "legacy import staging path exists but is not a regular file; refusing to follow it"
+                        .to_owned(),
+                );
+            }
+            validate_sqlite_header(&staged)?;
+            harden_private_file_permissions(&staged)?;
+            return Ok(Some(
+                "legacy import staging database already exists; it will be handled idempotently"
+                    .to_owned(),
+            ));
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "could not inspect legacy import staging path: {error}"
+            ))
+        }
     }
 
     let candidates = discover_legacy_databases(roots)?;
@@ -156,12 +173,7 @@ fn prepare_legacy_import_bridge_from_roots(
         [] => Ok(None),
         [candidate] => {
             validate_sqlite_header(candidate)?;
-            fs::create_dir_all(data_dir).map_err(|error| {
-                format!("could not create migration staging directory: {error}")
-            })?;
-            fs::copy(candidate, &staged)
-                .map_err(|error| format!("could not stage legacy database for import: {error}"))?;
-            harden_private_file_permissions(&staged)?;
+            stage_legacy_database(candidate, &staged)?;
             Ok(Some(format!(
                 "staged one legacy database for safe import from {}",
                 candidate.display()
@@ -201,7 +213,23 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
     for root in roots {
         for app_dir in ["scriptotar", "wesamboss"] {
             let candidate = root.join(app_dir).join("history.sqlite3");
-            if !candidate.is_file() {
+            let metadata = match fs::symlink_metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(format!(
+                        "could not inspect legacy database {}: {error}",
+                        candidate.display()
+                    ))
+                }
+            };
+            if metadata.file_type().is_symlink() {
+                return Err(format!(
+                    "legacy database {} is a symbolic link; refusing to follow it",
+                    candidate.display()
+                ));
+            }
+            if !metadata.is_file() {
                 continue;
             }
             let canonical = fs::canonicalize(&candidate).map_err(|error| {
@@ -219,6 +247,68 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
     Ok(candidates)
 }
 
+fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> {
+    let data_dir = staged
+        .parent()
+        .ok_or_else(|| "legacy staging path has no parent directory".to_owned())?;
+    fs::create_dir_all(data_dir)
+        .map_err(|error| format!("could not create migration staging directory: {error}"))?;
+    harden_private_directory_permissions(data_dir)?;
+
+    let mut source = fs::File::open(candidate)
+        .map_err(|error| format!("could not open legacy database for staging: {error}"))?;
+    let mut temporary = None;
+    for attempt in 0..16_u8 {
+        let path = data_dir.join(format!(
+            ".history.sqlite3.importing-{}-{attempt}",
+            process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                temporary = Some((path, file));
+                break;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not create temporary legacy import file: {error}"
+                ))
+            }
+        }
+    }
+    let (temporary_path, mut temporary_file) = temporary
+        .ok_or_else(|| "could not reserve a temporary legacy import file".to_owned())?;
+
+    let copy_result = io::copy(&mut source, &mut temporary_file)
+        .map_err(|error| format!("could not stage legacy database for import: {error}"))
+        .and_then(|_| {
+            temporary_file
+                .sync_all()
+                .map_err(|error| format!("could not flush staged legacy database: {error}"))
+        });
+    drop(temporary_file);
+    if let Err(error) = copy_result {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+
+    if let Err(error) = harden_private_file_permissions(&temporary_path)
+        .and_then(|_| validate_sqlite_header(&temporary_path))
+        .and_then(|_| {
+            fs::rename(&temporary_path, staged)
+                .map_err(|rename_error| format!("could not finalize staged legacy database: {rename_error}"))
+        })
+    {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn validate_sqlite_header(path: &Path) -> Result<(), String> {
     let mut file = fs::File::open(path)
         .map_err(|error| format!("could not inspect legacy database: {error}"))?;
@@ -228,6 +318,18 @@ fn validate_sqlite_header(path: &Path) -> Result<(), String> {
     if &header != SQLITE_HEADER {
         return Err("legacy database does not have a valid SQLite header".to_owned());
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn harden_private_directory_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("could not restrict application data permissions: {error}"))
+}
+
+#[cfg(not(unix))]
+fn harden_private_directory_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
@@ -290,6 +392,13 @@ mod tests {
         assert!(message.contains("staged one legacy database"));
         assert_eq!(fs::read(&source).unwrap(), before);
         assert_eq!(fs::read(&staged).unwrap(), before);
+        assert!(fs::read_dir(&data_dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".history.sqlite3.importing-")
+        }));
     }
 
     #[test]
@@ -318,6 +427,23 @@ mod tests {
             prepare_legacy_import_bridge_from_roots(&temp.path().join("next"), &[source_root])
                 .unwrap_err();
         assert!(error.contains("valid SQLite header"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_rejects_symlinked_legacy_database() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let source_root = temp.path().join("source");
+        let real = temp.path().join("real.sqlite3");
+        fake_sqlite(&real);
+        let candidate = source_root.join("scriptotar/history.sqlite3");
+        fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        symlink(&real, &candidate).unwrap();
+
+        let error = discover_legacy_databases(&[source_root]).unwrap_err();
+        assert!(error.contains("symbolic link"));
     }
 
     #[test]
