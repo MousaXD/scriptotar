@@ -18,6 +18,7 @@ export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
     saveWatchlist: (query: ResearchQuery) => invoke<BootstrapData>('save_watchlist', { query }),
     scanCreator: (query: ResearchQuery) => invoke<void>('scan_creator', { query }),
+    refreshWatchlists: () => invoke<number>('refresh_watchlists'),
     queueResearch: (ids) => invoke<void>('queue_research', { ids }),
     cancelJob: (jobId) => invoke<void>('cancel_job', { jobId }),
     buildAiPrompt: (input: AiPromptInput) => invoke<string>('build_ai_prompt', { input }),
