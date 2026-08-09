@@ -178,7 +178,7 @@ impl AppServices {
         let label = validated
             .as_url()
             .path_segments()
-            .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+            .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
             .filter(|segment| !segment.is_empty())
             .or_else(|| validated.as_url().host_str())
             .unwrap_or("Watchlist")
