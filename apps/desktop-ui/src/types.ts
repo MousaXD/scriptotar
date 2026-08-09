@@ -49,6 +49,17 @@ export interface Job {
   detail?: string;
 }
 
+export interface BackendJob {
+  id: string;
+  project_id: string;
+  input: { kind: 'url' | 'local_file'; value: string };
+  state: JobState;
+  progress: number | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TranscriptSegment {
   id: string;
   startSeconds: number;
@@ -106,6 +117,17 @@ export interface AppSettings {
   autoWatch: boolean;
   watchInterval: '30 min' | '60 min' | '2 hours' | '6 hours';
   appearance: 'dark' | 'system';
+}
+
+export interface LegacyImportReport {
+  skipped: boolean;
+  backup_path: string | null;
+  projects: number;
+  jobs: number;
+  transcripts: number;
+  research_items: number;
+  watchlists: number;
+  ai_runs: number;
 }
 
 export interface BootstrapData {
