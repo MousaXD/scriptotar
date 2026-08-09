@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import type { Project, ViewId } from '../types';
   export let activeView: ViewId;
   export let activeProjectId: string;
@@ -6,7 +7,7 @@
   export let activeJobs = 0;
   export let globalSearch = '';
   export let onNavigate: (view: ViewId) => void;
-  export let onProjectChange: (id: string) => void;
+  export let onProjectChange: (id: string) => Promise<void> | void;
 
   const nav: { id: ViewId; label: string; key: string }[] = [
     { id: 'dashboard', label: 'Dashboard', key: 'D' },
@@ -18,8 +19,12 @@
     { id: 'settings', label: 'Settings', key: ',' }
   ];
 
-  function changeProject(event: Event) {
-    onProjectChange((event.currentTarget as HTMLSelectElement).value);
+  async function changeProject(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    const requestedProjectId = select.value;
+    await onProjectChange(requestedProjectId);
+    await tick();
+    select.value = activeProjectId;
   }
 </script>
 <div class="app-frame">
@@ -33,7 +38,7 @@
         </button>
       {/each}
     </nav>
-    <div class="sidebar-foot"><span class="local-dot"></span><div><strong>Local-first</strong><small>Mock backend · no network calls</small></div></div>
+    <div class="sidebar-foot"><span class="local-dot"></span><div><strong>Local-first</strong><small>Rust-owned workspace state</small></div></div>
   </aside>
 
   <div class="workspace-shell">
