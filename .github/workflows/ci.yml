@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-venv python3-tk ffmpeg libsecret-tools xvfb dpkg-dev
+      - name: Compile Python sources
+        run: python3 -m py_compile scriptotar.py worker.py core.py creator.py scriptotar_common.py *_mixin.py
+      - name: Unit tests
+        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
+      - name: Headless GUI smoke test
+        run: |
+          tmp_home="$(mktemp -d)"
+          HOME="$tmp_home" PYTHONPATH=. xvfb-run -a python3 - <<'PY'
+          import scriptotar
+          app = scriptotar.App()
+          app.update_idletasks()
+          assert len(app.notebook.tabs()) == 7
+          assert app.project_var.get() == "Inbox"
+          app.destroy()
+          PY
+      - name: Build Debian package
+        run: ./build-deb.sh "$RUNNER_TEMP/scriptotar_1.2.0_all.deb"
+      - name: Inspect package
+        run: |
+          dpkg-deb --info "$RUNNER_TEMP/scriptotar_1.2.0_all.deb"
+          dpkg-deb --contents "$RUNNER_TEMP/scriptotar_1.2.0_all.deb" | grep -E 'creator.py|scriptotar.py|LICENSE|NOTICE'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scriptotar-deb
+          path: ${{ runner.temp }}/scriptotar_1.2.0_all.deb
+          if-no-files-found: error

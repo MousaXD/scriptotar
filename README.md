@@ -1,29 +1,94 @@
-# Scriptotar 1.1.0
+# Scriptotar 1.2
 
-Native Linux desktop app for downloading and transcribing Instagram Reels, TikTok, YouTube/Shorts, and local video files.
+Scriptotar is an Apache-2.0-licensed, local-first Linux desktop app for short-form video research, downloading, transcription, and AI-assisted content development.
 
-## Highlights in 1.1
+It accepts Instagram Reels, TikTok, YouTube/Shorts, creator/profile URLs supported by `yt-dlp`, and local video files. The media/transcription engine stays local. AI is optional.
+
+## What 1.2 adds
+
+### Research / “viral finder” workflow
+
+- Scan public creator/profile URLs through the same private `yt-dlp` engine.
+- Collect available title/description, views, likes, comments, publish date, duration, and source URL.
+- Sort research results by useful metrics.
+- Queue selected discoveries directly for download + Whisper transcription.
+- Export research results to CSV.
+- Save creator watchlists and optionally refresh them while Scriptotar is running.
+- No bundled scraped database and no claim of access to private metrics.
+
+### Local content library
+
+Scriptotar now stores a unified SQLite library containing:
+
+- completed transcripts;
+- public creator research metadata;
+- AI prompts and AI results;
+- per-project organization.
+
+This is the open-source equivalent of a hosted “viral library”: it is **your** library, built from sources you choose.
+
+### AI Studio: two modes
+
+Scriptotar’s AI layer is deliberately optional.
+
+**1. Copy prompt only**
+
+- Works without an API key.
+- Scriptotar builds a complete prompt from the transcript/research, topic, audience, duration, CTA, and voice instructions.
+- Copy it into ChatGPT, Claude, Gemini, a local model, or any other tool.
+- Nothing is sent to an AI provider by Scriptotar.
+
+**2. Use API key**
+
+Bring your own key for:
+
+- OpenAI Responses API;
+- Anthropic Messages API;
+- Gemini `generateContent`;
+- custom OpenAI-compatible `/chat/completions` endpoints.
+
+API keys are never written into `settings.json`. When Linux Secret Service is available, **Remember in keyring** uses `secret-tool`; otherwise the token remains in memory for that app session only.
+
+### AI tasks
+
+- Viral breakdown
+- Hook ideas
+- New short-form script
+- Structure remix
+- Content ideas
+- Caption + CTA
+- Voice profile
+- B-roll shot list
+
+The Structure Remix prompt explicitly asks the model to reuse only abstract structure and **not** reproduce distinctive wording, catchphrases, jokes, or long phrases from a source creator.
+
+### Projects
+
+Create separate local projects for brands, clients, niches, or channels. New transcripts, research, watchlists, and AI runs are attached to the active project.
+
+### Script timer
+
+AI Studio estimates spoken duration from the source text so a creator can target short-form runtime before recording.
+
+## Existing transcription features preserved
 
 - Queue multiple URLs and local videos.
-- Persistent faster-whisper worker reuses the loaded model between jobs.
-- Cancellation terminates the whole worker process group, including FFmpeg children.
-- Temporary `.partial` job folders are atomically renamed only after success.
-- SQLite history for completed/failed jobs.
-- Built-in transcript viewer/editor with Arabic RTL alignment.
+- Persistent `faster-whisper` worker reuses the loaded model between jobs.
+- Whole-process-group cancellation, including FFmpeg children.
+- Interrupted-job recovery using `.partial` folders.
+- SQLite history.
+- Built-in editable transcript viewer with Arabic RTL alignment.
 - Word-level timestamps.
-- Cleaner subtitle generation.
 - TXT, cleaned TXT, timestamped TXT, SRT, VTT, and JSON outputs.
-- 720p/1080p/best/audio-only download modes.
-- 30m/60m/2h/unlimited duration safety limits.
-- Browser-cookie options for Instagram.
-- `small`, `medium`, `turbo`, and `large-v3` model choices.
-- Optional batched inference.
-- Pinned engine versions with `pip check` and import verification.
+- 720p / 1080p / Best / Audio-only download choices.
+- Browser-cookie selection for sites that require an authenticated browser session.
+- `small`, `medium`, `turbo`, and `large-v3` Whisper model choices.
+- CPU/CUDA selection and optional batched inference.
 
 ## Install
 
 ```bash
-sudo apt install ./scriptotar_1.1.0_all.deb
+sudo apt install ./scriptotar_1.2.0_all.deb
 ```
 
 Launch from your app menu or:
@@ -32,7 +97,7 @@ Launch from your app menu or:
 scriptotar
 ```
 
-On first use click **Install / Repair Engine**. The private Python engine is stored in:
+On first use click **Install / Repair Engine**. Scriptotar creates a private Python environment under:
 
 ```text
 ~/.local/share/scriptotar/venv
@@ -42,7 +107,7 @@ No system Python packages are overwritten.
 
 ## Output
 
-Each successful job creates a folder containing:
+A successful transcription creates a result directory containing:
 
 ```text
 video.* or audio.*
@@ -54,11 +119,53 @@ transcript.vtt
 transcript.json
 ```
 
-## Notes
+The application database lives at:
 
-- Transcription is local after media/model files are present.
-- URL downloads still contact the source site.
-- The first use of each Whisper model downloads its model files.
-- Instagram can require an authenticated browser session. Select the browser in Settings.
-- CUDA mode requires a compatible NVIDIA CUDA/cuDNN setup for CTranslate2/faster-whisper.
+```text
+~/.local/share/scriptotar/history.sqlite3
+```
 
+## Privacy model
+
+- Local video transcription happens on-device after model/media files are available.
+- URL downloads and creator scans contact the source website through `yt-dlp`.
+- Prompt-only AI mode sends nothing to an AI provider.
+- API mode sends the generated prompt to the provider selected by the user.
+- Scriptotar has no telemetry, hosted account, or mandatory cloud service.
+- Remembered AI tokens use the Linux desktop Secret Service, not Scriptotar’s settings file.
+
+## Responsible research
+
+Scriptotar is a research and transformation tool, not a license to republish other people’s work. Platform terms and copyright still apply. Metadata availability varies by platform, login state, region, extractor support, and source changes.
+
+The app intentionally does not ship a copy of another service’s private “viral database”, paid stock catalog, branding, or copyrighted clip collection.
+
+## Build from source
+
+On Debian/Ubuntu/Pop!_OS:
+
+```bash
+sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools dpkg-dev
+./build-deb.sh
+```
+
+Run tests directly:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+## Engine versions
+
+The 1.2 application keeps the proven 1.1 transcription engine version, so upgrading the UI/research layer does not force existing users to reinstall Whisper unnecessarily.
+
+Pinned engine packages:
+
+```text
+faster-whisper==1.2.1
+yt-dlp[default,curl-cffi]==2026.7.4
+```
+
+## License
+
+Apache License 2.0. See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
