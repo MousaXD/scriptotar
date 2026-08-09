@@ -104,6 +104,7 @@ export interface LibraryItem {
 }
 
 export interface AppSettings {
+  outputDirectory: string | null;
   whisperModel: 'small' | 'medium' | 'turbo' | 'large-v3';
   device: 'auto' | 'cpu' | 'cuda';
   language: 'auto' | 'Arabic' | 'English';
