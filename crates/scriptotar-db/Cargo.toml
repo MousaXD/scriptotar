@@ -1,0 +1,15 @@
+[package]
+name = "scriptotar-db"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+scriptotar-core = { path = "../scriptotar-core" }
+serde_json.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
