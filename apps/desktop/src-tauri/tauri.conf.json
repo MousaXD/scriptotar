@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Scriptotar Next",
+  "version": "0.1.0",
+  "identifier": "io.github.mousaxd.scriptotar.next",
+  "build": {
+    "frontendDist": "./placeholder"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Scriptotar Next",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}
