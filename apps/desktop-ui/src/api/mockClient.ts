@@ -76,6 +76,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active });
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
+    async listJobs() { return structuredClone(snapshot().jobs); },
     async selectProject(projectId: string) { active = projectId; return snapshot(); },
     async createProject(_name: string) { return snapshot(); },
     async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
