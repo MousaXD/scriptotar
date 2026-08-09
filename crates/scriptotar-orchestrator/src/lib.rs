@@ -445,7 +445,9 @@ where
             }
             Ok(false)
         }
-        SidecarEvent::Result { job_id, result } if event_job_matches(original_job.id, &job_id) => {
+        SidecarEvent::Result { job_id, result, .. }
+            if event_job_matches(original_job.id, &job_id) =>
+        {
             ensure_processing(repository, original_job)?;
             persist_result(repository, original_job, result)?;
             Ok(true)
