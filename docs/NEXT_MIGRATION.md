@@ -143,11 +143,15 @@ The legacy database is not deleted. Import is migration assistance, not permissi
 6. keep non-loopback plaintext HTTP blocked by default;
 7. add success, provider-error and recovery tests.
 
-Copy Prompt mode requires no API key and remains useful even while live provider execution is incomplete.
+Copy Prompt mode requires no API key and remains useful even while live provider execution is incomplete. The desktop UI can build and copy that prompt locally. BYOK validates key presence and endpoint policy, then returns an explicit unavailable error until provider execution is implemented; it does not fake a successful AI response.
 
 ## Research providers
 
-`scriptotar-research` owns URL/network policy. To add a research provider:
+`scriptotar-research` owns URL/network policy. Local watchlists are implemented independently of external provider execution: the active project's watchlists are persisted in SQLite, idempotently upserted by profile URL, survive database reopen, and are surfaced through Tauri bootstrap state. Saving a watchlist does not contact a social platform.
+
+Live profile scanning and queueing of provider research results remain intentionally unavailable until a real provider is integrated. Those commands validate their input boundary and then return an explicit unavailable error instead of substituting mock production data. Browser-only development may still use the mock client.
+
+To add a research provider:
 
 1. implement the research-provider contract below the UI layer;
 2. validate the profile/source URL with the network policy before network access;
@@ -191,9 +195,11 @@ A normal Vite browser run uses mock data. A Tauri run injects the real command c
 cd sidecars/transcription
 PYTHONPATH=. python3 -m compileall -q .
 PYTHONPATH=. python3 -m unittest discover -s tests -v
+python3 -m pip install -r requirements-engine.txt
+python3 -m pip check
 ```
 
-Engine dependencies are installed separately. CI verifies `yt_dlp` and `faster_whisper` imports without downloading a Whisper model.
+Engine dependencies are installed separately. CI verifies dependency consistency plus `yt_dlp` and `faster_whisper` imports without downloading a Whisper model.
 
 ## CI quality gate
 
@@ -205,9 +211,13 @@ Supply-chain checks include Rust advisories, npm high-severity auditing, Python 
 
 ## Packaging status
 
-The existing legacy Debian/AppImage/Flatpak release pipeline is intentionally preserved. The Tauri app currently proves compilation with bundling disabled in PR validation. It does not silently replace the stable legacy packages.
+**Compile-ready application: yes.** PR validation builds the production Svelte assets and compiles the integrated Tauri application with `cargo tauri build --no-bundle`.
 
-A later packaging parity change should establish Tauri Debian/AppImage/Flatpak artifacts, sidecar/Python-environment placement, upgrade behavior and rollback testing before changing release names or replacing stable downloads.
+**Fully self-contained distributable: no.** The migration does not yet prove a bundled Python runtime, transcription sidecar environment, FFmpeg distribution, Whisper model/runtime resources, installed-package behavior, or release/upgrade path for the Tauri replacement.
+
+The existing legacy Debian/AppImage/Flatpak release pipeline is intentionally preserved. The Tauri app does not silently replace the stable legacy packages.
+
+A later packaging parity change should establish Tauri Debian/AppImage/Flatpak artifacts, sidecar/Python-environment placement, FFmpeg/model distribution, upgrade behavior and rollback testing before changing release names or replacing stable downloads.
 
 ## Legacy versus Next
 
