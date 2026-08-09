@@ -3,46 +3,54 @@ mod security;
 mod services;
 
 #[cfg(test)]
-mod tempfile {
-    use std::{
-        fs, io,
-        path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
-    };
+extern crate self as tempfile;
 
-    static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
 
-    pub struct TempDir {
-        path: PathBuf,
-    }
+#[cfg(test)]
+static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
 
-    impl TempDir {
-        pub fn new() -> io::Result<Self> {
-            let root = std::env::temp_dir();
-            for _ in 0..1024 {
-                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-                let path = root.join(format!("scriptotar-security-test-{}-{id}", std::process::id()));
-                match fs::create_dir(&path) {
-                    Ok(()) => return Ok(Self { path }),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-                    Err(error) => return Err(error),
-                }
+#[cfg(test)]
+pub struct TempDir {
+    path: PathBuf,
+}
+
+#[cfg(test)]
+impl TempDir {
+    pub fn new() -> io::Result<Self> {
+        let root = std::env::temp_dir();
+        for _ in 0..1024 {
+            let id = NEXT_TEST_DIR_ID.fetch_add(1, Ordering::Relaxed);
+            let path = root.join(format!(
+                "scriptotar-security-test-{}-{id}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
             }
-            Err(io::Error::new(
-                io::ErrorKind::AlreadyExists,
-                "could not reserve a unique test directory",
-            ))
         }
-
-        pub fn path(&self) -> &Path {
-            &self.path
-        }
+        Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not reserve a unique test directory",
+        ))
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[cfg(test)]
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
