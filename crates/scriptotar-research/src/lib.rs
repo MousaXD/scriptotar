@@ -320,6 +320,7 @@ fn normalize_research_item(
 ) -> Result<Option<ResearchObservation>, ResearchError> {
     let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
         .filter(|value| is_absolute_http_url(value))
+        .map(str::to_owned)
         .or_else(|| youtube_fallback(raw));
     let Some(source_url) = source_url else {
         return Ok(None);
