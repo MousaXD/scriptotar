@@ -90,6 +90,14 @@ fn import_legacy_data(state: tauri::State<'_, AppServices>) -> Result<LegacyImpo
 }
 
 #[tauri::command]
+fn save_watchlist(
+    query: ResearchQuery,
+    state: tauri::State<'_, AppServices>,
+) -> Result<BootstrapData, String> {
+    state.save_watchlist(query)
+}
+
+#[tauri::command]
 fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.scan_creator(query)
 }
@@ -133,6 +141,7 @@ pub fn run() {
             get_settings,
             save_settings,
             import_legacy_data,
+            save_watchlist,
             scan_creator,
             queue_research,
             build_ai_prompt,
