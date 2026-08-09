@@ -121,6 +121,13 @@ impl YtDlpCommand {
         }
     }
 
+    pub fn packaged_engine(program: impl Into<PathBuf>) -> Self {
+        Self {
+            program: program.into(),
+            prefix_args: vec!["--yt-dlp".to_owned()],
+        }
+    }
+
     pub fn python_module(python: impl Into<PathBuf>) -> Self {
         Self {
             program: python.into(),
@@ -131,6 +138,9 @@ impl YtDlpCommand {
     pub fn from_environment() -> Self {
         if let Some(executable) = env::var_os("SCRIPTOTAR_YTDLP_EXECUTABLE") {
             return Self::executable(executable);
+        }
+        if let Some(engine) = env::var_os("SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE") {
+            return Self::packaged_engine(engine);
         }
         if let Some(python) = env::var_os("SCRIPTOTAR_SIDECAR_PYTHON") {
             return Self::python_module(python);
@@ -304,7 +314,7 @@ fn provider_io_message(error: &std::io::Error) -> String {
 }
 
 fn safe_provider_detail(raw: &str) -> String {
-    let sanitized = raw.replace('\r', " ").replace('\n', " ");
+    let sanitized = raw.replace(['\r', '\n'], " ");
     let mut chars = sanitized.chars();
     let shortened = chars.by_ref().take(1_200).collect::<String>();
     if chars.next().is_some() {
@@ -522,6 +532,17 @@ mod tests {
                 .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn packaged_engine_uses_yt_dlp_mode() {
+        assert_eq!(
+            YtDlpCommand::packaged_engine("scriptotar-engine"),
+            YtDlpCommand {
+                program: PathBuf::from("scriptotar-engine"),
+                prefix_args: vec!["--yt-dlp".to_owned()],
+            }
+        );
     }
 
     #[test]
