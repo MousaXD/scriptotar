@@ -371,28 +371,26 @@ where
                 sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
             }
-            Ok(ReaderEvent::Closed) => {
-                match sidecar.wait_for_exit_after_stream_close()? {
-                    Some(status) if !status.success() => {
-                        return Err(OrchestratorError::Unavailable(format!(
-                            "sidecar exited with {status}"
-                        )));
-                    }
-                    Some(_) => {
-                        let current = repository.get_job(job_id)?;
-                        if current.state.is_active() {
-                            repository.transition_job(job_id, JobState::Interrupted)?;
-                        }
-                        return Ok(());
-                    }
-                    None => {
-                        sidecar.shutdown();
-                        return Err(OrchestratorError::Unavailable(
-                            "sidecar stdout closed while the process remained alive".to_owned(),
-                        ));
-                    }
+            Ok(ReaderEvent::Closed) => match sidecar.wait_for_exit_after_stream_close()? {
+                Some(status) if !status.success() => {
+                    return Err(OrchestratorError::Unavailable(format!(
+                        "sidecar exited with {status}"
+                    )));
                 }
-            }
+                Some(_) => {
+                    let current = repository.get_job(job_id)?;
+                    if current.state.is_active() {
+                        repository.transition_job(job_id, JobState::Interrupted)?;
+                    }
+                    return Ok(());
+                }
+                None => {
+                    sidecar.shutdown();
+                    return Err(OrchestratorError::Unavailable(
+                        "sidecar stdout closed while the process remained alive".to_owned(),
+                    ));
+                }
+            },
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 sidecar.shutdown();
@@ -462,9 +460,7 @@ where
         | SidecarEvent::Accepted { .. }
         | SidecarEvent::JobStarted { .. }
         | SidecarEvent::Shutdown { .. } => Ok(false),
-        SidecarEvent::Progress {
-            stage, percent, ..
-        } => {
+        SidecarEvent::Progress { stage, percent, .. } => {
             enter_stage(repository, original_job, &stage)?;
             if let Some(percent) = percent {
                 repository.update_job_progress(
