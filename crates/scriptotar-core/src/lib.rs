@@ -323,7 +323,7 @@ impl Default for ApplicationSettings {
             keep_failed_artifacts: false,
             ai_mode: AiMode::CopyPrompt,
             ai_provider: "OpenAI".to_owned(),
-            ai_model: String::new(),
+            ai_model: "gpt-5.2".to_owned(),
             ai_base_url: None,
             auto_watch: false,
             watch_interval_minutes: 60,
@@ -405,11 +405,7 @@ mod tests {
 
     #[test]
     fn recoverable_terminal_states_can_be_requeued() {
-        for state in [
-            JobState::Failed,
-            JobState::Cancelled,
-            JobState::Interrupted,
-        ] {
+        for state in [JobState::Failed, JobState::Cancelled, JobState::Interrupted] {
             assert!(state.validate_transition(JobState::Queued).is_ok());
         }
     }
