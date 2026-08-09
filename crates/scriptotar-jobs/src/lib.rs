@@ -111,10 +111,7 @@ mod tests {
         let repository = FakeRepository::default();
         let service = JobService::new(repository);
         let job = service
-            .enqueue(
-                Uuid::new_v4(),
-                JobInput::LocalFile("/tmp/a.mp4".to_owned()),
-            )
+            .enqueue(Uuid::new_v4(), JobInput::LocalFile("/tmp/a.mp4".to_owned()))
             .unwrap();
         assert_eq!(job.state, JobState::Queued);
     }
@@ -124,10 +121,7 @@ mod tests {
         let repository = FakeRepository::default();
         let service = JobService::new(repository.clone());
         let job = service
-            .enqueue(
-                Uuid::new_v4(),
-                JobInput::LocalFile("/tmp/a.mp4".to_owned()),
-            )
+            .enqueue(Uuid::new_v4(), JobInput::LocalFile("/tmp/a.mp4".to_owned()))
             .unwrap();
         service.advance(job.id, JobState::Preparing).unwrap();
         service.advance(job.id, JobState::Transcribing).unwrap();
@@ -145,10 +139,7 @@ mod tests {
         let repository = FakeRepository::default();
         let service = JobService::new(repository);
         let job = service
-            .enqueue(
-                Uuid::new_v4(),
-                JobInput::LocalFile("/tmp/a.mp4".to_owned()),
-            )
+            .enqueue(Uuid::new_v4(), JobInput::LocalFile("/tmp/a.mp4".to_owned()))
             .unwrap();
         for next in [
             JobState::Preparing,
