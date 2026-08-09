@@ -70,8 +70,17 @@ fn assert_protocol_fault_recovers(file_name: &str) {
         "unexpected persisted protocol error: {:?}",
         failed.last_error
     );
-    assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
-    assert_eq!(store.list_transcripts(Some(broken.project_id)).unwrap().len(), 1);
+    assert_eq!(
+        wait_for_terminal(&store, next.id).state,
+        JobState::Completed
+    );
+    assert_eq!(
+        store
+            .list_transcripts(Some(broken.project_id))
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -105,5 +114,8 @@ fn nonzero_sidecar_exit_fails_current_job_and_later_job_succeeds() {
         "unexpected persisted exit error: {:?}",
         failed.last_error
     );
-    assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+    assert_eq!(
+        wait_for_terminal(&store, next.id).state,
+        JobState::Completed
+    );
 }
