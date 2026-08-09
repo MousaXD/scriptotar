@@ -1,6 +1,11 @@
 mod dto;
 mod services;
 
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
+
 use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiSettings};
 use scriptotar_core::{Job, LegacyImportReport};
 use services::AppServices;
@@ -14,6 +19,49 @@ struct BackendHealth {
 
 fn command_error(error: impl ToString) -> String {
     error.to_string()
+}
+
+fn packaged_executable(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_owned()
+    }
+}
+
+fn set_path_env_if_missing(key: &str, value: &Path) {
+    if env::var_os(key).is_none() {
+        env::set_var(key, value.as_os_str());
+    }
+}
+
+fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
+    let runtime_dir = resource_dir.join("transcription-runtime");
+    set_path_env_if_missing(
+        "SCRIPTOTAR_SIDECAR_PYTHON",
+        &runtime_dir.join(packaged_executable("scriptotar-transcription")),
+    );
+    set_path_env_if_missing("SCRIPTOTAR_SIDECAR_SCRIPT", &runtime_dir.join("sidecar.py"));
+    set_path_env_if_missing(
+        "SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE",
+        &runtime_dir
+            .join("engine")
+            .join(packaged_executable("scriptotar-engine")),
+    );
+    set_path_env_if_missing("HF_HOME", &data_dir.join("models"));
+
+    if env::var_os("PYTHONUNBUFFERED").is_none() {
+        env::set_var("PYTHONUNBUFFERED", "1");
+    }
+
+    let ffmpeg_dir = runtime_dir.join("ffmpeg");
+    let mut search_path = vec![ffmpeg_dir];
+    if let Some(existing) = env::var_os("PATH") {
+        search_path.extend(env::split_paths(&existing));
+    }
+    if let Ok(joined) = env::join_paths(search_path) {
+        env::set_var("PATH", joined);
+    }
 }
 
 #[tauri::command]
@@ -132,7 +180,13 @@ fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
+            let data_dir = env::var_os("SCRIPTOTAR_DATA_DIR")
+                .map(PathBuf::from)
+                .unwrap_or(app.path().app_data_dir()?);
+            if !cfg!(debug_assertions) {
+                let resource_dir = app.path().resource_dir()?;
+                configure_packaged_runtime(&resource_dir, &data_dir);
+            }
             let services = AppServices::new(data_dir)?;
             app.manage(services);
             Ok(())
