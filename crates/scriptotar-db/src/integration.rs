@@ -8,9 +8,9 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use scriptotar_core::{
-    now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository,
-    JobState, LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType,
-    Transcript, TranscriptBundle, Watchlist, WatchlistRepository,
+    now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository, JobState,
+    LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType, Transcript,
+    TranscriptBundle, Watchlist, WatchlistRepository,
 };
 use uuid::Uuid;
 
