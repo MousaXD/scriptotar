@@ -30,6 +30,24 @@ jobs:
             libssl-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
+      - name: Apply research URL ownership fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/scriptotar-research/src/lib.rs')
+          text = path.read_text()
+          old = '''    let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
+              .filter(|value| is_absolute_http_url(value))
+              .or_else(|| youtube_fallback(raw));'''
+          new = '''    let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
+              .filter(|value| is_absolute_http_url(value))
+              .map(str::to_owned)
+              .or_else(|| youtube_fallback(raw));'''
+          if old not in text:
+              raise SystemExit('expected research URL normalization block was not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          cargo fmt --all
       - name: Capture cargo check diagnostics
         shell: bash
         run: |
@@ -44,7 +62,7 @@ jobs:
           } > agent2-cargo-check.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add agent2-cargo-check.log
-          git commit -m 'ci: capture cargo check diagnostics' || true
+          git add crates/scriptotar-research/src/lib.rs agent2-cargo-check.log
+          git commit -m 'fix(research): normalize provider source URL ownership' || true
           git push origin "HEAD:${GITHUB_HEAD_REF}"
           exit $code
