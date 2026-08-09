@@ -1,0 +1,10 @@
+[package]
+name = "scriptotar-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scriptotar-core = { path = "../scriptotar-core" }
+uuid.workspace = true
