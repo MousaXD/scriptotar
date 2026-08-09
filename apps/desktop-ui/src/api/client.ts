@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  Job,
   LegacyImportReport
 } from '../types';
 
@@ -29,6 +30,7 @@ export interface AiPromptInput {
 
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
+  listJobs(): Promise<Job[]>;
   selectProject(projectId: string): Promise<BootstrapData>;
   createProject(name: string): Promise<BootstrapData>;
   enqueueLocalMedia(projectId: string, path: string): Promise<BackendJob>;
