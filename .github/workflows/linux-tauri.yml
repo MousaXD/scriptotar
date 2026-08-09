@@ -93,7 +93,12 @@ jobs:
                 "icons/128x128.png",
                 "icons/128x128@2x.png",
                 "icons/icon.png"
-              ]
+              ],
+              "linux": {
+                "deb": {
+                  "depends": ["zenity"]
+                }
+              }
             }
           }
           JSON
@@ -116,6 +121,8 @@ jobs:
           test -n "$DEB"
           PACKAGE_NAME="$(dpkg-deb -f "$DEB" Package)"
           test -n "$PACKAGE_NAME"
+          DEPENDS="$(dpkg-deb -f "$DEB" Depends)"
+          printf '%s\n' "$DEPENDS" | grep -Eq '(^|, )zenity( |,|$)'
           mkdir -p dist
           cp "$DEB" "dist/Scriptotar-Next-${VERSION}-amd64.deb"
           cp apps/desktop/src-tauri/resources/transcription-runtime/RUNTIME-VERSIONS.txt dist/RUNTIME-VERSIONS.txt
@@ -134,6 +141,7 @@ jobs:
           PACKAGE_NAME="$(cat dist/DEB_PACKAGE)"
           sudo apt-get install -y "./dist/Scriptotar-Next-${VERSION}-amd64.deb"
           dpkg-query -W -f='${Status}\n' "$PACKAGE_NAME" | grep -q 'install ok installed'
+          command -v zenity >/dev/null
           RUNTIME_MARKER="$(dpkg -L "$PACKAGE_NAME" | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
           test -n "$RUNTIME_MARKER"
           python sidecars/transcription/validate_runtime.py "$(dirname "$RUNTIME_MARKER")"
