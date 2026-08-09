@@ -1,4 +1,5 @@
 mod dto;
+mod security;
 mod services;
 
 use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiSettings};
@@ -41,6 +42,7 @@ fn create_project(
     name: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
+    security::validate_project_name(&name)?;
     state.create_project(name).map_err(command_error)
 }
 
@@ -50,6 +52,7 @@ fn enqueue_local_media(
     path: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Job, String> {
+    let path = security::validated_local_media_path(&path)?;
     state
         .enqueue_local_media(project_id, path)
         .map_err(command_error)
@@ -61,6 +64,7 @@ fn enqueue_url(
     url: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Job, String> {
+    security::validate_url_argument("media URL", &url)?;
     state.enqueue_url(project_id, url).map_err(command_error)
 }
 
@@ -94,16 +98,19 @@ fn save_watchlist(
     query: ResearchQuery,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
+    security::validate_research_query(&query)?;
     state.save_watchlist(query)
 }
 
 #[tauri::command]
 fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    security::validate_research_query(&query)?;
     state.scan_creator(query)
 }
 
 #[tauri::command]
 fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    security::validate_research_ids(&ids)?;
     state.queue_research(ids)
 }
 
@@ -112,11 +119,13 @@ fn build_ai_prompt(
     input: AiPromptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<String, String> {
+    security::validate_ai_input(&input)?;
     state.build_ai_prompt(&input)
 }
 
 #[tauri::command]
 fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
+    security::validate_ai_input(&input)?;
     state.run_ai(&input)
 }
 
@@ -125,6 +134,11 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
+            match security::prepare_legacy_import_bridge(&data_dir) {
+                Ok(Some(message)) => eprintln!("[scriptotar-migration] {message}"),
+                Ok(None) => {}
+                Err(error) => eprintln!("[scriptotar-migration] {error}"),
+            }
             let services = AppServices::new(data_dir)?;
             app.manage(services);
             Ok(())
