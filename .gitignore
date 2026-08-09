@@ -13,3 +13,15 @@ dist/
 .flatpak-builder/
 flatpak-build/
 flatpak-repo/
+target/
+node_modules/
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage/
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
