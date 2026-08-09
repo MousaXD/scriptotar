@@ -164,4 +164,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("failed to run Scriptotar desktop shell");
 }
-
