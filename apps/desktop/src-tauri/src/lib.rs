@@ -166,7 +166,9 @@ fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
                 .arg("--file-filter=All files | *");
         }
         NativePicker::OutputDirectory => {
-            zenity.arg("--directory").arg("--title=Choose Scriptotar output folder");
+            zenity
+                .arg("--directory")
+                .arg("--title=Choose Scriptotar output folder");
         }
     }
     match command_output(&mut zenity) {
@@ -226,7 +228,11 @@ fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
     command_output(&mut command).map_err(|error| format!("native file picker failed: {error}"))
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "macos"
+)))]
 fn native_picker(_kind: NativePicker) -> Result<Option<String>, String> {
     Err("native file picking is not available on this platform".to_owned())
 }
