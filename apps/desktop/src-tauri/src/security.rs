@@ -37,8 +37,8 @@ pub fn validated_local_media_path(raw: &str) -> Result<String, String> {
     if !path.is_absolute() {
         return Err("local media path must be absolute".to_owned());
     }
-    let canonical = fs::canonicalize(path)
-        .map_err(|_| "local media path could not be resolved".to_owned())?;
+    let canonical =
+        fs::canonicalize(path).map_err(|_| "local media path could not be resolved".to_owned())?;
     let metadata = fs::metadata(&canonical)
         .map_err(|_| "local media path could not be inspected".to_owned())?;
     if !metadata.is_file() {
@@ -156,8 +156,9 @@ fn prepare_legacy_import_bridge_from_roots(
         [] => Ok(None),
         [candidate] => {
             validate_sqlite_header(candidate)?;
-            fs::create_dir_all(data_dir)
-                .map_err(|error| format!("could not create migration staging directory: {error}"))?;
+            fs::create_dir_all(data_dir).map_err(|error| {
+                format!("could not create migration staging directory: {error}")
+            })?;
             fs::copy(candidate, &staged)
                 .map_err(|error| format!("could not stage legacy database for import: {error}"))?;
             harden_private_file_permissions(&staged)?;
@@ -280,12 +281,10 @@ mod tests {
         let before = fs::read(&source).unwrap();
         let data_dir = temp.path().join("next");
 
-        let message = prepare_legacy_import_bridge_from_roots(
-            &data_dir,
-            std::slice::from_ref(&source_root),
-        )
-        .unwrap()
-        .unwrap();
+        let message =
+            prepare_legacy_import_bridge_from_roots(&data_dir, std::slice::from_ref(&source_root))
+                .unwrap()
+                .unwrap();
         let staged = data_dir.join("history.sqlite3");
 
         assert!(message.contains("staged one legacy database"));
@@ -300,11 +299,9 @@ mod tests {
         fake_sqlite(&source_root.join("scriptotar/history.sqlite3"));
         fake_sqlite(&source_root.join("wesamboss/history.sqlite3"));
 
-        let error = prepare_legacy_import_bridge_from_roots(
-            &temp.path().join("next"),
-            &[source_root],
-        )
-        .unwrap_err();
+        let error =
+            prepare_legacy_import_bridge_from_roots(&temp.path().join("next"), &[source_root])
+                .unwrap_err();
         assert!(error.contains("multiple legacy databases"));
         assert!(!temp.path().join("next/history.sqlite3").exists());
     }
@@ -317,11 +314,9 @@ mod tests {
         fs::create_dir_all(source.parent().unwrap()).unwrap();
         fs::write(&source, b"not a sqlite database").unwrap();
 
-        let error = prepare_legacy_import_bridge_from_roots(
-            &temp.path().join("next"),
-            &[source_root],
-        )
-        .unwrap_err();
+        let error =
+            prepare_legacy_import_bridge_from_roots(&temp.path().join("next"), &[source_root])
+                .unwrap_err();
         assert!(error.contains("valid SQLite header"));
     }
 
