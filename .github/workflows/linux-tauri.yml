@@ -65,7 +65,9 @@ jobs:
       - name: Install pinned Tauri CLI
         run: cargo install tauri-cli --version '2.11.2' --locked
       - name: Install pinned runtime bundler dependencies
-        run: python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
+        run: |
+          python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
+          python -m pip check
       - name: Build self-contained transcription runtime
         run: >-
           python sidecars/transcription/build_runtime.py
@@ -112,6 +114,8 @@ jobs:
           )"
           DEB="$(find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
           test -n "$DEB"
+          PACKAGE_NAME="$(dpkg-deb -f "$DEB" Package)"
+          test -n "$PACKAGE_NAME"
           mkdir -p dist
           cp "$DEB" "dist/Scriptotar-Next-${VERSION}-amd64.deb"
           cp apps/desktop/src-tauri/resources/transcription-runtime/RUNTIME-VERSIONS.txt dist/RUNTIME-VERSIONS.txt
@@ -123,26 +127,24 @@ jobs:
           grep -q 'ffprobe' dist/DEB-CONTENTS.txt
           (cd dist && sha256sum "Scriptotar-Next-${VERSION}-amd64.deb" RUNTIME-VERSIONS.txt > SHA256SUMS.txt)
           printf '%s\n' "$VERSION" > dist/TAURI_VERSION
+          printf '%s\n' "$PACKAGE_NAME" > dist/DEB_PACKAGE
       - name: Install deb and validate installed runtime
         run: |
           VERSION="$(cat dist/TAURI_VERSION)"
+          PACKAGE_NAME="$(cat dist/DEB_PACKAGE)"
           sudo apt-get install -y "./dist/Scriptotar-Next-${VERSION}-amd64.deb"
-          RUNTIME_MARKER="$(dpkg -L scriptotar-desktop 2>/dev/null | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
-          if [ -z "$RUNTIME_MARKER" ]; then
-            RUNTIME_MARKER="$(dpkg -L scriptotar-next 2>/dev/null | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
-          fi
-          if [ -z "$RUNTIME_MARKER" ]; then
-            RUNTIME_MARKER="$(find /usr /opt -type f -path '*/transcription-runtime/RUNTIME-VERSIONS.txt' -print -quit 2>/dev/null || true)"
-          fi
+          dpkg-query -W -f='${Status}\n' "$PACKAGE_NAME" | grep -q 'install ok installed'
+          RUNTIME_MARKER="$(dpkg -L "$PACKAGE_NAME" | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
           test -n "$RUNTIME_MARKER"
           python sidecars/transcription/validate_runtime.py "$(dirname "$RUNTIME_MARKER")"
       - name: Remove installed preview package
         if: always()
         run: |
-          if dpkg-query -W -f='${Status}' scriptotar-desktop 2>/dev/null | grep -q 'install ok installed'; then
-            sudo apt-get remove -y scriptotar-desktop
-          elif dpkg-query -W -f='${Status}' scriptotar-next 2>/dev/null | grep -q 'install ok installed'; then
-            sudo apt-get remove -y scriptotar-next
+          if [ -f dist/DEB_PACKAGE ]; then
+            PACKAGE_NAME="$(cat dist/DEB_PACKAGE)"
+            if dpkg-query -W -f='${Status}' "$PACKAGE_NAME" 2>/dev/null | grep -q 'install ok installed'; then
+              sudo apt-get remove -y "$PACKAGE_NAME"
+            fi
           fi
       - uses: actions/upload-artifact@v4
         with:
@@ -150,6 +152,7 @@ jobs:
           path: |
             dist/Scriptotar-Next-*-amd64.deb
             dist/TAURI_VERSION
+            dist/DEB_PACKAGE
             dist/RUNTIME-VERSIONS.txt
             dist/SHA256SUMS.txt
             dist/DEB-CONTENTS.txt
