@@ -51,6 +51,8 @@ jobs:
           cache-dependency-path: sidecars/transcription/requirements-engine.txt
       - name: Install pinned engine dependencies
         run: python -m pip install -r sidecars/transcription/requirements-engine.txt
+      - name: Verify installed dependency consistency
+        run: python -m pip check
       - name: Verify real imports without model download
         run: |
           python - <<'PY'
