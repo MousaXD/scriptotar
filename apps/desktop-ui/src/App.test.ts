@@ -44,6 +44,16 @@ describe('desktop workstation', () => {
     expect(screen.getByTestId('job-interrupted')).toBeInTheDocument();
   });
 
+  it('refreshes active jobs without repeatedly bootstrapping the full workspace', async () => {
+    const api = createMockClient();
+    const bootstrap = vi.spyOn(api, 'bootstrap');
+    const listJobs = vi.spyOn(api, 'listJobs');
+    await ready(api);
+
+    await waitFor(() => expect(listJobs).toHaveBeenCalled(), { timeout: 1600 });
+    expect(bootstrap).toHaveBeenCalledTimes(1);
+  });
+
   it('switches AI Studio between Copy Prompt and BYOK without persisting a key in UI state', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
