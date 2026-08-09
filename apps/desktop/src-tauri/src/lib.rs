@@ -23,10 +23,7 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
 }
 
 #[tauri::command]
-fn create_project(
-    name: String,
-    state: tauri::State<'_, AppServices>,
-) -> Result<Project, String> {
+fn create_project(name: String, state: tauri::State<'_, AppServices>) -> Result<Project, String> {
     state.create_project(name).map_err(command_error)
 }
 
