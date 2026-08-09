@@ -76,7 +76,7 @@
     return () => window.clearInterval(poll);
   });
 </script>
-<svelte:window on:keydown={keyNav} />
+<svelte:window onkeydown={keyNav} />
 
 {#if loading}
   <div class="boot-screen" aria-busy="true"><div class="boot-mark">S</div><div><strong>Opening Scriptotar</strong><span>Loading your local workspace…</span></div></div>
