@@ -88,3 +88,20 @@
     {/each}
   {/if}
 </section>
+
+<style>
+  .jobs-capture { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(260px, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 14px; padding: 14px; }
+  .local-file-choice { min-width: 0; }
+  .local-file-choice .field-label, .url-capture span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
+  .local-file-choice strong, .local-file-choice small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .local-file-choice strong { font-size: 12px; }
+  .local-file-choice small { margin-top: 5px; color: var(--faint); font-size: 10px; }
+  .capture-actions, .job-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .url-capture { display: grid; gap: 0; }
+  .advanced-path { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+  .advanced-path summary { cursor: pointer; }
+  .advanced-path div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
+  .job-actions { justify-content: flex-end; }
+  @media (max-width: 1050px) { .jobs-capture { grid-template-columns: minmax(0, 1fr) auto; } }
+  @media (max-width: 700px) { .jobs-capture { grid-template-columns: 1fr; } .advanced-path { grid-column: 1; } .capture-actions, .job-actions { justify-content: flex-start; } }
+</style>
