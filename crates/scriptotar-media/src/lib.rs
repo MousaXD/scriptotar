@@ -140,7 +140,7 @@ pub struct SidecarResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SidecarEvent {
     Ready {
         protocol: u16,
@@ -272,6 +272,14 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(error, SidecarEvent::Error { .. }));
+    }
+
+    #[test]
+    fn events_reject_unknown_top_level_fields() {
+        let event = serde_json::from_str::<SidecarEvent>(
+            r#"{"protocol":1,"type":"progress","job_id":"abc","stage":"transcribing","surprise":"pollution"}"#,
+        );
+        assert!(event.is_err());
     }
 
     #[test]
