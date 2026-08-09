@@ -48,6 +48,7 @@ describe('Tauri client command contract', () => {
       appearance: 'dark'
     });
     await api.importLegacyData();
+    await api.listJobs();
 
     expect(invokeMock).toHaveBeenNthCalledWith(1, 'bootstrap_app');
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'select_project', { projectId: 'project-id' });
@@ -64,5 +65,6 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenNthCalledWith(13, 'get_settings');
     expect(invokeMock).toHaveBeenNthCalledWith(14, 'save_settings', { settings: expect.objectContaining({ whisperModel: 'medium' }) });
     expect(invokeMock).toHaveBeenNthCalledWith(15, 'import_legacy_data');
+    expect(invokeMock).toHaveBeenNthCalledWith(16, 'list_jobs');
   });
 });
