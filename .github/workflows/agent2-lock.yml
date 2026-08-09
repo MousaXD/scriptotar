@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - name: Generate Cargo.lock
         run: cargo generate-lockfile
