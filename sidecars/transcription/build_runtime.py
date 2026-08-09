@@ -51,6 +51,10 @@ def build(output: Path) -> None:
                 str(work / "supervisor"),
                 "--specpath",
                 str(specs),
+                "--copy-metadata",
+                "yt-dlp",
+                "--copy-metadata",
+                "faster-whisper",
                 str(ROOT / "sidecar.py"),
             ]
         )
