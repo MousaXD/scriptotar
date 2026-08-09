@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "io.github.mousaxd.scriptotar.next",
   "build": {
-    "beforeBuildCommand": "cd ../../desktop-ui && npm ci && npm run build",
-    "beforeDevCommand": "cd ../../desktop-ui && npm run dev",
+    "beforeBuildCommand": "cd ../desktop-ui && npm ci && npm run build",
+    "beforeDevCommand": "cd ../desktop-ui && npm run dev",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../desktop-ui/dist"
   },
