@@ -19,6 +19,7 @@
   let switchError = '';
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
+  let jobRefreshInFlight = false;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
@@ -33,6 +34,27 @@
   }
 
   async function refresh() { await load(false); }
+
+  async function refreshJobs() {
+    if (!data || jobRefreshInFlight) return;
+    jobRefreshInFlight = true;
+    try {
+      const previousStates = new Map(data.jobs.map((job) => [job.id, job.state]));
+      const jobs = await api.listJobs();
+      const crossedTerminalBoundary = jobs.some((job) => {
+        const previous = previousStates.get(job.id);
+        return previous !== undefined && activeStates.has(previous) && !activeStates.has(job.state);
+      });
+
+      if (crossedTerminalBoundary) {
+        await refresh();
+      } else {
+        data = { ...data, jobs };
+      }
+    } finally {
+      jobRefreshInFlight = false;
+    }
+  }
 
   async function selectProject(id: string) {
     switchError = '';
@@ -77,8 +99,8 @@
   onMount(() => {
     void load();
     const poll = window.setInterval(() => {
-      if (data?.jobs.some((job) => activeStates.has(job.state))) void refresh();
-    }, 750);
+      if (data?.jobs.some((job) => activeStates.has(job.state))) void refreshJobs();
+    }, 1000);
     return () => window.clearInterval(poll);
   });
 </script>
