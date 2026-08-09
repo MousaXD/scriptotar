@@ -32,10 +32,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Resolve dependency lock for migration branch
-        run: npm install --package-lock-only --ignore-scripts
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: |
+          test -f package-lock.json
+          npm ci
       - name: Type and Svelte checks
         run: npm run check
       - name: Interaction tests
