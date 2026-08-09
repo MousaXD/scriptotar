@@ -27,9 +27,10 @@ from creator import (
 
 APP = "Scriptotar"
 VERSION = "1.2.0"
-INSTALL = Path("/opt/scriptotar")
-DATA = Path.home() / ".local" / "share" / "scriptotar"
-LEGACY_DATA = Path.home() / ".local" / "share" / "wesamboss"
+INSTALL = Path(os.environ.get("SCRIPTOTAR_INSTALL", "/opt/scriptotar"))
+DATA_ROOT = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+DATA = DATA_ROOT / "scriptotar"
+LEGACY_DATA = DATA_ROOT / "wesamboss"
 DEFAULT_OUTPUT = Path.home() / "Videos" / "Scriptotar"
 LEGACY_DEFAULT_OUTPUT = Path.home() / "Videos" / "WesamBoss"
 VENV = DATA / "venv"
@@ -73,6 +74,18 @@ DEFAULTS = {
     "auto_watch": False,
     "watch_interval": "60 min",
 }
+
+
+def engine_subprocess_env() -> dict:
+    """Environment for the persistent engine/worker processes.
+
+    AppImage launches the GUI with PYTHONHOME pointed at its mounted runtime.
+    That path is ephemeral, so persistent virtualenv processes must not inherit it.
+    """
+    env = os.environ.copy()
+    env.pop("PYTHONHOME", None)
+    env.pop("PYTHONPATH", None)
+    return env
 
 
 def migrate_legacy_branding() -> None:

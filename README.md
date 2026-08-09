@@ -87,11 +87,41 @@ AI Studio estimates spoken duration from the source text so a creator can target
 
 ## Install
 
+### Latest automatic builds
+
+Every successful push or merge to `main` refreshes the rolling **Scriptotar Latest** GitHub release with three Linux packages:
+
+- `scriptotar-latest_all.deb` for Debian, Ubuntu, Pop!_OS, and derivatives;
+- `Scriptotar-latest-x86_64.AppImage` as the portable x86_64 build;
+- `Scriptotar-latest-x86_64.flatpak` as a single-file Flatpak bundle.
+
+The rolling release always points at the newest successfully packaged `main` commit. Permanent releases are created from version tags such as `v1.2.0`.
+
+### Debian / Ubuntu / Pop!_OS
+
 ```bash
-sudo apt install ./scriptotar_1.2.0_all.deb
+sudo apt install ./scriptotar-latest_all.deb
 ```
 
-Launch from your app menu or:
+### AppImage
+
+```bash
+chmod +x Scriptotar-latest-x86_64.AppImage
+./Scriptotar-latest-x86_64.AppImage
+```
+
+The AppImage bundles the GUI Python/Tk runtime and FFmpeg-facing runtime libraries. On first launch it keeps a small persistent Python base under Scriptotar's data directory so the private Whisper virtualenv remains valid across AppImage remounts.
+
+### Flatpak bundle
+
+```bash
+flatpak install --user ./Scriptotar-latest-x86_64.flatpak
+flatpak run io.github.mousaxd.scriptotar
+```
+
+The Flatpak bundle references the Freedesktop 24.08 runtime. Flatpak may download that runtime during installation if it is not already installed. The Flatpak uses its own XDG data directory for settings, history, and the private Whisper engine.
+
+Launch the Debian install from your app menu or:
 
 ```bash
 scriptotar
@@ -142,12 +172,21 @@ The app intentionally does not ship a copy of another service’s private “vir
 
 ## Build from source
 
-On Debian/Ubuntu/Pop!_OS:
+On Debian/Ubuntu/Pop!_OS, build the Debian package with:
 
 ```bash
 sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools dpkg-dev
 ./build-deb.sh
 ```
+
+Build the AppImage with:
+
+```bash
+sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools curl
+./packaging/build-appimage.sh
+```
+
+Build the Flatpak bundle with `flatpak-builder` using `io.github.mousaxd.scriptotar.yml`. GitHub Actions performs all three packaging builds automatically on `main` and on version tags.
 
 Run tests directly:
 

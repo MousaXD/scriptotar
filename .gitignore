@@ -7,3 +7,9 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+*.AppImage
+*.flatpak
+dist/
+.flatpak-builder/
+flatpak-build/
+flatpak-repo/

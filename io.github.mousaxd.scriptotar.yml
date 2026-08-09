@@ -1,0 +1,30 @@
+id: io.github.mousaxd.scriptotar
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: scriptotar
+default-branch: stable
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=x11
+  - --device=dri
+  - --filesystem=home
+  - --talk-name=org.freedesktop.secrets
+modules:
+  - name: scriptotar
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 packaging/flatpak-launcher.sh /app/bin/scriptotar
+      - install -d /app/lib/scriptotar
+      - install -m755 scriptotar.py worker.py /app/lib/scriptotar/
+      - install -m644 core.py creator.py scriptotar_common.py ui_mixin.py persistence_mixin.py jobs_mixin.py research_mixin.py ai_mixin.py library_mixin.py requirements-engine.txt /app/lib/scriptotar/
+      - install -Dm644 packaging/io.github.mousaxd.scriptotar.desktop /app/share/applications/io.github.mousaxd.scriptotar.desktop
+      - install -Dm644 scriptotar.svg /app/share/icons/hicolor/scalable/apps/io.github.mousaxd.scriptotar.svg
+      - install -Dm644 packaging/io.github.mousaxd.scriptotar.metainfo.xml /app/share/metainfo/io.github.mousaxd.scriptotar.metainfo.xml
+      - install -Dm644 LICENSE /app/share/licenses/io.github.mousaxd.scriptotar/LICENSE
+      - install -Dm644 NOTICE /app/share/doc/scriptotar/NOTICE
+      - install -Dm644 THIRD_PARTY_NOTICES.md /app/share/doc/scriptotar/THIRD_PARTY_NOTICES.md
+    sources:
+      - type: dir
+        path: .

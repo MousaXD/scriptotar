@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mousaxd.scriptotar</id>
+  <name>Scriptotar</name>
+  <summary>Local-first short-form video research and transcription</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <description>
+    <p>Scriptotar downloads and transcribes supported short-form videos, researches public creator feeds, stores a local content library, and prepares AI prompts or optional bring-your-own-key AI requests.</p>
+    <p>Transcription runs locally after the selected Whisper model and media have been downloaded.</p>
+  </description>
+  <launchable type="desktop-id">io.github.mousaxd.scriptotar.desktop</launchable>
+  <url type="homepage">https://github.com/MousaXD/scriptotar</url>
+  <url type="bugtracker">https://github.com/MousaXD/scriptotar/issues</url>
+  <provides>
+    <binary>scriptotar</binary>
+  </provides>
+  <releases>
+    <release version="1.2.0" date="2026-08-09"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

@@ -54,7 +54,7 @@ class JobsMixin:
             messagebox.showerror(APP, "No URL found.")
             return
         for url in urls:
-            self._enqueue(self._new_job("url", url.rstrip(".,);]}>") ))
+            self._enqueue(self._new_job("url", url.rstrip(".,);]}>")))
         self.url_var.set("")
 
     def _add_clipboard_urls(self):
@@ -67,7 +67,7 @@ class JobsMixin:
             messagebox.showinfo(APP, "No URLs found in the clipboard.")
             return
         for url in urls:
-            self._enqueue(self._new_job("url", url.rstrip(".,);]}>") ))
+            self._enqueue(self._new_job("url", url.rstrip(".,);]}>")))
 
     def _add_files(self):
         paths = filedialog.askopenfilenames(
@@ -119,7 +119,7 @@ class JobsMixin:
             try:
                 DATA.mkdir(parents=True, exist_ok=True)
                 if not VPY.exists():
-                    subprocess.run([sys.executable, "-m", "venv", str(VENV)], check=True)
+                    subprocess.run([os.environ.get("SCRIPTOTAR_ENGINE_PYTHON", sys.executable), "-m", "venv", str(VENV)], check=True, env=engine_subprocess_env())
                 commands = [
                     [str(VPY), "-m", "pip", "install", "--upgrade", "pip", "wheel"],
                     [str(VPY), "-m", "pip", "install", "--upgrade", "-r", str(REQS)],
@@ -128,7 +128,7 @@ class JobsMixin:
                 ]
                 for command in commands:
                     self.events.put(("install_log", "$ " + " ".join(command)))
-                    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=engine_subprocess_env())
                     for line in proc.stdout:
                         self.events.put(("install_log", line.rstrip()))
                     if proc.wait() != 0:
@@ -157,6 +157,7 @@ class JobsMixin:
             text=True,
             bufsize=1,
             start_new_session=True,
+            env=engine_subprocess_env(),
         )
 
         def reader(proc):

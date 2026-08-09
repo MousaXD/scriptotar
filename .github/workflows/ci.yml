@@ -1,16 +1,19 @@
-name: CI
+name: CI and Linux Releases
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test-and-package:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  test-and-deb:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
@@ -32,14 +35,177 @@ jobs:
           assert app.project_var.get() == "Inbox"
           app.destroy()
           PY
-      - name: Build Debian package
-        run: ./build-deb.sh "$RUNNER_TEMP/scriptotar_1.2.0_all.deb"
-      - name: Inspect package
+      - name: Resolve version
+        id: version
         run: |
-          dpkg-deb --info "$RUNNER_TEMP/scriptotar_1.2.0_all.deb"
-          dpkg-deb --contents "$RUNNER_TEMP/scriptotar_1.2.0_all.deb" | grep -E 'creator.py|scriptotar.py|LICENSE|NOTICE'
+          VERSION="$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' scriptotar_common.py | head -n1)"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Build Debian package
+        run: |
+          mkdir -p dist
+          ./build-deb.sh "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb"
+          printf '%s\n' '${{ steps.version.outputs.version }}' > dist/VERSION
+      - name: Inspect Debian package
+        run: |
+          dpkg-deb --info "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb"
+          dpkg-deb --contents "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb" | grep -E 'creator.py|scriptotar.py|LICENSE|NOTICE'
       - uses: actions/upload-artifact@v4
         with:
           name: scriptotar-deb
-          path: ${{ runner.temp }}/scriptotar_1.2.0_all.deb
+          path: |
+            dist/scriptotar_${{ steps.version.outputs.version }}_all.deb
+            dist/VERSION
           if-no-files-found: error
+
+  portable-packages:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install AppImage and Flatpak build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3 python3-venv python3-tk ffmpeg libsecret-tools curl desktop-file-utils \
+            flatpak flatpak-builder libfuse2
+      - name: Resolve version
+        id: version
+        run: |
+          VERSION="$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' scriptotar_common.py | head -n1)"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Build AppImage
+        run: |
+          mkdir -p dist
+          ./packaging/build-appimage.sh "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage"
+          test -x "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage"
+      - name: Configure Flathub runtime source
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+      - name: Build Flatpak
+        run: |
+          flatpak-builder --user --force-clean \
+            --repo="$RUNNER_TEMP/scriptotar-flatpak-repo" \
+            "$RUNNER_TEMP/scriptotar-flatpak-build" \
+            io.github.mousaxd.scriptotar.yml
+      - name: Smoke-test Flatpak runtime
+        run: |
+          flatpak-builder --run "$RUNNER_TEMP/scriptotar-flatpak-build" io.github.mousaxd.scriptotar.yml \
+            python3 -c 'import sqlite3, ssl, tkinter; print("Flatpak Python/Tk runtime OK")'
+          flatpak-builder --run "$RUNNER_TEMP/scriptotar-flatpak-build" io.github.mousaxd.scriptotar.yml \
+            sh -lc 'command -v ffmpeg >/dev/null && test -f /app/lib/scriptotar/worker.py'
+      - name: Build Flatpak bundle
+        run: |
+          flatpak build-bundle \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
+            "$RUNNER_TEMP/scriptotar-flatpak-repo" \
+            "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak" \
+            io.github.mousaxd.scriptotar stable
+          test -s "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak"
+          printf '%s\n' '${{ steps.version.outputs.version }}' > dist/VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scriptotar-portable
+          path: |
+            dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage
+            dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak
+            dist/VERSION
+          if-no-files-found: error
+
+  rolling-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test-and-deb, portable-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scriptotar-*
+          path: dist
+          merge-multiple: true
+      - name: Prepare rolling release assets
+        run: |
+          VERSION="$(cat dist/VERSION)"
+          mkdir -p latest
+          cp "dist/scriptotar_${VERSION}_all.deb" latest/scriptotar-latest_all.deb
+          cp "dist/Scriptotar-${VERSION}-x86_64.AppImage" latest/Scriptotar-latest-x86_64.AppImage
+          cp "dist/Scriptotar-${VERSION}-x86_64.flatpak" latest/Scriptotar-latest-x86_64.flatpak
+          (cd latest && sha256sum scriptotar-latest_all.deb Scriptotar-latest-x86_64.AppImage Scriptotar-latest-x86_64.flatpak > SHA256SUMS.txt)
+          cat > latest/RELEASE-NOTES.txt <<NOTES
+          Scriptotar Latest
+
+          Built automatically from main.
+          App version: ${VERSION}
+          Commit: ${GITHUB_SHA}
+
+          Assets:
+          - scriptotar-latest_all.deb
+          - Scriptotar-latest-x86_64.AppImage
+          - Scriptotar-latest-x86_64.flatpak
+
+          This rolling release is replaced after every successful push or merge to main.
+          For permanent releases, use version tags such as v1.2.0.
+          NOTES
+      - name: Move rolling tag to this commit
+        run: |
+          git tag -f continuous "$GITHUB_SHA"
+          git push origin refs/tags/continuous --force
+      - name: Create or update Scriptotar Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view continuous >/dev/null 2>&1; then
+            gh release upload continuous latest/* --clobber
+            gh release edit continuous \
+              --title "Scriptotar Latest" \
+              --notes-file latest/RELEASE-NOTES.txt \
+              --target "$GITHUB_SHA" \
+              --latest
+          else
+            gh release create continuous latest/* \
+              --verify-tag \
+              --title "Scriptotar Latest" \
+              --notes-file latest/RELEASE-NOTES.txt \
+              --latest
+          fi
+
+  tagged-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [test-and-deb, portable-packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scriptotar-*
+          path: dist
+          merge-multiple: true
+      - name: Verify tag matches app version
+        run: |
+          VERSION="$(cat dist/VERSION)"
+          test "${GITHUB_REF_NAME}" = "v${VERSION}" || {
+            echo "Tag ${GITHUB_REF_NAME} does not match app version v${VERSION}" >&2
+            exit 1
+          }
+          (cd dist && sha256sum "scriptotar_${VERSION}_all.deb" "Scriptotar-${VERSION}-x86_64.AppImage" "Scriptotar-${VERSION}-x86_64.flatpak" > SHA256SUMS.txt)
+      - name: Create permanent version release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              dist/*.deb dist/*.AppImage dist/*.flatpak dist/SHA256SUMS.txt --clobber
+            gh release edit "$GITHUB_REF_NAME" --latest=false
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              dist/*.deb dist/*.AppImage dist/*.flatpak dist/SHA256SUMS.txt \
+              --verify-tag --generate-notes --latest=false
+          fi
