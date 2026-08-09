@@ -76,10 +76,9 @@ impl EndpointPolicy {
             ProviderKind::OpenAi => "https://api.openai.com/v1/responses".to_owned(),
             ProviderKind::Anthropic => "https://api.anthropic.com/v1/messages".to_owned(),
             ProviderKind::Gemini => "https://generativelanguage.googleapis.com/v1beta".to_owned(),
-            ProviderKind::OpenAiCompatible | ProviderKind::Local => config
-                .base_url
-                .clone()
-                .ok_or(AiError::MissingEndpoint)?,
+            ProviderKind::OpenAiCompatible | ProviderKind::Local => {
+                config.base_url.clone().ok_or(AiError::MissingEndpoint)?
+            }
         };
         self.validate(&raw)
     }
