@@ -241,8 +241,7 @@ impl HttpAiProvider {
         if model.is_empty()
             || model.contains('/')
             || model.chars().any(|character| {
-                !(character.is_ascii_alphanumeric()
-                    || matches!(character, '-' | '_' | '.' | ':'))
+                !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':'))
             })
         {
             return Err(AiError::InvalidModel(
@@ -349,7 +348,10 @@ fn parse_json_response(
     api_key: &str,
     parser: fn(&Value) -> Result<String, AiError>,
 ) -> Result<AiResponse, AiError> {
-    if response.content_length().is_some_and(|size| size > MAX_RESPONSE_BYTES) {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_RESPONSE_BYTES)
+    {
         return Err(AiError::ResponseTooLarge);
     }
     let status = response.status();
@@ -697,16 +699,15 @@ mod tests {
         assert_eq!(response.text, "mock result");
         let request = captured.lock().unwrap().clone();
         assert!(request.starts_with("POST /v1/chat/completions "));
-        assert!(request.to_ascii_lowercase().contains("authorization: bearer session-secret"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer session-secret"));
         assert!(request.contains("hello mock"));
     }
 
     #[test]
     fn provider_error_redacts_session_key() {
-        let (base, _) = spawn_json_server(
-            401,
-            r#"{"error":{"message":"bad key session-secret"}}"#,
-        );
+        let (base, _) = spawn_json_server(401, r#"{"error":{"message":"bad key session-secret"}}"#);
         let service = AiService::new(
             HttpAiProvider::with_timeout(ProviderKind::OpenAiCompatible, Duration::from_secs(2))
                 .unwrap(),
@@ -728,15 +729,22 @@ mod tests {
     #[test]
     fn parses_builtin_provider_response_shapes() {
         assert_eq!(
-            parse_openai_response(&json!({"output":[{"content":[{"type":"output_text","text":"openai"}]}]})).unwrap(),
+            parse_openai_response(
+                &json!({"output":[{"content":[{"type":"output_text","text":"openai"}]}]})
+            )
+            .unwrap(),
             "openai"
         );
         assert_eq!(
-            parse_anthropic_response(&json!({"content":[{"type":"text","text":"anthropic"}]})).unwrap(),
+            parse_anthropic_response(&json!({"content":[{"type":"text","text":"anthropic"}]}))
+                .unwrap(),
             "anthropic"
         );
         assert_eq!(
-            parse_gemini_response(&json!({"candidates":[{"content":{"parts":[{"text":"gemini"}]}}]})).unwrap(),
+            parse_gemini_response(
+                &json!({"candidates":[{"content":{"parts":[{"text":"gemini"}]}}]})
+            )
+            .unwrap(),
             "gemini"
         );
     }

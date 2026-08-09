@@ -192,6 +192,9 @@ mod tests {
             reopened_rows[0].profile_url,
             "https://www.youtube.com/@creator"
         );
-        assert_eq!(reopened_rows[0].last_scan_at.as_deref(), Some(scan_time.as_str()));
+        assert_eq!(
+            reopened_rows[0].last_scan_at.as_deref(),
+            Some(scan_time.as_str())
+        );
     }
 }

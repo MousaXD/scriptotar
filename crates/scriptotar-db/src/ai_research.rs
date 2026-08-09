@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use scriptotar_core::{
-    AiRun, AiRunMode, AiRunRepository, Creator, ProjectRepository, RepositoryError, RepositoryResult,
-    ResearchItem, ResearchRepository,
+    AiRun, AiRunMode, AiRunRepository, Creator, ProjectRepository, RepositoryError,
+    RepositoryResult, ResearchItem, ResearchRepository,
 };
 use uuid::Uuid;
 
@@ -32,7 +32,9 @@ fn open_connection(store: &SqliteStore) -> RepositoryResult<Connection> {
 
 fn validate_text(field: &str, value: &str, max_chars: usize) -> RepositoryResult<()> {
     if value.trim().is_empty() {
-        return Err(RepositoryError::Validation(format!("{field} cannot be empty")));
+        return Err(RepositoryError::Validation(format!(
+            "{field} cannot be empty"
+        )));
     }
     if value.chars().count() > max_chars {
         return Err(RepositoryError::Validation(format!("{field} is too long")));
@@ -53,11 +55,7 @@ fn validate_optional_text(
 
 fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {
     Uuid::parse_str(&value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            0,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
     })
 }
 
@@ -149,7 +147,11 @@ impl ResearchRepository for SqliteStore {
                 .execute(
                     "UPDATE creators SET platform = ?1, display_name = COALESCE(?2, display_name)
                      WHERE id = ?3",
-                    params![creator.platform, creator.display_name, existing.id.to_string()],
+                    params![
+                        creator.platform,
+                        creator.display_name,
+                        existing.id.to_string()
+                    ],
                 )
                 .map_err(storage_error)?;
             return connection
@@ -193,7 +195,9 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_creator)
                 .map_err(storage_error)?
         } else {
-            statement.query_map([], row_creator).map_err(storage_error)?
+            statement
+                .query_map([], row_creator)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -306,7 +310,9 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_research)
                 .map_err(storage_error)?
         } else {
-            statement.query_map([], row_research).map_err(storage_error)?
+            statement
+                .query_map([], row_research)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }

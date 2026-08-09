@@ -186,7 +186,9 @@ impl AppServices {
             .map_err(|error| error.to_string())?;
         let profile_url = validated.as_url().to_string();
         let label = profile_label(validated.as_url());
-        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         self.store
             .upsert_watchlist(active_project, &label, &profile_url, u32::from(query.limit))
             .map_err(|error| error.to_string())?;
@@ -196,8 +198,13 @@ impl AppServices {
 
     pub fn scan_creator(&self, query: ResearchQuery) -> Result<(), String> {
         validate_research_limit(query.limit)?;
-        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
-        let settings = self.store.load_settings().map_err(|error| error.to_string())?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
+        let settings = self
+            .store
+            .load_settings()
+            .map_err(|error| error.to_string())?;
         scan_and_persist_research(
             &self.store,
             &self.research_command,
@@ -210,12 +217,17 @@ impl AppServices {
     }
 
     pub fn refresh_watchlists(&self) -> Result<usize, String> {
-        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         let watchlists = self
             .store
             .list_watchlists(Some(active_project))
             .map_err(|error| error.to_string())?;
-        let settings = self.store.load_settings().map_err(|error| error.to_string())?;
+        let settings = self
+            .store
+            .load_settings()
+            .map_err(|error| error.to_string())?;
         let mut saved_items = 0_usize;
         let mut errors = Vec::new();
         for watchlist in watchlists {
@@ -250,7 +262,9 @@ impl AppServices {
                 "select at most {MAX_RESEARCH_QUEUE_ITEMS} research items at once"
             ));
         }
-        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         let mut unique = Vec::new();
         let mut seen = HashSet::new();
         for raw in ids {
@@ -315,7 +329,9 @@ impl AppServices {
 
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
         let prompt = self.build_ai_prompt(input)?;
-        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         if !input.mode.eq_ignore_ascii_case("byok") {
             self.store
                 .insert_ai_run(&AiRun {
@@ -506,35 +522,39 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| UiLibraryItem {
-            id: format!("research:{}", item.id),
-            kind: "Research".to_owned(),
-            title: item.title.clone(),
-            subtitle: item.creator.clone(),
-            project_id: active_project.to_string(),
-            platform: Some(item.platform.clone()),
-            metric: item.views.map(|views| format!("{views} views")),
-            date: item
-                .published_at
-                .clone()
-                .unwrap_or_else(|| "Unknown date".to_owned()),
+        library.extend(ui_research.iter().map(|item| {
+            UiLibraryItem {
+                id: format!("research:{}", item.id),
+                kind: "Research".to_owned(),
+                title: item.title.clone(),
+                subtitle: item.creator.clone(),
+                project_id: active_project.to_string(),
+                platform: Some(item.platform.clone()),
+                metric: item.views.map(|views| format!("{views} views")),
+                date: item
+                    .published_at
+                    .clone()
+                    .unwrap_or_else(|| "Unknown date".to_owned()),
+            }
         }));
-        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
-            id: format!("ai:{}", run.id),
-            kind: "AI run".to_owned(),
-            title: run.task.clone(),
-            subtitle: run
-                .provider
-                .clone()
-                .map(|provider| match &run.model {
-                    Some(model) => format!("{provider} · {model}"),
-                    None => provider,
-                })
-                .unwrap_or_else(|| "Copy Prompt".to_owned()),
-            project_id: run.project_id.to_string(),
-            platform: None,
-            metric: None,
-            date: run.created_at.clone(),
+        library.extend(ai_runs.iter().map(|run| {
+            UiLibraryItem {
+                id: format!("ai:{}", run.id),
+                kind: "AI run".to_owned(),
+                title: run.task.clone(),
+                subtitle: run
+                    .provider
+                    .clone()
+                    .map(|provider| match &run.model {
+                        Some(model) => format!("{provider} · {model}"),
+                        None => provider,
+                    })
+                    .unwrap_or_else(|| "Copy Prompt".to_owned()),
+                project_id: run.project_id.to_string(),
+                platform: None,
+                metric: None,
+                date: run.created_at.clone(),
+            }
         }));
 
         Ok(BootstrapData {
@@ -560,7 +580,9 @@ fn scan_and_persist_research(
     cookie_browser: Option<&str>,
 ) -> Result<usize, String> {
     validate_research_limit(limit)?;
-    store.get_project(project_id).map_err(|error| error.to_string())?;
+    store
+        .get_project(project_id)
+        .map_err(|error| error.to_string())?;
     let validated = NetworkPolicy
         .validate(profile_url.trim())
         .map_err(|error| error.to_string())?;
@@ -698,7 +720,12 @@ fn research_to_ui(
         .raw_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-        .and_then(|value| value.get("thumbnail").and_then(Value::as_str).map(str::to_owned));
+        .and_then(|value| {
+            value
+                .get("thumbnail")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
     UiResearchItem {
         id: item.id.to_string(),
         creator_id: item.creator_id.map(|id| id.to_string()).unwrap_or_default(),

@@ -159,7 +159,10 @@ impl YtDlpProvider {
         }
     }
 
-    pub fn with_cookie_browser(mut self, cookie_browser: Option<&str>) -> Result<Self, ResearchError> {
+    pub fn with_cookie_browser(
+        mut self,
+        cookie_browser: Option<&str>,
+    ) -> Result<Self, ResearchError> {
         self.cookie_browser = validate_cookie_browser(cookie_browser)?;
         Ok(self)
     }
@@ -173,22 +176,20 @@ impl ResearchProvider for YtDlpProvider {
     ) -> Result<Vec<ResearchObservation>, ResearchError> {
         let limit = limit.clamp(1, 200);
         let mut command = Command::new(&self.command.program);
-        command
-            .args(&self.command.prefix_args)
-            .args([
-                "--skip-download",
-                "--dump-json",
-                "--ignore-errors",
-                "--no-warnings",
-                "--socket-timeout",
-                "20",
-                "--retries",
-                "2",
-                "--extractor-retries",
-                "2",
-                "--playlist-end",
-                &limit.to_string(),
-            ]);
+        command.args(&self.command.prefix_args).args([
+            "--skip-download",
+            "--dump-json",
+            "--ignore-errors",
+            "--no-warnings",
+            "--socket-timeout",
+            "20",
+            "--retries",
+            "2",
+            "--extractor-retries",
+            "2",
+            "--playlist-end",
+            &limit.to_string(),
+        ]);
         if let Some(cookie_browser) = &self.cookie_browser {
             command.args(["--cookies-from-browser", cookie_browser]);
         }
@@ -205,12 +206,14 @@ impl ResearchProvider for YtDlpProvider {
                 provider_io_message(&error)
             ))
         })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            ResearchError::Provider("yt-dlp stdout was unavailable".to_owned())
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            ResearchError::Provider("yt-dlp stderr was unavailable".to_owned())
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ResearchError::Provider("yt-dlp stdout was unavailable".to_owned()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ResearchError::Provider("yt-dlp stderr was unavailable".to_owned()))?;
         let stderr_reader = thread::spawn(move || {
             let mut bytes = Vec::new();
             let _ = stderr
@@ -274,7 +277,10 @@ impl ResearchProvider for YtDlpProvider {
 }
 
 fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, ResearchError> {
-    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty() && *value != "none") else {
+    let Some(value) = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "none")
+    else {
         return Ok(None);
     };
     if value.chars().count() > 160
@@ -298,7 +304,7 @@ fn provider_io_message(error: &std::io::Error) -> String {
 }
 
 fn safe_provider_detail(raw: &str) -> String {
-    let sanitized = raw.replace(['\r', '\n'], " ");
+    let sanitized = raw.replace('\r', " ").replace('\n', " ");
     let mut chars = sanitized.chars();
     let shortened = chars.by_ref().take(1_200).collect::<String>();
     if chars.next().is_some() {
@@ -416,7 +422,10 @@ fn sanitized_raw_json(raw: &Value) -> Result<Option<String>, ResearchError> {
     let mut safe = Map::new();
     for key in ["id", "uploader", "channel", "channel_url", "thumbnail"] {
         if let Some(value) = raw.get(key).and_then(Value::as_str) {
-            safe.insert(key.to_owned(), json!(value.chars().take(2_048).collect::<String>()));
+            safe.insert(
+                key.to_owned(),
+                json!(value.chars().take(2_048).collect::<String>()),
+            );
         }
     }
     if let Some(description) = raw.get("description").and_then(Value::as_str) {
@@ -594,12 +603,7 @@ mod tests {
             }
         }
         let error = ResearchService::new(MaliciousProvider)
-            .scan(
-                Uuid::new_v4(),
-                None,
-                "https://www.youtube.com/@creator",
-                25,
-            )
+            .scan(Uuid::new_v4(), None, "https://www.youtube.com/@creator", 25)
             .unwrap_err();
         assert_eq!(error, ResearchError::HostNotAllowed);
     }
