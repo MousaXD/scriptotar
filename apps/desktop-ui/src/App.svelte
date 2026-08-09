@@ -96,7 +96,7 @@
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
     {:else if activeView === 'research'}
-      <ResearchView items={data.research} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = await api.saveWatchlist({ profileUrl, limit }); }} />
+      <ResearchView items={data.research} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = await api.saveWatchlist({ profileUrl, limit }); }} onRefresh={async () => { const count = await api.refreshWatchlists(); await refresh(); return count; }} />
     {:else if activeView === 'jobs'}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} />
     {:else if activeView === 'transcript'}
