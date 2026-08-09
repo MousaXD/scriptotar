@@ -4,3 +4,5 @@ pub use foundation::*;
 
 mod integration;
 pub use integration::*;
+
+mod watchlists;
