@@ -43,13 +43,13 @@ jobs:
           cache-dependency-path: apps/desktop-ui/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version '2.11.2' --locked
+      - name: Install pinned Tauri CLI
+        run: npm install --global @tauri-apps/cli@2.11.2
       - name: Generate Windows icons and bundle override
         working-directory: apps/desktop
         shell: pwsh
         run: |
-          cargo tauri icon ../../scriptotar.svg --output src-tauri/icons
+          tauri icon ../../scriptotar.svg --output src-tauri/icons
           @'
           {
             "bundle": {
@@ -71,7 +71,7 @@ jobs:
           '@ | Set-Content -Encoding utf8 src-tauri/tauri.windows-ci.conf.json
       - name: Build Tauri NSIS installer
         working-directory: apps/desktop
-        run: cargo tauri build --config src-tauri/tauri.windows-ci.conf.json --bundles nsis -- --locked
+        run: tauri build --config src-tauri/tauri.windows-ci.conf.json --bundles nsis -- --locked
       - name: Stage Windows installer
         shell: pwsh
         run: |
