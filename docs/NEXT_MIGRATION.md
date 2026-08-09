@@ -40,8 +40,8 @@ The frontend must never open the application SQLite database or launch Python. T
 - `scriptotar-jobs`: application-level job lifecycle operations such as enqueue, retry and startup recovery.
 - `scriptotar-media`: media validation and the Rust representation of sidecar protocol v1.
 - `scriptotar-orchestrator`: persistent sidecar process management, serialized execution, cancellation, progress handling and transcript-result commits.
-- `scriptotar-ai`: AI provider contracts and endpoint security policy.
-- `scriptotar-research`: research-provider boundary and network URL policy.
+- `scriptotar-ai`: AI provider contracts, provider execution and endpoint security policy.
+- `scriptotar-research`: research-provider execution and network URL policy.
 - `apps/desktop/src-tauri`: Tauri composition root and thin typed commands.
 - `apps/desktop-ui`: Svelte/TypeScript presentation and a single `ScriptotarApi` host seam.
 - `sidecars/transcription`: Python media/transcription worker and its protocol implementation.
@@ -133,32 +133,51 @@ The legacy database is not deleted. Import is migration assistance, not permissi
 
 ## AI providers
 
-`scriptotar-ai` owns provider contracts and endpoint policy. To add an AI provider:
+`scriptotar-ai` owns provider contracts, HTTPS execution, response parsing, timeouts and endpoint policy. Production BYOK execution currently supports:
 
-1. add/extend a `ProviderKind` and provider implementation behind the provider trait;
-2. keep request execution below Tauri/UI layers;
-3. pass BYOK secrets only for the request that needs them;
-4. never add API keys to `ApplicationSettings`, browser storage or SQLite;
-5. apply `EndpointPolicy` before attaching a key to a custom endpoint;
-6. keep non-loopback plaintext HTTP blocked by default;
-7. add success, provider-error and recovery tests.
+- OpenAI through the Responses API;
+- Anthropic through the Messages API;
+- Gemini through `generateContent`;
+- common OpenAI-compatible `/chat/completions` servers.
 
-Copy Prompt mode requires no API key and remains useful even while live provider execution is incomplete. The desktop UI can build and copy that prompt locally. BYOK validates key presence and endpoint policy, then returns an explicit unavailable error until provider execution is implemented; it does not fake a successful AI response.
+Provider rules:
+
+1. pass BYOK secrets only for the request that needs them;
+2. never add API keys to `ApplicationSettings`, browser storage, SQLite, provider errors or normal logs;
+3. apply `EndpointPolicy` before attaching a key to a custom endpoint;
+4. require HTTPS for non-loopback custom endpoints;
+5. allow plaintext HTTP only for localhost or loopback development endpoints;
+6. reject embedded URL credentials and malformed endpoints;
+7. keep model validation structural rather than maintaining a fragile exhaustive remote-model allowlist;
+8. cap prompt/provider-response sizes and return explicit timeout/provider/parse failures.
+
+Copy Prompt mode requires no API key and does not contact an AI provider. Preparing a Copy Prompt run can be stored in local AI history. Completed BYOK runs persist project, task, provider, model, prompt, result and timestamps, but never the session API key.
+
+Secure credential-store persistence is not implemented in this wave. Keys remain session-only. Local-model provider execution also remains explicitly unavailable rather than pretending to succeed.
+
+Provider tests use local/mock HTTP boundaries and response fixtures. CI does not spend provider credits or require live OpenAI, Anthropic or Gemini availability.
 
 ## Research providers
 
-`scriptotar-research` owns URL/network policy. Local watchlists are implemented independently of external provider execution: the active project's watchlists are persisted in SQLite, idempotently upserted by profile URL, survive database reopen, and are surfaced through Tauri bootstrap state. Saving a watchlist does not contact a social platform.
+`scriptotar-research` owns URL/network policy and the production creator-scan provider. Creator scanning uses `yt-dlp` without a shell and accepts only the intended Instagram, TikTok and YouTube domain allowlist. Lookalike hosts, embedded credentials, unsupported schemes and non-standard ports are rejected before provider execution. Provider-returned media URLs are validated again before persistence or queueing.
 
-Live profile scanning and queueing of provider research results remain intentionally unavailable until a real provider is integrated. Those commands validate their input boundary and then return an explicit unavailable error instead of substituting mock production data. Browser-only development may still use the mock client.
+Research observations are normalized into Rust-owned `ResearchItem` records. The application stores useful normalized metadata such as source URL, platform, title, view/like/comment counts, publish date, duration, creator relationship and scan timestamp. Only a small sanitized metadata subset is retained from extractor output, with explicit size limits.
 
-To add a research provider:
+Research persistence is project-scoped and deduplicates repeated scans by project plus source URL. Selected research items enter transcription through the normal `JobService` and orchestrator boundary; research code does not duplicate transcription execution.
 
-1. implement the research-provider contract below the UI layer;
-2. validate the profile/source URL with the network policy before network access;
-3. return typed/sanitized research items, not raw extractor dictionaries;
-4. persist through Rust repositories only;
-5. test lookalike domains, unsupported schemes, credentials/SSRF-style input and provider failures;
-6. never make CI depend on a live social platform returning stable data.
+Watchlists support:
+
+- local project-scoped persistence;
+- manual refresh from the Research view;
+- configured in-process refresh intervals while the desktop app is running;
+- last-successful-scan timestamps;
+- deduplicated research refreshes.
+
+Saving a watchlist itself does not contact a social platform. Automatic refresh is not a closed-app daemon: when Scriptotar is not running, watchlists are not scanned in the background.
+
+The research provider discovers `yt-dlp` through `SCRIPTOTAR_YTDLP_EXECUTABLE`, the configured sidecar Python environment, or the system `yt-dlp` executable. Production packaging/provisioning of that executable remains a distribution concern and must be validated by the packaging work before self-contained installation is claimed.
+
+Research tests use local fixture executables and policy tests rather than depending on live social-platform availability.
 
 ## Adding a job type
 
@@ -205,7 +224,7 @@ Engine dependencies are installed separately. CI verifies dependency consistency
 
 `.github/workflows/integration.yml` separates Rust, frontend, sidecar, integration, supply-chain and Tauri-build responsibilities. Standard GitHub-hosted runners are used. The workflow does not rely on the repository owner's Azure/self-hosted machines.
 
-The integration lane uses local fixtures/fakes so Instagram, TikTok and YouTube availability cannot determine CI success. The Tauri lane must compile the integrated desktop application, not merely run unit tests.
+The integration lane uses local fixtures/fakes so Instagram, TikTok and YouTube availability cannot determine CI success. AI provider tests likewise use local/mock boundaries rather than spending API credits. The Tauri lane must compile the integrated desktop application, not merely run unit tests.
 
 Supply-chain checks include Rust advisories, npm high-severity auditing, Python dependency auditing and Dependabot configuration.
 
@@ -221,8 +240,8 @@ A later packaging parity change should establish Tauri Debian/AppImage/Flatpak a
 
 ## Legacy versus Next
 
-The legacy Python/Tkinter application remains the production/reference application during this wave. Scriptotar Next has the integrated persistence, UI and transcription architecture, but replacement parity is not claimed merely because a Tauri binary compiles.
+The legacy Python/Tkinter application remains the production/reference application during this wave. Scriptotar Next now has real BYOK AI-provider execution and creator research in addition to the integrated persistence, UI and transcription architecture, but replacement parity is not claimed merely because those services work or a Tauri binary compiles.
 
-Known intentionally deferred parity includes live AI-provider execution, full live research-provider execution, production Next packaging/sidecar environment placement and broader feature-by-feature validation against the legacy UI.
+Known intentionally deferred parity includes local-model AI execution, production Next packaging/runtime placement and broader feature-by-feature validation against the legacy UI.
 
-Until those gaps are closed, the correct release recommendation is **not ready to replace the legacy application**.
+Until those remaining gaps are closed and the final integration agent validates the exact integration SHA, the correct release recommendation remains **not ready to replace the legacy application**.
