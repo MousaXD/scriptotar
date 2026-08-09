@@ -5,6 +5,7 @@
 
   export let settings: AppSettings;
   export let api: ScriptotarApi;
+  export let onSaved: (settings: AppSettings) => Promise<void> | void = () => {};
 
   let draft = structuredClone(settings);
   let status = '';
@@ -21,6 +22,7 @@
     try {
       await api.saveSettings(draft);
       persistAppearance(draft.appearance);
+      await onSaved(structuredClone(draft));
       status = 'Settings saved. New transcription jobs will use these preferences.';
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : 'Could not save settings.';
