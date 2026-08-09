@@ -8,7 +8,7 @@ use scriptotar_ai::{EndpointPolicy, ProviderConfig, ProviderKind};
 use scriptotar_core::{
     ApplicationSettings, ContentRepository, Job, JobInput, JobRepository, Project,
     ProjectRepository, RepositoryError, RepositoryResult, SettingsRepository, SourceType,
-    TranscriptBundle,
+    TranscriptBundle, WatchlistRepository,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
@@ -19,8 +19,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiLibraryItem, UiProject, UiSettings,
-    UiTranscript, UiTranscriptSegment,
+    AiPromptInput, BootstrapData, ResearchQuery, UiCreator, UiJob, UiLibraryItem, UiProject,
+    UiSettings, UiTranscript, UiTranscriptSegment,
 };
 
 #[derive(Debug, Clone)]
@@ -167,6 +167,39 @@ impl AppServices {
         self.store.import_legacy_database(&self.legacy_path)
     }
 
+    pub fn save_watchlist(&self, query: ResearchQuery) -> Result<BootstrapData, String> {
+        if !(1..=200).contains(&query.limit) {
+            return Err("research limit must be between 1 and 200".to_owned());
+        }
+        let validated = NetworkPolicy
+            .validate(&query.profile_url)
+            .map_err(|error| error.to_string())?;
+        let profile_url = validated.as_url().to_string();
+        let label = validated
+            .as_url()
+            .path_segments()
+            .and_then(|segments| segments.filter(|segment| !segment.is_empty()).next_back())
+            .filter(|segment| !segment.is_empty())
+            .or_else(|| validated.as_url().host_str())
+            .unwrap_or("Watchlist")
+            .trim_start_matches('@')
+            .to_owned();
+        let active_project = *self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
+        self.store
+            .upsert_watchlist(
+                active_project,
+                &label,
+                &profile_url,
+                u32::from(query.limit),
+            )
+            .map_err(|error| error.to_string())?;
+        self.bootstrap_for(active_project)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn scan_creator(&self, query: ResearchQuery) -> Result<(), String> {
         if !(1..=200).contains(&query.limit) {
             return Err("research limit must be between 1 and 200".to_owned());
@@ -234,6 +267,20 @@ impl AppServices {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
         let transcripts = self.store.list_transcripts(Some(active_project))?;
+        let creators = self
+            .store
+            .list_watchlists(Some(active_project))?
+            .into_iter()
+            .map(|watchlist| UiCreator {
+                id: watchlist.id.to_string(),
+                name: watchlist.label,
+                handle: watchlist.profile_url.clone(),
+                platform: source_platform(&watchlist.profile_url, SourceType::Url),
+                avatar: None,
+                watchlisted: true,
+                last_scanned_at: watchlist.last_scan_at,
+            })
+            .collect::<Vec<_>>();
         let jobs = all_jobs
             .iter()
             .filter(|job| job.project_id == active_project)
@@ -289,7 +336,7 @@ impl AppServices {
         Ok(BootstrapData {
             projects: ui_projects,
             active_project_id: active_project.to_string(),
-            creators: Vec::new(),
+            creators,
             research: Vec::new(),
             jobs,
             transcripts: ui_transcripts,
