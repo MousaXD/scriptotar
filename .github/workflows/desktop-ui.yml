@@ -1,0 +1,44 @@
+name: Desktop UI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop-ui/**'
+      - '.github/workflows/desktop-ui.yml'
+  push:
+    branches:
+      - 'rewrite/svelte-desktop-ui'
+    paths:
+      - 'apps/desktop-ui/**'
+      - '.github/workflows/desktop-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-ui-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve dependency lock for migration branch
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Install dependencies
+        run: npm ci
+      - name: Type and Svelte checks
+        run: npm run check
+      - name: Interaction tests
+        run: npm run test
+      - name: Production build
+        run: npm run build
