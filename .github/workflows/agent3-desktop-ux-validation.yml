@@ -1,0 +1,77 @@
+name: Agent 3 desktop UX validation
+
+on:
+  push:
+    branches:
+      - improve/desktop-ux
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-desktop-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend check test build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Install
+        working-directory: apps/desktop-ui
+        run: npm ci
+      - name: Check
+        working-directory: apps/desktop-ui
+        run: npm run check
+      - name: Test
+        working-directory: apps/desktop-ui
+        run: npm run test
+      - name: Build
+        working-directory: apps/desktop-ui
+        run: npm run build
+
+  rust:
+    name: Rust format check clippy test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            patchelf
+      - name: Build frontend assets required by Tauri context
+        working-directory: apps/desktop-ui
+        run: |
+          npm ci
+          npm run build
+      - name: Rustfmt
+        run: cargo fmt --all -- --check
+      - name: Check desktop crate
+        run: cargo check -p scriptotar-desktop --locked
+      - name: Clippy desktop crate
+        run: cargo clippy -p scriptotar-desktop --all-targets --all-features --locked -- -D warnings
+      - name: Test desktop crate
+        run: cargo test -p scriptotar-desktop --locked
