@@ -506,7 +506,7 @@ where
         let next = match (current.state, target) {
             (JobState::Preparing, JobState::Downloading) => JobState::Downloading,
             (JobState::Preparing, JobState::Transcribing) => JobState::Transcribing,
-            (JobState::Preparing, JobState::Processing) => match job.input {
+            (JobState::Preparing, JobState::Processing) => match &job.input {
                 JobInput::Url(_) => JobState::Downloading,
                 JobInput::LocalFile(_) => JobState::Transcribing,
             },
@@ -536,7 +536,7 @@ where
     R: JobRepository + ContentRepository,
 {
     let now = now_rfc3339();
-    let source_type = match job.input {
+    let source_type = match &job.input {
         JobInput::Url(_) => SourceType::Url,
         JobInput::LocalFile(_) => SourceType::LocalFile,
     };
