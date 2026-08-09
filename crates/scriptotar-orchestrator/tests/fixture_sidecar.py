@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 PROTOCOL = 1
@@ -85,6 +86,7 @@ def main() -> int:
 
         if input_kind == "url":
             emit("progress", job_id=job_id, stage="downloading", percent=40.0, message="fixture download")
+            time.sleep(0.05)
         emit("progress", job_id=job_id, stage="transcribing", percent=50.0, message="fixture")
         emit("result", job_id=job_id, result=result_for(source, input_kind))
     return 0
