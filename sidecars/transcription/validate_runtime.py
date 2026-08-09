@@ -42,6 +42,17 @@ def _validate_engine(root: Path, env: dict[str, str]) -> None:
         if not report.get(tool, {}).get("path"):
             raise RuntimeError(f"engine self-test did not resolve {tool}")
 
+    yt_dlp = subprocess.run(
+        [str(engine), "--yt-dlp", "--version"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if not yt_dlp.stdout.strip():
+        raise RuntimeError("packaged engine yt-dlp mode did not report a version")
+
 
 def _validate_supervisor(root: Path, env: dict[str, str]) -> None:
     supervisor = root / _exe_name("scriptotar-transcription")
