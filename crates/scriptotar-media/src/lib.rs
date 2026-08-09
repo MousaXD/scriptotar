@@ -134,7 +134,7 @@ pub struct SidecarArtifacts {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SidecarResult {
     pub source: SidecarSourceResult,
-    pub transcript: SidecarTranscriptResult,
+    pub transcript: Box<SidecarTranscriptResult>,
     pub artifacts: SidecarArtifacts,
     pub output_dir: String,
 }
