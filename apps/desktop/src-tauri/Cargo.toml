@@ -25,4 +25,5 @@ scriptotar-research = { path = "../../../crates/scriptotar-research" }
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+url.workspace = true
 uuid.workspace = true
