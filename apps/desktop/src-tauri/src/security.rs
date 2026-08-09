@@ -4,7 +4,10 @@ use std::{
     io::{self, Read},
     path::{Path, PathBuf},
     process,
+    time::Duration,
 };
+
+use rusqlite::{backup::Backup, Connection, OpenFlags};
 
 use crate::dto::{AiPromptInput, ResearchQuery};
 
@@ -255,43 +258,28 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
         .map_err(|error| format!("could not create migration staging directory: {error}"))?;
     harden_private_directory_permissions(data_dir)?;
 
-    let mut source = fs::File::open(candidate)
-        .map_err(|error| format!("could not open legacy database for staging: {error}"))?;
-    let mut temporary = None;
-    for attempt in 0..16_u8 {
-        let path = data_dir.join(format!(
-            ".history.sqlite3.importing-{}-{attempt}",
-            process::id()
-        ));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                temporary = Some((path, file));
-                break;
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "could not create temporary legacy import file: {error}"
-                ))
-            }
-        }
-    }
-    let (temporary_path, mut temporary_file) =
-        temporary.ok_or_else(|| "could not reserve a temporary legacy import file".to_owned())?;
-
-    let copy_result = io::copy(&mut source, &mut temporary_file)
-        .map_err(|error| format!("could not stage legacy database for import: {error}"))
-        .and_then(|_| {
-            temporary_file
-                .sync_all()
-                .map_err(|error| format!("could not flush staged legacy database: {error}"))
-        });
-    drop(temporary_file);
-    if let Err(error) = copy_result {
+    let temporary_path = reserve_legacy_staging_path(data_dir)?;
+    let snapshot_result = (|| -> Result<(), String> {
+        let source = Connection::open_with_flags(
+            candidate,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| format!("could not open legacy database for snapshot: {error}"))?;
+        let mut destination = Connection::open(&temporary_path)
+            .map_err(|error| format!("could not create temporary SQLite snapshot: {error}"))?;
+        let backup = Backup::new(&source, &mut destination)
+            .map_err(|error| format!("could not initialize legacy SQLite backup: {error}"))?;
+        backup
+            .run_to_completion(64, Duration::from_millis(10), None)
+            .map_err(|error| format!("could not snapshot legacy SQLite database: {error}"))?;
+        drop(backup);
+        drop(destination);
+        fs::File::open(&temporary_path)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| format!("could not flush staged legacy database: {error}"))?;
+        Ok(())
+    })();
+    if let Err(error) = snapshot_result {
         let _ = fs::remove_file(&temporary_path);
         return Err(error);
     }
@@ -308,6 +296,32 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
         return Err(error);
     }
     Ok(())
+}
+
+fn reserve_legacy_staging_path(data_dir: &Path) -> Result<PathBuf, String> {
+    for attempt in 0..16_u8 {
+        let path = data_dir.join(format!(
+            ".history.sqlite3.importing-{}-{attempt}",
+            process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                drop(file);
+                return Ok(path);
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not create temporary legacy import file: {error}"
+                ))
+            }
+        }
+    }
+    Err("could not reserve a temporary legacy import file".to_owned())
 }
 
 fn validate_sqlite_header(path: &Path) -> Result<(), String> {
@@ -361,6 +375,18 @@ mod tests {
         file.write_all(b"fixture").unwrap();
     }
 
+    fn real_sqlite(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let connection = Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE fixture(value TEXT); INSERT INTO fixture(value) VALUES ('source');",
+            )
+            .unwrap();
+    }
+
     #[test]
     fn discovery_finds_scriptotar_and_wesamboss_locations_without_duplicates() {
         let temp = TempDir::new().unwrap();
@@ -380,7 +406,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let source_root = temp.path().join("source");
         let source = source_root.join("scriptotar/history.sqlite3");
-        fake_sqlite(&source);
+        real_sqlite(&source);
         let before = fs::read(&source).unwrap();
         let data_dir = temp.path().join("next");
 
@@ -392,7 +418,11 @@ mod tests {
 
         assert!(message.contains("staged one legacy database"));
         assert_eq!(fs::read(&source).unwrap(), before);
-        assert_eq!(fs::read(&staged).unwrap(), before);
+        let staged_connection = Connection::open(&staged).unwrap();
+        let value: String = staged_connection
+            .query_row("SELECT value FROM fixture", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "source");
         assert!(fs::read_dir(&data_dir).unwrap().all(|entry| {
             !entry
                 .unwrap()
@@ -400,6 +430,50 @@ mod tests {
                 .to_string_lossy()
                 .starts_with(".history.sqlite3.importing-")
         }));
+    }
+
+    #[test]
+    fn bridge_snapshot_includes_committed_wal_frames() {
+        let temp = TempDir::new().unwrap();
+        let source_root = temp.path().join("source");
+        let source = source_root.join("scriptotar/history.sqlite3");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+
+        let writer = Connection::open(&source).unwrap();
+        writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+        writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        writer.execute("CREATE TABLE fixture(value TEXT)", []).unwrap();
+        writer
+            .execute("INSERT INTO fixture(value) VALUES ('before')", [])
+            .unwrap();
+        writer.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+
+        let reader = Connection::open(&source).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT count(*) FROM fixture;")
+            .unwrap();
+        writer
+            .execute("INSERT INTO fixture(value) VALUES ('wal-commit')", [])
+            .unwrap();
+        let wal = PathBuf::from(format!("{}-wal", source.display()));
+        assert!(wal.is_file());
+        assert!(fs::metadata(&wal).unwrap().len() > 0);
+
+        let data_dir = temp.path().join("next");
+        prepare_legacy_import_bridge_from_roots(&data_dir, std::slice::from_ref(&source_root))
+            .unwrap()
+            .unwrap();
+
+        let staged = Connection::open(data_dir.join("history.sqlite3")).unwrap();
+        let values = staged
+            .prepare("SELECT value FROM fixture ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(values, vec!["before", "wal-commit"]);
+        reader.execute_batch("ROLLBACK;").unwrap();
     }
 
     #[test]
