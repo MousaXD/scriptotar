@@ -111,7 +111,7 @@ mod tests {
     use super::SqliteStore;
 
     #[test]
-    fn watchlist_upsert_is_project_scoped_persistent_and_idempotent() {
+    fn integration_watchlist_upsert_is_project_scoped_persistent_and_idempotent() {
         let temp = tempdir().unwrap();
         let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
         store.run_integration_migrations().unwrap();
