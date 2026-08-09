@@ -24,10 +24,14 @@ jobs:
         shell: bash
         run: |
           set +e
-          cargo check --workspace > agent2-cargo-check.log 2>&1
+          cargo check --workspace --color never > /tmp/agent2-cargo-check.full 2>&1
           code=$?
-          tail -n 240 agent2-cargo-check.log > agent2-cargo-check.tail
-          mv agent2-cargo-check.tail agent2-cargo-check.log
+          {
+            grep -E '^(error(\[[^]]+\])?:|warning:| *-->| *\||note:|help:)' /tmp/agent2-cargo-check.full || true
+            echo
+            echo '--- final cargo output ---'
+            tail -n 80 /tmp/agent2-cargo-check.full
+          } > agent2-cargo-check.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add agent2-cargo-check.log
