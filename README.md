@@ -62,6 +62,3 @@ transcript.json
 - Instagram can require an authenticated browser session. Select the browser in Settings.
 - CUDA mode requires a compatible NVIDIA CUDA/cuDNN setup for CTranslate2/faster-whisper.
 
-## Rename migration
-
-Scriptotar replaces the previous `wesamboss` package. On first launch it can reuse the existing private engine and history under `~/.local/share/wesamboss`, migrating them into `~/.local/share/scriptotar`. The old default `~/Videos/WesamBoss` output directory is renamed to `~/Videos/Scriptotar` when it can be moved safely on the same filesystem.
