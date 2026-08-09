@@ -1,4 +1,4 @@
-name: Agent 2 clippy diagnostics
+name: Agent 2 clippy validation
 
 on:
   pull_request:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  diagnose:
+  validate:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -31,35 +31,42 @@ jobs:
             patchelf
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Apply first clippy fix
+      - name: Apply clippy fixes
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('crates/scriptotar-research/src/lib.rs')
-          text = path.read_text()
-          old = r'''raw.replace('\r', " ").replace('\n', " ")'''
-          new = r'''raw.replace(['\r', '\n'], " ")'''
-          if old in text:
-              path.write_text(text.replace(old, new, 1))
+
+          research = Path('crates/scriptotar-research/src/lib.rs')
+          text = research.read_text()
+          text = text.replace(
+              r'''raw.replace('\r', " ").replace('\n', " ")''',
+              r'''raw.replace(['\r', '\n'], " ")''',
+              1,
+          )
+          research.write_text(text)
+
+          db = Path('crates/scriptotar-db/src/ai_research.rs')
+          text = db.read_text()
+          old = 'store.upsert_research_items(&[first.clone()]).unwrap()'
+          new = 'store.upsert_research_items(std::slice::from_ref(&first)).unwrap()'
+          if old not in text:
+              raise SystemExit('expected one-item research slice test was not found')
+          db.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --all
-      - name: Capture clippy diagnostics
-        shell: bash
+      - name: Clippy
         env:
           CARGO_TERM_COLOR: never
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test workspace
+        env:
+          CARGO_TERM_COLOR: never
+        run: cargo test --workspace --locked
+      - name: Commit tested fixes to temporary branch
+        if: github.event_name == 'pull_request'
         run: |
-          set +e
-          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings > /tmp/clippy.full 2>&1
-          code=$?
-          {
-            grep -E '^(error(\[[^]]+\])?:|warning:| *-->| *\||note:|help:)' /tmp/clippy.full || true
-            echo
-            echo '--- final clippy output ---'
-            tail -n 120 /tmp/clippy.full
-          } > agent2-clippy.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add crates/scriptotar-research/src/lib.rs agent2-clippy.log
-          git commit -m 'ci: capture Agent 2 clippy diagnostics' || true
+          git add crates/scriptotar-research/src/lib.rs crates/scriptotar-db/src/ai_research.rs
+          git commit -m 'fix: satisfy Agent 2 Rust quality gates' || true
           git push origin "HEAD:${GITHUB_HEAD_REF}"
-          exit $code
