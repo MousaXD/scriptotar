@@ -36,15 +36,10 @@ jobs:
           from pathlib import Path
           path = Path('crates/scriptotar-research/src/lib.rs')
           text = path.read_text()
-          old = '''    let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
-              .filter(|value| is_absolute_http_url(value))
-              .or_else(|| youtube_fallback(raw));'''
-          new = '''    let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
-              .filter(|value| is_absolute_http_url(value))
-              .map(str::to_owned)
-              .or_else(|| youtube_fallback(raw));'''
+          old = '.filter(|value| is_absolute_http_url(value))\n        .or_else(|| youtube_fallback(raw));'
+          new = '.filter(|value| is_absolute_http_url(value))\n        .map(str::to_owned)\n        .or_else(|| youtube_fallback(raw));'
           if old not in text:
-              raise SystemExit('expected research URL normalization block was not found')
+              raise SystemExit('expected research URL normalization lines were not found')
           path.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --all
