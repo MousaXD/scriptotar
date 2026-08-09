@@ -3,6 +3,7 @@ export type JobState = 'queued' | 'preparing' | 'downloading' | 'transcribing' |
 export type LibraryKind = 'Transcript' | 'Research' | 'AI run' | 'Project' | 'Creator';
 export type AiMode = 'copy' | 'byok';
 export type AiProvider = 'OpenAI' | 'Anthropic' | 'Gemini' | 'OpenAI-compatible' | 'Local (coming later)';
+export type SearchResultKind = 'Project' | 'Transcript' | 'Research' | 'Creator' | 'AI run';
 
 export interface Project {
   id: string;
@@ -103,7 +104,18 @@ export interface LibraryItem {
   date: string;
 }
 
+export interface WorkspaceSearchResult {
+  id: string;
+  kind: SearchResultKind;
+  title: string;
+  subtitle: string;
+  view: ViewId;
+  projectId?: string;
+  targetId?: string;
+}
+
 export interface AppSettings {
+  outputDirectory: string | null;
   whisperModel: 'small' | 'medium' | 'turbo' | 'large-v3';
   device: 'auto' | 'cpu' | 'cuda';
   language: 'auto' | 'Arabic' | 'English';
