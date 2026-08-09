@@ -35,7 +35,12 @@ jobs:
           git diff -- Cargo.lock > agent5-lock.diff
           git diff -- '*.rs' > agent5-rustfmt.diff
       - name: Clippy workspace
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        shell: bash
+        run: |
+          set +e
+          cargo clippy --workspace --all-targets --all-features -- -D warnings 2>&1 | tee agent5-clippy.log
+          status=${PIPESTATUS[0]}
+          exit "$status"
       - name: Test workspace
         run: cargo test --workspace
       - name: Upload generated integration files
@@ -47,6 +52,7 @@ jobs:
             Cargo.lock
             agent5-lock.diff
             agent5-rustfmt.diff
+            agent5-clippy.log
             apps/desktop/src-tauri/src/**/*.rs
             crates/**/*.rs
           if-no-files-found: error
