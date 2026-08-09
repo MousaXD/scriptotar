@@ -1,0 +1,29 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/scriptotar-core",
+    "crates/scriptotar-db",
+    "crates/scriptotar-jobs",
+    "crates/scriptotar-ai",
+    "crates/scriptotar-research",
+    "crates/scriptotar-media",
+    "apps/desktop/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/MousaXD/scriptotar"
+
+[workspace.dependencies]
+chrono = { version = "0.4", features = ["clock", "serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = "2"
+tauri-build = "2"
+tempfile = "3"
+thiserror = "2"
+url = "2"
+uuid = { version = "1", features = ["serde", "v4"] }
