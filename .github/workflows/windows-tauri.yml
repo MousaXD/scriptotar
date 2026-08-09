@@ -1,0 +1,154 @@
+name: Windows Tauri Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/desktop/**'
+      - 'apps/desktop-ui/**'
+      - 'scriptotar.svg'
+      - '.github/workflows/windows-tauri.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/desktop/**'
+      - 'apps/desktop-ui/**'
+      - 'scriptotar.svg'
+      - '.github/workflows/windows-tauri.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-tauri-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-installer:
+    name: Build NSIS setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '2.11.2' --locked
+      - name: Generate Windows icons and bundle override
+        working-directory: apps/desktop
+        shell: pwsh
+        run: |
+          cargo tauri icon ../../scriptotar.svg --output src-tauri/icons
+          @'
+          {
+            "bundle": {
+              "active": true,
+              "targets": ["nsis"],
+              "icon": [
+                "icons/32x32.png",
+                "icons/128x128.png",
+                "icons/128x128@2x.png",
+                "icons/icon.ico"
+              ],
+              "windows": {
+                "nsis": {
+                  "installMode": "currentUser"
+                }
+              }
+            }
+          }
+          '@ | Set-Content -Encoding utf8 src-tauri/tauri.windows-ci.conf.json
+      - name: Build Tauri NSIS installer
+        working-directory: apps/desktop
+        run: cargo tauri build --config src-tauri/tauri.windows-ci.conf.json --bundles nsis -- --locked
+      - name: Stage Windows installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $installer = Get-ChildItem -Path . -Recurse -Filter '*-setup.exe' |
+            Where-Object { $_.FullName -match '[\\/]bundle[\\/]nsis[\\/]' } |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'Tauri NSIS installer was not found after a successful build.'
+          }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $output = "dist/Scriptotar-Next-$version-x64-setup.exe"
+          Copy-Item $installer.FullName $output
+          Set-Content -Encoding ascii dist/TAURI_VERSION $version
+          Write-Host "Staged $output from $($installer.FullName)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scriptotar-windows-tauri
+          path: |
+            dist/Scriptotar-Next-*-x64-setup.exe
+            dist/TAURI_VERSION
+          if-no-files-found: error
+
+  publish-windows-preview:
+    name: Publish Windows preview release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-windows-installer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: scriptotar-windows-tauri
+          path: dist
+      - name: Prepare Windows release assets
+        run: |
+          VERSION="$(cat dist/TAURI_VERSION)"
+          mkdir -p latest
+          cp "dist/Scriptotar-Next-${VERSION}-x64-setup.exe" latest/Scriptotar-Next-latest-x64-setup.exe
+          (cd latest && sha256sum Scriptotar-Next-latest-x64-setup.exe > SHA256SUMS.txt)
+          cat > latest/RELEASE-NOTES.txt <<NOTES
+          Scriptotar Next Windows Preview
+
+          Built automatically from main.
+          Tauri app version: ${VERSION}
+          Commit: ${GITHUB_SHA}
+
+          Asset:
+          - Scriptotar-Next-latest-x64-setup.exe
+
+          This is the new Tauri desktop application packaged as an NSIS Windows installer.
+          The Python transcription sidecar/runtime is not yet bundled as a fully self-contained production dependency, so this release remains a preview.
+          NOTES
+      - name: Move Windows preview tag to this commit
+        run: |
+          git tag -f tauri-next-latest "$GITHUB_SHA"
+          git push origin refs/tags/tauri-next-latest --force
+      - name: Create or update Windows preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view tauri-next-latest >/dev/null 2>&1; then
+            gh release upload tauri-next-latest latest/* --clobber
+            gh release edit tauri-next-latest \
+              --title "Scriptotar Next Windows Preview" \
+              --notes-file latest/RELEASE-NOTES.txt \
+              --target "$GITHUB_SHA" \
+              --prerelease \
+              --latest=false
+          else
+            gh release create tauri-next-latest latest/* \
+              --verify-tag \
+              --title "Scriptotar Next Windows Preview" \
+              --notes-file latest/RELEASE-NOTES.txt \
+              --prerelease
+          fi
