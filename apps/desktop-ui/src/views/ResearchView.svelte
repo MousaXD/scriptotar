@@ -12,6 +12,7 @@
   let profileUrl = '';
   let limit = 25;
   let scanning = false;
+  let status = '';
 
   $: filtered = items
     .filter((item) => platform === 'All' || item.platform === platform)
@@ -28,7 +29,15 @@
   async function scan() {
     if (!profileUrl.trim()) return;
     scanning = true;
-    try { await onScan(profileUrl.trim(), limit); } finally { scanning = false; }
+    status = '';
+    try { await onScan(profileUrl.trim(), limit); status = 'Research scan completed.'; }
+    catch (error) { status = `Research scan failed: ${error instanceof Error ? error.message : String(error)}`; }
+    finally { scanning = false; }
+  }
+  async function queueSelected() {
+    status = '';
+    try { await onQueue([...selected]); status = 'Selected media queued.'; }
+    catch (error) { status = `Queue failed: ${error instanceof Error ? error.message : String(error)}`; }
   }
 </script>
 <section class="view-head"><div><span class="eyebrow">Creator intelligence</span><h1>Research</h1><p>Scan public creator profiles, compare performance signals, then queue only the media worth transcribing.</p></div></section>
@@ -38,12 +47,13 @@
   <button class="button primary" disabled={scanning || !profileUrl.trim()} on:click={scan}>{scanning ? 'Scanning…' : 'Scan profile'}</button>
   <button class="button secondary">Save watchlist</button>
 </section>
+{#if status}<p class="status-copy" role="status">{status}</p>{/if}
 <section class="panel research-panel">
   <div class="filter-bar">
     <label class="search-field"><span>⌕</span><input aria-label="Filter research" bind:value={query} placeholder="Filter title or creator…" /></label>
     <select aria-label="Platform filter" bind:value={platform}><option>All</option><option>TikTok</option><option>YouTube</option><option>Instagram</option></select>
     <label class="sort-control">Sort <select aria-label="Research sort" bind:value={sort}><option value="views">Views</option><option value="likes">Likes</option><option value="comments">Comments</option><option value="date">Newest</option></select></label>
-    <button class="button secondary" disabled={selected.size === 0} on:click={() => onQueue([...selected])}>Queue selected ({selected.size})</button>
+    <button class="button secondary" disabled={selected.size === 0} on:click={queueSelected}>Queue selected ({selected.size})</button>
   </div>
   {#if filtered.length === 0}
     <EmptyState title="No matching research" message="Change the filters or scan another creator profile." />

@@ -63,6 +63,10 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const client: ScriptotarApi = {
     async bootstrap() { return { ...structuredClone(mockBootstrap), activeProjectId: active }; },
     async selectProject(projectId: string) { active = projectId; },
+    async createProject(_name: string) {},
+    async enqueueLocalMedia(_projectId: string, _path: string) {},
+    async enqueueUrl(_projectId: string, _url: string) {},
+    async retryJob(_jobId: string) {},
     async scanCreator(_query: ResearchQuery) {},
     async queueResearch(_ids: string[]) {},
     async cancelJob(_jobId: string) {},

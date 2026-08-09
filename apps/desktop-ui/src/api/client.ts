@@ -23,6 +23,10 @@ export interface AiPromptInput {
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
   selectProject(projectId: string): Promise<void>;
+  createProject(name: string): Promise<void>;
+  enqueueLocalMedia(projectId: string, path: string): Promise<void>;
+  enqueueUrl(projectId: string, url: string): Promise<void>;
+  retryJob(jobId: string): Promise<void>;
   scanCreator(query: ResearchQuery): Promise<void>;
   queueResearch(ids: string[]): Promise<void>;
   cancelJob(jobId: string): Promise<void>;

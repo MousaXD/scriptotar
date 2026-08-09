@@ -7,6 +7,10 @@ export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
   return {
     bootstrap: () => invoke<BootstrapData>('bootstrap_app'),
     selectProject: (projectId) => invoke<void>('select_project', { projectId }),
+    createProject: (name) => invoke<void>('create_project', { name }),
+    enqueueLocalMedia: (projectId, path) => invoke<void>('enqueue_local_media', { projectId, path }),
+    enqueueUrl: (projectId, url) => invoke<void>('enqueue_url', { projectId, url }),
+    retryJob: (jobId) => invoke<void>('retry_job', { jobId }),
     scanCreator: (query: ResearchQuery) => invoke<void>('scan_creator', { query }),
     queueResearch: (ids) => invoke<void>('queue_research', { ids }),
     cancelJob: (jobId) => invoke<void>('cancel_job', { jobId }),
