@@ -88,6 +88,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async retryJob(jobId: string) { return { ...backendJob(active, 'local_file', '/mock/retry.mp4'), id: jobId }; },
     async saveWatchlist(_query: ResearchQuery) { return snapshot(); },
     async scanCreator(_query: ResearchQuery) {},
+    async refreshWatchlists() { return snapshot().research.length; },
     async queueResearch(_ids: string[]) {},
     async cancelJob(_jobId: string) {},
     async buildAiPrompt(input: AiPromptInput) {
