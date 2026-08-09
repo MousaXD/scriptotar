@@ -1,13 +1,18 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import type { Project, ViewId } from '../types';
+  import type { Project, ViewId, WorkspaceSearchResult } from '../types';
+
   export let activeView: ViewId;
   export let activeProjectId: string;
   export let projects: Project[];
   export let activeJobs = 0;
   export let globalSearch = '';
+  export let searchResults: WorkspaceSearchResult[] = [];
   export let onNavigate: (view: ViewId) => void;
   export let onProjectChange: (id: string) => Promise<void> | void;
+  export let onSearchSelect: (result: WorkspaceSearchResult) => Promise<void> | void;
+
+  let searchInput: HTMLInputElement;
 
   const nav: { id: ViewId; label: string; key: string }[] = [
     { id: 'dashboard', label: 'Dashboard', key: 'D' },
@@ -26,7 +31,29 @@
     await tick();
     select.value = activeProjectId;
   }
+
+  function searchKeys(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      globalSearch = '';
+      searchInput.blur();
+      return;
+    }
+    if (event.key === 'Enter' && searchResults[0]) {
+      event.preventDefault();
+      void onSearchSelect(searchResults[0]);
+    }
+  }
+
+  function globalShortcut(event: KeyboardEvent) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      searchInput?.focus();
+      searchInput?.select();
+    }
+  }
 </script>
+<svelte:window onkeydown={globalShortcut} />
+
 <div class="app-frame">
   <aside class="sidebar" aria-label="Primary navigation">
     <div class="brand-lockup"><div class="brand-mark">S</div><div><strong>Scriptotar</strong><span>Creator workstation</span></div></div>
@@ -49,10 +76,23 @@
           {#each projects as project}<option value={project.id}>{project.name}</option>{/each}
         </select>
       </div>
-      <label class="global-search" aria-label="Global search">
-        <span>⌕</span><input bind:value={globalSearch} placeholder="Search this workspace…" />
-        <kbd>Ctrl K</kbd>
-      </label>
+      <div class="global-search-wrap">
+        <label class="global-search" aria-label="Global search">
+          <span aria-hidden="true">⌕</span><input bind:this={searchInput} bind:value={globalSearch} on:keydown={searchKeys} aria-label="Search workspace" aria-expanded={Boolean(globalSearch.trim())} aria-controls="workspace-search-results" placeholder="Search transcripts, projects, creators…" />
+          <kbd>Ctrl K</kbd>
+        </label>
+        {#if globalSearch.trim()}
+          <div id="workspace-search-results" class="search-results" aria-label="Workspace search results">
+            {#if searchResults.length === 0}
+              <p>No local matches.</p>
+            {:else}
+              {#each searchResults as result}
+                <button on:click={() => onSearchSelect(result)}><span><strong>{result.title}</strong><small>{result.subtitle}</small></span><b>{result.kind}</b></button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+      </div>
       <button class="activity-button" on:click={() => onNavigate('jobs')} aria-label="Open jobs">
         <span class="activity-orb" class:busy={activeJobs > 0}></span>
         <span>{activeJobs > 0 ? `${activeJobs} active` : 'Idle'}</span>
@@ -61,3 +101,15 @@
     <main class="workspace"><slot /></main>
   </div>
 </div>
+
+<style>
+  .global-search-wrap { position: relative; min-width: 0; }
+  .search-results { position: absolute; top: calc(100% + 7px); left: 0; right: 0; z-index: 30; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 18px 45px rgb(0 0 0 / 35%); }
+  .search-results p { margin: 0; padding: 13px; font-size: 11px; }
+  .search-results button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; border-top: 1px solid var(--border); background: transparent; text-align: left; }
+  .search-results button:first-child { border-top: 0; }
+  .search-results button:hover, .search-results button:focus-visible { background: var(--surface-2); }
+  .search-results strong, .search-results small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-results small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+  .search-results b { color: var(--accent); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+</style>
