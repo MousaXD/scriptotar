@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
@@ -255,6 +256,37 @@ def _openai_text(data: dict[str, Any]) -> str:
     raise RuntimeError("The provider response did not contain readable text.")
 
 
+def _validated_openai_compatible_base_url(raw: str) -> str:
+    root = raw.strip().rstrip("/")
+    if not root:
+        raise ValueError("Enter the OpenAI-compatible base URL.")
+    try:
+        parsed = urllib.parse.urlparse(root)
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("OpenAI-compatible base URL has a malformed host or port.") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+        raise ValueError("OpenAI-compatible base URL must be an http:// or https:// URL with a valid host.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credentials must not be embedded in the OpenAI-compatible base URL.")
+    if parsed.query or parsed.fragment:
+        raise ValueError("OpenAI-compatible base URL must not include a query string or fragment.")
+    if port is not None and not (1 <= port <= 65535):
+        raise ValueError("OpenAI-compatible base URL has an invalid port.")
+
+    if parsed.scheme == "http":
+        host = parsed.hostname.rstrip(".").lower()
+        loopback = host == "localhost"
+        if not loopback:
+            try:
+                loopback = ipaddress.ip_address(host).is_loopback
+            except ValueError:
+                loopback = False
+        if not loopback:
+            raise ValueError("Plaintext HTTP is only allowed for localhost or loopback OpenAI-compatible endpoints.")
+    return root
+
+
 def request_ai(
     provider: str,
     model: str,
@@ -315,12 +347,7 @@ def request_ai(
         return "\n".join(chunks).strip()
 
     if provider == "OpenAI-compatible":
-        root = base_url.strip().rstrip("/")
-        if not root:
-            raise ValueError("Enter the OpenAI-compatible base URL.")
-        parsed = urllib.parse.urlparse(root)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("OpenAI-compatible base URL must be an http:// or https:// URL.")
+        root = _validated_openai_compatible_base_url(base_url)
         endpoint = root if root.endswith("/chat/completions") else root + "/chat/completions"
         data = _post_json(
             endpoint,
