@@ -1,7 +1,7 @@
 mod dto;
 mod services;
 
-use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiSettings};
+use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiSettings};
 use scriptotar_core::{Job, LegacyImportReport};
 use services::AppServices;
 use tauri::Manager;
@@ -26,6 +26,14 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
 #[tauri::command]
 fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
     state.bootstrap().map_err(command_error)
+}
+
+#[tauri::command]
+fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
+    state
+        .bootstrap()
+        .map(|bootstrap| bootstrap.jobs)
+        .map_err(command_error)
 }
 
 #[tauri::command]
@@ -132,6 +140,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             backend_health,
             bootstrap_app,
+            list_jobs,
             select_project,
             create_project,
             enqueue_local_media,
