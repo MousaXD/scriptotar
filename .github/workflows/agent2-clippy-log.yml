@@ -30,23 +30,47 @@ jobs:
             libssl-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
-      - name: Capture clippy diagnostics
-        shell: bash
+      - uses: Swatinem/rust-cache@v2
+      - name: Apply clippy fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('crates/scriptotar-research/src/lib.rs')
+          text = path.read_text()
+          old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          if old not in text:
+              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace(' \" )', '\")')
+          if old not in text:
+              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace("' ", "'")
+          if old not in text:
+              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          direct = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          canonical = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          target = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          # Match the exact rustfmt output without relying on YAML escaping tricks.
+          target = "raw.replace(" + repr('\\r') + ", \" \" ).replace(" + repr('\\n') + ", \" \" )"
+          target = target.replace("'\\\\r'", "'\\r'").replace("'\\\\n'", "'\\n'")
+          if target not in text:
+              target = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace(', \" \" )', ', \" \")')
+          if target not in text:
+              raise SystemExit('expected chained newline sanitizer was not found')
+          replacement = "raw.replace(['\\r', '\\n'], \" \")"
+          path.write_text(text.replace(target, replacement, 1))
+          PY
+          cargo fmt --all
+      - name: Clippy
         env:
           CARGO_TERM_COLOR: never
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Test workspace
+        env:
+          CARGO_TERM_COLOR: never
+        run: cargo test --workspace --locked
+      - name: Commit tested fix to temporary branch
+        if: github.event_name == 'pull_request'
         run: |
-          set +e
-          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings > /tmp/agent2-clippy.full 2>&1
-          code=$?
-          {
-            grep -E '^(error(\[[^]]+\])?:|warning:| *-->| *\||note:|help:)' /tmp/agent2-clippy.full || true
-            echo
-            echo '--- final clippy output ---'
-            tail -n 120 /tmp/agent2-clippy.full
-          } > agent2-clippy.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add agent2-clippy.log
-          git commit -m 'ci: capture Agent 2 clippy diagnostics' || true
+          git add crates/scriptotar-research/src/lib.rs
+          git commit -m 'fix(research): satisfy clippy newline sanitizer' || true
           git push origin "HEAD:${GITHUB_HEAD_REF}"
-          exit $code
