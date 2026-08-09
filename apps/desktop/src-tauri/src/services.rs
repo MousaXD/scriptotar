@@ -189,12 +189,7 @@ impl AppServices {
             .lock()
             .map_err(|_| "active project lock poisoned".to_owned())?;
         self.store
-            .upsert_watchlist(
-                active_project,
-                &label,
-                &profile_url,
-                u32::from(query.limit),
-            )
+            .upsert_watchlist(active_project, &label, &profile_url, u32::from(query.limit))
             .map_err(|error| error.to_string())?;
         self.bootstrap_for(active_project)
             .map_err(|error| error.to_string())
