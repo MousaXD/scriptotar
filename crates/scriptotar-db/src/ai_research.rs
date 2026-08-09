@@ -147,11 +147,7 @@ impl ResearchRepository for SqliteStore {
                 .execute(
                     "UPDATE creators SET platform = ?1, display_name = COALESCE(?2, display_name)
                      WHERE id = ?3",
-                    params![
-                        creator.platform,
-                        creator.display_name,
-                        existing.id.to_string()
-                    ],
+                    params![creator.platform, creator.display_name, existing.id.to_string()],
                 )
                 .map_err(storage_error)?;
             return connection
@@ -195,9 +191,7 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_creator)
                 .map_err(storage_error)?
         } else {
-            statement
-                .query_map([], row_creator)
-                .map_err(storage_error)?
+            statement.query_map([], row_creator).map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -310,9 +304,7 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_research)
                 .map_err(storage_error)?
         } else {
-            statement
-                .query_map([], row_research)
-                .map_err(storage_error)?
+            statement.query_map([], row_research).map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -442,7 +434,9 @@ mod tests {
             raw_json: None,
             scanned_at: now_rfc3339(),
         };
-        let first_saved = store.upsert_research_items(&[first.clone()]).unwrap();
+        let first_saved = store
+            .upsert_research_items(std::slice::from_ref(&first))
+            .unwrap();
         let mut refreshed = first;
         refreshed.id = Uuid::new_v4();
         refreshed.title = Some("Refreshed".to_owned());

@@ -1,0 +1,167 @@
+name: Linux Tauri Package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/desktop/**'
+      - 'apps/desktop-ui/**'
+      - 'sidecars/transcription/**'
+      - 'scriptotar.svg'
+      - '.github/workflows/linux-tauri.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'apps/desktop/**'
+      - 'apps/desktop-ui/**'
+      - 'sidecars/transcription/**'
+      - 'scriptotar.svg'
+      - '.github/workflows/linux-tauri.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-tauri-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux-deb:
+    name: Build and validate Tauri deb
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            sidecars/transcription/requirements-engine.txt
+            sidecars/transcription/requirements-bundle.txt
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            patchelf
+      - name: Install pinned Tauri CLI
+        run: cargo install tauri-cli --version '2.11.2' --locked
+      - name: Install pinned runtime bundler dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
+          python -m pip check
+      - name: Build self-contained transcription runtime
+        run: >-
+          python sidecars/transcription/build_runtime.py
+          --output apps/desktop/src-tauri/resources/transcription-runtime
+      - name: Validate built runtime before Tauri packaging
+        run: >-
+          python sidecars/transcription/validate_runtime.py
+          apps/desktop/src-tauri/resources/transcription-runtime
+      - name: Generate Linux icons and platform bundle config
+        working-directory: apps/desktop
+        run: |
+          cargo tauri icon ../../scriptotar.svg --output src-tauri/icons
+          cat > src-tauri/tauri.linux.conf.json <<'JSON'
+          {
+            "bundle": {
+              "active": true,
+              "targets": ["deb"],
+              "resources": {
+                "resources/transcription-runtime/": "transcription-runtime/"
+              },
+              "icon": [
+                "icons/32x32.png",
+                "icons/128x128.png",
+                "icons/128x128@2x.png",
+                "icons/icon.png"
+              ],
+              "linux": {
+                "deb": {
+                  "depends": ["zenity"]
+                }
+              }
+            }
+          }
+          JSON
+      - name: Build frontend assets
+        working-directory: apps/desktop-ui
+        run: |
+          npm ci
+          npm run build
+      - name: Build locked Linux deb
+        working-directory: apps/desktop
+        run: cargo tauri build --bundles deb -- --locked
+      - name: Stage and inspect deb
+        run: |
+          VERSION="$(python - <<'PY'
+          import json
+          print(json.load(open('apps/desktop/src-tauri/tauri.conf.json', encoding='utf-8'))['version'])
+          PY
+          )"
+          DEB="$(find target/release/bundle/deb -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          test -n "$DEB"
+          PACKAGE_NAME="$(dpkg-deb -f "$DEB" Package)"
+          test -n "$PACKAGE_NAME"
+          DEPENDS="$(dpkg-deb -f "$DEB" Depends)"
+          printf '%s\n' "$DEPENDS" | grep -Eq '(^|, )zenity( |,|$)'
+          mkdir -p dist
+          cp "$DEB" "dist/Scriptotar-Next-${VERSION}-amd64.deb"
+          cp apps/desktop/src-tauri/resources/transcription-runtime/RUNTIME-VERSIONS.txt dist/RUNTIME-VERSIONS.txt
+          dpkg-deb --contents "dist/Scriptotar-Next-${VERSION}-amd64.deb" > dist/DEB-CONTENTS.txt
+          grep -q 'transcription-runtime' dist/DEB-CONTENTS.txt
+          grep -q 'scriptotar-transcription' dist/DEB-CONTENTS.txt
+          grep -q 'scriptotar-engine' dist/DEB-CONTENTS.txt
+          grep -q 'ffmpeg' dist/DEB-CONTENTS.txt
+          grep -q 'ffprobe' dist/DEB-CONTENTS.txt
+          (cd dist && sha256sum "Scriptotar-Next-${VERSION}-amd64.deb" RUNTIME-VERSIONS.txt > SHA256SUMS.txt)
+          printf '%s\n' "$VERSION" > dist/TAURI_VERSION
+          printf '%s\n' "$PACKAGE_NAME" > dist/DEB_PACKAGE
+      - name: Install deb and validate installed runtime
+        run: |
+          VERSION="$(cat dist/TAURI_VERSION)"
+          PACKAGE_NAME="$(cat dist/DEB_PACKAGE)"
+          sudo apt-get install -y "./dist/Scriptotar-Next-${VERSION}-amd64.deb"
+          dpkg-query -W -f='${Status}\n' "$PACKAGE_NAME" | grep -q 'install ok installed'
+          command -v zenity >/dev/null
+          RUNTIME_MARKER="$(dpkg -L "$PACKAGE_NAME" | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
+          test -n "$RUNTIME_MARKER"
+          python sidecars/transcription/validate_runtime.py "$(dirname "$RUNTIME_MARKER")"
+      - name: Remove installed preview package
+        if: always()
+        run: |
+          if [ -f dist/DEB_PACKAGE ]; then
+            PACKAGE_NAME="$(cat dist/DEB_PACKAGE)"
+            if dpkg-query -W -f='${Status}' "$PACKAGE_NAME" 2>/dev/null | grep -q 'install ok installed'; then
+              sudo apt-get remove -y "$PACKAGE_NAME"
+            fi
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scriptotar-linux-tauri
+          path: |
+            dist/Scriptotar-Next-*-amd64.deb
+            dist/TAURI_VERSION
+            dist/DEB_PACKAGE
+            dist/RUNTIME-VERSIONS.txt
+            dist/SHA256SUMS.txt
+            dist/DEB-CONTENTS.txt
+          if-no-files-found: error

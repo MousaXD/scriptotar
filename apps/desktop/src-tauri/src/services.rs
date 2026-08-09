@@ -2,9 +2,12 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    thread,
-    time::Duration,
+    sync::{
+        mpsc::{self, RecvTimeoutError, Sender},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
@@ -33,14 +36,37 @@ use crate::dto::{
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
 const MAX_AI_CONTEXT_CHARS: usize = 20_000;
+const WATCHLIST_TICK: Duration = Duration::from_secs(60);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+struct WatchlistRefresher {
+    inner: Arc<WatchlistRefresherInner>,
+}
+
+struct WatchlistRefresherInner {
+    stop: Sender<()>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for WatchlistRefresherInner {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Ok(handle) = self.handle.get_mut() {
+            if let Some(handle) = handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct AppServices {
     store: SqliteStore,
     orchestrator: JobOrchestrator<SqliteStore>,
     active_project: Arc<Mutex<Uuid>>,
     legacy_path: PathBuf,
     research_command: YtDlpCommand,
+    _watchlist_refresher: WatchlistRefresher,
 }
 
 impl AppServices {
@@ -73,7 +99,8 @@ impl AppServices {
             runtime_config(data_dir.join("transcription-output")),
         );
         let research_command = YtDlpCommand::from_environment();
-        spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher =
+            spawn_watchlist_refresher(store.clone(), research_command.clone());
 
         Ok(Self {
             store,
@@ -81,6 +108,7 @@ impl AppServices {
             active_project: Arc::new(Mutex::new(active_project)),
             legacy_path,
             research_command,
+            _watchlist_refresher: watchlist_refresher,
         })
     }
 
@@ -312,19 +340,7 @@ impl AppServices {
     }
 
     pub fn build_ai_prompt(&self, input: &AiPromptInput) -> Result<String, String> {
-        validate_ai_input(input)?;
-        let mut sections = vec![format!("Task: {}", input.task.trim())];
-        push_prompt_field(&mut sections, "Source context", &input.source_text);
-        push_prompt_field(&mut sections, "Topic / goal", &input.topic);
-        push_prompt_field(&mut sections, "Audience", &input.audience);
-        push_prompt_field(&mut sections, "Target duration", &input.duration);
-        push_prompt_field(&mut sections, "CTA", &input.cta);
-        push_prompt_field(&mut sections, "Voice / style", &input.voice);
-        sections.push(
-            "Return a useful creator-workstation result. Preserve factual uncertainty and do not invent source details."
-                .to_owned(),
-        );
-        Ok(sections.join("\n\n"))
+        build_ai_prompt_text(input)
     }
 
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
@@ -522,39 +538,35 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| {
-            UiLibraryItem {
-                id: format!("research:{}", item.id),
-                kind: "Research".to_owned(),
-                title: item.title.clone(),
-                subtitle: item.creator.clone(),
-                project_id: active_project.to_string(),
-                platform: Some(item.platform.clone()),
-                metric: item.views.map(|views| format!("{views} views")),
-                date: item
-                    .published_at
-                    .clone()
-                    .unwrap_or_else(|| "Unknown date".to_owned()),
-            }
+        library.extend(ui_research.iter().map(|item| UiLibraryItem {
+            id: format!("research:{}", item.id),
+            kind: "Research".to_owned(),
+            title: item.title.clone(),
+            subtitle: item.creator.clone(),
+            project_id: active_project.to_string(),
+            platform: Some(item.platform.clone()),
+            metric: item.views.map(|views| format!("{views} views")),
+            date: item
+                .published_at
+                .clone()
+                .unwrap_or_else(|| "Unknown date".to_owned()),
         }));
-        library.extend(ai_runs.iter().map(|run| {
-            UiLibraryItem {
-                id: format!("ai:{}", run.id),
-                kind: "AI run".to_owned(),
-                title: run.task.clone(),
-                subtitle: run
-                    .provider
-                    .clone()
-                    .map(|provider| match &run.model {
-                        Some(model) => format!("{provider} · {model}"),
-                        None => provider,
-                    })
-                    .unwrap_or_else(|| "Copy Prompt".to_owned()),
-                project_id: run.project_id.to_string(),
-                platform: None,
-                metric: None,
-                date: run.created_at.clone(),
-            }
+        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
+            id: format!("ai:{}", run.id),
+            kind: "AI run".to_owned(),
+            title: run.task.clone(),
+            subtitle: run
+                .provider
+                .clone()
+                .map(|provider| match &run.model {
+                    Some(model) => format!("{provider} · {model}"),
+                    None => provider,
+                })
+                .unwrap_or_else(|| "Copy Prompt".to_owned()),
+            project_id: run.project_id.to_string(),
+            platform: None,
+            metric: None,
+            date: run.created_at.clone(),
         }));
 
         Ok(BootstrapData {
@@ -616,32 +628,66 @@ fn scan_and_persist_research(
     Ok(persisted.len())
 }
 
-fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) {
-    thread::spawn(move || loop {
-        thread::sleep(Duration::from_secs(60));
-        let Ok(settings) = store.load_settings() else {
-            continue;
-        };
-        if !settings.auto_watch {
-            continue;
-        }
-        let Ok(watchlists) = store.list_watchlists(None) else {
-            continue;
-        };
-        for watchlist in watchlists {
-            if !watchlist_is_due(&watchlist, settings.watch_interval_minutes) {
+fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+    let (stop, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut failed_until = HashMap::<Uuid, Instant>::new();
+        loop {
+            match receiver.recv_timeout(WATCHLIST_TICK) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            let Ok(settings) = store.load_settings() else {
+                continue;
+            };
+            if !settings.auto_watch {
                 continue;
             }
-            let _ = scan_and_persist_research(
-                &store,
-                &command,
-                watchlist.project_id,
-                &watchlist.profile_url,
-                watchlist.limit_count.min(200) as u16,
-                settings.cookie_browser.as_deref(),
-            );
+            let Ok(watchlists) = store.list_watchlists(None) else {
+                continue;
+            };
+            for watchlist in watchlists {
+                if failed_until
+                    .get(&watchlist.id)
+                    .is_some_and(|retry_at| *retry_at > Instant::now())
+                {
+                    continue;
+                }
+                if !watchlist_is_due(&watchlist, settings.watch_interval_minutes) {
+                    continue;
+                }
+                match scan_and_persist_research(
+                    &store,
+                    &command,
+                    watchlist.project_id,
+                    &watchlist.profile_url,
+                    watchlist.limit_count.min(200) as u16,
+                    settings.cookie_browser.as_deref(),
+                ) {
+                    Ok(_) => {
+                        failed_until.remove(&watchlist.id);
+                    }
+                    Err(_) => {
+                        failed_until.insert(
+                            watchlist.id,
+                            Instant::now()
+                                + watchlist_failure_retry(settings.watch_interval_minutes),
+                        );
+                    }
+                }
+            }
         }
     });
+    WatchlistRefresher {
+        inner: Arc::new(WatchlistRefresherInner {
+            stop,
+            handle: Mutex::new(Some(handle)),
+        }),
+    }
+}
+
+fn watchlist_failure_retry(interval_minutes: u32) -> Duration {
+    Duration::from_secs(u64::from(interval_minutes.max(5)) * 60)
 }
 
 fn watchlist_is_due(watchlist: &Watchlist, interval_minutes: u32) -> bool {
@@ -685,6 +731,62 @@ fn validate_ai_input(input: &AiPromptInput) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn task_instructions(task: &str) -> &'static str {
+    match task.trim() {
+        "Viral breakdown" => {
+            "Analyze why the source may retain attention. Return: Hook, Structure beats, Retention devices, Payoff, and Transferable lessons. Explain techniques without reproducing the source script."
+        }
+        "Hook ideas" => {
+            "Generate 10 distinct hooks grounded in the supplied facts. Vary the angle and mechanism; keep each hook to one or two lines and avoid copying distinctive source phrasing."
+        }
+        "New short-form script" => {
+            "Write an original short-form script for the requested goal and duration. Use a clear hook, concise body beats, payoff, and CTA. Preserve source facts but do not imitate or reproduce distinctive wording."
+        }
+        "Structure remix" => {
+            "First identify the source's high-level structural beats, then propose a materially new structure using the same supported facts. Do not perform sentence-level imitation."
+        }
+        "Content ideas" => {
+            "Generate 10 original content ideas. For each, provide a working title, core angle, audience value, and one concrete execution note grounded in the source context."
+        }
+        "Caption + CTA" => {
+            "Return three concise caption options followed by three CTA options. Keep claims supported by the source and make the variants meaningfully different."
+        }
+        "Voice profile" => {
+            "Describe observable communication traits such as pacing, sentence shape, vocabulary, rhetorical devices, energy, and recurring content patterns. Describe traits for adaptation, not identity impersonation or voice cloning."
+        }
+        "B-roll shot list" => {
+            "Create a practical ordered B-roll shot list. For each shot include the visual, its narrative purpose, and any useful on-screen text or graphic cue. Keep visuals consistent with supported source facts."
+        }
+        _ => {
+            "Complete the requested creator task with a clear, useful result grounded in the supplied source and brief."
+        }
+    }
+}
+
+fn build_ai_prompt_text(input: &AiPromptInput) -> Result<String, String> {
+    validate_ai_input(input)?;
+    let mut sections = vec![format!(
+        "Task: {}\n\nTask instructions:\n{}",
+        input.task.trim(),
+        task_instructions(&input.task)
+    )];
+    push_prompt_field(&mut sections, "Source transcript / context", &input.source_text);
+    push_prompt_field(&mut sections, "Topic / goal", &input.topic);
+    push_prompt_field(&mut sections, "Audience", &input.audience);
+    push_prompt_field(&mut sections, "Target duration", &input.duration);
+    push_prompt_field(&mut sections, "CTA", &input.cta);
+    push_prompt_field(&mut sections, "Voice / style instructions", &input.voice);
+    sections.push(
+        "Grounding and transformation rules:\n- Preserve factual meaning and uncertainty; do not invent source details, quotes, metrics, or events.\n- Transform, summarize, analyze, or create anew rather than reproducing lengthy or distinctive copyrighted wording from the source.\n- If the source does not support a requested claim, say what is missing.\n- Treat voice/style notes as creative constraints, not permission to impersonate a real person."
+            .to_owned(),
+    );
+    sections.push(
+        "Output format:\nReturn clean Markdown suitable for Scriptotar's result panel. Use short headings, bullets, or numbered sections where useful. Do not include process commentary or a generic preamble."
+            .to_owned(),
+    );
+    Ok(sections.join("\n\n"))
 }
 
 fn profile_label(url: &url::Url) -> String {
@@ -907,6 +1009,7 @@ fn source_platform(locator: &str, source_type: SourceType) -> String {
 
 fn settings_to_ui(settings: &ApplicationSettings) -> UiSettings {
     UiSettings {
+        output_directory: settings.output_directory.clone(),
         whisper_model: settings.transcription_model.clone(),
         device: settings.transcription_device.clone(),
         language: match settings.language.as_str() {
@@ -952,6 +1055,7 @@ fn settings_from_ui(
     ui: UiSettings,
     mut settings: ApplicationSettings,
 ) -> RepositoryResult<ApplicationSettings> {
+    settings.output_directory = validate_output_directory(ui.output_directory)?;
     if !["small", "medium", "turbo", "large-v3"].contains(&ui.whisper_model.as_str()) {
         return Err(RepositoryError::Validation(
             "unsupported transcription model".to_owned(),
@@ -1031,6 +1135,41 @@ fn settings_from_ui(
     Ok(settings)
 }
 
+fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let path = Path::new(trimmed);
+    if !path.is_dir() {
+        return Err(RepositoryError::Validation(format!(
+            "output directory does not exist or is not a directory: {}",
+            path.display()
+        )));
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        RepositoryError::Validation(format!("cannot access output directory: {error}"))
+    })?;
+    let probe = canonical.join(format!(".scriptotar-write-test-{}", Uuid::new_v4()));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|error| {
+            RepositoryError::Validation(format!("output directory is not writable: {error}"))
+        })?;
+    drop(file);
+    std::fs::remove_file(&probe).map_err(|error| {
+        RepositoryError::Storage(format!(
+            "failed to clean output-directory write test: {error}"
+        ))
+    })?;
+    Ok(Some(canonical.to_string_lossy().into_owned()))
+}
+
 fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
     match provider {
         "OpenAI" => Ok(ProviderKind::OpenAi),
@@ -1053,26 +1192,49 @@ fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn ai_prompt_never_contains_session_key() {
-        let input = AiPromptInput {
+    fn prompt_input(task: &str) -> AiPromptInput {
+        AiPromptInput {
             mode: "byok".to_owned(),
             provider: "OpenAI".to_owned(),
             model: "model".to_owned(),
-            task: "Summarize".to_owned(),
-            source_text: "source".to_owned(),
-            topic: String::new(),
-            audience: String::new(),
-            duration: String::new(),
-            cta: String::new(),
-            voice: String::new(),
+            task: task.to_owned(),
+            source_text: "A source fact with uncertainty.".to_owned(),
+            topic: "Topic".to_owned(),
+            audience: "Audience".to_owned(),
+            duration: "45 seconds".to_owned(),
+            cta: "Follow for more".to_owned(),
+            voice: "Direct and concise".to_owned(),
             base_url: None,
             api_key: Some("super-secret".to_owned()),
-        };
-        let mut sections = vec![format!("Task: {}", input.task.trim())];
-        push_prompt_field(&mut sections, "Source context", &input.source_text);
-        let prompt = sections.join("\n\n");
+        }
+    }
+
+    #[test]
+    fn ai_prompt_never_contains_session_key_and_has_grounding_rules() {
+        let prompt = build_ai_prompt_text(&prompt_input("Hook ideas")).unwrap();
         assert!(!prompt.contains("super-secret"));
+        assert!(prompt.contains("10 distinct hooks"));
+        assert!(prompt.contains("Preserve factual meaning"));
+        assert!(prompt.contains("copyrighted wording"));
+        assert!(prompt.contains("clean Markdown"));
+    }
+
+    #[test]
+    fn supported_ai_actions_have_task_specific_instructions() {
+        for task in [
+            "Viral breakdown",
+            "Hook ideas",
+            "New short-form script",
+            "Structure remix",
+            "Content ideas",
+            "Caption + CTA",
+            "Voice profile",
+            "B-roll shot list",
+        ] {
+            let prompt = build_ai_prompt_text(&prompt_input(task)).unwrap();
+            assert!(prompt.contains(&format!("Task: {task}")));
+            assert!(!prompt.contains("Task instructions:\nComplete the requested creator task"));
+        }
     }
 
     #[test]
@@ -1086,7 +1248,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_watchlist_timestamp_is_due_for_recovery() {
+    fn watchlist_interval_and_failed_refresh_backoff_are_bounded() {
         let watchlist = Watchlist {
             id: Uuid::new_v4(),
             project_id: Uuid::new_v4(),
@@ -1096,5 +1258,22 @@ mod tests {
             last_scan_at: Some("not-a-time".to_owned()),
         };
         assert!(watchlist_is_due(&watchlist, 60));
+        assert_eq!(watchlist_failure_retry(30), Duration::from_secs(30 * 60));
+        assert_eq!(watchlist_failure_retry(0), Duration::from_secs(5 * 60));
+    }
+
+    #[test]
+    fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {
+        let temp =
+            std::env::temp_dir().join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let expected = std::fs::canonicalize(&temp).unwrap();
+        let value = validate_output_directory(Some(temp.to_string_lossy().into_owned())).unwrap();
+        assert_eq!(value.as_deref(), Some(expected.to_string_lossy().as_ref()));
+        assert_eq!(
+            validate_output_directory(Some("   ".to_owned())).unwrap(),
+            None
+        );
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 }

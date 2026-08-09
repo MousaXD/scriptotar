@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  Job,
   LegacyImportReport
 } from '../types';
 
@@ -11,14 +12,16 @@ export type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) =
 export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
   return {
     bootstrap: () => invoke<BootstrapData>('bootstrap_app'),
+    listJobs: () => invoke<Job[]>('list_jobs'),
     selectProject: (projectId) => invoke<BootstrapData>('select_project', { projectId }),
     createProject: (name) => invoke<BootstrapData>('create_project', { name }),
+    chooseLocalMedia: () => invoke<string | null>('choose_local_media'),
+    chooseOutputDirectory: () => invoke<string | null>('choose_output_directory'),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
     enqueueUrl: (projectId, url) => invoke<BackendJob>('enqueue_url', { projectId, url }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
     saveWatchlist: (query: ResearchQuery) => invoke<BootstrapData>('save_watchlist', { query }),
     scanCreator: (query: ResearchQuery) => invoke<void>('scan_creator', { query }),
-    refreshWatchlists: () => invoke<number>('refresh_watchlists'),
     queueResearch: (ids) => invoke<void>('queue_research', { ids }),
     cancelJob: (jobId) => invoke<void>('cancel_job', { jobId }),
     buildAiPrompt: (input: AiPromptInput) => invoke<string>('build_ai_prompt', { input }),

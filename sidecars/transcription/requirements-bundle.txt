@@ -1,0 +1,4 @@
+# Build-time pins for the self-contained Tauri transcription runtime.
+-r requirements-engine.txt
+pyinstaller==6.21.0
+static-ffmpeg==3.0

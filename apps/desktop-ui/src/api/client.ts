@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  Job,
   LegacyImportReport
 } from '../types';
 
@@ -29,14 +30,16 @@ export interface AiPromptInput {
 
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
+  listJobs(): Promise<Job[]>;
   selectProject(projectId: string): Promise<BootstrapData>;
   createProject(name: string): Promise<BootstrapData>;
+  chooseLocalMedia(): Promise<string | null>;
+  chooseOutputDirectory(): Promise<string | null>;
   enqueueLocalMedia(projectId: string, path: string): Promise<BackendJob>;
   enqueueUrl(projectId: string, url: string): Promise<BackendJob>;
   retryJob(jobId: string): Promise<BackendJob>;
   saveWatchlist(query: ResearchQuery): Promise<BootstrapData>;
   scanCreator(query: ResearchQuery): Promise<void>;
-  refreshWatchlists(): Promise<number>;
   queueResearch(ids: string[]): Promise<void>;
   cancelJob(jobId: string): Promise<void>;
   buildAiPrompt(input: AiPromptInput): Promise<string>;

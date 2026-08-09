@@ -1,5 +1,6 @@
 use std::{
     env,
+    ffi::OsString,
     io::{BufRead, BufReader, Read},
     path::PathBuf,
     process::{Command, Stdio},
@@ -128,14 +129,21 @@ impl YtDlpCommand {
         }
     }
 
-    pub fn from_environment() -> Self {
-        if let Some(executable) = env::var_os("SCRIPTOTAR_YTDLP_EXECUTABLE") {
+    fn from_overrides(executable: Option<OsString>, python: Option<OsString>) -> Self {
+        if let Some(executable) = executable {
             return Self::executable(executable);
         }
-        if let Some(python) = env::var_os("SCRIPTOTAR_SIDECAR_PYTHON") {
+        if let Some(python) = python {
             return Self::python_module(python);
         }
         Self::executable("yt-dlp")
+    }
+
+    pub fn from_environment() -> Self {
+        Self::from_overrides(
+            env::var_os("SCRIPTOTAR_YTDLP_EXECUTABLE"),
+            env::var_os("SCRIPTOTAR_YTDLP_PYTHON"),
+        )
     }
 }
 
@@ -228,9 +236,14 @@ impl ResearchProvider for YtDlpProvider {
         let mut line = Vec::new();
         loop {
             line.clear();
-            let read = reader
-                .read_until(b'\n', &mut line)
-                .map_err(|error| ResearchError::Provider(provider_io_message(&error)))?;
+            let read = match reader.read_until(b'\n', &mut line) {
+                Ok(read) => read,
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ResearchError::Provider(provider_io_message(&error)));
+                }
+            };
             if read == 0 {
                 break;
             }
@@ -251,6 +264,7 @@ impl ResearchProvider for YtDlpProvider {
                 Err(_) => invalid_lines += 1,
             }
             if observations.len() >= usize::from(limit) {
+                let _ = child.kill();
                 break;
             }
         }
@@ -304,7 +318,7 @@ fn provider_io_message(error: &std::io::Error) -> String {
 }
 
 fn safe_provider_detail(raw: &str) -> String {
-    let sanitized = raw.replace('\r', " ").replace('\n', " ");
+    let sanitized = raw.replace(['\r', '\n'], " ");
     let mut chars = sanitized.chars();
     let shortened = chars.by_ref().take(1_200).collect::<String>();
     if chars.next().is_some() {
@@ -500,6 +514,7 @@ where
 mod tests {
     use std::{
         fs,
+        path::PathBuf,
         sync::{Arc, Mutex},
     };
 
@@ -537,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_lookalike_nonstandard_port_and_non_http_urls() {
+    fn rejects_lookalike_nonstandard_port_non_http_and_credentials() {
         let policy = NetworkPolicy;
         assert_eq!(
             policy.validate("https://youtube.com.attacker.example/watch?v=1"),
@@ -547,8 +562,16 @@ mod tests {
             policy.validate("https://youtube.com:444/@example"),
             Err(ResearchError::NonStandardPort)
         );
+        assert_eq!(
+            policy.validate("https://user:pass@youtube.com/@example"),
+            Err(ResearchError::EmbeddedCredentials)
+        );
         assert!(matches!(
             policy.validate("file:///etc/passwd"),
+            Err(ResearchError::InvalidUrl(_))
+        ));
+        assert!(matches!(
+            policy.validate("not a url"),
             Err(ResearchError::InvalidUrl(_))
         ));
     }
@@ -609,18 +632,36 @@ mod tests {
         assert_eq!(error, ResearchError::HostNotAllowed);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn yt_dlp_provider_parses_line_stream_without_live_network() {
+    fn dedicated_ytdlp_override_has_priority_and_python_is_explicit() {
+        let executable = YtDlpCommand::from_overrides(
+            Some(OsString::from("packaged-ytdlp")),
+            Some(OsString::from("python-dev")),
+        );
+        assert_eq!(executable.program, PathBuf::from("packaged-ytdlp"));
+        assert!(executable.prefix_args.is_empty());
+
+        let python = YtDlpCommand::from_overrides(None, Some(OsString::from("python-dev")));
+        assert_eq!(python.program, PathBuf::from("python-dev"));
+        assert_eq!(python.prefix_args, ["-m", "yt_dlp"]);
+    }
+
+    #[cfg(unix)]
+    fn fixture_script(body: &str) -> (tempfile::TempDir, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
         let fixture = temp.path().join("fake-yt-dlp");
-        fs::write(
-            &fixture,
-            "#!/bin/sh\nprintf '%s\\n' '{\"id\":\"abc\",\"extractor_key\":\"Youtube\",\"title\":\"Fixture\",\"view_count\":42,\"like_count\":5,\"comment_count\":2,\"upload_date\":\"20260809\",\"duration\":12.5}'\n",
-        )
-        .unwrap();
+        fs::write(&fixture, format!("#!/bin/sh\n{body}\n")).unwrap();
         fs::set_permissions(&fixture, fs::Permissions::from_mode(0o755)).unwrap();
+        (temp, fixture)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn yt_dlp_provider_parses_line_stream_without_live_network() {
+        let (_temp, fixture) = fixture_script(
+            "printf '%s\\n' '{\"id\":\"abc\",\"extractor_key\":\"Youtube\",\"title\":\"Fixture\",\"view_count\":42,\"like_count\":5,\"comment_count\":2,\"upload_date\":\"20260809\",\"duration\":12.5}'",
+        );
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
         let validated = NetworkPolicy
             .validate("https://www.youtube.com/@creator")
@@ -631,5 +672,33 @@ mod tests {
         assert_eq!(items[0].title.as_deref(), Some("Fixture"));
         assert_eq!(items[0].view_count, Some(42));
         assert_eq!(items[0].published_at.as_deref(), Some("2026-08-09"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn yt_dlp_failure_and_empty_success_are_distinct() {
+        let (_temp, failure) = fixture_script("echo 'fixture failure' >&2; exit 2");
+        let provider = YtDlpProvider::new(YtDlpCommand::executable(failure));
+        let validated = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
+        assert!(matches!(provider.scan(&validated, 25), Err(ResearchError::Provider(_))));
+
+        let (_temp, empty) = fixture_script("exit 0");
+        let provider = YtDlpProvider::new(YtDlpCommand::executable(empty));
+        assert!(provider.scan(&validated, 25).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn yt_dlp_result_count_is_bounded() {
+        let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
+        let (_temp, fixture) = fixture_script(body);
+        let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
+        let validated = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
+        let items = provider.scan(&validated, 1).unwrap();
+        assert_eq!(items.len(), 1);
     }
 }
