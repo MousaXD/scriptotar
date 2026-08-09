@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { BootstrapData } from '../types';
+import type { BackendJob, BootstrapData } from '../types';
 
 export const mockBootstrap: BootstrapData = {
   activeProjectId: 'p-creator-lab',
@@ -58,6 +58,19 @@ export const mockBootstrap: BootstrapData = {
   }
 };
 
+function backendJob(projectId: string, kind: 'url' | 'local_file', value: string): BackendJob {
+  return {
+    id: `mock-${kind}`,
+    project_id: projectId,
+    input: { kind, value },
+    state: 'queued',
+    progress: null,
+    last_error: null,
+    created_at: '2026-08-09T09:30:00+04:00',
+    updated_at: '2026-08-09T09:30:00+04:00'
+  };
+}
+
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
   const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active });
@@ -65,9 +78,9 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async bootstrap() { return snapshot(); },
     async selectProject(projectId: string) { active = projectId; return snapshot(); },
     async createProject(_name: string) { return snapshot(); },
-    async enqueueLocalMedia(_projectId: string, _path: string) {},
-    async enqueueUrl(_projectId: string, _url: string) {},
-    async retryJob(_jobId: string) {},
+    async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
+    async enqueueUrl(projectId: string, url: string) { return backendJob(projectId, 'url', url); },
+    async retryJob(jobId: string) { return { ...backendJob(active, 'local_file', '/mock/retry.mp4'), id: jobId }; },
     async scanCreator(_query: ResearchQuery) {},
     async queueResearch(_ids: string[]) {},
     async cancelJob(_jobId: string) {},
@@ -75,7 +88,20 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       return [`Task: ${input.task}`, `Topic: ${input.topic || 'Use source context'}`, `Audience: ${input.audience || 'General audience'}`, '', input.sourceText].join('\n');
     },
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
-    async saveSettings(_settings) {}
+    async getSettings() { return structuredClone(mockBootstrap.settings); },
+    async saveSettings(_settings) {},
+    async importLegacyData() {
+      return {
+        skipped: false,
+        backup_path: '/mock/history.sqlite3.scriptotar-next.bak',
+        projects: 1,
+        jobs: 2,
+        transcripts: 1,
+        research_items: 3,
+        watchlists: 1,
+        ai_runs: 1
+      };
+    }
   };
   return { ...client, ...overrides };
 }
