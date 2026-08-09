@@ -158,6 +158,9 @@ mod tests {
         let reopened_rows = reopened.list_watchlists(Some(first_project.id)).unwrap();
         assert_eq!(reopened_rows.len(), 1);
         assert_eq!(reopened_rows[0].id, first.id);
-        assert_eq!(reopened_rows[0].profile_url, "https://www.youtube.com/@creator");
+        assert_eq!(
+            reopened_rows[0].profile_url,
+            "https://www.youtube.com/@creator"
+        );
     }
 }
