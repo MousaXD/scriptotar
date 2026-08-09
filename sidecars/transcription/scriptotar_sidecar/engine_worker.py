@@ -15,6 +15,20 @@ def emit(event_type: str, **payload: Any) -> None:
     sys.stdout.flush()
 
 
+def _unexpected_error_payload(exc: Exception) -> dict[str, Any]:
+    detail = f"{type(exc).__name__}: {exc}"
+    message = (
+        "The transcription engine could not complete the job. On first use the selected Whisper model "
+        "may need network access to download; retry when online or choose a model that is already cached. "
+        f"Technical detail: {detail}"
+    )
+    return {
+        "code": "ENGINE_ERROR",
+        "message": message[:2000],
+        "retryable": True,
+    }
+
+
 def main() -> int:
     if os.name == "posix":
         os.umask(0o077)
@@ -40,15 +54,7 @@ def main() -> int:
                     emit("error", job_id=job_id, error=exc.as_payload())
                 except Exception as exc:
                     traceback.print_exc(file=sys.stderr)
-                    emit(
-                        "error",
-                        job_id=job_id,
-                        error={
-                            "code": "ENGINE_ERROR",
-                            "message": f"{type(exc).__name__}: {exc}",
-                            "retryable": False,
-                        },
-                    )
+                    emit("error", job_id=job_id, error=_unexpected_error_payload(exc))
                 else:
                     emit("result", job_id=job_id, result=result)
             elif command_type == "shutdown":
