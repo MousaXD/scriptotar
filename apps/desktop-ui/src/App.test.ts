@@ -11,8 +11,9 @@ async function ready(api = createMockClient()) {
 
 describe('desktop workstation', () => {
   it('switches projects through the backend contract', async () => {
-    const selectProject = vi.fn(async () => {});
-    await ready(createMockClient({ selectProject }));
+    const api = createMockClient();
+    const selectProject = vi.spyOn(api, 'selectProject');
+    await ready(api);
     const select = screen.getByLabelText('Project');
     await fireEvent.change(select, { target: { value: 'p-client-a' } });
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith('p-client-a'));
