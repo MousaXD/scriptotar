@@ -228,11 +228,7 @@ fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
     command_output(&mut command).map_err(|error| format!("native file picker failed: {error}"))
 }
 
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "windows",
-    target_os = "macos"
-)))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn native_picker(_kind: NativePicker) -> Result<Option<String>, String> {
     Err("native file picking is not available on this platform".to_owned())
 }
