@@ -360,7 +360,9 @@ impl ProjectRepository for SqliteStore {
         let mut statement = connection
             .prepare("SELECT id, name, created_at FROM projects ORDER BY name COLLATE NOCASE")
             .map_err(storage_error)?;
-        let rows = statement.query_map([], row_project).map_err(storage_error)?;
+        let rows = statement
+            .query_map([], row_project)
+            .map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
@@ -589,7 +591,9 @@ mod tests {
         assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         let connection = db.connection().unwrap();
         let applied: u32 = connection
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(applied, LATEST_SCHEMA_VERSION);
     }
@@ -663,19 +667,13 @@ mod tests {
     fn active_jobs_become_interrupted_after_restart_recovery() {
         let (_temp, db) = store();
         let project = project(&db, "Inbox");
-        let job = Job::new(
-            project.id,
-            JobInput::LocalFile("/tmp/video.mp4".to_owned()),
-        );
+        let job = Job::new(project.id, JobInput::LocalFile("/tmp/video.mp4".to_owned()));
         db.insert_job(&job).unwrap();
         db.transition_job(job.id, JobState::Preparing).unwrap();
         db.transition_job(job.id, JobState::Transcribing).unwrap();
 
         assert_eq!(db.mark_active_jobs_interrupted().unwrap(), 1);
-        assert_eq!(
-            db.get_job(job.id).unwrap().state,
-            JobState::Interrupted
-        );
+        assert_eq!(db.get_job(job.id).unwrap().state, JobState::Interrupted);
     }
 
     #[test]
