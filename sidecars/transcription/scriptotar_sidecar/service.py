@@ -32,6 +32,17 @@ class EngineSupervisor:
         self.log_stream.flush()
 
     def _engine_command(self) -> list[str]:
+        packaged = os.environ.get("SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE")
+        if packaged:
+            path = Path(packaged).expanduser().resolve()
+            if not path.is_file():
+                raise SidecarError(
+                    "ENGINE_CONFIG",
+                    "Bundled transcription engine executable does not exist.",
+                    details={"path": str(path)},
+                )
+            return [str(path)]
+
         override = os.environ.get("SCRIPTOTAR_SIDECAR_ENGINE_WORKER")
         if override:
             path = Path(override).expanduser().resolve()
