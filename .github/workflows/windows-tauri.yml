@@ -45,7 +45,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install pinned Tauri CLI
         run: npm install --global @tauri-apps/cli@2.11.2
-      - name: Generate Windows icons and bundle override
+      - name: Generate Windows icons and platform bundle config
         working-directory: apps/desktop
         shell: pwsh
         run: |
@@ -68,10 +68,17 @@ jobs:
               }
             }
           }
-          '@ | Set-Content -Encoding utf8 src-tauri/tauri.windows-ci.conf.json
-      - name: Build Tauri NSIS installer
+          '@ | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json
+      - name: Build frontend assets
+        working-directory: apps/desktop-ui
+        run: |
+          npm ci
+          npm run build
+      - name: Build locked Windows binary
+        run: cargo build --release --locked -p scriptotar-desktop
+      - name: Bundle NSIS installer
         working-directory: apps/desktop
-        run: tauri build --config src-tauri/tauri.windows-ci.conf.json --bundles nsis -- --locked
+        run: tauri bundle
       - name: Stage Windows installer
         shell: pwsh
         run: |
@@ -80,7 +87,7 @@ jobs:
             Where-Object { $_.FullName -match '[\\/]bundle[\\/]nsis[\\/]' } |
             Select-Object -First 1
           if (-not $installer) {
-            throw 'Tauri NSIS installer was not found after a successful build.'
+            throw 'Tauri NSIS installer was not found after a successful bundle.'
           }
           New-Item -ItemType Directory -Force dist | Out-Null
           $output = "dist/Scriptotar-Next-$version-x64-setup.exe"
