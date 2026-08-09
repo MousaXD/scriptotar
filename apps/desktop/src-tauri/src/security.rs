@@ -280,8 +280,8 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
             }
         }
     }
-    let (temporary_path, mut temporary_file) = temporary
-        .ok_or_else(|| "could not reserve a temporary legacy import file".to_owned())?;
+    let (temporary_path, mut temporary_file) =
+        temporary.ok_or_else(|| "could not reserve a temporary legacy import file".to_owned())?;
 
     let copy_result = io::copy(&mut source, &mut temporary_file)
         .map_err(|error| format!("could not stage legacy database for import: {error}"))
@@ -299,8 +299,9 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
     if let Err(error) = harden_private_file_permissions(&temporary_path)
         .and_then(|_| validate_sqlite_header(&temporary_path))
         .and_then(|_| {
-            fs::rename(&temporary_path, staged)
-                .map_err(|rename_error| format!("could not finalize staged legacy database: {rename_error}"))
+            fs::rename(&temporary_path, staged).map_err(|rename_error| {
+                format!("could not finalize staged legacy database: {rename_error}")
+            })
         })
     {
         let _ = fs::remove_file(&temporary_path);
