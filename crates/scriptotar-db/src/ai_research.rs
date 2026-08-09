@@ -40,7 +40,11 @@ fn validate_text(field: &str, value: &str, max_chars: usize) -> RepositoryResult
     Ok(())
 }
 
-fn validate_optional_text(field: &str, value: Option<&str>, max_chars: usize) -> RepositoryResult<()> {
+fn validate_optional_text(
+    field: &str,
+    value: Option<&str>,
+    max_chars: usize,
+) -> RepositoryResult<()> {
     if value.is_some_and(|value| value.chars().count() > max_chars) {
         return Err(RepositoryError::Validation(format!("{field} is too long")));
     }
@@ -207,7 +211,11 @@ impl ResearchRepository for SqliteStore {
             validate_text("research source URL", &item.source_url, MAX_URL_CHARS)?;
             validate_text("research platform", &item.platform, 64)?;
             validate_optional_text("research title", item.title.as_deref(), MAX_TITLE_CHARS)?;
-            validate_optional_text("research raw metadata", item.raw_json.as_deref(), MAX_RAW_JSON_CHARS)?;
+            validate_optional_text(
+                "research raw metadata",
+                item.raw_json.as_deref(),
+                MAX_RAW_JSON_CHARS,
+            )?;
             let existing_id = tx
                 .query_row(
                     "SELECT id FROM research_items
@@ -218,11 +226,16 @@ impl ResearchRepository for SqliteStore {
                 )
                 .optional()
                 .map_err(storage_error)?;
+            let is_new = existing_id.is_none();
             let id = existing_id
-                .map(|value| Uuid::parse_str(&value).map_err(|error| RepositoryError::Storage(error.to_string())))
+                .as_deref()
+                .map(|value| {
+                    Uuid::parse_str(value)
+                        .map_err(|error| RepositoryError::Storage(error.to_string()))
+                })
                 .transpose()?
                 .unwrap_or(item.id);
-            if id == item.id && existing_id.is_none() {
+            if is_new {
                 tx.execute(
                     "INSERT INTO research_items(
                         id, project_id, creator_id, source_url, platform, title, view_count,
@@ -403,7 +416,10 @@ mod tests {
         renamed.display_name = Some("Creator renamed".to_owned());
         let second_creator = store.upsert_creator(&renamed).unwrap();
         assert_eq!(first_creator.id, second_creator.id);
-        assert_eq!(second_creator.display_name.as_deref(), Some("Creator renamed"));
+        assert_eq!(
+            second_creator.display_name.as_deref(),
+            Some("Creator renamed")
+        );
 
         let first = ResearchItem {
             id: Uuid::new_v4(),
