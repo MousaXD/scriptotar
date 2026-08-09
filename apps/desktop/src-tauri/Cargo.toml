@@ -21,7 +21,11 @@ scriptotar-jobs = { path = "../../../crates/scriptotar-jobs" }
 scriptotar-media = { path = "../../../crates/scriptotar-media" }
 scriptotar-orchestrator = { path = "../../../crates/scriptotar-orchestrator" }
 scriptotar-research = { path = "../../../crates/scriptotar-research" }
+rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
