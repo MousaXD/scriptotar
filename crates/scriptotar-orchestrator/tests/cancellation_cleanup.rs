@@ -16,8 +16,10 @@ fn wait_for_state(store: &SqliteStore, job_id: Uuid, wanted: JobState) -> Job {
         if job.state == wanted {
             return job;
         }
-        if matches!(job.state, JobState::Failed | JobState::Completed | JobState::Interrupted)
-            && job.state != wanted
+        if matches!(
+            job.state,
+            JobState::Failed | JobState::Completed | JobState::Interrupted
+        ) && job.state != wanted
         {
             panic!("job reached unexpected terminal state: {:?}", job.state);
         }
@@ -133,5 +135,8 @@ fn cancellation_reaps_spawned_worker_process_and_next_job_succeeds() {
         project.id,
         &temp.path().join("normal.mp4"),
     );
-    assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+    assert_eq!(
+        wait_for_terminal(&store, next.id).state,
+        JobState::Completed
+    );
 }
