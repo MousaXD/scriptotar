@@ -12,7 +12,7 @@ def emit(event_type: str, *, protocol: int = PROTOCOL, **payload: object) -> Non
     print(json.dumps({"protocol": protocol, "type": event_type, **payload}), flush=True)
 
 
-def result_for(source: str) -> dict[str, object]:
+def result_for(source: str, input_kind: str) -> dict[str, object]:
     return {
         "source": {
             "title": Path(source).stem,
@@ -37,7 +37,7 @@ def result_for(source: str) -> dict[str, object]:
             "srt": None,
             "vtt": None,
             "json": None,
-            "media": source,
+            "media": "/tmp/downloaded-fixture.mp4" if input_kind == "url" else source,
         },
         "output_dir": "/tmp/scriptotar-fixture",
     }
@@ -61,6 +61,7 @@ def main() -> int:
             continue
 
         job_id = command["job_id"]
+        input_kind = command["input"]["kind"]
         source = command["input"]["value"]
         name = Path(source).name
         emit("accepted", job_id=job_id, request_id=command.get("request_id"))
@@ -70,16 +71,22 @@ def main() -> int:
             print('{"protocol":1,"type":"result"', flush=True)
             continue
         if "wrong-protocol" in name:
-            emit("result", protocol=99, job_id=job_id, result=result_for(source))
+            emit("result", protocol=99, job_id=job_id, result=result_for(source, input_kind))
             continue
         if "wrong-job-id" in name:
-            emit("result", job_id="definitely-not-the-active-job", result=result_for(source))
+            emit(
+                "result",
+                job_id="definitely-not-the-active-job",
+                result=result_for(source, input_kind),
+            )
             continue
         if "sidecar-exit" in name:
             os._exit(23)
 
+        if input_kind == "url":
+            emit("progress", job_id=job_id, stage="downloading", percent=40.0, message="fixture download")
         emit("progress", job_id=job_id, stage="transcribing", percent=50.0, message="fixture")
-        emit("result", job_id=job_id, result=result_for(source))
+        emit("result", job_id=job_id, result=result_for(source, input_kind))
     return 0
 
 
