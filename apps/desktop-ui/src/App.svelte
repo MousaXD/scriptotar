@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getApi, type ScriptotarApi } from './api';
-  import type { BootstrapData, ViewId } from './types';
+  import { applyAppearance, loadAppearance } from './appearance';
+  import type { AppSettings, BootstrapData, Job, LibraryItem, ViewId, WorkspaceSearchResult } from './types';
   import AppShell from './components/AppShell.svelte';
   import ErrorState from './components/ErrorState.svelte';
   import DashboardView from './views/DashboardView.svelte';
@@ -19,15 +20,47 @@
   let switchError = '';
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
+  let selectedTranscriptId = '';
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
+  $: searchResults = data ? buildSearchResults(data, globalSearch) : [];
+
+  function prepareData(next: BootstrapData): BootstrapData {
+    const appearance = loadAppearance(next.settings.appearance);
+    applyAppearance(appearance);
+    return { ...next, settings: { ...next.settings, appearance } };
+  }
+
+  function buildSearchResults(snapshot: BootstrapData, rawQuery: string): WorkspaceSearchResult[] {
+    const query = rawQuery.trim().toLocaleLowerCase();
+    if (!query) return [];
+    const match = (...values: Array<string | undefined>) => values.some((value) => value?.toLocaleLowerCase().includes(query));
+    const results: WorkspaceSearchResult[] = [];
+
+    for (const project of snapshot.projects) {
+      if (match(project.name, project.description)) results.push({ id: `project:${project.id}`, kind: 'Project', title: project.name, subtitle: project.description || `${project.itemCount} items`, view: 'dashboard', projectId: project.id });
+    }
+    for (const transcript of snapshot.transcripts) {
+      if (match(transcript.title, transcript.text, transcript.language, transcript.platform)) results.push({ id: `transcript:${transcript.id}`, kind: 'Transcript', title: transcript.title, subtitle: `${transcript.language} · ${transcript.platform}`, view: 'transcript', projectId: transcript.projectId, targetId: transcript.id });
+    }
+    for (const item of snapshot.research) {
+      if (match(item.title, item.creator, item.platform)) results.push({ id: `research:${item.id}`, kind: 'Research', title: item.title, subtitle: `${item.creator} · ${item.platform}`, view: 'research', projectId: snapshot.activeProjectId, targetId: item.id });
+    }
+    for (const creator of snapshot.creators) {
+      if (match(creator.name, creator.handle, creator.platform)) results.push({ id: `creator:${creator.id}`, kind: 'Creator', title: creator.name, subtitle: `${creator.handle} · ${creator.platform}`, view: 'research', projectId: snapshot.activeProjectId, targetId: creator.id });
+    }
+    for (const run of snapshot.aiRuns) {
+      if (match(run.title, run.task, run.provider, run.model)) results.push({ id: `ai:${run.id}`, kind: 'AI run', title: run.title, subtitle: `${run.task} · ${run.provider || 'Local prompt'}`, view: 'ai', projectId: snapshot.activeProjectId, targetId: run.id });
+    }
+    return results.slice(0, 10);
+  }
 
   async function load(showLoading = true) {
     if (showLoading) loading = true;
     error = '';
-    try { data = await api.bootstrap(); }
+    try { data = prepareData(await api.bootstrap()); }
     catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load the desktop workspace.'; }
     finally { if (showLoading) loading = false; }
   }
@@ -37,7 +70,8 @@
   async function selectProject(id: string) {
     switchError = '';
     try {
-      data = await api.selectProject(id);
+      data = prepareData(await api.selectProject(id));
+      selectedTranscriptId = data.transcripts[0]?.id || '';
     } catch (cause) {
       switchError = cause instanceof Error ? cause.message : 'Unable to switch projects.';
       if (data) data = { ...data };
@@ -66,6 +100,45 @@
     await refresh();
   }
 
+  async function openCompletedJob(job: Job) {
+    const transcript = data?.transcripts.find((item) => item.source === job.source || item.title === job.title);
+    if (!transcript) throw new Error('This job is complete, but no persisted transcript for it is available in the active project yet. Refresh the workspace or open the transcript from Library.');
+    selectedTranscriptId = transcript.id;
+    activeView = 'transcript';
+  }
+
+  async function openLibraryItem(item: LibraryItem) {
+    if (!data) return;
+    if (item.kind === 'Project') {
+      if (item.projectId !== data.activeProjectId) await selectProject(item.projectId);
+      activeView = 'dashboard';
+      return;
+    }
+    if (item.kind === 'Transcript') {
+      const embeddedId = item.id.startsWith('transcript:') ? item.id.slice('transcript:'.length) : '';
+      const transcript = data.transcripts.find((candidate) => candidate.id === embeddedId || candidate.title === item.title);
+      if (!transcript) throw new Error('The library entry exists, but its transcript is not available in the active project.');
+      selectedTranscriptId = transcript.id;
+      activeView = 'transcript';
+      return;
+    }
+    if (item.kind === 'Research' || item.kind === 'Creator') activeView = 'research';
+    else if (item.kind === 'AI run') activeView = 'ai';
+  }
+
+  async function openSearchResult(result: WorkspaceSearchResult) {
+    if (!data) return;
+    if (result.projectId && result.projectId !== data.activeProjectId) await selectProject(result.projectId);
+    if (result.kind === 'Transcript' && result.targetId) selectedTranscriptId = result.targetId;
+    activeView = result.view;
+    globalSearch = '';
+  }
+
+  function settingsSaved(settings: AppSettings) {
+    if (data) data = { ...data, settings: structuredClone(settings) };
+    applyAppearance(settings.appearance);
+  }
+
   function keyNav(event: KeyboardEvent) {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
@@ -89,24 +162,24 @@
 {:else if error}
   <div class="boot-screen error-boot"><ErrorState title="Could not open Scriptotar" message={error} onRetry={() => load()} /></div>
 {:else if data && activeProject}
-  <AppShell {activeView} activeProjectId={data.activeProjectId} projects={data.projects} {activeJobs} bind:globalSearch onNavigate={(view) => activeView = view} onProjectChange={selectProject}>
+  <AppShell {activeView} activeProjectId={data.activeProjectId} projects={data.projects} {activeJobs} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
     {#if switchError}
       <ErrorState title="Could not switch projects" message={switchError} />
     {/if}
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
     {:else if activeView === 'research'}
-      <ResearchView items={data.research} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = await api.saveWatchlist({ profileUrl, limit }); }} />
+      <ResearchView items={data.research} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
     {:else if activeView === 'jobs'}
-      <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} />
+      <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
     {:else if activeView === 'transcript'}
-      <TranscriptView transcripts={data.transcripts} />
+      <TranscriptView transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
     {:else if activeView === 'ai'}
       <AiStudioView {api} initialSource={data.transcripts[0]?.text || ''} />
     {:else if activeView === 'library'}
-      <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} />
+      <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
     {:else if activeView === 'settings'}
-      <SettingsView settings={data.settings} {api} />
+      <SettingsView settings={data.settings} {api} onSaved={settingsSaved} />
     {/if}
   </AppShell>
 {/if}
