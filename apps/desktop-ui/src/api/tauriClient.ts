@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  Job,
   LegacyImportReport
 } from '../types';
 
@@ -11,6 +12,7 @@ export type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) =
 export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
   return {
     bootstrap: () => invoke<BootstrapData>('bootstrap_app'),
+    listJobs: () => invoke<Job[]>('list_jobs'),
     selectProject: (projectId) => invoke<BootstrapData>('select_project', { projectId }),
     createProject: (name) => invoke<BootstrapData>('create_project', { name }),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
