@@ -27,6 +27,7 @@ describe('Tauri client command contract', () => {
     await api.retryJob('job-id');
     await api.saveWatchlist({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
     await api.scanCreator({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
+    await api.refreshWatchlists();
     await api.queueResearch(['research-id']);
     await api.cancelJob('job-id');
     await api.buildAiPrompt(aiInput);
@@ -57,12 +58,13 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenNthCalledWith(6, 'retry_job', { jobId: 'job-id' });
     expect(invokeMock).toHaveBeenNthCalledWith(7, 'save_watchlist', { query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 } });
     expect(invokeMock).toHaveBeenNthCalledWith(8, 'scan_creator', { query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 } });
-    expect(invokeMock).toHaveBeenNthCalledWith(9, 'queue_research', { ids: ['research-id'] });
-    expect(invokeMock).toHaveBeenNthCalledWith(10, 'cancel_job', { jobId: 'job-id' });
-    expect(invokeMock).toHaveBeenNthCalledWith(11, 'build_ai_prompt', { input: aiInput });
-    expect(invokeMock).toHaveBeenNthCalledWith(12, 'run_ai', { input: aiInput });
-    expect(invokeMock).toHaveBeenNthCalledWith(13, 'get_settings');
-    expect(invokeMock).toHaveBeenNthCalledWith(14, 'save_settings', { settings: expect.objectContaining({ whisperModel: 'medium' }) });
-    expect(invokeMock).toHaveBeenNthCalledWith(15, 'import_legacy_data');
+    expect(invokeMock).toHaveBeenNthCalledWith(9, 'refresh_watchlists');
+    expect(invokeMock).toHaveBeenNthCalledWith(10, 'queue_research', { ids: ['research-id'] });
+    expect(invokeMock).toHaveBeenNthCalledWith(11, 'cancel_job', { jobId: 'job-id' });
+    expect(invokeMock).toHaveBeenNthCalledWith(12, 'build_ai_prompt', { input: aiInput });
+    expect(invokeMock).toHaveBeenNthCalledWith(13, 'run_ai', { input: aiInput });
+    expect(invokeMock).toHaveBeenNthCalledWith(14, 'get_settings');
+    expect(invokeMock).toHaveBeenNthCalledWith(15, 'save_settings', { settings: expect.objectContaining({ whisperModel: 'medium' }) });
+    expect(invokeMock).toHaveBeenNthCalledWith(16, 'import_legacy_data');
   });
 });
