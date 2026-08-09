@@ -86,10 +86,7 @@ fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, 
 
 #[tauri::command]
 fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
-    state
-        .bootstrap()
-        .map(|bootstrap| bootstrap.jobs)
-        .map_err(command_error)
+    state.list_jobs().map_err(command_error)
 }
 
 #[tauri::command]
@@ -179,6 +176,11 @@ fn save_watchlist(
 fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     security::validate_research_query(&query)?;
     state.scan_creator(query)
+}
+
+#[tauri::command]
+fn refresh_watchlists(state: tauri::State<'_, AppServices>) -> Result<usize, String> {
+    state.refresh_watchlists()
 }
 
 #[tauri::command]
@@ -338,6 +340,7 @@ pub fn run() {
             import_legacy_data,
             save_watchlist,
             scan_creator,
+            refresh_watchlists,
             queue_research,
             build_ai_prompt,
             run_ai,
