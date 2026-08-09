@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate-lockfile:
@@ -20,6 +20,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Generate Cargo.lock
         run: cargo generate-lockfile
+      - name: Commit generated lockfile to temporary PR branch
+        if: github.event_name == 'pull_request'
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo 'Cargo.lock is already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.lock
+          git commit -m 'chore: refresh Cargo.lock'
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
       - uses: actions/upload-artifact@v4
         with:
           name: agent2-cargo-lock
