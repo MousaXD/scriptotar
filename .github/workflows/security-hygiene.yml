@@ -1,0 +1,25 @@
+name: Security hygiene
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'improve/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-hygiene-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-hygiene:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan tracked repository content
+        run: python3 scripts/check_repo_hygiene.py
