@@ -102,7 +102,7 @@
     {:else if activeView === 'transcript'}
       <TranscriptView transcripts={data.transcripts} />
     {:else if activeView === 'ai'}
-      <AiStudioView {api} initialSource={data.transcripts[0]?.text || ''} />
+      <AiStudioView {api} initialSource={data.transcripts[0]?.text || ''} onCompleted={refresh} />
     {:else if activeView === 'library'}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} />
     {:else if activeView === 'settings'}
