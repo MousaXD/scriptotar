@@ -41,7 +41,16 @@ def self_test() -> int:
     return 0
 
 
+def run_yt_dlp(args: list[str]) -> int:
+    from yt_dlp import main as yt_dlp_main
+
+    yt_dlp_main(args)
+    return 0
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
         raise SystemExit(self_test())
+    if sys.argv[1:2] == ["--yt-dlp"]:
+        raise SystemExit(run_yt_dlp(sys.argv[2:]))
     raise SystemExit(engine_main())
