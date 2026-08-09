@@ -19,7 +19,7 @@ repository = "https://github.com/MousaXD/scriptotar"
 
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["clock", "serde"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = "2"
