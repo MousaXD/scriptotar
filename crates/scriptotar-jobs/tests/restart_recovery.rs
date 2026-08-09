@@ -1,6 +1,4 @@
-use scriptotar_core::{
-    JobInput, JobRepository, JobState, Project, ProjectRepository,
-};
+use scriptotar_core::{JobInput, JobRepository, JobState, Project, ProjectRepository};
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
 use tempfile::TempDir;
@@ -28,7 +26,10 @@ fn persisted_running_job_is_interrupted_after_restart_and_requires_explicit_retr
     let reopened = SqliteStore::open(&database).unwrap();
     let restarted = JobService::new(reopened.clone());
     assert_eq!(restarted.recover_after_unclean_shutdown().unwrap(), 1);
-    assert_eq!(reopened.get_job(job.id).unwrap().state, JobState::Interrupted);
+    assert_eq!(
+        reopened.get_job(job.id).unwrap().state,
+        JobState::Interrupted
+    );
 
     let retried = restarted.retry(job.id).unwrap();
     assert_eq!(retried.state, JobState::Queued);
