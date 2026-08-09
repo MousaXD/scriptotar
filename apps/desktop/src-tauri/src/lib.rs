@@ -257,8 +257,12 @@ fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
 #[cfg(target_os = "windows")]
 fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
     let script = match kind {
-        NativePicker::MediaFile => r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = 'Choose video'; $d.Filter = 'Supported media|*.mp4;*.mkv;*.mov;*.webm;*.m4v;*.avi;*.mp3;*.wav;*.m4a;*.flac;*.ogg;*.opus|All files|*.*'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($d.FileName) }"#,
-        NativePicker::OutputDirectory => r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose Scriptotar output folder'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($d.SelectedPath) }"#,
+        NativePicker::MediaFile => {
+            r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = 'Choose video'; $d.Filter = 'Supported media|*.mp4;*.mkv;*.mov;*.webm;*.m4v;*.avi;*.mp3;*.wav;*.m4a;*.flac;*.ogg;*.opus|All files|*.*'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($d.FileName) }"#
+        }
+        NativePicker::OutputDirectory => {
+            r#"Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Choose Scriptotar output folder'; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($d.SelectedPath) }"#
+        }
     };
     let mut command = Command::new("powershell.exe");
     command

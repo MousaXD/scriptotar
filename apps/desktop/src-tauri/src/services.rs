@@ -697,8 +697,8 @@ mod tests {
 
     #[test]
     fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {
-        let temp = std::env::temp_dir()
-            .join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
+        let temp =
+            std::env::temp_dir().join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp).unwrap();
         let expected = std::fs::canonicalize(&temp).unwrap();
         let value = validate_output_directory(Some(temp.to_string_lossy().into_owned())).unwrap();
