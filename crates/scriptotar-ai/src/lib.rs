@@ -181,6 +181,7 @@ impl HttpAiProvider {
     pub fn with_timeout(provider: ProviderKind, timeout: Duration) -> Result<Self, AiError> {
         let client = Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Scriptotar-Next/0.1")
             .build()
             .map_err(|error| AiError::Provider(safe_transport_error(&error)))?;
@@ -541,7 +542,7 @@ mod tests {
         net::TcpListener,
         sync::{Arc, Mutex},
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     use super::*;
@@ -574,6 +575,39 @@ mod tests {
         }
     }
 
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        let mut data = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        let mut expected = None;
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            data.extend_from_slice(&buffer[..read]);
+            if expected.is_none() {
+                if let Some(index) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let header_end = index + 4;
+                    let headers = String::from_utf8_lossy(&data[..header_end]);
+                    let content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())
+                                .flatten()
+                        })
+                        .unwrap_or(0);
+                    expected = Some(header_end + content_length);
+                }
+            }
+            if expected.is_some_and(|size| data.len() >= size) {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&data).into_owned()
+    }
+
     fn spawn_json_server(status: u16, body: &'static str) -> (String, Arc<Mutex<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -581,36 +615,7 @@ mod tests {
         let captured_for_thread = captured.clone();
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut data = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            let mut expected = None;
-            loop {
-                let read = stream.read(&mut buffer).unwrap();
-                if read == 0 {
-                    break;
-                }
-                data.extend_from_slice(&buffer[..read]);
-                if expected.is_none() {
-                    if let Some(index) = data.windows(4).position(|window| window == b"\r\n\r\n") {
-                        let header_end = index + 4;
-                        let headers = String::from_utf8_lossy(&data[..header_end]);
-                        let content_length = headers
-                            .lines()
-                            .find_map(|line| {
-                                let (name, value) = line.split_once(':')?;
-                                name.eq_ignore_ascii_case("content-length")
-                                    .then(|| value.trim().parse::<usize>().ok())
-                                    .flatten()
-                            })
-                            .unwrap_or(0);
-                        expected = Some(header_end + content_length);
-                    }
-                }
-                if expected.is_some_and(|size| data.len() >= size) {
-                    break;
-                }
-            }
-            *captured_for_thread.lock().unwrap() = String::from_utf8_lossy(&data).into_owned();
+            *captured_for_thread.lock().unwrap() = read_request(&mut stream);
             let reason = if status == 200 { "OK" } else { "Error" };
             let response = format!(
                 "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -619,6 +624,51 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
         (format!("http://{address}"), captured)
+    }
+
+    fn spawn_redirect_server(location: String) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = read_request(&mut stream);
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {location}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        format!("http://{address}")
+    }
+
+    fn spawn_connection_probe() -> (String, Arc<Mutex<bool>>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let contacted = Arc::new(Mutex::new(false));
+        let contacted_for_thread = contacted.clone();
+        let handle = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        *contacted_for_thread.lock().unwrap() = true;
+                        let _ = read_request(&mut stream);
+                        let body = r#"{"choices":[{"message":{"content":"redirected"}}]}"#;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => return,
+                }
+            }
+        });
+        (format!("http://{address}/leak"), contacted, handle)
     }
 
     #[test]
@@ -703,6 +753,28 @@ mod tests {
             .to_ascii_lowercase()
             .contains("authorization: bearer session-secret"));
         assert!(request.contains("hello mock"));
+    }
+
+    #[test]
+    fn provider_redirects_are_not_followed_or_forwarded() {
+        let (target, contacted, probe) = spawn_connection_probe();
+        let redirect = spawn_redirect_server(target);
+        let service = AiService::new(
+            HttpAiProvider::with_timeout(ProviderKind::OpenAiCompatible, Duration::from_secs(2))
+                .unwrap(),
+        );
+        let error = service
+            .generate(
+                &compatible(&format!("{redirect}/v1")),
+                "session-secret",
+                &AiRequest {
+                    prompt: "hello".to_owned(),
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("HTTP 302"));
+        probe.join().unwrap();
+        assert!(!*contacted.lock().unwrap());
     }
 
     #[test]
