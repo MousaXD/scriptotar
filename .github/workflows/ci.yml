@@ -116,7 +116,7 @@ jobs:
           if-no-files-found: error
 
   rolling-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test-and-deb.result == 'success' }}
     needs: [test-and-deb, portable-packages]
     runs-on: ubuntu-latest
     permissions:
@@ -135,24 +135,43 @@ jobs:
           VERSION="$(cat dist/VERSION)"
           mkdir -p latest
           cp "dist/scriptotar_${VERSION}_all.deb" latest/scriptotar-latest_all.deb
-          cp "dist/Scriptotar-${VERSION}-x86_64.AppImage" latest/Scriptotar-latest-x86_64.AppImage
-          cp "dist/Scriptotar-${VERSION}-x86_64.flatpak" latest/Scriptotar-latest-x86_64.flatpak
-          (cd latest && sha256sum scriptotar-latest_all.deb Scriptotar-latest-x86_64.AppImage Scriptotar-latest-x86_64.flatpak > SHA256SUMS.txt)
-          cat > latest/RELEASE-NOTES.txt <<NOTES
-          Scriptotar Latest
 
-          Built automatically from main.
-          App version: ${VERSION}
-          Commit: ${GITHUB_SHA}
+          if [ -f "dist/Scriptotar-${VERSION}-x86_64.AppImage" ]; then
+            cp "dist/Scriptotar-${VERSION}-x86_64.AppImage" latest/Scriptotar-latest-x86_64.AppImage
+          fi
+          if [ -f "dist/Scriptotar-${VERSION}-x86_64.flatpak" ]; then
+            cp "dist/Scriptotar-${VERSION}-x86_64.flatpak" latest/Scriptotar-latest-x86_64.flatpak
+          fi
 
-          Assets:
-          - scriptotar-latest_all.deb
-          - Scriptotar-latest-x86_64.AppImage
-          - Scriptotar-latest-x86_64.flatpak
+          (
+            cd latest
+            find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.flatpak' \) \
+              -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          )
 
-          This rolling release is replaced after every successful push or merge to main.
-          For permanent releases, use version tags such as v1.2.0.
-          NOTES
+          {
+            echo "Scriptotar Latest"
+            echo
+            echo "Built automatically from main."
+            echo "App version: ${VERSION}"
+            echo "Commit: ${GITHUB_SHA}"
+            echo
+            echo "Assets:"
+            echo "- scriptotar-latest_all.deb"
+            if [ -f latest/Scriptotar-latest-x86_64.AppImage ]; then
+              echo "- Scriptotar-latest-x86_64.AppImage"
+            fi
+            if [ -f latest/Scriptotar-latest-x86_64.flatpak ]; then
+              echo "- Scriptotar-latest-x86_64.flatpak"
+            fi
+            if [ "${{ needs.portable-packages.result }}" != "success" ]; then
+              echo
+              echo "Portable packaging did not succeed in this run. The Debian package is still published independently."
+            fi
+            echo
+            echo "This rolling release is replaced after every successful push or merge to main."
+            echo "For permanent releases, use version tags such as v1.2.0."
+          } > latest/RELEASE-NOTES.txt
       - name: Move rolling tag to this commit
         run: |
           git tag -f continuous "$GITHUB_SHA"
