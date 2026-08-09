@@ -8,3 +8,7 @@ repository.workspace = true
 [dependencies]
 scriptotar-core = { path = "../scriptotar-core" }
 uuid.workspace = true
+
+[dev-dependencies]
+scriptotar-db = { path = "../scriptotar-db" }
+tempfile.workspace = true
