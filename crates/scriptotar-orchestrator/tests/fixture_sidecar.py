@@ -88,6 +88,8 @@ def main() -> int:
             emit("progress", job_id=job_id, stage="downloading", percent=40.0, message="fixture download")
             time.sleep(0.05)
         emit("progress", job_id=job_id, stage="transcribing", percent=50.0, message="fixture")
+        if "progress-hold" in name:
+            time.sleep(0.15)
         emit("result", job_id=job_id, result=result_for(source, input_kind))
     return 0
 
