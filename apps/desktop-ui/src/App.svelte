@@ -16,6 +16,7 @@
   let data: BootstrapData | null = null;
   let loading = true;
   let error = '';
+  let switchError = '';
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
 
@@ -34,7 +35,13 @@
   async function refresh() { await load(false); }
 
   async function selectProject(id: string) {
-    data = await api.selectProject(id);
+    switchError = '';
+    try {
+      data = await api.selectProject(id);
+    } catch (cause) {
+      switchError = cause instanceof Error ? cause.message : 'Unable to switch projects.';
+      if (data) data = { ...data };
+    }
   }
 
   async function enqueueLocal(path: string) {
@@ -83,6 +90,9 @@
   <div class="boot-screen error-boot"><ErrorState title="Could not open Scriptotar" message={error} onRetry={() => load()} /></div>
 {:else if data && activeProject}
   <AppShell {activeView} activeProjectId={data.activeProjectId} projects={data.projects} {activeJobs} bind:globalSearch onNavigate={(view) => activeView = view} onProjectChange={selectProject}>
+    {#if switchError}
+      <ErrorState title="Could not switch projects" message={switchError} />
+    {/if}
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
     {:else if activeView === 'research'}
