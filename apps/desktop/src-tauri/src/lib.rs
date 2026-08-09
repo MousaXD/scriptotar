@@ -103,6 +103,11 @@ fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> R
 }
 
 #[tauri::command]
+fn refresh_watchlists(state: tauri::State<'_, AppServices>) -> Result<usize, String> {
+    state.refresh_watchlists()
+}
+
+#[tauri::command]
 fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.queue_research(ids)
 }
@@ -143,6 +148,7 @@ pub fn run() {
             import_legacy_data,
             save_watchlist,
             scan_creator,
+            refresh_watchlists,
             queue_research,
             build_ai_prompt,
             run_ai,
