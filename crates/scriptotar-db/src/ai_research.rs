@@ -442,7 +442,9 @@ mod tests {
             raw_json: None,
             scanned_at: now_rfc3339(),
         };
-        let first_saved = store.upsert_research_items(&[first.clone()]).unwrap();
+        let first_saved = store
+            .upsert_research_items(std::slice::from_ref(&first))
+            .unwrap();
         let mut refreshed = first;
         refreshed.id = Uuid::new_v4();
         refreshed.title = Some("Refreshed".to_owned());

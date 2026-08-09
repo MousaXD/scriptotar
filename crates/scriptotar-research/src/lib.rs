@@ -304,7 +304,7 @@ fn provider_io_message(error: &std::io::Error) -> String {
 }
 
 fn safe_provider_detail(raw: &str) -> String {
-    let sanitized = raw.replace('\r', " ").replace('\n', " ");
+    let sanitized = raw.replace(['\r', '\n'], " ");
     let mut chars = sanitized.chars();
     let shortened = chars.by_ref().take(1_200).collect::<String>();
     if chars.next().is_some() {
