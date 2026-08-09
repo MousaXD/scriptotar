@@ -2,6 +2,7 @@ import { mount } from 'svelte';
 import App from './App.svelte';
 import { createTauriClient, setApi } from './api';
 import './app.css';
+import './theme.css';
 
 type GlobalTauri = {
   core?: {

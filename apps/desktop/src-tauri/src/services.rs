@@ -480,6 +480,7 @@ fn source_platform(locator: &str, source_type: SourceType) -> String {
 
 fn settings_to_ui(settings: &ApplicationSettings) -> UiSettings {
     UiSettings {
+        output_directory: settings.output_directory.clone(),
         whisper_model: settings.transcription_model.clone(),
         device: settings.transcription_device.clone(),
         language: match settings.language.as_str() {
@@ -525,6 +526,7 @@ fn settings_from_ui(
     ui: UiSettings,
     mut settings: ApplicationSettings,
 ) -> RepositoryResult<ApplicationSettings> {
+    settings.output_directory = validate_output_directory(ui.output_directory)?;
     if !["small", "medium", "turbo", "large-v3"].contains(&ui.whisper_model.as_str()) {
         return Err(RepositoryError::Validation(
             "unsupported transcription model".to_owned(),
@@ -604,6 +606,41 @@ fn settings_from_ui(
     Ok(settings)
 }
 
+fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<String>> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let path = Path::new(trimmed);
+    if !path.is_dir() {
+        return Err(RepositoryError::Validation(format!(
+            "output directory does not exist or is not a directory: {}",
+            path.display()
+        )));
+    }
+    let canonical = std::fs::canonicalize(path).map_err(|error| {
+        RepositoryError::Validation(format!("cannot access output directory: {error}"))
+    })?;
+    let probe = canonical.join(format!(".scriptotar-write-test-{}", Uuid::new_v4()));
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|error| {
+            RepositoryError::Validation(format!("output directory is not writable: {error}"))
+        })?;
+    drop(file);
+    std::fs::remove_file(&probe).map_err(|error| {
+        RepositoryError::Storage(format!(
+            "failed to clean output-directory write test: {error}"
+        ))
+    })?;
+    Ok(Some(canonical.to_string_lossy().into_owned()))
+}
+
 fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
     match provider {
         "OpenAI" => Ok(ProviderKind::OpenAi),
@@ -656,5 +693,20 @@ mod tests {
             base_url: Some("http://example.com/v1".to_owned()),
         };
         assert!(EndpointPolicy.endpoint_for(&config).is_err());
+    }
+
+    #[test]
+    fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {
+        let temp = std::env::temp_dir()
+            .join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let expected = std::fs::canonicalize(&temp).unwrap();
+        let value = validate_output_directory(Some(temp.to_string_lossy().into_owned())).unwrap();
+        assert_eq!(value.as_deref(), Some(expected.to_string_lossy().as_ref()));
+        assert_eq!(
+            validate_output_directory(Some("   ".to_owned())).unwrap(),
+            None
+        );
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 }
