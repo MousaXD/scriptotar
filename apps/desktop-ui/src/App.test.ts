@@ -80,6 +80,17 @@ describe('desktop workstation', () => {
     expect(screen.getByTestId('transcript-content')).toHaveAttribute('dir', 'rtl');
   });
 
+  it('shows an inspectable legacy migration result', async () => {
+    const api = createMockClient();
+    const importLegacyData = vi.spyOn(api, 'importLegacyData');
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Import legacy data' }));
+    await waitFor(() => expect(importLegacyData).toHaveBeenCalledTimes(1));
+    expect(screen.getByText(/Legacy import completed:/)).toHaveTextContent('1 transcripts');
+    expect(screen.getByText(/Legacy import completed:/)).toHaveTextContent('Backup:');
+  });
+
   it('shows a recoverable error state when bootstrap fails', async () => {
     render(App, { props: { api: createMockClient({ bootstrap: async () => { throw new Error('Database unavailable'); } }) } });
     const alert = await screen.findByRole('alert');
