@@ -1,14 +1,14 @@
 use std::{
     collections::HashMap,
     fs,
-    path::{Path, PathBuf},
+    path::Path,
     str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use scriptotar_core::{
-    now_rfc3339, AiRunMode, ContentRepository, Job, JobInput, JobRepository, JobRuntimeRepository,
+    now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository,
     JobState, LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType,
     Transcript, TranscriptBundle, Watchlist, WatchlistRepository,
 };
@@ -930,7 +930,9 @@ struct LegacyResearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scriptotar_core::{Project, ProjectRepository};
+    use std::path::PathBuf;
+
+    use scriptotar_core::{JobInput, Project, ProjectRepository};
     use tempfile::TempDir;
 
     fn new_store(temp: &TempDir) -> SqliteStore {
