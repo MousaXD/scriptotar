@@ -37,25 +37,11 @@ jobs:
           from pathlib import Path
           path = Path('crates/scriptotar-research/src/lib.rs')
           text = path.read_text()
-          old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
+          old = r'''raw.replace('\r', " ").replace('\n', " ")'''
+          new = r'''raw.replace(['\r', '\n'], " ")'''
           if old not in text:
-              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace(' \" )', '\")')
-          if old not in text:
-              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace("' ", "'")
-          if old not in text:
-              old = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
-          direct = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
-          canonical = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
-          target = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )"
-          # Match the exact rustfmt output without relying on YAML escaping tricks.
-          target = "raw.replace(" + repr('\\r') + ", \" \" ).replace(" + repr('\\n') + ", \" \" )"
-          target = target.replace("'\\\\r'", "'\\r'").replace("'\\\\n'", "'\\n'")
-          if target not in text:
-              target = "raw.replace('\\r', \" \" ).replace('\\n', \" \" )".replace(', \" \" )', ', \" \")')
-          if target not in text:
               raise SystemExit('expected chained newline sanitizer was not found')
-          replacement = "raw.replace(['\\r', '\\n'], \" \")"
-          path.write_text(text.replace(target, replacement, 1))
+          path.write_text(text.replace(old, new, 1))
           PY
           cargo fmt --all
       - name: Clippy
