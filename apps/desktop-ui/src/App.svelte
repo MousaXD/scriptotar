@@ -34,8 +34,7 @@
   async function refresh() { await load(false); }
 
   async function selectProject(id: string) {
-    await api.selectProject(id);
-    await refresh();
+    data = await api.selectProject(id);
   }
 
   async function enqueueLocal(path: string) {
