@@ -81,6 +81,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
     async enqueueUrl(projectId: string, url: string) { return backendJob(projectId, 'url', url); },
     async retryJob(jobId: string) { return { ...backendJob(active, 'local_file', '/mock/retry.mp4'), id: jobId }; },
+    async saveWatchlist(_query: ResearchQuery) { return snapshot(); },
     async scanCreator(_query: ResearchQuery) {},
     async queueResearch(_ids: string[]) {},
     async cancelJob(_jobId: string) {},
