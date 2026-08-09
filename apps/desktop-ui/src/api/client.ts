@@ -34,6 +34,7 @@ export interface ScriptotarApi {
   enqueueLocalMedia(projectId: string, path: string): Promise<BackendJob>;
   enqueueUrl(projectId: string, url: string): Promise<BackendJob>;
   retryJob(jobId: string): Promise<BackendJob>;
+  saveWatchlist(query: ResearchQuery): Promise<BootstrapData>;
   scanCreator(query: ResearchQuery): Promise<void>;
   queueResearch(ids: string[]): Promise<void>;
   cancelJob(jobId: string): Promise<void>;
