@@ -13,24 +13,34 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            patchelf
       - uses: dtolnay/rust-toolchain@stable
       - name: Capture cargo check diagnostics
         shell: bash
         run: |
           set +e
-          cargo check --workspace --color never > /tmp/agent2-cargo-check.full 2>&1
+          cargo check --workspace --all-targets --locked --color never > /tmp/agent2-cargo-check.full 2>&1
           code=$?
           {
             grep -E '^(error(\[[^]]+\])?:|warning:| *-->| *\||note:|help:)' /tmp/agent2-cargo-check.full || true
             echo
             echo '--- final cargo output ---'
-            tail -n 80 /tmp/agent2-cargo-check.full
+            tail -n 100 /tmp/agent2-cargo-check.full
           } > agent2-cargo-check.log
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
