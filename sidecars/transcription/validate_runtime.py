@@ -245,11 +245,18 @@ def _validate_native_hashes(root: Path, native_manifest: dict) -> None:
                 )
 
 
-def _validate_license_inventory(root: Path, name: str, manifest: dict, shipped_category: str) -> None:
+def _validate_license_inventory(
+    root: Path,
+    name: str,
+    manifest: dict,
+    shipped_category: str,
+    *,
+    require_shipped: bool = True,
+) -> None:
     packages = manifest.get("packages")
     if not isinstance(packages, list) or not packages:
         raise RuntimeError(f"{name} license inventory contains no packages")
-    if not any(
+    if require_shipped and not any(
         isinstance(package, dict) and package.get("category") == shipped_category
         for package in packages
     ):
@@ -275,6 +282,36 @@ def _validate_license_inventory(root: Path, name: str, manifest: dict, shipped_c
             _require_relative_file(root, relative)
 
 
+def _validate_frontend_inventory(root: Path, frontend: dict) -> None:
+    declared = frontend.get("declared_runtime_dependencies")
+    if not isinstance(declared, list) or any(not isinstance(item, str) for item in declared):
+        raise RuntimeError("frontend inventory does not contain a valid declared runtime dependency list")
+    packages = frontend.get("packages")
+    if not isinstance(packages, list):
+        raise RuntimeError("frontend inventory packages is not a list")
+    production = {
+        str(package.get("name"))
+        for package in packages
+        if isinstance(package, dict) and package.get("category") == "production"
+    }
+    if frontend.get("production_package_count") != len(production):
+        raise RuntimeError("frontend production package count does not match the inventory")
+    missing = sorted(set(declared) - production)
+    if missing:
+        raise RuntimeError(f"frontend declared runtime dependencies are absent from production closure: {missing}")
+    if not declared and production:
+        raise RuntimeError(
+            f"frontend inventory claims production packages despite package.json declaring no dependencies: {sorted(production)}"
+        )
+    _validate_license_inventory(
+        root,
+        "frontend",
+        frontend,
+        "production",
+        require_shipped=bool(declared),
+    )
+
+
 def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
     for relative in REQUIRED_COMPLIANCE_FILES:
         _require_relative_file(root, relative)
@@ -294,6 +331,16 @@ def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
         raise RuntimeError("runtime provenance has no valid static FFmpeg archive SHA-256")
     if archive.get("archive_sha256") != archive.get("git_lfs_oid_sha256"):
         raise RuntimeError("runtime provenance archive SHA does not match the reviewed provider LFS object")
+    for field in (
+        "ffmpeg_bins_generation_commit",
+        "static_ffmpeg_workflow_run",
+        "static_ffmpeg_workflow_revision",
+        "upstream_provider",
+        "upstream_provider_url",
+        "upstream_selection",
+    ):
+        if archive.get(field) in (None, ""):
+            raise RuntimeError(f"runtime provenance is missing FFmpeg provider lineage field: {field}")
     if standalone.get("runtime") != runtime_manifest.get("ffmpeg"):
         raise RuntimeError("runtime provenance FFmpeg record differs from RUNTIME-LICENSES.json")
     source = standalone.get("corresponding_source")
@@ -322,7 +369,7 @@ def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
 
     _validate_native_hashes(root, native)
     _validate_license_inventory(root, "Rust", rust, "runtime")
-    _validate_license_inventory(root, "frontend", frontend, "production")
+    _validate_frontend_inventory(root, frontend)
     rust_names = {
         str(package.get("name"))
         for package in rust.get("packages", [])
