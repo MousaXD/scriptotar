@@ -100,7 +100,10 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
 }
 
 fn try_migration_operation() -> Result<MutexGuard<'static, ()>, MigrationLockError> {
-    match MIGRATION_OPERATION.get_or_init(|| Mutex::new(())).try_lock() {
+    match MIGRATION_OPERATION
+        .get_or_init(|| Mutex::new(()))
+        .try_lock()
+    {
         Ok(guard) => Ok(guard),
         Err(TryLockError::WouldBlock) => Err(MigrationLockError::Busy),
         Err(TryLockError::Poisoned(_)) => Err(MigrationLockError::Poisoned),
@@ -445,7 +448,10 @@ fn import_legacy_data(
             if status.state == "completed" {
                 Ok(report)
             } else {
-                Err("Legacy data was imported, but migration finalization needs recovery.".to_owned())
+                Err(
+                    "Legacy data was imported, but migration finalization needs recovery."
+                        .to_owned(),
+                )
             }
         }
         Err(error) => {
@@ -605,12 +611,8 @@ pub fn run() {
                 configure_packaged_runtime(&resource_dir, &data_dir);
             }
 
-            let preparation = if let Some(status) = completed_status_if_marked(&data_dir) {
-                if status.state == "completed" {
-                    None
-                } else {
-                    None
-                }
+            let preparation = if completed_status_if_marked(&data_dir).is_some() {
+                None
             } else {
                 Some(migration::prepare_startup(&data_dir))
             };

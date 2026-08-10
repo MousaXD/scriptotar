@@ -284,7 +284,7 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => {
                     return Err(
-                        "A legacy database candidate could not be inspected safely.".to_owned(),
+                        "A legacy database candidate could not be inspected safely.".to_owned()
                     )
                 }
             };
@@ -399,7 +399,8 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
     match fs::symlink_metadata(staged) {
         Ok(_) => {
             return Err(
-                "A migration snapshot already exists; Scriptotar refused to overwrite it.".to_owned(),
+                "A migration snapshot already exists; Scriptotar refused to overwrite it."
+                    .to_owned(),
             )
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -840,7 +841,10 @@ mod tests {
             prepare_from_roots(&data_dir, &[root]),
             Preparation::Ready
         ));
-        assert_eq!(fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         assert_eq!(
             fs::metadata(data_dir.join(PENDING_STAGE_NAME))
                 .unwrap()

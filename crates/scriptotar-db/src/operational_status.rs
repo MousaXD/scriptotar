@@ -301,8 +301,14 @@ mod tests {
             .watchlist_refresh_status(watchlist_id)
             .unwrap()
             .is_none());
-        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
-        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
+        assert!(store
+            .list_watchlist_refresh_status(None)
+            .unwrap()
+            .is_empty());
+        assert!(store
+            .list_watchlist_refresh_status(None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -321,7 +327,10 @@ mod tests {
             .watchlist_refresh_status(watchlist_id)
             .unwrap()
             .is_none());
-        assert!(reopened.list_watchlist_refresh_status(None).unwrap().is_empty());
+        assert!(reopened
+            .list_watchlist_refresh_status(None)
+            .unwrap()
+            .is_empty());
         let table_exists: i64 = Connection::open(&database)
             .unwrap()
             .query_row(

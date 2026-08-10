@@ -555,35 +555,39 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| UiLibraryItem {
-            id: format!("research:{}", item.id),
-            kind: "Research".to_owned(),
-            title: item.title.clone(),
-            subtitle: item.creator.clone(),
-            project_id: active_project.to_string(),
-            platform: Some(item.platform.clone()),
-            metric: item.views.map(|views| format!("{views} views")),
-            date: item
-                .published_at
-                .clone()
-                .unwrap_or_else(|| "Unknown date".to_owned()),
+        library.extend(ui_research.iter().map(|item| {
+            UiLibraryItem {
+                id: format!("research:{}", item.id),
+                kind: "Research".to_owned(),
+                title: item.title.clone(),
+                subtitle: item.creator.clone(),
+                project_id: active_project.to_string(),
+                platform: Some(item.platform.clone()),
+                metric: item.views.map(|views| format!("{views} views")),
+                date: item
+                    .published_at
+                    .clone()
+                    .unwrap_or_else(|| "Unknown date".to_owned()),
+            }
         }));
-        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
-            id: format!("ai:{}", run.id),
-            kind: "AI run".to_owned(),
-            title: run.task.clone(),
-            subtitle: run
-                .provider
-                .clone()
-                .map(|provider| match &run.model {
-                    Some(model) => format!("{provider} · {model}"),
-                    None => provider,
-                })
-                .unwrap_or_else(|| "Copy Prompt".to_owned()),
-            project_id: run.project_id.to_string(),
-            platform: None,
-            metric: None,
-            date: run.created_at.clone(),
+        library.extend(ai_runs.iter().map(|run| {
+            UiLibraryItem {
+                id: format!("ai:{}", run.id),
+                kind: "AI run".to_owned(),
+                title: run.task.clone(),
+                subtitle: run
+                    .provider
+                    .clone()
+                    .map(|provider| match &run.model {
+                        Some(model) => format!("{provider} · {model}"),
+                        None => provider,
+                    })
+                    .unwrap_or_else(|| "Copy Prompt".to_owned()),
+                project_id: run.project_id.to_string(),
+                platform: None,
+                metric: None,
+                date: run.created_at.clone(),
+            }
         }));
 
         Ok(BootstrapData {
@@ -646,7 +650,9 @@ fn scan_and_persist_research(
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
-    let retry_at = DateTime::parse_from_rfc3339(value).ok()?.with_timezone(&Utc);
+    let retry_at = DateTime::parse_from_rfc3339(value)
+        .ok()?
+        .with_timezone(&Utc);
     let remaining = retry_at.signed_duration_since(now).to_std().ok()?;
     if remaining.is_zero() {
         None
