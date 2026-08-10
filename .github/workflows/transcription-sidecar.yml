@@ -65,6 +65,59 @@ jobs:
   agent8-whisper-canary:
     name: Agent 8 real Whisper canary verification
     if: github.event_name == 'pull_request' && github.head_ref == 'test/whisper-runtime-canary'
-    uses: ./.github/workflows/whisper-runtime-canary.yml
-    permissions:
-      contents: read
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CANARY_MODEL: small
+      CANARY_RUNTIME: ${{ runner.temp }}/scriptotar-transcription-runtime
+      CANARY_WORK: ${{ runner.temp }}/whisper-canary-work
+      CANARY_SUMMARY: ${{ runner.temp }}/whisper-canary-summary.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            sidecars/transcription/requirements-engine.txt
+            sidecars/transcription/requirements-bundle.txt
+      - name: Install deterministic speech fixture generator
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends espeak-ng
+      - name: Install pinned packaged-runtime dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
+          python -m pip check
+      - name: Build self-contained transcription runtime
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/build_runtime.py --output "$CANARY_RUNTIME"
+      - name: Validate packaged runtime before real inference
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/validate_runtime.py "$CANARY_RUNTIME"
+      - name: Download model and run real packaged inference twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/whisper_runtime_canary.py \
+            --runtime "$CANARY_RUNTIME" \
+            --work-dir "$CANARY_WORK" \
+            --model "$CANARY_MODEL" \
+            --timeout-seconds 1200 \
+            --summary-json "$CANARY_SUMMARY" \
+            2>&1 | tee whisper-canary.log
+      - name: Upload canary diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent8-whisper-runtime-canary-diagnostics
+          path: |
+            whisper-canary.log
+            ${{ runner.temp }}/whisper-canary-summary.json
+            ${{ runner.temp }}/scriptotar-transcription-runtime/RUNTIME-VERSIONS.txt
+          if-no-files-found: warn
+          retention-days: 14
