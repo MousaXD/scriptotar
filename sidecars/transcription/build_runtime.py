@@ -9,6 +9,11 @@ import tempfile
 from pathlib import Path
 
 from compliance_enrichment import write_compliance_enrichment
+from compliance_finalize import (
+    finalize_compliance_bundle,
+    prepare_frontend_bundle,
+    validate_final_compliance,
+)
 from distribution_compliance import (
     fetch_pinned_static_ffmpeg,
     write_distribution_compliance_bundle,
@@ -32,6 +37,11 @@ def build(output: Path) -> None:
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
+
+    # Produce the exact production frontend output graph before compliance
+    # generation. Vite source maps are the evidence used to distinguish npm
+    # packages actually bundled into production JS from build-only tooling.
+    prepare_frontend_bundle(REPO_ROOT)
 
     # Use the same static-ffmpeg 3.0 provider mapping as before, but perform the
     # fetch through Scriptotar's byte-pinned verifier so a floating provider URL
@@ -151,11 +161,14 @@ def build(output: Path) -> None:
         (output / "RUNTIME-VERSIONS.txt").write_text(versions, encoding="utf-8")
 
         # Generate the exact Python/runtime legal inventory first, then the
-        # transitive/native inventories, and finally enrich them with pinned
-        # native notice material plus production-bundle frontend evidence.
+        # transitive/native inventories, enrich them with versioned native
+        # notices and Vite output evidence, preserve both frontend views, and
+        # validate the final package evidence before returning success.
         write_runtime_legal_bundle(output, ffmpeg_source, REPO_ROOT)
         write_distribution_compliance_bundle(output, REPO_ROOT, ffmpeg_fetch)
         write_compliance_enrichment(output, REPO_ROOT)
+        finalize_compliance_bundle(output, REPO_ROOT)
+        validate_final_compliance(output, REPO_ROOT)
 
 
 def main() -> int:
