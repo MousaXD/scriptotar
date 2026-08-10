@@ -17,6 +17,7 @@ from typing import Iterable
 SCHEMA_VERSION = 1
 ENGINE_REQUIREMENTS = ("faster-whisper", "yt-dlp[default,curl-cffi]")
 SUPPORTED_FFMPEG_LICENSE = "GPL-3.0-or-later"
+SUPPORTED_PYAV_FFMPEG_LICENSE = "GPL-3.0-or-later"
 FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.GPLv3"
 FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
 
@@ -78,9 +79,12 @@ def _requirement_is_active(requirement: object, selected_extras: set[str]) -> bo
     if "extra" not in marker_text:
         return marker.evaluate(environment)
 
-    # Requirements guarded by an `extra` marker are active only for extras
-    # selected on the parent distribution.
-    return any(marker.evaluate({**environment, "extra": extra}) for extra in selected_extras)
+    # Evaluate once with no extra as well as every selected extra. This handles
+    # compound markers such as `extra == 'x' or sys_platform == 'win32'`.
+    extras_to_try = selected_extras or {""}
+    if "" not in extras_to_try:
+        extras_to_try = {*extras_to_try, ""}
+    return any(marker.evaluate({**environment, "extra": extra}) for extra in extras_to_try)
 
 
 def collect_runtime_distributions(
@@ -300,7 +304,7 @@ def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
         binary_sha256["ffprobe"] = _sha256_file(ffprobe_executable)
 
     return {
-        "component": "FFmpeg and ffprobe",
+        "component": "FFmpeg and ffprobe executables fetched by static-ffmpeg",
         "license": inferred_license,
         "version_line": version_line,
         "configuration": configuration,
@@ -308,6 +312,107 @@ def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
         "binary_sha256": binary_sha256,
         "redistribution_guard": "--enable-nonfree is rejected at package build time",
     }
+
+
+def parse_pyav_ffmpeg_report(output: str) -> dict[str, object]:
+    """Parse `python -m av --version` and enforce the FFmpeg wheel baseline."""
+
+    pyav_version = ""
+    groups: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("PyAV v"):
+            pyav_version = line.removeprefix("PyAV v").strip()
+            continue
+        if line.startswith("library configuration:"):
+            configuration = line.partition(":")[2].strip()
+            current = {"configuration": configuration, "libraries": []}
+            groups.append(current)
+            continue
+        if line.startswith("library license:"):
+            if current is None:
+                raise RuntimeError("PyAV reported a library license before a configuration")
+            current["reported_license"] = line.partition(":")[2].strip()
+            continue
+        if current is not None and re.match(r"^lib[A-Za-z0-9_]+\s+\-?\d+", line):
+            libraries = current["libraries"]
+            assert isinstance(libraries, list)
+            libraries.append(line)
+
+    if not pyav_version or not groups:
+        raise RuntimeError(f"could not parse PyAV FFmpeg build information: {output}")
+
+    for group in groups:
+        configuration = str(group.get("configuration") or "")
+        reported_license = str(group.get("reported_license") or "")
+        if not configuration or not reported_license:
+            raise RuntimeError(f"incomplete PyAV FFmpeg build group: {group}")
+        inferred = classify_ffmpeg_license(configuration)
+        if inferred != SUPPORTED_PYAV_FFMPEG_LICENSE:
+            raise RuntimeError(
+                "PyAV's bundled FFmpeg library license changed from the audited baseline: "
+                f"expected {SUPPORTED_PYAV_FFMPEG_LICENSE}, got {inferred}"
+            )
+        if reported_license.lower() != "gpl version 3 or later":
+            raise RuntimeError(
+                "PyAV's FFmpeg runtime reported an unexpected license string: "
+                f"{reported_license}"
+            )
+        group["inferred_license"] = inferred
+
+    return {"pyav_version": pyav_version, "library_groups": groups}
+
+
+def _pyav_native_library_hashes(dist: metadata.Distribution) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for entry in dist.files or []:
+        text = str(entry).replace("\\", "/")
+        lowered = text.lower()
+        if not (
+            lowered.startswith("av.libs/")
+            or "/av.libs/" in lowered
+            or lowered.startswith("av/.dylibs/")
+            or "/av/.dylibs/" in lowered
+        ):
+            continue
+        source = Path(dist.locate_file(entry))
+        if source.is_file():
+            hashes[text] = _sha256_file(source)
+    return dict(sorted(hashes.items()))
+
+
+def _pyav_ffmpeg_report(ffmpeg_license_file: str) -> dict[str, object]:
+    completed = subprocess.run(
+        [sys.executable, "-m", "av", "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    output = completed.stdout + completed.stderr
+    parsed = parse_pyav_ffmpeg_report(output)
+    av_dist = metadata.distribution("av")
+    native_hashes = _pyav_native_library_hashes(av_dist)
+    if not native_hashes:
+        raise RuntimeError(
+            "PyAV binary wheel did not expose the expected bundled native-library directory; "
+            "review the wheel packaging before distributing it"
+        )
+    parsed.update(
+        {
+            "component": "FFmpeg shared libraries bundled by the PyAV binary wheel",
+            "license": SUPPORTED_PYAV_FFMPEG_LICENSE,
+            "license_file": ffmpeg_license_file,
+            "native_library_sha256": native_hashes,
+            "wheel_project_url": _project_url(av_dist),
+            "redistribution_guard": "every PyAV FFmpeg library group must be GPLv3 and must not use --enable-nonfree",
+        }
+    )
+    return parsed
 
 
 def write_runtime_legal_bundle(
@@ -376,6 +481,7 @@ def write_runtime_legal_bundle(
 
     ffmpeg = _ffmpeg_report(ffmpeg_executable)
     ffmpeg["license_file"] = ffmpeg_license_file
+    pyav_ffmpeg = _pyav_ffmpeg_report(ffmpeg_license_file)
 
     manifest = {
         "schema": SCHEMA_VERSION,
@@ -387,6 +493,7 @@ def write_runtime_legal_bundle(
             "distribution": "embedded by PyInstaller; separate system Python is not required",
         },
         "ffmpeg": ffmpeg,
+        "pyav_ffmpeg": pyav_ffmpeg,
         "python_components": python_components,
         "build_tools": [
             {
