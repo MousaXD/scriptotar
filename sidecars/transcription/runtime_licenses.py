@@ -20,6 +20,9 @@ SUPPORTED_FFMPEG_LICENSE = "GPL-3.0-or-later"
 SUPPORTED_PYAV_FFMPEG_LICENSE = "GPL-3.0-or-later"
 FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.GPLv3"
 FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+CPYTHON_LICENSE_VERSION = "3.12.13"
+CPYTHON_LICENSE_URL = "https://raw.githubusercontent.com/python/cpython/v3.12.13/LICENSE"
+CPYTHON_LICENSE_SHA256 = "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
 
 # Some binary wheels omit usable License-Expression/License-File metadata even
 # though the upstream project has an explicit license. Keep fallbacks narrow,
@@ -205,8 +208,19 @@ def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
                 return destination.relative_to(output_root).as_posix()
-    raise RuntimeError(
-        "could not locate the license shipped with the Python interpreter used by PyInstaller"
+
+    version = sys.version.split()[0]
+    if sys.implementation.name != "cpython" or version != CPYTHON_LICENSE_VERSION:
+        raise RuntimeError(
+            "could not locate the embedded Python runtime license and the reviewed CPython "
+            f"fallback applies only to {CPYTHON_LICENSE_VERSION}; resolved {sys.implementation.name} {version}"
+        )
+    return _write_verified_remote_file(
+        CPYTHON_LICENSE_URL,
+        CPYTHON_LICENSE_SHA256,
+        legal_root / "python-runtime" / "LICENSE.txt",
+        output_root,
+        f"CPython {CPYTHON_LICENSE_VERSION} license text",
     )
 
 
