@@ -1,0 +1,141 @@
+name: Temporary integration fixup
+
+on:
+  push:
+    branches:
+      - improve/scriptotar-next-integration
+
+permissions:
+  contents: write
+
+concurrency:
+  group: scriptotar-integration-fixup
+  cancel-in-progress: false
+
+jobs:
+  fix-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out authoritative integration head
+        uses: actions/checkout@v4
+        with:
+          ref: improve/scriptotar-next-integration
+          fetch-depth: 0
+
+      - name: Apply reviewed integration fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one match in {path}, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          core = "crates/scriptotar-core/src/lib.rs"
+          replace_once(
+              core,
+              '''    pub auto_watch: bool,\n    pub watch_interval_minutes: u32,\n}''',
+              '''    pub auto_watch: bool,\n    pub watch_interval_minutes: u32,\n    #[serde(default = "default_appearance")]\n    pub appearance: String,\n}''',
+          )
+          replace_once(
+              core,
+              '''impl Default for ApplicationSettings {''',
+              '''fn default_appearance() -> String {\n    "dark".to_owned()\n}\n\nimpl Default for ApplicationSettings {''',
+          )
+          replace_once(
+              core,
+              '''            auto_watch: false,\n            watch_interval_minutes: 60,\n''',
+              '''            auto_watch: false,\n            watch_interval_minutes: 60,\n            appearance: default_appearance(),\n''',
+          )
+          replace_once(
+              core,
+              '''    #[test]\n    fn application_settings_never_contain_api_keys() {\n        let json = serde_json::to_string(&ApplicationSettings::default()).unwrap();\n        assert!(!json.to_ascii_lowercase().contains("api_key"));\n        assert!(!json.to_ascii_lowercase().contains("apikey"));\n    }\n}''',
+              '''    #[test]\n    fn application_settings_never_contain_api_keys() {\n        let json = serde_json::to_string(&ApplicationSettings::default()).unwrap();\n        assert!(!json.to_ascii_lowercase().contains("api_key"));\n        assert!(!json.to_ascii_lowercase().contains("apikey"));\n    }\n\n    #[test]\n    fn legacy_settings_json_defaults_appearance() {\n        let mut value = serde_json::to_value(ApplicationSettings::default()).unwrap();\n        value.as_object_mut().unwrap().remove("appearance");\n        let settings: ApplicationSettings = serde_json::from_value(value).unwrap();\n        assert_eq!(settings.appearance, "dark");\n    }\n}''',
+          )
+
+          services = "apps/desktop/src-tauri/src/services.rs"
+          replace_once(
+              services,
+              '''    pub fn bootstrap(&self) -> RepositoryResult<BootstrapData> {\n        let active_project = self.active_project_id()?;\n        self.bootstrap_for(active_project)\n    }\n''',
+              '''    pub fn bootstrap(&self) -> RepositoryResult<BootstrapData> {\n        let active_project = self.active_project_id()?;\n        self.bootstrap_for(active_project)\n    }\n\n    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {\n        let active_project = self.active_project_id()?;\n        self.store\n            .list_jobs(Some(active_project))\n            .map(|jobs| jobs.iter().map(job_to_ui).collect())\n    }\n''',
+          )
+          replace_once(
+              services,
+              '''        appearance: "dark".to_owned(),''',
+              '''        appearance: settings.appearance.clone(),''',
+          )
+          replace_once(
+              services,
+              '''    if !["dark", "system"].contains(&ui.appearance.as_str()) {\n        return Err(RepositoryError::Validation(\n            "unsupported appearance setting".to_owned(),\n        ));\n    }\n    Ok(settings)''',
+              '''    if !["dark", "system"].contains(&ui.appearance.as_str()) {\n        return Err(RepositoryError::Validation(\n            "unsupported appearance setting".to_owned(),\n        ));\n    }\n    settings.appearance = ui.appearance;\n    Ok(settings)''',
+          )
+
+          desktop = "apps/desktop/src-tauri/src/lib.rs"
+          replace_once(
+              desktop,
+              '''#[tauri::command]\nfn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {\n    state\n        .bootstrap()\n        .map(|bootstrap| bootstrap.jobs)\n        .map_err(command_error)\n}''',
+              '''#[tauri::command]\nfn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {\n    state.list_jobs().map_err(command_error)\n}''',
+          )
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            patchelf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Build frontend assets required by Tauri context
+        working-directory: apps/desktop-ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Format Rust workspace
+        run: cargo fmt --all
+
+      - name: Repair lockfile and compile every Rust target
+        run: cargo check --workspace --all-targets
+
+      - name: Verify repaired lockfile is stable
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test workspace
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Verify diff
+        run: git diff --check
+
+      - name: Commit validated integration fixes
+        shell: bash
+        run: |
+          git config user.name "scriptotar-ci-maintenance"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            Cargo.lock \
+            crates/scriptotar-core/src/lib.rs \
+            apps/desktop/src-tauri/src/services.rs \
+            apps/desktop/src-tauri/src/lib.rs
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No validated changes to commit."
+            exit 0
+          fi
+          git commit -m "fix: finalize integration settings and job refresh"
+          git push origin HEAD:improve/scriptotar-next-integration
