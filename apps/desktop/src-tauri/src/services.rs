@@ -121,6 +121,13 @@ impl AppServices {
         self.bootstrap_for(active_project)
     }
 
+    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
+        let active_project = self.active_project_id()?;
+        self.store
+            .list_jobs(Some(active_project))
+            .map(|jobs| jobs.iter().map(job_to_ui).collect())
+    }
+
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
         *self
@@ -1055,7 +1062,7 @@ fn settings_to_ui(settings: &ApplicationSettings) -> UiSettings {
             _ => "60 min",
         }
         .to_owned(),
-        appearance: "dark".to_owned(),
+        appearance: settings.appearance.clone(),
     }
 }
 
@@ -1140,6 +1147,7 @@ fn settings_from_ui(
             "unsupported appearance setting".to_owned(),
         ));
     }
+    settings.appearance = ui.appearance;
     Ok(settings)
 }
 

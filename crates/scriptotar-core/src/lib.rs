@@ -298,6 +298,8 @@ pub struct ApplicationSettings {
     pub ai_base_url: Option<String>,
     pub auto_watch: bool,
     pub watch_interval_minutes: u32,
+    #[serde(default = "default_appearance")]
+    pub appearance: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -305,6 +307,10 @@ pub struct ApplicationSettings {
 pub enum AiMode {
     CopyPrompt,
     Byok,
+}
+
+fn default_appearance() -> String {
+    "dark".to_owned()
 }
 
 impl Default for ApplicationSettings {
@@ -327,6 +333,7 @@ impl Default for ApplicationSettings {
             ai_base_url: None,
             auto_watch: false,
             watch_interval_minutes: 60,
+            appearance: default_appearance(),
         }
     }
 }
@@ -415,5 +422,13 @@ mod tests {
         let json = serde_json::to_string(&ApplicationSettings::default()).unwrap();
         assert!(!json.to_ascii_lowercase().contains("api_key"));
         assert!(!json.to_ascii_lowercase().contains("apikey"));
+    }
+
+    #[test]
+    fn legacy_settings_json_defaults_appearance() {
+        let mut value = serde_json::to_value(ApplicationSettings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("appearance");
+        let settings: ApplicationSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.appearance, "dark");
     }
 }

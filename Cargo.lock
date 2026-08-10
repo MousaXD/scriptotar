@@ -2960,6 +2960,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tempfile",
  "url",
  "uuid",
 ]

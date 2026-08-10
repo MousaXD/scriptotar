@@ -90,10 +90,7 @@ fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, 
 
 #[tauri::command]
 fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
-    state
-        .bootstrap()
-        .map(|bootstrap| bootstrap.jobs)
-        .map_err(command_error)
+    state.list_jobs().map_err(command_error)
 }
 
 #[tauri::command]
