@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 import unittest
 from pathlib import Path
 
@@ -25,10 +24,30 @@ def assignment(path: str, name: str) -> str:
     return match.group(1) or match.group(2)
 
 
+def toml_string_in_section(path: str, section: str, name: str) -> str:
+    document = read(path)
+    section_match = re.search(
+        rf'^\[{re.escape(section)}\]\s*$\n(.*?)(?=^\[|\Z)',
+        document,
+        re.MULTILINE | re.DOTALL,
+    )
+    if section_match is None:
+        raise AssertionError(f"could not resolve [{section}] from {path}")
+    value_match = re.search(
+        rf'^\s*{re.escape(name)}\s*=\s*"([^"]+)"\s*(?:#.*)?$',
+        section_match.group(1),
+        re.MULTILINE,
+    )
+    if value_match is None:
+        raise AssertionError(f"could not resolve {name} from [{section}] in {path}")
+    return value_match.group(1)
+
+
 class VersionIdentityTests(unittest.TestCase):
     def test_next_versions_are_aligned(self) -> None:
-        workspace = tomllib.loads(read("Cargo.toml"))
-        workspace_version = workspace["workspace"]["package"]["version"]
+        workspace_version = toml_string_in_section(
+            "Cargo.toml", "workspace.package", "version"
+        )
         tauri_version = json.loads(read("apps/desktop/src-tauri/tauri.conf.json"))["version"]
         frontend_version = json.loads(read("apps/desktop-ui/package.json"))["version"]
         sidecar_version = assignment(
