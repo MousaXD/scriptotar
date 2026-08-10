@@ -199,8 +199,22 @@ impl SqliteStore {
              ORDER BY watchlist_id"
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
-        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(String, String, Option<String>, Option<String>, Option<String>, Option<String>)> {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        )> {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         };
         let rows = if let Some(project_id) = project_id {
             statement
@@ -317,7 +331,10 @@ mod tests {
             status.last_error.as_deref(),
             Some("Provider authentication is required.")
         );
-        assert_eq!(status.next_retry_at.as_deref(), Some("2026-08-10T11:00:00Z"));
+        assert_eq!(
+            status.next_retry_at.as_deref(),
+            Some("2026-08-10T11:00:00Z")
+        );
 
         reopened
             .record_watchlist_refresh_success(watchlist_id, "2026-08-10T11:01:00Z")
