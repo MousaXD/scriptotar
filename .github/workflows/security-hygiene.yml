@@ -20,6 +20,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
+      - name: Verify GitHub Actions use immutable pins
+        run: |
+          python3 scripts/check_github_action_pins.py --self-test
+          python3 scripts/check_github_action_pins.py
       - name: Scan tracked repository content
         run: python3 scripts/check_repo_hygiene.py
