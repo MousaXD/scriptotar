@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { APPEARANCE_STORAGE_KEY } from './appearance';
 import { createMockClient, mockBootstrap } from './api/mockClient';
+import type { MigrationStatus, WatchlistStatus } from './types';
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -13,6 +14,13 @@ async function ready(api = createMockClient()) {
   render(App, { props: { api } });
   await screen.findByRole('heading', { name: 'Creator Lab' });
   return api;
+}
+
+function bootstrapWithMigration(migrationStatus: MigrationStatus) {
+  return {
+    ...structuredClone(mockBootstrap),
+    migrationStatus: structuredClone(migrationStatus)
+  };
 }
 
 describe('desktop workstation', () => {
@@ -109,6 +117,68 @@ describe('desktop workstation', () => {
     expect(card).toHaveTextContent('Next retry');
   });
 
+  it('renders never-scanned, refreshing, healthy, failed, retry, and recovered watchlists', async () => {
+    const watchlistStatuses: WatchlistStatus[] = [
+      {
+        watchlistId: 'never', projectId: 'p-creator-lab', label: 'Never creator', state: 'never_scanned'
+      },
+      {
+        watchlistId: 'refreshing', projectId: 'p-creator-lab', label: 'Refreshing creator', state: 'refreshing',
+        lastAttemptAt: '2026-08-10T10:00:00Z'
+      },
+      {
+        watchlistId: 'healthy', projectId: 'p-creator-lab', label: 'Healthy creator', state: 'healthy',
+        lastAttemptAt: '2026-08-10T10:00:00Z', lastSuccessfulScanAt: '2026-08-10T10:00:01Z'
+      },
+      {
+        watchlistId: 'failed', projectId: 'p-creator-lab', label: 'Failed creator', state: 'failed',
+        lastAttemptAt: '2026-08-10T10:00:00Z', lastError: 'Creator refresh failed safely.'
+      },
+      {
+        watchlistId: 'retry', projectId: 'p-creator-lab', label: 'Retry creator', state: 'retry_scheduled',
+        lastAttemptAt: '2026-08-10T10:00:00Z', lastError: 'Creator refresh could not reach the provider.',
+        nextRetryAt: '2026-08-10T10:30:00Z'
+      },
+      {
+        watchlistId: 'recovered', projectId: 'p-creator-lab', label: 'Recovered creator', state: 'healthy',
+        lastAttemptAt: '2026-08-10T10:30:00Z', lastSuccessfulScanAt: '2026-08-10T10:30:01Z'
+      }
+    ];
+    const api = createMockClient({
+      bootstrap: async () => ({ ...structuredClone(mockBootstrap), watchlistStatuses: structuredClone(watchlistStatuses) }),
+      getWatchlistStatuses: async () => structuredClone(watchlistStatuses)
+    });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Research/ }));
+
+    expect(screen.getByTestId('watchlist-status-never')).toHaveTextContent('Never scanned');
+    expect(screen.getByTestId('watchlist-status-refreshing')).toHaveTextContent('Refreshing');
+    expect(screen.getByTestId('watchlist-status-healthy')).toHaveTextContent('Healthy');
+    expect(screen.getByTestId('watchlist-status-failed')).toHaveTextContent('Failed');
+    expect(screen.getByTestId('watchlist-status-failed')).toHaveTextContent('Creator refresh failed safely.');
+    expect(screen.getByTestId('watchlist-status-retry')).toHaveTextContent('Retry scheduled');
+    expect(screen.getByTestId('watchlist-status-retry')).toHaveTextContent('Next retry');
+    expect(screen.getByTestId('watchlist-status-recovered')).toHaveTextContent('Healthy');
+    expect(screen.getByTestId('watchlist-status-recovered')).not.toHaveTextContent('failed');
+  });
+
+  it('disables manual scan action while a refresh is in flight', async () => {
+    const api = createMockClient();
+    let finishScan: (() => void) | undefined;
+    const scanPending = new Promise<void>((resolve) => { finishScan = resolve; });
+    vi.spyOn(api, 'scanCreator').mockReturnValue(scanPending);
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Research/ }));
+    await fireEvent.input(screen.getByLabelText('Creator profile URL'), {
+      target: { value: 'https://www.youtube.com/@creator' }
+    });
+    const scan = screen.getByRole('button', { name: 'Scan profile' });
+    await fireEvent.click(scan);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Scanning…' })).toBeDisabled());
+    finishScan?.();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Scan profile' })).toBeEnabled());
+  });
+
   it('searches timestamped transcript segments and jumps back to full context', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Transcript/ }));
@@ -186,8 +256,8 @@ describe('desktop workstation', () => {
         state: 'requires_choice',
         message: 'Multiple legacy databases were found. Choose one safely.',
         candidates: [
-          { id: 'candidate-11111111-1111-5111-8111-111111111111', label: 'Scriptotar Classic database (data, option 1)' },
-          { id: 'candidate-22222222-2222-5222-8222-222222222222', label: 'WeSamBoss database (data, option 2)' }
+          { id: 'candidate-11111111-1111-5111-8111-111111111111', label: 'Scriptotar Classic database (option 1)' },
+          { id: 'candidate-22222222-2222-5222-8222-222222222222', label: 'WeSamBoss database (option 2)' }
         ]
       }
     });
@@ -197,8 +267,98 @@ describe('desktop workstation', () => {
     const migration = screen.getByTestId('migration-status');
     expect(migration).toHaveTextContent('Choice required');
     expect(migration).toHaveTextContent('Multiple legacy databases were found');
-    await fireEvent.click(screen.getByRole('button', { name: 'WeSamBoss database (data, option 2)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'WeSamBoss database (option 2)' }));
     await waitFor(() => expect(selectCandidate).toHaveBeenCalledWith('candidate-22222222-2222-5222-8222-222222222222'));
+  });
+
+  it('shows invalid legacy candidate state with a safe retry path', async () => {
+    const migrationStatus: MigrationStatus = {
+      state: 'invalid_db',
+      message: 'A discovered legacy database is not a safe, readable SQLite file.',
+      candidates: []
+    };
+    const api = createMockClient({ bootstrap: async () => bootstrapWithMigration(migrationStatus) });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const migration = screen.getByTestId('migration-status');
+    expect(migration).toHaveTextContent('Invalid legacy database');
+    expect(screen.getByRole('button', { name: 'Retry migration discovery' })).toBeEnabled();
+  });
+
+  it('shows failed migration state and can retry discovery', async () => {
+    let migrationStatus: MigrationStatus = {
+      state: 'failed',
+      message: 'Migration failed safely.',
+      candidates: []
+    };
+    const api = createMockClient({
+      bootstrap: async () => bootstrapWithMigration(migrationStatus),
+      retryLegacyMigration: async () => {
+        migrationStatus = {
+          state: 'no_legacy_db',
+          message: 'No Scriptotar Classic database was found in the standard legacy locations.',
+          candidates: []
+        };
+        return structuredClone(migrationStatus);
+      }
+    });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    expect(screen.getByTestId('migration-status')).toHaveTextContent('Migration failed');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry migration discovery' }));
+    await waitFor(() => expect(screen.getByTestId('migration-status')).toHaveTextContent('No legacy database found'));
+  });
+
+  it('shows migration in progress without offering another migration action', async () => {
+    const migrationStatus: MigrationStatus = {
+      state: 'in_progress',
+      message: 'Scriptotar is importing the prepared legacy snapshot.',
+      candidates: []
+    };
+    const api = createMockClient({ bootstrap: async () => bootstrapWithMigration(migrationStatus) });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const migration = screen.getByTestId('migration-status');
+    expect(migration).toHaveAttribute('data-state', 'in_progress');
+    expect(migration).toHaveTextContent('Importing');
+    expect(screen.queryByRole('button', { name: /migration|import prepared|retry migration/i })).not.toBeInTheDocument();
+  });
+
+  it('imports a prepared snapshot and renders successful migration counts', async () => {
+    const completed: MigrationStatus = {
+      state: 'completed',
+      message: 'Legacy migration completed.',
+      candidates: [],
+      report: {
+        skipped: false,
+        backup_path: '/mock/history.sqlite3.scriptotar-next.bak',
+        projects: 1,
+        jobs: 2,
+        transcripts: 3,
+        research_items: 4,
+        watchlists: 5,
+        ai_runs: 6
+      }
+    };
+    let migrationStatus: MigrationStatus = {
+      state: 'ready',
+      message: 'A safe legacy database snapshot is prepared for import.',
+      candidates: []
+    };
+    const api = createMockClient({
+      bootstrap: async () => bootstrapWithMigration(migrationStatus),
+      retryLegacyMigration: async () => {
+        migrationStatus = structuredClone(completed);
+        return structuredClone(completed);
+      }
+    });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    expect(screen.getByRole('button', { name: 'Import prepared snapshot' })).toBeEnabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Import prepared snapshot' }));
+    await waitFor(() => expect(screen.getByTestId('migration-status')).toHaveTextContent('Completed'));
+    expect(screen.getByTestId('migration-status')).toHaveTextContent('Imported 1 projects, 2 jobs, 3 transcripts, 4 research items, 5 watchlists, and 6 AI runs.');
+    expect(screen.queryByRole('button', { name: 'Import prepared snapshot' })).not.toBeInTheDocument();
   });
 
   it('shows a recoverable error state when bootstrap fails', async () => {
