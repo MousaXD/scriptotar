@@ -100,6 +100,15 @@ describe('desktop workstation', () => {
     expect(screen.queryByTestId('research-r-1')).not.toBeInTheDocument();
   });
 
+  it('surfaces persisted watchlist retry state and safe failure detail', async () => {
+    await ready();
+    await fireEvent.click(screen.getByRole('button', { name: /Research/ }));
+    const card = screen.getByTestId('watchlist-status-w-2');
+    expect(card).toHaveTextContent('Retry scheduled');
+    expect(card).toHaveTextContent('Creator refresh needs valid browser authentication or provider access.');
+    expect(card).toHaveTextContent('Next retry');
+  });
+
   it('searches timestamped transcript segments and jumps back to full context', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Transcript/ }));
@@ -157,15 +166,16 @@ describe('desktop workstation', () => {
     expect(document.documentElement.dataset.theme).toBe('system');
   });
 
-  it('shows an inspectable legacy migration result', async () => {
+  it('shows structured migration discovery status and a recovery action', async () => {
     const api = createMockClient();
-    const importLegacyData = vi.spyOn(api, 'importLegacyData');
+    const retryLegacyMigration = vi.spyOn(api, 'retryLegacyMigration');
     await ready(api);
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Import legacy data' }));
-    await waitFor(() => expect(importLegacyData).toHaveBeenCalledTimes(1));
-    expect(screen.getByText(/Legacy import completed:/)).toHaveTextContent('1 transcripts');
-    expect(screen.getByText(/Legacy import completed:/)).toHaveTextContent('Backup:');
+    const migration = screen.getByTestId('migration-status');
+    expect(migration).toHaveTextContent('No legacy database found');
+    expect(migration).toHaveTextContent('No Scriptotar Classic database was found');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry migration discovery' }));
+    await waitFor(() => expect(retryLegacyMigration).toHaveBeenCalledTimes(1));
   });
 
   it('shows a recoverable error state when bootstrap fails', async () => {
