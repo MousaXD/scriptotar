@@ -1,112 +1,114 @@
 # Third-party notices
 
-Scriptotar source code is distributed under the Apache License 2.0. Scriptotar Next also distributes and links third-party software under each component's own license. This document describes the current Windows NSIS and Linux Debian preview packages; it is an engineering inventory, not a legal opinion or warranty of compliance.
+Scriptotar source code is distributed under the Apache License 2.0. Scriptotar Next also distributes and links third-party software under each component's own license. This document describes the current Windows NSIS and Linux Debian preview packages. It is an engineering inventory, not a legal opinion or warranty of compliance.
 
-## Machine-readable package inventory
+## Generated package inventory
 
-Every Scriptotar Next package contains a self-contained transcription runtime. During packaging, `sidecars/transcription/runtime_licenses.py` writes `transcription-runtime/RUNTIME-LICENSES.json` and a `transcription-runtime/legal/` directory.
+Every Scriptotar Next package contains a self-contained transcription runtime. During packaging, `sidecars/transcription/runtime_licenses.py` writes:
 
-That generated manifest records the exact installed Python dependency closure and versions used for the package, copies license/NOTICE files exposed by installed Python distributions, records the embedded Python interpreter license, and audits **both** FFmpeg distribution paths used by Scriptotar Next:
+- `transcription-runtime/RUNTIME-LICENSES.json`;
+- `transcription-runtime/legal/THIRD_PARTY_NOTICES.md`;
+- the Scriptotar `NOTICE` and Apache-2.0 license;
+- the embedded Python runtime license;
+- license/NOTICE files exposed by installed Python distributions;
+- a verified GNU GPLv3 text for the standalone FFmpeg/ffprobe payload;
+- a verified GNU LGPLv3 text for FFmpeg libraries bundled by PyAV.
 
-1. the standalone `ffmpeg`/`ffprobe` executables fetched through `static-ffmpeg`;
-2. the FFmpeg shared/native libraries bundled inside the PyAV binary wheel.
+The generated manifest records the exact installed Python dependency closure and versions used by the package. It also audits two independent FFmpeg distribution paths:
 
-For the standalone executables, the manifest records binary SHA-256 values, the exact FFmpeg build configuration and the `static-ffmpeg` download record when available. For PyAV, it records the output-derived FFmpeg configuration/license groups and hashes the wheel's bundled native libraries. Packaging rejects `--enable-nonfree` and rejects FFmpeg license drift away from the currently audited GPLv3 baseline.
+1. standalone `ffmpeg` and `ffprobe` executables fetched through `static-ffmpeg`;
+2. FFmpeg shared/native libraries carried inside the PyAV binary wheel.
 
-The package workflows already run `sidecars/transcription/validate_runtime.py` before Tauri packaging and again against the installed package. The validator now requires the runtime legal bundle and both FFmpeg inventories, so a package that drops the notices or changes the audited FFmpeg licensing fails validation.
+The existing Windows and Linux packaging workflows run `sidecars/transcription/validate_runtime.py` before Tauri packaging and again against the packaged/installed runtime. The validator now requires the legal bundle and rejects unexpected FFmpeg licensing or `--enable-nonfree`.
 
-When this document and the generated manifest disagree, treat the discrepancy as a release blocker and investigate the built artifact.
+When this document and a generated `RUNTIME-LICENSES.json` disagree, treat the package as a release blocker and inspect the built artifact.
 
-## Components bundled in Scriptotar Next
+## Rust and Tauri desktop application
 
-### Rust/Tauri desktop application
+Scriptotar's Rust crates are Apache-2.0 and are compiled into the desktop executable. Tauri 2 and its Rust runtime are compiled/linked into that application; upstream Tauri uses Apache-2.0 or MIT licensing. Exact Rust dependency versions are locked by `Cargo.lock`.
 
-- **Scriptotar Rust crates** are Apache-2.0 and are compiled into the desktop executable.
-- **Tauri 2** and its Rust runtime are compiled/linked into the desktop application. Upstream Tauri declares `Apache-2.0 OR MIT`. Exact dependency versions are locked by `Cargo.lock`.
-- **rusqlite** and **libsqlite3-sys** are MIT-licensed upstream. This repository enables rusqlite's `bundled` feature, which compiles SQLite into the application instead of relying on a system SQLite library. The core SQLite code delivered this way is dedicated to the public domain by the SQLite project. Exact Rust dependency identity is recorded in `Cargo.lock`.
+The application enables rusqlite's `bundled` feature. That means SQLite is compiled into Scriptotar rather than being supplied by the operating system. rusqlite/libsqlite3-sys are MIT-licensed upstream, while SQLite's core source is dedicated to the public domain by the SQLite project.
 
-The Rust toolchain and Tauri CLI used by CI are build tools; their command-line programs are not copied into the installer.
+The Rust toolchain and Tauri CLI are build tools. Their command-line programs are not copied into the installer.
 
-### Svelte frontend
+## Svelte frontend
 
-Scriptotar Next ships the generated static frontend assets consumed by Tauri. Svelte runtime code needed by the compiled application can therefore be present in those generated assets. Svelte is MIT-licensed upstream.
+Scriptotar Next ships the generated static frontend consumed by Tauri. Svelte runtime code needed by the compiled frontend can therefore be present in those generated assets. Svelte is MIT-licensed upstream.
 
-The repository's Node development toolchain, including Vite, TypeScript, Vitest, jsdom and testing-library packages, is used to build/test the frontend. `node_modules` itself is not copied into the Tauri package.
+Vite, TypeScript, Vitest, jsdom, testing-library packages and other development dependencies are used to build/test the frontend. `node_modules` itself is not copied into the Tauri package.
 
-### Packaged Python transcription runtime
+## Packaged Python transcription runtime
 
-A separate system Python installation is **not** required by Scriptotar Next. PyInstaller builds the supervisor, engine and dedicated yt-dlp executable and embeds the Python runtime/dependencies they need.
+A separate system Python installation is not required by Scriptotar Next. PyInstaller builds the supervisor, engine and dedicated yt-dlp executable and embeds the Python runtime and imported dependencies they need.
 
-Important bundled Python components include, with exact versions and discovered license files recorded in `RUNTIME-LICENSES.json`:
+Important bundled Python components include:
 
-- **faster-whisper**: transcription/inference integration;
-- **CTranslate2**: inference runtime used by faster-whisper;
-- **yt-dlp**: media metadata extraction/downloading;
-- **curl-cffi**: the precompiled native HTTP/TLS client selected by the yt-dlp extra used by Scriptotar;
-- **huggingface-hub**: model acquisition/cache client used by the inference stack;
-- **tokenizers**: tokenizer runtime;
-- **PyAV (`av`)** and the remaining installed transitive dependencies required by the engine.
+- `faster-whisper` for transcription/inference integration;
+- CTranslate2 for inference;
+- `yt-dlp` for media extraction/downloading;
+- `curl-cffi` for the yt-dlp HTTP/TLS impersonation extra used by Scriptotar;
+- `huggingface-hub` for model acquisition/cache behavior;
+- `tokenizers`;
+- PyAV (`av`), including its native FFmpeg libraries;
+- the remaining installed transitive dependencies resolved from those roots.
 
-Installed wheel metadata is used as the primary license source. Some wheels do not expose sufficient license metadata. `tokenizers 0.23.1`, for example, does not expose a usable license declaration/file in the wheel metadata seen by package CI, so Scriptotar uses a version-specific Apache-2.0 fallback fetched from the exact upstream `v0.23.1` tag and verifies its SHA-256. A tokenizers version change therefore fails rather than inheriting an old assumption.
+Exact versions, project URLs, declared license metadata and discovered license files are recorded in `RUNTIME-LICENSES.json`.
 
-**PyInstaller 6.21.0** is primarily a build tool, but its bootloader is part of generated executables. PyInstaller is GPL-2.0-or-later with its upstream bootloader exception, which permits distribution of applications built with the bootloader under the application's chosen license subject to the exception's terms. The package copies PyInstaller's installed license material into the runtime legal directory for reference.
+Installed wheel metadata is the primary license source. If a bundled wheel exposes neither usable license metadata nor a license file, packaging fails unless there is a narrow, reviewed fallback for that exact version. The current fallback for `tokenizers 0.23.1` fetches the Apache-2.0 license from the exact upstream `v0.23.1` tag and verifies its SHA-256. A tokenizers version change therefore requires review instead of inheriting the old assumption.
 
-### FFmpeg and ffprobe executables
+The hosted Linux CPython 3.12.13 installation used by package CI does not always place its license beside the interpreter. When no local interpreter license is found, the builder permits only CPython 3.12.13 and fetches the license from the official `v3.12.13` source tag with a pinned SHA-256. Other interpreter/version combinations fail unless their license is locally available or reviewed.
 
-**FFmpeg and ffprobe are bundled binaries. They are not system-provided in Scriptotar Next.**
+PyInstaller 6.21.0 is primarily a build tool, but its bootloader is included in generated executables. PyInstaller is GPL-2.0-or-later with its upstream bootloader exception. The runtime legal directory includes PyInstaller license material exposed by the installed distribution.
 
-`static-ffmpeg==3.0` is the build-time fetcher. It resolves FFmpeg 8.0-era platform binaries and Scriptotar copies the resulting `ffmpeg` and `ffprobe` executables into `transcription-runtime/ffmpeg/`. The `static-ffmpeg` Python package itself is not copied into the runtime.
+## Standalone FFmpeg and ffprobe
 
-The upstream `static-ffmpeg` binary-generation workflow documents these sources for the v8.0 archive lineage used by the package:
+**FFmpeg and ffprobe are bundled binaries in Scriptotar Next. They are not system-provided.**
 
-- Linux x86-64/ARM64 archives: BtbN/FFmpeg-Builds **GPL** variants;
-- Windows x86-64 archive: gyan.dev **essentials** build.
+`static-ffmpeg==3.0` is used at build time to acquire platform FFmpeg binaries. Scriptotar copies the resulting executables into `transcription-runtime/ffmpeg/`. The `static-ffmpeg` Python package itself is not copied into the runtime.
 
-Scriptotar does not trust those labels alone. Packaging executes the selected FFmpeg binary, records its full `configuration:` switches, records SHA-256 hashes for the resolved binaries, and classifies the effective FFmpeg license from `--enable-gpl`, `--enable-version3` and `--enable-nonfree`. The currently supported/audited package baseline is **GPL-3.0-or-later**. A different classification fails packaging until the notices and legal artifacts are reviewed.
+For each package build, Scriptotar executes the selected FFmpeg binary, records its version/configuration and binary SHA-256 values, then infers the effective FFmpeg license from the actual configure switches. `--enable-nonfree` is rejected. The currently audited standalone binary baseline on Windows and Linux is **GPL-3.0-or-later**, with `--enable-gpl` and `--enable-version3` present.
 
-### FFmpeg libraries bundled through PyAV
+The package includes a hash-verified copy of GNU GPL version 3 at `legal/FFMPEG-GPL-3.0.txt`.
 
-PyAV is not just Python code. Upstream explicitly provides binary wheels with FFmpeg bundled. At the currently audited dependency resolution, PyAV `18.0.0` uses FFmpeg `8.1.2` in its binary wheels, and the PyAV tag points its Windows vendor fetch to the `PyAV-Org/pyav-ffmpeg` `8.1.2-1` release lineage.
+## FFmpeg libraries bundled through PyAV
 
-Scriptotar therefore treats PyAV's native FFmpeg libraries as a **second FFmpeg distribution path**, independent of the standalone `static-ffmpeg` executables. During packaging, Scriptotar runs `python -m av --version`, reads every FFmpeg library configuration/license group reported by the installed wheel, classifies the configuration switches using the same GPL/version3/nonfree rules, and hashes the wheel's `av.libs`/native-library payload.
+PyAV binary wheels bundle FFmpeg libraries, so they are a second distribution path independent of the standalone `static-ffmpeg` executables.
 
-The current audited PyAV FFmpeg baseline is also **GPL-3.0-or-later**. Packaging fails if a PyAV FFmpeg group changes license, lacks the expected GPLv3 configuration, or includes `--enable-nonfree`.
+Package CI for the currently resolved PyAV 18.0.0 wheels reports **LGPL-3.0-or-later** for the bundled FFmpeg library groups on both Windows and Linux. Scriptotar records the output of `python -m av --version`, requires the configuration to remain compatible with the audited LGPLv3 baseline, rejects GPL/nonfree drift, and hashes the wheel's native `av.libs`/equivalent payload.
 
-The runtime includes a verified verbatim copy of GNU GPL version 3 as `legal/FFMPEG-GPL-3.0.txt`, referenced by both FFmpeg inventory entries.
+The package includes a hash-verified copy of GNU LGPL version 3 at `legal/FFMPEG-LGPL-3.0.txt`. GNU LGPLv3 incorporates GPLv3 terms and requires the GPL and LGPL license documents to accompany covered object code in relevant cases, so both texts are present in the runtime legal directory.
 
-## Downloaded later, not bundled in the installer
+## Downloaded later, not bundled
 
-Whisper model weights are intentionally not included in Scriptotar Next installers. A selected model is downloaded on first uncached use and cached in the user's Scriptotar application-data location. Model repositories can have their own licenses, notices and usage terms; those model artifacts are outside the installer inventory above.
+Whisper model weights are not included in Scriptotar Next installers. A selected model is downloaded on first uncached use and cached in the user's Scriptotar application-data location. Model repositories can have their own licenses, notices and usage terms, so those model artifacts are outside the installer inventory above.
 
-Remote media downloaded at the user's request is likewise not a component distributed in the Scriptotar installer.
+Remote media downloaded at the user's request is also not a component distributed in the Scriptotar installer.
 
 ## System-provided runtime components
 
-On Linux, **WebKitGTK/GTK and their platform libraries are system package/runtime dependencies**, not files copied into Scriptotar's `transcription-runtime` resource directory. The Debian package also declares `zenity` as a system dependency. Build CI installs development packages so Tauri can compile; end users receive runtime libraries through their operating-system package manager.
+On Linux, WebKitGTK, GTK and their platform libraries are system package/runtime dependencies rather than files copied into Scriptotar's transcription runtime. The Debian package also declares `zenity` as a system dependency. Build CI installs development packages so Tauri can compile, while end users receive the runtime libraries through their operating-system package manager.
 
-On Windows, the Tauri webview/platform runtime is supplied by the Windows/WebView2 environment rather than by Scriptotar's transcription-runtime resources.
+On Windows, the webview/platform runtime is supplied through the Windows/WebView2 environment rather than Scriptotar's transcription-runtime resource directory.
 
-## Items still requiring human/legal review
+## Items requiring human or legal review
 
-The safeguards above improve the accuracy and reproducibility of the package inventory, but they do **not** constitute a legal compliance guarantee.
+The safeguards above improve package accuracy and make license drift fail CI, but they do not establish a legal-compliance guarantee.
 
-1. **GPL Corresponding Source for both FFmpeg payloads.** Scriptotar currently records provenance/configuration and ships GPLv3 terms, but this repository does not yet mirror a Corresponding Source bundle for the exact standalone FFmpeg binaries **or** for the FFmpeg/native library set distributed through the PyAV wheel and their GPL-covered linked components. Before distributing installers, release owners should verify a GPL-compliant Corresponding Source delivery method or publish/mirror the required sources and build material. A bare upstream hyperlink should not be assumed to satisfy that obligation.
-2. **curl-cffi native dependency notices.** `curl-cffi` is precompiled and its current upstream release line includes a native curl-impersonation stack. Scriptotar copies license/NOTICE files exposed by the installed wheel, but a human should confirm that the wheel's own native third-party components and attributions are fully represented before claiming exhaustive compliance.
-3. **Exhaustive Rust/frontend transitive notices.** `Cargo.lock` and the frontend lockfile determine the build graph, and this notice identifies the principal shipped runtime layers, but the generated legal manifest currently focuses on the self-contained transcription runtime. It does not yet claim to be a complete license-text aggregation for every compiled Rust crate or every piece of frontend code folded into production assets. That remains a separate release/legal-review item.
+1. **Standalone GPL FFmpeg Corresponding Source.** Scriptotar records the exact executable configuration, provenance where available and SHA-256 values, and ships GPLv3 terms. This repository still does not mirror a Corresponding Source bundle for the exact prebuilt standalone FFmpeg/ffprobe binaries and their GPL-covered linked components. Release owners must verify a GPL-compliant source-delivery method before distributing installers.
+2. **PyAV/FFmpeg LGPL obligations.** The current PyAV wheel's FFmpeg libraries audit as LGPL-3.0-or-later, not GPL. LGPLv3 has source, notice and relinking/modified-library requirements that depend on how the covered libraries are conveyed and linked. The package now ships the LGPL/GPL texts and records the native payload, but a human should verify the chosen distribution mechanism satisfies the applicable LGPL requirements for the exact wheel.
+3. **curl-cffi native dependency notices.** `curl-cffi` is precompiled and includes a native curl-impersonation stack. Scriptotar copies license/NOTICE files exposed by its installed wheel, but a human should confirm that all native third-party components and attributions inside that wheel are fully represented before claiming exhaustive compliance.
+4. **Exhaustive Rust/frontend transitive notices.** `Cargo.lock` and the frontend lockfile define those dependency graphs, but the generated legal manifest currently focuses on the self-contained transcription runtime. It does not yet claim to aggregate every license text for every compiled Rust crate or every third-party code fragment folded into production frontend assets.
 
-## Legacy Scriptotar Classic
+## Scriptotar Classic
 
-Scriptotar Classic remains a separate Python/Tkinter application in this repository. Its Tk/Tkinter and Linux secret-service integration are legacy/runtime concerns and should not be confused with what the Scriptotar Next installers bundle. This notice focuses on the current Scriptotar Next Windows and Linux distribution path.
+Scriptotar Classic remains a separate Python/Tkinter application in this repository. Its Tk/Tkinter and Linux secret-service integration should not be confused with what the Scriptotar Next installers bundle. This notice focuses on the current Scriptotar Next Windows and Linux distribution path.
 
 ## Upstream references
 
 - FFmpeg: https://ffmpeg.org/ and https://github.com/FFmpeg/FFmpeg
 - static-ffmpeg: https://github.com/zackees/static_ffmpeg
-- static-ffmpeg binary archive: https://github.com/zackees/ffmpeg_bins
-- BtbN FFmpeg builds: https://github.com/BtbN/FFmpeg-Builds
-- gyan.dev FFmpeg builds: https://www.gyan.dev/ffmpeg/builds/
 - PyAV: https://github.com/PyAV-Org/PyAV
-- PyAV FFmpeg binary builds: https://github.com/PyAV-Org/pyav-ffmpeg
+- PyAV FFmpeg builds: https://github.com/PyAV-Org/pyav-ffmpeg
 - PyInstaller: https://pyinstaller.org/
 - faster-whisper: https://github.com/SYSTRAN/faster-whisper
 - CTranslate2: https://github.com/OpenNMT/CTranslate2
@@ -114,6 +116,7 @@ Scriptotar Classic remains a separate Python/Tkinter application in this reposit
 - curl-cffi: https://github.com/lexiforest/curl_cffi
 - Hugging Face Hub: https://github.com/huggingface/huggingface_hub
 - tokenizers: https://github.com/huggingface/tokenizers
+- CPython: https://github.com/python/cpython
 - rusqlite: https://github.com/rusqlite/rusqlite
 - SQLite: https://www.sqlite.org/copyright.html
 - Tauri: https://github.com/tauri-apps/tauri
