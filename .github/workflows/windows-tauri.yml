@@ -173,6 +173,7 @@ jobs:
             throw 'Installed transcription-runtime resource directory was not found.'
           }
           python sidecars/transcription/validate_runtime.py $runtime.FullName
+          python sidecars/transcription/compliance_finalize.py --validate $runtime.FullName
 
           $uninstaller = Get-ChildItem -Path $installDir -Recurse -Filter 'uninstall.exe' | Select-Object -First 1
           if (-not $uninstaller) {
