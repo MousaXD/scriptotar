@@ -61,3 +61,10 @@ jobs:
           print("faster-whisper", faster_whisper.__version__)
           print("yt-dlp", yt_dlp.version.__version__)
           PY
+
+  agent8-whisper-canary:
+    name: Agent 8 real Whisper canary verification
+    if: github.event_name == 'pull_request' && github.head_ref == 'test/whisper-runtime-canary'
+    uses: ./.github/workflows/whisper-runtime-canary.yml
+    permissions:
+      contents: read
