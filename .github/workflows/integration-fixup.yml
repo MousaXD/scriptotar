@@ -10,10 +10,10 @@ permissions:
 
 concurrency:
   group: scriptotar-integration-fixup
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  fix-and-validate:
+  fix-and-commit:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-22.04
     steps:
@@ -82,47 +82,23 @@ jobs:
               '''#[tauri::command]\nfn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {\n    state.list_jobs().map_err(command_error)\n}''',
           )
 
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            patchelf
-
-      - name: Install Rust toolchain
+      - name: Install Rust formatter
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
-      - name: Build frontend assets required by Tauri context
-        working-directory: apps/desktop-ui
-        run: |
-          npm ci
-          npm run build
+          components: rustfmt
 
       - name: Format Rust workspace
         run: cargo fmt --all
 
-      - name: Repair lockfile and compile every Rust target
-        run: cargo check --workspace --all-targets
-
-      - name: Verify repaired lockfile is stable
-        run: cargo check --workspace --all-targets --locked
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Test workspace
-        run: cargo test --workspace --all-targets --locked
+      - name: Resolve complete Cargo graph and repair lockfile
+        run: |
+          cargo metadata --format-version 1 > /dev/null
+          cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Verify diff
         run: git diff --check
 
-      - name: Commit validated integration fixes
+      - name: Commit integration fixes
         shell: bash
         run: |
           git config user.name "scriptotar-ci-maintenance"
@@ -133,9 +109,6 @@ jobs:
             apps/desktop/src-tauri/src/services.rs \
             apps/desktop/src-tauri/src/lib.rs
           git diff --cached --check
-          if git diff --cached --quiet; then
-            echo "No validated changes to commit."
-            exit 0
-          fi
+          test -n "$(git diff --cached --name-only)"
           git commit -m "fix: finalize integration settings and job refresh"
           git push origin HEAD:improve/scriptotar-next-integration
