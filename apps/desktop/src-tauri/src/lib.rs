@@ -2,6 +2,9 @@ mod dto;
 mod security;
 mod services;
 
+#[cfg(test)]
+mod installed_app_e2e;
+
 use std::{
     env, io,
     path::{Path, PathBuf},
