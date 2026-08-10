@@ -4,6 +4,8 @@ export type LibraryKind = 'Transcript' | 'Research' | 'AI run' | 'Project' | 'Cr
 export type AiMode = 'copy' | 'byok';
 export type AiProvider = 'OpenAI' | 'Anthropic' | 'Gemini' | 'OpenAI-compatible' | 'Local (coming later)';
 export type SearchResultKind = 'Project' | 'Transcript' | 'Research' | 'Creator' | 'AI run';
+export type WatchlistOperationalState = 'healthy' | 'never_scanned' | 'refreshing' | 'retry_scheduled' | 'failed';
+export type MigrationState = 'completed' | 'no_legacy_db' | 'ready' | 'requires_choice' | 'invalid_db' | 'failed';
 
 export interface Project {
   id: string;
@@ -21,6 +23,22 @@ export interface Creator {
   avatar?: string;
   watchlisted: boolean;
   lastScannedAt?: string;
+}
+
+export interface WatchlistStatus {
+  watchlistId: string;
+  projectId: string;
+  label: string;
+  state: WatchlistOperationalState;
+  lastAttemptAt?: string;
+  lastSuccessfulScanAt?: string;
+  lastError?: string;
+  nextRetryAt?: string;
+}
+
+export interface MigrationCandidate {
+  id: string;
+  label: string;
 }
 
 export interface ResearchItem {
@@ -142,6 +160,13 @@ export interface LegacyImportReport {
   ai_runs: number;
 }
 
+export interface MigrationStatus {
+  state: MigrationState;
+  message: string;
+  candidates: MigrationCandidate[];
+  report?: LegacyImportReport;
+}
+
 export interface BootstrapData {
   projects: Project[];
   activeProjectId: string;
@@ -152,4 +177,6 @@ export interface BootstrapData {
   aiRuns: AiRun[];
   library: LibraryItem[];
   settings: AppSettings;
+  watchlistStatuses: WatchlistStatus[];
+  migrationStatus: MigrationStatus;
 }
