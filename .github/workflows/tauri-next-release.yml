@@ -4,7 +4,6 @@ on:
   workflow_run:
     workflows:
       - Windows Tauri Installer
-      - Linux Tauri Package
     types: [completed]
     branches: [main]
   pull_request:
@@ -19,7 +18,7 @@ permissions:
 
 concurrency:
   group: tauri-next-release-${{ github.event.workflow_run.head_sha || github.sha }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   validate-contract:
@@ -38,7 +37,7 @@ jobs:
   publish-preview:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     permissions:
       contents: write
       actions: read
@@ -74,14 +73,48 @@ jobs:
               '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId // empty'
           }
 
-          WINDOWS_RUN_ID="$(find_run windows-tauri.yml)"
-          LINUX_RUN_ID="$(find_run linux-tauri.yml)"
+          WINDOWS_RUN_ID=""
+          LINUX_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            WINDOWS_RUN_ID="$(find_run windows-tauri.yml)"
+            LINUX_RUN_ID="$(find_run linux-tauri.yml)"
+            if [ -n "$WINDOWS_RUN_ID" ] && [ -n "$LINUX_RUN_ID" ]; then
+              break
+            fi
+            echo "Waiting for matching package workflow runs for $SOURCE_SHA ($attempt/20)..."
+            sleep 15
+          done
 
           test -n "$WINDOWS_RUN_ID" || { echo 'No Windows package run found for this main commit.' >&2; exit 1; }
           test -n "$LINUX_RUN_ID" || { echo 'No Linux package run found for this main commit.' >&2; exit 1; }
 
           echo "windows_run_id=$WINDOWS_RUN_ID" >> "$GITHUB_OUTPUT"
           echo "linux_run_id=$LINUX_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for both package workflows to finish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_status() {
+            gh run view "$1" --repo "$GITHUB_REPOSITORY" --json status --jq '.status'
+          }
+
+          WINDOWS_RUN_ID='${{ steps.runs.outputs.windows_run_id }}'
+          LINUX_RUN_ID='${{ steps.runs.outputs.linux_run_id }}'
+
+          for attempt in $(seq 1 160); do
+            WINDOWS_STATUS="$(run_status "$WINDOWS_RUN_ID")"
+            LINUX_STATUS="$(run_status "$LINUX_RUN_ID")"
+            if [ "$WINDOWS_STATUS" = completed ] && [ "$LINUX_STATUS" = completed ]; then
+              exit 0
+            fi
+            echo "Waiting for package workflows: windows=$WINDOWS_STATUS linux=$LINUX_STATUS ($attempt/160)"
+            sleep 30
+          done
+
+          echo 'Timed out waiting for both package workflows to complete.' >&2
+          exit 1
 
       - name: Verify package build jobs succeeded
         shell: bash
@@ -95,8 +128,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --json jobs | jq -r '.jobs[] | select(.name == "Build and validate Tauri deb") | .conclusion' | tail -n 1)"
 
-          test "$WINDOWS_RESULT" = success || { echo "Windows package job is $WINDOWS_RESULT, refusing to publish." >&2; exit 1; }
-          test "$LINUX_RESULT" = success || { echo "Linux package job is $LINUX_RESULT, refusing to publish." >&2; exit 1; }
+          test "$WINDOWS_RESULT" = success || { echo "Windows package build job is $WINDOWS_RESULT, refusing to publish." >&2; exit 1; }
+          test "$LINUX_RESULT" = success || { echo "Linux package build job is $LINUX_RESULT, refusing to publish." >&2; exit 1; }
 
       - name: Download validated package artifacts
         shell: bash
@@ -137,7 +170,7 @@ jobs:
           LINUX_CONTENTS="$(find dist/linux -type f -name DEB-CONTENTS.txt -print -quit)"
 
           for file in "$WINDOWS_INSTALLER" "$LINUX_DEB" "$WINDOWS_RUNTIME" "$LINUX_RUNTIME" "$LINUX_CONTENTS"; do
-            test -n "$file" && test -s "$file" || { echo "Required release asset is missing." >&2; exit 1; }
+            test -n "$file" && test -s "$file" || { echo 'Required release asset is missing.' >&2; exit 1; }
           done
 
           mkdir -p latest
@@ -161,12 +194,12 @@ jobs:
           cat > RELEASE-NOTES.md <<NOTES
           # Scriptotar Next Preview
 
-          Built automatically from validated Windows and Linux package jobs on \\`main\`.
+          Built automatically from validated Windows and Linux package jobs on `main`.
 
           - Tauri app version: ${WINDOWS_VERSION}
           - Commit: ${SOURCE_SHA}
-          - Windows: \\`Scriptotar-Next-latest-x64-setup.exe\`
-          - Linux: \\`Scriptotar-Next-latest-amd64.deb\`
+          - Windows: `Scriptotar-Next-latest-x64-setup.exe`
+          - Linux: `Scriptotar-Next-latest-amd64.deb`
 
           Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
 
