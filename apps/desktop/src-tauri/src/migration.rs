@@ -35,9 +35,11 @@ pub fn current_status() -> UiMigrationStatus {
     status_cell()
         .lock()
         .map(|status| status.clone())
-        .unwrap_or_else(|_| UiMigrationStatus::failed(
-            "Migration status is temporarily unavailable. Restart Scriptotar and try again.",
-        ))
+        .unwrap_or_else(|_| {
+            UiMigrationStatus::failed(
+                "Migration status is temporarily unavailable. Restart Scriptotar and try again.",
+            )
+        })
 }
 
 pub fn set_status(status: UiMigrationStatus) {
@@ -59,11 +61,8 @@ pub fn retry_discovery(data_dir: &Path) -> Preparation {
 }
 
 pub fn choose_candidate(data_dir: &Path, candidate_id: &str) -> Preparation {
-    let preparation = choose_candidate_from_roots(
-        data_dir,
-        &configured_legacy_data_roots(),
-        candidate_id,
-    );
+    let preparation =
+        choose_candidate_from_roots(data_dir, &configured_legacy_data_roots(), candidate_id);
     set_status(status_for_preparation(&preparation));
     preparation
 }
@@ -215,7 +214,8 @@ fn choose_candidate_from_roots(
                 .to_owned(),
         );
     };
-    match validate_sqlite_header(candidate).and_then(|_| stage_legacy_database(candidate, &pending)) {
+    match validate_sqlite_header(candidate).and_then(|_| stage_legacy_database(candidate, &pending))
+    {
         Ok(()) => Preparation::Ready,
         Err(error) if is_invalid_database_error(&error) => {
             Preparation::InvalidDatabase(safe_invalid_message(&error))
@@ -250,7 +250,7 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => {
                     return Err(
-                        "A legacy database candidate could not be inspected safely.".to_owned(),
+                        "A legacy database candidate could not be inspected safely.".to_owned()
                     )
                 }
             };
@@ -263,8 +263,9 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
             if !metadata.is_file() {
                 continue;
             }
-            let canonical = fs::canonicalize(&candidate)
-                .map_err(|_| "A legacy database candidate could not be resolved safely.".to_owned())?;
+            let canonical = fs::canonicalize(&candidate).map_err(|_| {
+                "A legacy database candidate could not be resolved safely.".to_owned()
+            })?;
             if seen.insert(canonical.clone()) {
                 candidates.push(canonical);
             }
@@ -413,8 +414,7 @@ fn quarantine_unsafe_stage(path: &Path, data_dir: &Path) -> Result<(), String> {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(_) => {
                 return Err(
-                    "Scriptotar could not quarantine an unsafe migration staging entry."
-                        .to_owned(),
+                    "Scriptotar could not quarantine an unsafe migration staging entry.".to_owned(),
                 )
             }
         }
