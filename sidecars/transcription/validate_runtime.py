@@ -66,80 +66,14 @@ def _runtime_env(root: Path) -> dict[str, str]:
     return env
 
 
-def _validate_engine(root: Path, env: dict[str, str]) -> None:
-    engine = root / "engine" / _exe_name("scriptotar-engine")
-    if not engine.is_file():
-        raise RuntimeError(f"packaged engine executable is missing: {engine}")
-    completed = subprocess.run(
-        [str(engine), "--self-test"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=45,
-    )
-    report = json.loads(completed.stdout.strip())
-    if report.get("ok") is not True:
-        raise RuntimeError(f"engine self-test did not report success: {report}")
-    for tool in ("ffmpeg", "ffprobe"):
-        if not report.get(tool, {}).get("path"):
-            raise RuntimeError(f"engine self-test did not resolve {tool}")
-
-
-def _validate_ytdlp(root: Path, env: dict[str, str]) -> None:
-    ytdlp = root / _exe_name("scriptotar-ytdlp")
-    if not ytdlp.is_file():
-        raise RuntimeError(f"packaged yt-dlp executable is missing: {ytdlp}")
-    completed = subprocess.run(
-        [str(ytdlp), "--version"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if not completed.stdout.strip():
-        raise RuntimeError("packaged yt-dlp executable returned no version")
-
-
-def _validate_supervisor(root: Path, env: dict[str, str]) -> None:
-    supervisor = root / _exe_name("scriptotar-transcription")
-    marker = root / "sidecar.py"
-    if not supervisor.is_file():
-        raise RuntimeError(f"packaged supervisor executable is missing: {supervisor}")
-    if not marker.is_file():
-        raise RuntimeError(f"packaged sidecar marker is missing: {marker}")
-    payload = (
-        '{"protocol":1,"type":"ping","request_id":"runtime-smoke"}\n'
-        '{"protocol":1,"type":"shutdown","request_id":"runtime-shutdown"}\n'
-    )
-    completed = subprocess.run(
-        [str(supervisor), str(marker)],
-        input=payload,
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    events = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
-    types = [event.get("type") for event in events]
-    if not types or types[0] != "ready":
-        raise RuntimeError(f"packaged supervisor did not start with ready: {events}")
-    if "pong" not in types or "shutdown" not in types:
-        raise RuntimeError(f"packaged supervisor protocol smoke failed: {events}")
-    if events[0].get("protocol") != 1:
-        raise RuntimeError(f"packaged supervisor protocol version mismatch: {events[0]}")
-
-
 def _require_relative_file(root: Path, relative: str) -> Path:
     candidate = (root / relative).resolve()
     try:
         candidate.relative_to(root.resolve())
     except ValueError as exc:
-        raise RuntimeError(f"license manifest path escapes runtime root: {relative}") from exc
+        raise RuntimeError(f"manifest path escapes runtime root: {relative}") from exc
     if not candidate.is_file() or candidate.stat().st_size == 0:
-        raise RuntimeError(f"required packaged legal file is missing or empty: {relative}")
+        raise RuntimeError(f"required packaged file is missing or empty: {relative}")
     return candidate
 
 
@@ -234,10 +168,10 @@ def _validate_pyav_ffmpeg(root: Path, record: object) -> None:
 
 
 def _validate_python_licenses(root: Path) -> dict:
-    manifest_path = root / "RUNTIME-LICENSES.json"
-    if not manifest_path.is_file():
-        raise RuntimeError(f"runtime license manifest is missing: {manifest_path}")
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    path = root / "RUNTIME-LICENSES.json"
+    if not path.is_file():
+        raise RuntimeError(f"runtime license manifest is missing: {path}")
+    manifest = json.loads(path.read_text(encoding="utf-8"))
     if manifest.get("schema") != 1:
         raise RuntimeError(f"unsupported runtime license manifest schema: {manifest.get('schema')}")
     for relative in REQUIRED_LEGAL_FILES:
@@ -248,7 +182,6 @@ def _validate_python_licenses(root: Path) -> dict:
     if not isinstance(python_license, str):
         raise RuntimeError("runtime license manifest does not identify the embedded Python license")
     _require_relative_file(root, python_license)
-
     _validate_standalone_ffmpeg(root, manifest.get("ffmpeg"))
     _validate_pyav_ffmpeg(root, manifest.get("pyav_ffmpeg"))
 
@@ -286,7 +219,11 @@ def _validate_native_hashes(root: Path, native_manifest: dict) -> None:
         if not isinstance(record, dict):
             raise RuntimeError(f"native component inventory is missing {section}")
         wheel = record.get("wheel")
-        if not isinstance(wheel, dict) or not isinstance(wheel.get("sha256"), str) or len(wheel["sha256"]) != 64:
+        if (
+            not isinstance(wheel, dict)
+            or not isinstance(wheel.get("sha256"), str)
+            or len(wheel["sha256"]) != 64
+        ):
             raise RuntimeError(f"native component inventory has no valid wheel hash for {section}")
         hashes = record.get("native_file_sha256")
         if not isinstance(hashes, dict) or not hashes:
@@ -308,19 +245,22 @@ def _validate_native_hashes(root: Path, native_manifest: dict) -> None:
                 )
 
 
-def _validate_license_inventory(name: str, manifest: dict, required_category: str) -> None:
+def _validate_license_inventory(root: Path, name: str, manifest: dict, shipped_category: str) -> None:
     packages = manifest.get("packages")
     if not isinstance(packages, list) or not packages:
         raise RuntimeError(f"{name} license inventory contains no packages")
-    if not any(isinstance(package, dict) and package.get("category") == required_category for package in packages):
-        raise RuntimeError(f"{name} license inventory contains no {required_category} packages")
+    if not any(
+        isinstance(package, dict) and package.get("category") == shipped_category
+        for package in packages
+    ):
+        raise RuntimeError(f"{name} license inventory contains no {shipped_category} packages")
     for package in packages:
         if not isinstance(package, dict):
             raise RuntimeError(f"{name} license inventory contains a malformed package")
         license_expression = str(package.get("license") or "")
         if not license_expression:
             raise RuntimeError(f"{name} package lacks license metadata: {package}")
-        if package.get("category") == required_category and any(
+        if package.get("category") == shipped_category and any(
             marker.lower() in license_expression.lower() for marker in PROHIBITED_LICENSE_MARKERS
         ):
             raise RuntimeError(
@@ -330,8 +270,9 @@ def _validate_license_inventory(name: str, manifest: dict, required_category: st
         if copied and not isinstance(copied, list):
             raise RuntimeError(f"{name} copied_license_files is malformed for {package.get('name')}")
         for relative in copied:
-            if isinstance(relative, str):
-                _require_relative_file(Path(manifest.get("_runtime_root", ".")), relative)
+            if not isinstance(relative, str):
+                raise RuntimeError(f"{name} copied license path is malformed: {relative}")
+            _require_relative_file(root, relative)
 
 
 def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
@@ -351,6 +292,8 @@ def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
     archive_hash = archive.get("archive_sha256")
     if not isinstance(archive_hash, str) or len(archive_hash) != 64:
         raise RuntimeError("runtime provenance has no valid static FFmpeg archive SHA-256")
+    if archive.get("archive_sha256") != archive.get("git_lfs_oid_sha256"):
+        raise RuntimeError("runtime provenance archive SHA does not match the reviewed provider LFS object")
     if standalone.get("runtime") != runtime_manifest.get("ffmpeg"):
         raise RuntimeError("runtime provenance FFmpeg record differs from RUNTIME-LICENSES.json")
     source = standalone.get("corresponding_source")
@@ -363,25 +306,96 @@ def _validate_compliance(root: Path, runtime_manifest: dict) -> None:
     source_components = pyav_native.get("source_components")
     if not isinstance(source_components, list) or not source_components:
         raise RuntimeError("PyAV native inventory has no source component manifest")
-    source_names = {str(component.get("name")) for component in source_components if isinstance(component, dict)}
+    source_names = {
+        str(component.get("name"))
+        for component in source_components
+        if isinstance(component, dict)
+    }
     for required in ("ffmpeg", "x264", "x265", "gnutls", "vpx"):
         if required not in source_names:
             raise RuntimeError(f"PyAV native source inventory is missing {required}")
 
+    curl_native = native.get("curl_cffi") or {}
+    recipe = curl_native.get("recipe") or {}
+    if recipe.get("curl_impersonate_version") != "1.5.2" or recipe.get("curl_version") != "8.15.0":
+        raise RuntimeError(f"unexpected curl-cffi native recipe: {recipe}")
+
     _validate_native_hashes(root, native)
-    _validate_license_inventory("Rust", rust, "runtime")
-    _validate_license_inventory("frontend", frontend, "production")
-    rust_names = {str(package.get("name")) for package in rust.get("packages", []) if isinstance(package, dict)}
+    _validate_license_inventory(root, "Rust", rust, "runtime")
+    _validate_license_inventory(root, "frontend", frontend, "production")
+    rust_names = {
+        str(package.get("name"))
+        for package in rust.get("packages", [])
+        if isinstance(package, dict)
+    }
     if "scriptotar-desktop" not in rust_names:
         raise RuntimeError("Rust inventory is missing scriptotar-desktop")
 
-    for package in rust.get("packages", []):
-        if not isinstance(package, dict):
-            continue
-        for relative in package.get("copied_license_files") or []:
-            if not isinstance(relative, str):
-                raise RuntimeError(f"Rust copied license path is malformed: {relative}")
-            _require_relative_file(root, relative)
+
+def _validate_engine(root: Path, env: dict[str, str]) -> None:
+    engine = root / "engine" / _exe_name("scriptotar-engine")
+    if not engine.is_file():
+        raise RuntimeError(f"packaged engine executable is missing: {engine}")
+    completed = subprocess.run(
+        [str(engine), "--self-test"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=45,
+    )
+    report = json.loads(completed.stdout.strip())
+    if report.get("ok") is not True:
+        raise RuntimeError(f"engine self-test did not report success: {report}")
+    for tool in ("ffmpeg", "ffprobe"):
+        if not report.get(tool, {}).get("path"):
+            raise RuntimeError(f"engine self-test did not resolve {tool}")
+
+
+def _validate_ytdlp(root: Path, env: dict[str, str]) -> None:
+    ytdlp = root / _exe_name("scriptotar-ytdlp")
+    if not ytdlp.is_file():
+        raise RuntimeError(f"packaged yt-dlp executable is missing: {ytdlp}")
+    completed = subprocess.run(
+        [str(ytdlp), "--version"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if not completed.stdout.strip():
+        raise RuntimeError("packaged yt-dlp executable returned no version")
+
+
+def _validate_supervisor(root: Path, env: dict[str, str]) -> None:
+    supervisor = root / _exe_name("scriptotar-transcription")
+    marker = root / "sidecar.py"
+    if not supervisor.is_file():
+        raise RuntimeError(f"packaged supervisor executable is missing: {supervisor}")
+    if not marker.is_file():
+        raise RuntimeError(f"packaged sidecar marker is missing: {marker}")
+    payload = (
+        '{"protocol":1,"type":"ping","request_id":"runtime-smoke"}\n'
+        '{"protocol":1,"type":"shutdown","request_id":"runtime-shutdown"}\n'
+    )
+    completed = subprocess.run(
+        [str(supervisor), str(marker)],
+        input=payload,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    events = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    types = [event.get("type") for event in events]
+    if not types or types[0] != "ready":
+        raise RuntimeError(f"packaged supervisor did not start with ready: {events}")
+    if "pong" not in types or "shutdown" not in types:
+        raise RuntimeError(f"packaged supervisor protocol smoke failed: {events}")
+    if events[0].get("protocol") != 1:
+        raise RuntimeError(f"packaged supervisor protocol version mismatch: {events[0]}")
 
 
 def validate(root: Path) -> None:
