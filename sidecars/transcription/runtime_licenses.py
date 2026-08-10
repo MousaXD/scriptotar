@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata as metadata
 import json
 import os
@@ -7,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.request
 from collections import deque
 from pathlib import Path
 from typing import Iterable
@@ -15,6 +17,8 @@ from typing import Iterable
 SCHEMA_VERSION = 1
 ENGINE_REQUIREMENTS = ("faster-whisper", "yt-dlp[default,curl-cffi]")
 SUPPORTED_FFMPEG_LICENSE = "GPL-3.0-or-later"
+FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.GPLv3"
+FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
 
 
 def _canonical_name(name: str) -> str:
@@ -179,6 +183,21 @@ def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
     )
 
 
+def _write_verified_ffmpeg_license(legal_root: Path, output_root: Path) -> str:
+    request = urllib.request.Request(FFMPEG_GPL3_URL, headers={"User-Agent": "Scriptotar-runtime-builder"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read()
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != FFMPEG_GPL3_SHA256:
+        raise RuntimeError(
+            "FFmpeg GPLv3 license text hash changed; refusing to package an unreviewed legal artifact "
+            f"(expected {FFMPEG_GPL3_SHA256}, got {actual})"
+        )
+    destination = legal_root / "FFMPEG-GPL-3.0.txt"
+    destination.write_bytes(data)
+    return destination.relative_to(output_root).as_posix()
+
+
 def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
     completed = subprocess.run(
         [str(ffmpeg_executable), "-version"],
@@ -231,13 +250,13 @@ def write_runtime_legal_bundle(
         repo_root / "THIRD_PARTY_NOTICES.md": legal_root / "THIRD_PARTY_NOTICES.md",
         repo_root / "NOTICE": legal_root / "NOTICE",
         repo_root / "LICENSE": legal_root / "SCRIPTOTAR-APACHE-2.0.txt",
-        repo_root / "third_party" / "licenses" / "ffmpeg" / "COPYING.GPLv3": legal_root / "FFMPEG-GPL-3.0.txt",
     }
     for source, destination in root_files.items():
         if not source.is_file():
             raise RuntimeError(f"required distribution notice/license is missing: {source}")
         shutil.copy2(source, destination)
 
+    ffmpeg_license_file = _write_verified_ffmpeg_license(legal_root, output_root)
     python_license = _copy_python_runtime_license(legal_root, output_root)
 
     python_components: list[dict[str, object]] = []
@@ -267,6 +286,9 @@ def write_runtime_legal_bundle(
         output_root,
     )
 
+    ffmpeg = _ffmpeg_report(ffmpeg_executable)
+    ffmpeg["license_file"] = ffmpeg_license_file
+
     manifest = {
         "schema": SCHEMA_VERSION,
         "scope": "Scriptotar Next packaged transcription runtime",
@@ -276,7 +298,7 @@ def write_runtime_legal_bundle(
             "license_file": python_license,
             "distribution": "embedded by PyInstaller; separate system Python is not required",
         },
-        "ffmpeg": _ffmpeg_report(ffmpeg_executable),
+        "ffmpeg": ffmpeg,
         "python_components": python_components,
         "build_tools": [
             {
