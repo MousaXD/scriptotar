@@ -112,15 +112,15 @@ fn ensure_schema(connection: &Connection) -> RepositoryResult<()> {
 }
 
 impl SqliteStore {
-    pub fn record_watchlist_refresh_attempt(
+    pub fn try_begin_watchlist_refresh(
         &self,
         watchlist_id: Uuid,
         attempted_at: &str,
-    ) -> RepositoryResult<()> {
+    ) -> RepositoryResult<bool> {
         self.run_integration_migrations()?;
         let connection = open_connection(self)?;
         ensure_schema(&connection)?;
-        connection
+        let changed = connection
             .execute(
                 "INSERT INTO watchlist_refresh_status(
                     watchlist_id, state, last_attempt_at, last_success_at, last_error, next_retry_at
@@ -129,11 +129,12 @@ impl SqliteStore {
                     state = 'refreshing',
                     last_attempt_at = excluded.last_attempt_at,
                     last_error = NULL,
-                    next_retry_at = NULL",
+                    next_retry_at = NULL
+                 WHERE watchlist_refresh_status.state <> 'refreshing'",
                 params![watchlist_id.to_string(), attempted_at],
             )
             .map_err(storage_error)?;
-        Ok(())
+        Ok(changed == 1)
     }
 
     pub fn record_watchlist_refresh_success(
@@ -291,11 +292,39 @@ mod tests {
     }
 
     #[test]
+    fn never_scanned_watchlist_has_no_operational_row_until_first_attempt() {
+        let (_temp, store, watchlist_id) = store_with_watchlist();
+        assert!(store
+            .watchlist_refresh_status(watchlist_id)
+            .unwrap()
+            .is_none());
+        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
+        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn refresh_claim_is_atomic_and_released_by_completion() {
+        let (_temp, store, watchlist_id) = store_with_watchlist();
+        assert!(store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
+            .unwrap());
+        assert!(!store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z")
+            .unwrap());
+        store
+            .record_watchlist_refresh_success(watchlist_id, "2026-08-10T10:01:00Z")
+            .unwrap();
+        assert!(store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:02:00Z")
+            .unwrap());
+    }
+
+    #[test]
     fn refresh_failure_and_recovery_survive_restart() {
         let (temp, store, watchlist_id) = store_with_watchlist();
-        store
-            .record_watchlist_refresh_attempt(watchlist_id, "2026-08-10T10:00:00Z")
-            .unwrap();
+        assert!(store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
+            .unwrap());
         store
             .record_watchlist_refresh_failure(
                 watchlist_id,
@@ -340,9 +369,9 @@ mod tests {
     #[test]
     fn interrupted_refresh_is_marked_failed_on_restart_recovery() {
         let (_temp, store, watchlist_id) = store_with_watchlist();
-        store
-            .record_watchlist_refresh_attempt(watchlist_id, "2026-08-10T10:00:00Z")
-            .unwrap();
+        assert!(store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
+            .unwrap());
         assert_eq!(store.recover_interrupted_watchlist_refreshes().unwrap(), 1);
         let status = store
             .watchlist_refresh_status(watchlist_id)
@@ -353,5 +382,8 @@ mod tests {
             status.last_error.as_deref(),
             Some("The previous automatic refresh was interrupted before completion.")
         );
+        assert!(store
+            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:05:00Z")
+            .unwrap());
     }
 }
