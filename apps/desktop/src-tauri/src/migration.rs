@@ -1,11 +1,12 @@
 use std::{
     collections::HashSet,
     env, fs,
-    io::{self, Read},
+    hash::{DefaultHasher, Hash, Hasher},
+    io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process,
     sync::{Mutex, OnceLock},
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use rusqlite::{backup::Backup, Connection, OpenFlags};
@@ -16,6 +17,7 @@ use crate::dto::{UiMigrationCandidate, UiMigrationStatus};
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
 const ACTIVE_STAGE_NAME: &str = "history.sqlite3";
 const PENDING_STAGE_NAME: &str = ".history.sqlite3.pending-import";
+const IDENTITY_SAMPLE_BYTES: usize = 64 * 1024;
 
 static STATUS: OnceLock<Mutex<UiMigrationStatus>> = OnceLock::new();
 
@@ -71,6 +73,7 @@ pub fn choose_candidate(data_dir: &Path, candidate_id: &str) -> Preparation {
 pub fn activate_pending_stage(data_dir: &Path) -> Result<PathBuf, String> {
     let pending = data_dir.join(PENDING_STAGE_NAME);
     validate_regular_sqlite(&pending)?;
+    harden_private_file_permissions(&pending)?;
     let active = data_dir.join(ACTIVE_STAGE_NAME);
     match fs::symlink_metadata(&active) {
         Ok(_) => Err(
@@ -80,6 +83,7 @@ pub fn activate_pending_stage(data_dir: &Path) -> Result<PathBuf, String> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             fs::rename(&pending, &active)
                 .map_err(|_| "Could not activate the prepared legacy import snapshot.".to_owned())?;
+            harden_private_file_permissions(&active)?;
             Ok(active)
         }
         Err(_) => Err("Could not inspect the legacy import staging location.".to_owned()),
@@ -99,10 +103,10 @@ fn status_for_preparation(preparation: &Preparation) -> UiMigrationStatus {
 }
 
 fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
-    if let Err(error) = fs::create_dir_all(data_dir) {
-        return Preparation::Failed(format!(
-            "Scriptotar could not prepare its migration staging directory: {error}"
-        ));
+    if fs::create_dir_all(data_dir).is_err() {
+        return Preparation::Failed(
+            "Scriptotar could not prepare its migration staging directory.".to_owned(),
+        );
     }
     if let Err(error) = harden_private_directory_permissions(data_dir) {
         return Preparation::Failed(error);
@@ -123,17 +127,29 @@ fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
                 return Preparation::InvalidDatabase(safe_invalid_message(&error));
             }
             let pending = data_dir.join(PENDING_STAGE_NAME);
-            if pending.exists() {
-                return Preparation::Failed(
-                    "A previous migration snapshot is still pending. Restart Scriptotar and retry migration discovery."
-                        .to_owned(),
-                );
+            match fs::symlink_metadata(&pending) {
+                Ok(_) => {
+                    return Preparation::Failed(
+                        "A previous migration snapshot is still pending. Restart Scriptotar and retry migration discovery."
+                            .to_owned(),
+                    )
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(_) => {
+                    return Preparation::Failed(
+                        "Scriptotar could not inspect the pending legacy migration snapshot."
+                            .to_owned(),
+                    )
+                }
             }
             if fs::rename(&active, &pending).is_err() {
                 return Preparation::Failed(
                     "Scriptotar could not safely prepare the existing migration snapshot for import."
                         .to_owned(),
                 );
+            }
+            if let Err(error) = harden_private_file_permissions(&pending) {
+                return Preparation::Failed(error);
             }
             return Preparation::Ready;
         }
@@ -155,9 +171,14 @@ fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
                         .to_owned(),
                 );
             }
-            return match validate_sqlite_header(&pending) {
+            return match validate_sqlite_header(&pending)
+                .and_then(|_| harden_private_file_permissions(&pending))
+            {
                 Ok(()) => Preparation::Ready,
-                Err(error) => Preparation::InvalidDatabase(safe_invalid_message(&error)),
+                Err(error) if is_invalid_database_error(&error) => {
+                    Preparation::InvalidDatabase(safe_invalid_message(&error))
+                }
+                Err(error) => Preparation::Failed(safe_failure_message(&error)),
             };
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -192,10 +213,27 @@ fn choose_candidate_from_roots(
     roots: &[PathBuf],
     selected_id: &str,
 ) -> Preparation {
-    let pending = data_dir.join(PENDING_STAGE_NAME);
-    if pending.exists() {
-        return Preparation::Ready;
+    for stage in [
+        data_dir.join(PENDING_STAGE_NAME),
+        data_dir.join(ACTIVE_STAGE_NAME),
+    ] {
+        match fs::symlink_metadata(&stage) {
+            Ok(_) => {
+                return Preparation::Failed(
+                    "A migration snapshot is already being prepared or imported. Refresh migration status before choosing another candidate."
+                        .to_owned(),
+                )
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => {
+                return Preparation::Failed(
+                    "Scriptotar could not inspect the migration staging location safely."
+                        .to_owned(),
+                )
+            }
+        }
     }
+
     let candidates = match discover_legacy_databases(roots) {
         Ok(candidates) => candidates,
         Err(error) => return classify_discovery_error(&error),
@@ -205,10 +243,11 @@ fn choose_candidate_from_roots(
         .find(|candidate| candidate_id(candidate) == selected_id)
     else {
         return Preparation::Failed(
-            "The selected migration candidate is no longer available. Refresh migration discovery and choose again."
+            "The selected migration candidate is stale or no longer available. Refresh migration discovery and choose again."
                 .to_owned(),
         );
     };
+    let pending = data_dir.join(PENDING_STAGE_NAME);
     match validate_sqlite_header(candidate).and_then(|_| stage_legacy_database(candidate, &pending))
     {
         Ok(()) => Preparation::Ready,
@@ -245,7 +284,7 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(_) => {
                     return Err(
-                        "A legacy database candidate could not be inspected safely.".to_owned()
+                        "A legacy database candidate could not be inspected safely.".to_owned(),
                     )
                 }
             };
@@ -271,8 +310,56 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
 }
 
 fn candidate_id(path: &Path) -> String {
-    let value = Uuid::new_v5(&Uuid::NAMESPACE_URL, path.to_string_lossy().as_bytes());
+    let mut identity = path.to_string_lossy().into_owned();
+    identity.push('|');
+    identity.push_str(&file_identity(path));
+    identity.push('|');
+    identity.push_str(&file_identity(&path_with_suffix(path, "-wal")));
+    let value = Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes());
     format!("candidate-{value}")
+}
+
+fn path_with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(suffix);
+    PathBuf::from(value)
+}
+
+fn file_identity(path: &Path) -> String {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return "missing".to_owned(),
+    };
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let mut hasher = DefaultHasher::new();
+    metadata.len().hash(&mut hasher);
+    modified.hash(&mut hasher);
+    metadata.file_type().is_symlink().hash(&mut hasher);
+
+    if metadata.is_file() {
+        if let Ok(mut file) = fs::File::open(path) {
+            let mut sample = vec![0_u8; IDENTITY_SAMPLE_BYTES.min(metadata.len() as usize)];
+            if file.read_exact(&mut sample).is_ok() {
+                sample.hash(&mut hasher);
+            }
+            if metadata.len() > IDENTITY_SAMPLE_BYTES as u64
+                && file
+                    .seek(SeekFrom::End(-(IDENTITY_SAMPLE_BYTES as i64)))
+                    .is_ok()
+            {
+                let mut tail = vec![0_u8; IDENTITY_SAMPLE_BYTES];
+                if file.read_exact(&mut tail).is_ok() {
+                    tail.hash(&mut hasher);
+                }
+            }
+        }
+    }
+    format!("{}:{modified}:{:016x}", metadata.len(), hasher.finish())
 }
 
 fn candidate_labels(candidates: &[PathBuf]) -> Vec<UiMigrationCandidate> {
@@ -316,6 +403,17 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
     fs::create_dir_all(data_dir)
         .map_err(|_| "Scriptotar could not create the migration staging directory.".to_owned())?;
     harden_private_directory_permissions(data_dir)?;
+    match fs::symlink_metadata(staged) {
+        Ok(_) => {
+            return Err(
+                "A migration snapshot already exists; Scriptotar refused to overwrite it.".to_owned(),
+            )
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(_) => {
+            return Err("Scriptotar could not inspect the migration snapshot path.".to_owned())
+        }
+    }
 
     let temporary_path = reserve_legacy_staging_path(data_dir)?;
     let snapshot_result = (|| -> Result<(), String> {
@@ -345,9 +443,16 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
 
     if let Err(error) = harden_private_file_permissions(&temporary_path)
         .and_then(|_| validate_sqlite_header(&temporary_path))
-        .and_then(|_| {
-            fs::rename(&temporary_path, staged)
-                .map_err(|_| "Scriptotar could not finalize the migration snapshot.".to_owned())
+        .and_then(|_| match fs::symlink_metadata(staged) {
+            Ok(_) => Err(
+                "A migration snapshot appeared while Scriptotar was staging; it was not overwritten."
+                    .to_owned(),
+            ),
+            Err(inspect_error) if inspect_error.kind() == io::ErrorKind::NotFound => {
+                fs::rename(&temporary_path, staged)
+                    .map_err(|_| "Scriptotar could not finalize the migration snapshot.".to_owned())
+            }
+            Err(_) => Err("Scriptotar could not inspect the migration snapshot path.".to_owned()),
         })
     {
         let _ = fs::remove_file(&temporary_path);
@@ -492,10 +597,14 @@ mod tests {
             .unwrap();
     }
 
-    fn fixture_value(path: &Path) -> String {
+    fn fixture_values(path: &Path) -> Vec<String> {
         Connection::open(path)
             .unwrap()
-            .query_row("SELECT value FROM fixture LIMIT 1", [], |row| row.get(0))
+            .prepare("SELECT value FROM fixture ORDER BY rowid")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
             .unwrap()
     }
 
@@ -557,9 +666,116 @@ mod tests {
         assert!(matches!(selected, Preparation::Ready));
         let pending = data_dir.join(PENDING_STAGE_NAME);
         assert!(pending.is_file());
-        assert_eq!(fixture_value(&pending), "second");
+        assert_eq!(fixture_values(&pending), vec!["second"]);
         assert_eq!(fs::read(&first).unwrap(), first_before);
         assert_eq!(fs::read(&second).unwrap(), second_before);
+    }
+
+    #[test]
+    fn stale_candidate_id_fails_when_source_changes() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        let first = root.join("scriptotar/history.sqlite3");
+        let second = root.join("wesamboss/history.sqlite3");
+        real_sqlite(&first, "first");
+        real_sqlite(&second, "second");
+        let data_dir = temp.path().join("next");
+        let Preparation::RequiresChoice(candidates) =
+            prepare_from_roots(&data_dir, std::slice::from_ref(&root))
+        else {
+            panic!("expected migration choice");
+        };
+        let selected = candidates
+            .iter()
+            .find(|candidate| candidate.label.contains("WeSamBoss"))
+            .unwrap()
+            .id
+            .clone();
+
+        let connection = Connection::open(&second).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE changed(payload BLOB); INSERT INTO changed(payload) VALUES (zeroblob(1048576));",
+            )
+            .unwrap();
+        drop(connection);
+
+        let result = choose_candidate_from_roots(&data_dir, &[root], &selected);
+        assert!(matches!(result, Preparation::Failed(_)));
+        assert!(!data_dir.join(PENDING_STAGE_NAME).exists());
+    }
+
+    #[test]
+    fn disappeared_candidate_fails_without_staging_another_database() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        let first = root.join("scriptotar/history.sqlite3");
+        let second = root.join("wesamboss/history.sqlite3");
+        real_sqlite(&first, "first");
+        real_sqlite(&second, "second");
+        let data_dir = temp.path().join("next");
+        let Preparation::RequiresChoice(candidates) =
+            prepare_from_roots(&data_dir, std::slice::from_ref(&root))
+        else {
+            panic!("expected migration choice");
+        };
+        let selected = candidates
+            .iter()
+            .find(|candidate| candidate.label.contains("WeSamBoss"))
+            .unwrap()
+            .id
+            .clone();
+        fs::remove_file(second).unwrap();
+
+        let result = choose_candidate_from_roots(&data_dir, &[root], &selected);
+        assert!(matches!(result, Preparation::Failed(_)));
+        assert!(!data_dir.join(PENDING_STAGE_NAME).exists());
+    }
+
+    #[test]
+    fn second_selection_cannot_overwrite_pending_snapshot() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        real_sqlite(&root.join("scriptotar/history.sqlite3"), "first");
+        real_sqlite(&root.join("wesamboss/history.sqlite3"), "second");
+        let data_dir = temp.path().join("next");
+        let Preparation::RequiresChoice(candidates) =
+            prepare_from_roots(&data_dir, std::slice::from_ref(&root))
+        else {
+            panic!("expected migration choice");
+        };
+        let first_id = candidates[0].id.clone();
+        let second_id = candidates[1].id.clone();
+        assert!(matches!(
+            choose_candidate_from_roots(&data_dir, std::slice::from_ref(&root), &first_id),
+            Preparation::Ready
+        ));
+        let staged_before = fs::read(data_dir.join(PENDING_STAGE_NAME)).unwrap();
+        assert!(matches!(
+            choose_candidate_from_roots(&data_dir, &[root], &second_id),
+            Preparation::Failed(_)
+        ));
+        assert_eq!(
+            fs::read(data_dir.join(PENDING_STAGE_NAME)).unwrap(),
+            staged_before
+        );
+    }
+
+    #[test]
+    fn pending_snapshot_survives_restart_discovery() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        real_sqlite(&root.join("scriptotar/history.sqlite3"), "source");
+        let data_dir = temp.path().join("next");
+        assert!(matches!(
+            prepare_from_roots(&data_dir, std::slice::from_ref(&root)),
+            Preparation::Ready
+        ));
+        assert!(matches!(
+            prepare_from_roots(&data_dir, &[root]),
+            Preparation::Ready
+        ));
+        assert!(data_dir.join(PENDING_STAGE_NAME).is_file());
     }
 
     #[test]
@@ -567,15 +783,78 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("legacy-root");
         let source = root.join("scriptotar/history.sqlite3");
-        real_sqlite(&source, "source");
-        let before = fs::read(&source).unwrap();
-        let data_dir = temp.path().join("next");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
 
+        let writer = Connection::open(&source).unwrap();
+        writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+        writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+        writer
+            .execute("CREATE TABLE fixture(value TEXT)", [])
+            .unwrap();
+        writer
+            .execute("INSERT INTO fixture(value) VALUES ('before')", [])
+            .unwrap();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+        let reader = Connection::open(&source).unwrap();
+        reader
+            .execute_batch("BEGIN; SELECT count(*) FROM fixture;")
+            .unwrap();
+        writer
+            .execute("INSERT INTO fixture(value) VALUES ('wal-commit')", [])
+            .unwrap();
+        assert!(path_with_suffix(&source, "-wal").is_file());
+
+        let data_dir = temp.path().join("next");
         let preparation = prepare_from_roots(&data_dir, &[root]);
         assert!(matches!(preparation, Preparation::Ready));
+        let pending = data_dir.join(PENDING_STAGE_NAME);
+        assert_eq!(fixture_values(&pending), vec!["before", "wal-commit"]);
         let activated = activate_pending_stage(&data_dir).unwrap();
         assert_eq!(activated, data_dir.join(ACTIVE_STAGE_NAME));
         assert!(activated.is_file());
-        assert_eq!(fs::read(&source).unwrap(), before);
+        reader.execute_batch("ROLLBACK;").unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_rejects_symlinked_legacy_database() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        let real = temp.path().join("real.sqlite3");
+        real_sqlite(&real, "source");
+        let candidate = root.join("scriptotar/history.sqlite3");
+        fs::create_dir_all(candidate.parent().unwrap()).unwrap();
+        symlink(&real, &candidate).unwrap();
+
+        let preparation = prepare_from_roots(&temp.path().join("next"), &[root]);
+        assert!(matches!(preparation, Preparation::InvalidDatabase(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn staged_snapshot_permissions_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("legacy-root");
+        real_sqlite(&root.join("scriptotar/history.sqlite3"), "source");
+        let data_dir = temp.path().join("next");
+        assert!(matches!(
+            prepare_from_roots(&data_dir, &[root]),
+            Preparation::Ready
+        ));
+        assert_eq!(fs::metadata(&data_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            fs::metadata(data_dir.join(PENDING_STAGE_NAME))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
     }
 }
