@@ -4,10 +4,16 @@ on:
   schedule:
     - cron: '17 3 * * 1'
   workflow_dispatch:
-  # Branch-only verification trigger. Removed after the first real canary run is proven.
+  # Temporary branch/PR verification triggers. Removed after the first real canary run is proven.
   push:
     branches:
       - test/whisper-runtime-canary
+    paths:
+      - '.github/workflows/whisper-runtime-canary.yml'
+      - 'sidecars/transcription/**'
+  pull_request:
+    branches:
+      - main
     paths:
       - '.github/workflows/whisper-runtime-canary.yml'
       - 'sidecars/transcription/**'
