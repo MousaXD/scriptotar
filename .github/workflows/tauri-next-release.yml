@@ -9,8 +9,12 @@ on:
   pull_request:
     paths:
       - '.github/workflows/tauri-next-release.yml'
+      - '.github/workflows/integration.yml'
+      - '.github/workflows/security-hygiene.yml'
       - '.github/workflows/windows-tauri.yml'
       - '.github/workflows/linux-tauri.yml'
+      - 'scripts/release_ci_gate.py'
+      - 'scripts/tests/test_release_ci_gate.py'
 
 permissions:
   contents: read
@@ -26,6 +30,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test exact-SHA release gate logic
+        run: python3 -m unittest discover -s scripts/tests -p 'test_release_ci_gate.py' -v
       - name: Verify package workflow contracts
         run: |
           set -euo pipefail
@@ -52,95 +58,20 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
-      - name: Resolve matching Windows and Linux package runs
-        id: runs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          find_run() {
-            local workflow="$1"
-            local runs
-            runs="$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow "$workflow" \
-              --branch main \
-              --event push \
-              --commit "$SOURCE_SHA" \
-              --limit 20 \
-              --json databaseId,headSha,createdAt)"
-            printf '%s' "$runs" | jq -r --arg sha "$SOURCE_SHA" \
-              '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId // empty'
-          }
-
-          WINDOWS_RUN_ID=""
-          LINUX_RUN_ID=""
-          for attempt in $(seq 1 20); do
-            WINDOWS_RUN_ID="$(find_run windows-tauri.yml)"
-            LINUX_RUN_ID="$(find_run linux-tauri.yml)"
-            if [ -n "$WINDOWS_RUN_ID" ] && [ -n "$LINUX_RUN_ID" ]; then
-              break
-            fi
-            echo "Waiting for matching package workflow runs for $SOURCE_SHA ($attempt/20)..."
-            sleep 15
-          done
-
-          test -n "$WINDOWS_RUN_ID" || { echo 'No Windows package run found for this main commit.' >&2; exit 1; }
-          test -n "$LINUX_RUN_ID" || { echo 'No Linux package run found for this main commit.' >&2; exit 1; }
-
-          echo "windows_run_id=$WINDOWS_RUN_ID" >> "$GITHUB_OUTPUT"
-          echo "linux_run_id=$LINUX_RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for both package workflows to finish
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          run_status() {
-            gh run view "$1" --repo "$GITHUB_REPOSITORY" --json status --jq '.status'
-          }
-
-          WINDOWS_RUN_ID='${{ steps.runs.outputs.windows_run_id }}'
-          LINUX_RUN_ID='${{ steps.runs.outputs.linux_run_id }}'
-
-          for attempt in $(seq 1 160); do
-            WINDOWS_STATUS="$(run_status "$WINDOWS_RUN_ID")"
-            LINUX_STATUS="$(run_status "$LINUX_RUN_ID")"
-            if [ "$WINDOWS_STATUS" = completed ] && [ "$LINUX_STATUS" = completed ]; then
-              exit 0
-            fi
-            echo "Waiting for package workflows: windows=$WINDOWS_STATUS linux=$LINUX_STATUS ($attempt/160)"
-            sleep 30
-          done
-
-          echo 'Timed out waiting for both package workflows to complete.' >&2
-          exit 1
-
-      - name: Verify package build jobs succeeded
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          WINDOWS_RESULT="$(gh run view '${{ steps.runs.outputs.windows_run_id }}' \
-            --repo "$GITHUB_REPOSITORY" \
-            --json jobs | jq -r '.jobs[] | select(.name == "Build and smoke-test NSIS setup.exe") | .conclusion' | tail -n 1)"
-          LINUX_RESULT="$(gh run view '${{ steps.runs.outputs.linux_run_id }}' \
-            --repo "$GITHUB_REPOSITORY" \
-            --json jobs | jq -r '.jobs[] | select(.name == "Build and validate Tauri deb") | .conclusion' | tail -n 1)"
-
-          test "$WINDOWS_RESULT" = success || { echo "Windows package build job is $WINDOWS_RESULT, refusing to publish." >&2; exit 1; }
-          test "$LINUX_RESULT" = success || { echo "Linux package build job is $LINUX_RESULT, refusing to publish." >&2; exit 1; }
+      - name: Verify complete exact-SHA release gates
+        id: gates
+        run: python3 scripts/release_ci_gate.py
 
       - name: Download validated package artifacts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/windows dist/linux
-          gh run download '${{ steps.runs.outputs.windows_run_id }}' \
+          gh run download '${{ steps.gates.outputs.windows_run_id }}' \
             --repo "$GITHUB_REPOSITORY" \
             --name scriptotar-windows-tauri \
             --dir dist/windows
-          gh run download '${{ steps.runs.outputs.linux_run_id }}' \
+          gh run download '${{ steps.gates.outputs.linux_run_id }}' \
             --repo "$GITHUB_REPOSITORY" \
             --name scriptotar-linux-tauri \
             --dir dist/linux
@@ -194,12 +125,14 @@ jobs:
           cat > RELEASE-NOTES.md <<NOTES
           # Scriptotar Next Preview
 
-          Built automatically from validated Windows and Linux package jobs on main.
+          Built automatically only after the mandatory exact-SHA CI suite passed on main.
 
           - Tauri app version: ${WINDOWS_VERSION}
           - Commit: ${SOURCE_SHA}
           - Windows asset: Scriptotar-Next-latest-x64-setup.exe
           - Linux asset: Scriptotar-Next-latest-amd64.deb
+
+          Required release gates: Tauri migration integration, Security hygiene, Windows Tauri Installer, and Linux Tauri Package. Every gate and its mandatory jobs must complete successfully for this exact commit.
 
           Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
 
@@ -278,5 +211,6 @@ jobs:
             echo
             echo "- Commit: $SOURCE_SHA"
             echo "- Release: $RELEASE_URL"
+            echo '- Exact-SHA integration, security, Windows, and Linux gates passed.'
             echo '- Windows NSIS and Linux Debian assets verified.'
           } >> "$GITHUB_STEP_SUMMARY"
