@@ -4,7 +4,6 @@ import type {
   BackendJob,
   BootstrapData,
   Job,
-  LegacyImportReport,
   MigrationStatus,
   WatchlistStatus
 } from '../types';
@@ -51,6 +50,5 @@ export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
     runAi: (input: AiPromptInput) => invoke<string>('run_ai', { input }),
     getSettings: () => invoke<AppSettings>('get_settings'),
     saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { settings }),
-    importLegacyData: () => invoke<LegacyImportReport>('import_legacy_data')
   };
 }

@@ -1424,6 +1424,45 @@ mod tests {
     }
 
     #[test]
+    fn secret_like_provider_error_is_not_persisted_or_displayable() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let watchlist = store
+            .upsert_watchlist(
+                project.id,
+                "Creator",
+                "https://www.youtube.com/@creator",
+                25,
+            )
+            .unwrap();
+        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let safe = safe_watchlist_error(raw);
+        store
+            .record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None)
+            .unwrap();
+        let displayable = store
+            .watchlist_refresh_status(watchlist.id)
+            .unwrap()
+            .unwrap()
+            .last_error
+            .unwrap();
+        assert_eq!(displayable, safe);
+        for forbidden in [
+            "super-secret",
+            "query-secret",
+            "/home/user",
+            "<html>",
+            "Traceback",
+            "Bearer",
+        ] {
+            assert!(!displayable.contains(forbidden));
+        }
+    }
+
+    #[test]
     fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {
         let temp =
             std::env::temp_dir().join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));

@@ -5,7 +5,6 @@ import type {
   BackendJob,
   BootstrapData,
   Job,
-  LegacyImportReport,
   MigrationStatus,
   WatchlistStatus
 } from '../types';
@@ -52,5 +51,4 @@ export interface ScriptotarApi {
   runAi(input: AiPromptInput): Promise<string>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
-  importLegacyData(): Promise<LegacyImportReport>;
 }

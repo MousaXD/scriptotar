@@ -123,25 +123,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
-    async importLegacyData() {
-      const report = {
-        skipped: false,
-        backup_path: '/mock/history.sqlite3.scriptotar-next.bak',
-        projects: 1,
-        jobs: 2,
-        transcripts: 1,
-        research_items: 3,
-        watchlists: 1,
-        ai_runs: 1
-      };
-      migrationStatus = {
-        state: 'completed',
-        message: 'Legacy migration completed.',
-        candidates: [],
-        report
-      };
-      return report;
-    }
+
   };
   return { ...client, ...overrides };
 }

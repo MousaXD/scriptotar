@@ -426,45 +426,6 @@ fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> 
 }
 
 #[tauri::command]
-fn import_legacy_data(
-    state: tauri::State<'_, AppServices>,
-    operational: tauri::State<'_, OperationalState>,
-) -> Result<LegacyImportReport, String> {
-    let _guard = try_migration_operation().map_err(|error| match error {
-        MigrationLockError::Busy => "Legacy migration is already in progress.".to_owned(),
-        MigrationLockError::Poisoned => {
-            "Migration coordination is unavailable. Restart Scriptotar before retrying migration."
-                .to_owned()
-        }
-    })?;
-    if migration_completed(&operational.data_dir)? {
-        migration::set_status(UiMigrationStatus::previously_completed());
-        return Err("Legacy migration is already complete on this installation.".to_owned());
-    }
-    migration::set_status(UiMigrationStatus::in_progress());
-    match state.import_legacy_data() {
-        Ok(report) => {
-            let status = finalize_migration_success(report.clone(), &operational.data_dir);
-            if status.state == "completed" {
-                Ok(report)
-            } else {
-                Err(
-                    "Legacy data was imported, but migration finalization needs recovery."
-                        .to_owned(),
-                )
-            }
-        }
-        Err(error) => {
-            eprintln!("[scriptotar-migration] manual import failed: {error}");
-            migration::set_status(UiMigrationStatus::failed(
-                "Legacy import failed. The source database was left untouched; retry after resolving the local database error.",
-            ));
-            Err("Legacy import failed. Check migration status for recovery options.".to_owned())
-        }
-    }
-}
-
-#[tauri::command]
 fn save_watchlist(
     query: ResearchQuery,
     state: tauri::State<'_, AppServices>,
@@ -650,7 +611,6 @@ pub fn run() {
             retry_job,
             get_settings,
             save_settings,
-            import_legacy_data,
             save_watchlist,
             scan_creator,
             queue_research,
