@@ -120,6 +120,56 @@ def _require_relative_file(root: Path, relative: str) -> Path:
     return candidate
 
 
+def _validate_ffmpeg_record(root: Path, ffmpeg: dict[str, object], label: str) -> None:
+    if ffmpeg.get("license") != "GPL-3.0-or-later":
+        raise RuntimeError(f"unexpected {label} license: {ffmpeg.get('license')}")
+    configuration = str(ffmpeg.get("configuration") or "")
+    if "--enable-gpl" not in configuration or "--enable-version3" not in configuration:
+        raise RuntimeError(f"{label} GPLv3 build switches are not present in manifest: {configuration}")
+    if "--enable-nonfree" in configuration:
+        raise RuntimeError(f"{label} manifest contains --enable-nonfree")
+    ffmpeg_license = ffmpeg.get("license_file")
+    if not isinstance(ffmpeg_license, str):
+        raise RuntimeError(f"runtime license manifest does not identify the {label} license text")
+    _require_relative_file(root, ffmpeg_license)
+
+
+def _validate_pyav_ffmpeg(root: Path, record: object) -> None:
+    if not isinstance(record, dict):
+        raise RuntimeError("runtime license manifest is missing the PyAV-bundled FFmpeg inventory")
+    if record.get("license") != "GPL-3.0-or-later":
+        raise RuntimeError(f"unexpected PyAV FFmpeg license: {record.get('license')}")
+    license_file = record.get("license_file")
+    if not isinstance(license_file, str):
+        raise RuntimeError("PyAV FFmpeg inventory does not identify its GPL license text")
+    _require_relative_file(root, license_file)
+
+    groups = record.get("library_groups")
+    if not isinstance(groups, list) or not groups:
+        raise RuntimeError("PyAV FFmpeg inventory contains no library groups")
+    for group in groups:
+        if not isinstance(group, dict):
+            raise RuntimeError("PyAV FFmpeg inventory contains a malformed library group")
+        configuration = str(group.get("configuration") or "")
+        reported = str(group.get("reported_license") or "")
+        inferred = str(group.get("inferred_license") or "")
+        if inferred != "GPL-3.0-or-later":
+            raise RuntimeError(f"unexpected inferred PyAV FFmpeg license: {inferred}")
+        if reported.lower() != "gpl version 3 or later":
+            raise RuntimeError(f"unexpected reported PyAV FFmpeg license: {reported}")
+        if "--enable-gpl" not in configuration or "--enable-version3" not in configuration:
+            raise RuntimeError(f"PyAV FFmpeg GPLv3 build switches are missing: {configuration}")
+        if "--enable-nonfree" in configuration:
+            raise RuntimeError("PyAV FFmpeg configuration contains --enable-nonfree")
+
+    hashes = record.get("native_library_sha256")
+    if not isinstance(hashes, dict) or not hashes:
+        raise RuntimeError("PyAV FFmpeg inventory contains no native library hashes")
+    for name, digest in hashes.items():
+        if not isinstance(name, str) or not isinstance(digest, str) or len(digest) != 64:
+            raise RuntimeError(f"malformed PyAV native library hash entry: {name}={digest}")
+
+
 def _validate_licenses(root: Path) -> None:
     manifest_path = root / "RUNTIME-LICENSES.json"
     if not manifest_path.is_file():
@@ -137,18 +187,11 @@ def _validate_licenses(root: Path) -> None:
         raise RuntimeError("runtime license manifest does not identify the embedded Python license")
     _require_relative_file(root, python_license)
 
-    ffmpeg = manifest.get("ffmpeg") or {}
-    if ffmpeg.get("license") != "GPL-3.0-or-later":
-        raise RuntimeError(f"unexpected packaged FFmpeg license: {ffmpeg.get('license')}")
-    configuration = str(ffmpeg.get("configuration") or "")
-    if "--enable-gpl" not in configuration or "--enable-version3" not in configuration:
-        raise RuntimeError(f"FFmpeg GPLv3 build switches are not present in manifest: {configuration}")
-    if "--enable-nonfree" in configuration:
-        raise RuntimeError("packaged FFmpeg manifest contains --enable-nonfree")
-    ffmpeg_license = ffmpeg.get("license_file")
-    if not isinstance(ffmpeg_license, str):
-        raise RuntimeError("runtime license manifest does not identify the FFmpeg license text")
-    _require_relative_file(root, ffmpeg_license)
+    ffmpeg = manifest.get("ffmpeg")
+    if not isinstance(ffmpeg, dict):
+        raise RuntimeError("runtime license manifest is missing bundled FFmpeg/ffprobe information")
+    _validate_ffmpeg_record(root, ffmpeg, "bundled FFmpeg/ffprobe")
+    _validate_pyav_ffmpeg(root, manifest.get("pyav_ffmpeg"))
 
     components = manifest.get("python_components")
     if not isinstance(components, list):
