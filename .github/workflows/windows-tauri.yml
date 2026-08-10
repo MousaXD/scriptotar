@@ -149,24 +149,41 @@ jobs:
             throw 'Installed Scriptotar application executable was not found.'
           }
 
-          $env:SCRIPTOTAR_DATA_DIR = $dataDir
-          $appProcess = Start-Process -FilePath $app.FullName -PassThru
-          $database = Join-Path $dataDir 'scriptotar.sqlite3'
-          $created = $false
-          for ($i = 0; $i -lt 40; $i++) {
-            Start-Sleep -Milliseconds 500
-            if ($appProcess.HasExited) {
-              throw "Installed Scriptotar application exited during startup with code $($appProcess.ExitCode)"
+          New-Item -ItemType Directory -Force $dataDir | Out-Null
+          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $startInfo.FileName = $app.FullName
+          $startInfo.UseShellExecute = $false
+          $startInfo.Environment['SCRIPTOTAR_DATA_DIR'] = $dataDir
+          $appProcess = [System.Diagnostics.Process]::new()
+          $appProcess.StartInfo = $startInfo
+          if (-not $appProcess.Start()) {
+            throw 'Installed Scriptotar application process could not be started.'
+          }
+
+          try {
+            $database = Join-Path $dataDir 'scriptotar.sqlite3'
+            $created = $false
+            for ($i = 0; $i -lt 40; $i++) {
+              Start-Sleep -Milliseconds 500
+              if ($appProcess.HasExited) {
+                throw "Installed Scriptotar application exited during startup with code $($appProcess.ExitCode)"
+              }
+              if (Test-Path $database) {
+                $created = $true
+                break
+              }
             }
-            if (Test-Path $database) {
-              $created = $true
-              break
+            if (-not $created) {
+              throw "Installed Scriptotar application did not initialize its data directory: $dataDir"
             }
           }
-          if (-not $created) {
-            throw "Installed Scriptotar application did not initialize its data directory: $dataDir"
+          finally {
+            if (-not $appProcess.HasExited) {
+              Stop-Process -Id $appProcess.Id -Force
+              $appProcess.WaitForExit()
+            }
+            $appProcess.Dispose()
           }
-          Stop-Process -Id $appProcess.Id -Force
 
           $runtime = Get-ChildItem -Path $installDir -Recurse -Directory -Filter 'transcription-runtime' | Select-Object -First 1
           if (-not $runtime) {
