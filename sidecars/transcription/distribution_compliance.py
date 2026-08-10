@@ -3,13 +3,13 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata as metadata
 import json
-import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -19,10 +19,8 @@ from static_ffmpeg import run as static_ffmpeg_run
 
 SCHEMA_VERSION = 1
 
-# static-ffmpeg 3.0 resolves these two x86-64 payloads from zackees/ffmpeg_bins.
-# The SHA-256 values are the Git LFS object IDs committed for v8.0/linux.zip and
-# v8.0/win32.zip. Downloading through the floating main URL is therefore safe only
-# while the bytes still match this reviewed immutable object identity.
+# static-ffmpeg 3.0 maps these platforms to zackees/ffmpeg_bins v8.0. The
+# expected digests are the Git LFS OIDs committed for the provider archives.
 STATIC_FFMPEG_ARCHIVES = {
     "linux": {
         "url": "https://github.com/zackees/ffmpeg_bins/raw/main/v8.0/linux.zip",
@@ -47,12 +45,12 @@ PYAV_BUILD_RECIPE = {
     "build_recipe_revision": "cf545d99347ea17cd00ac72f0a3c3cb137399eca",
 }
 
-# Exact source coordinates from PyAV-Org/pyav-ffmpeg at the revision that moved
-# the wheel build to FFmpeg 8.1.2. Header/tool-only packages are included because
-# they are part of the reproducible build recipe even if they are not shipped as
-# separate shared objects in every wheel.
+# Source URLs and hashes are copied from PyAV-Org/pyav-ffmpeg at the reviewed
+# recipe revision above. Header/tool inputs stay in the list because they are
+# needed to reconstruct the wheel build even when they are not separate runtime
+# shared libraries.
 PYAV_SOURCE_COMPONENTS = [
-    {"name": "ffmpeg", "source_url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz", "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c", "license": "LGPL-2.1-or-later; effective FFmpeg library build is LGPL-3.0-or-later when --enable-version3 is used"},
+    {"name": "ffmpeg", "source_url": "https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz", "sha256": "464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c", "license": "LGPL-2.1-or-later; audited build reports LGPL-3.0-or-later with --enable-version3"},
     {"name": "lame", "source_url": "http://deb.debian.org/debian/pool/main/l/lame/lame_3.100.orig.tar.gz", "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e", "license": "LGPL-2.0-or-later"},
     {"name": "opus", "source_url": "https://ftp.osuosl.org/pub/xiph/releases/opus/opus-1.6.1.tar.gz", "sha256": "6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1", "license": "BSD-3-Clause"},
     {"name": "dav1d", "source_url": "https://code.videolan.org/videolan/dav1d/-/archive/1.5.3/dav1d-1.5.3.tar.bz2", "sha256": "e099f53253f6c247580c554d53a13f1040638f2066edc3c740e4c2f15174ce22", "license": "BSD-2-Clause"},
@@ -66,7 +64,7 @@ PYAV_SOURCE_COMPONENTS = [
     {"name": "gmp", "source_url": "https://ftp.gnu.org/gnu/gmp/gmp-6.3.0.tar.xz", "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898", "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"},
     {"name": "unistring", "source_url": "https://ftp.gnu.org/gnu/libunistring/libunistring-1.4.2.tar.gz", "sha256": "e82664b170064e62331962126b259d452d53b227bb4a93ab20040d846fec01d8", "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"},
     {"name": "nettle", "source_url": "https://ftp.gnu.org/gnu/nettle/nettle-3.10.2.tar.gz", "sha256": "fe9ff51cb1f2abb5e65a6b8c10a92da0ab5ab6eaf26e7fc2b675c45f1fb519b5", "license": "LGPL-3.0-or-later OR GPL-2.0-or-later"},
-    {"name": "gnutls", "source_url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz", "sha256": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e", "license": "LGPL-2.1-or-later for the library, with separately licensed parts"},
+    {"name": "gnutls", "source_url": "https://www.gnupg.org/ftp/gcrypt/gnutls/v3.8/gnutls-3.8.13.tar.xz", "sha256": "ffed8ec1bf09c2426d4f14aae377de4753b53e537d685e604e99a8b16ca9c97e", "license": "LGPL-2.1-or-later for the library; separately licensed parts exist"},
     {"name": "alsa-lib", "source_url": "https://www.alsa-project.org/files/pub/lib/alsa-lib-1.2.14.tar.bz2", "sha256": "be9c88a0b3604367dd74167a2b754a35e142f670292ae47a2fdef27a2ee97a32", "license": "LGPL-2.1-or-later"},
     {"name": "libvpl", "source_url": "https://github.com/intel/libvpl/archive/refs/tags/v2.16.0.tar.gz", "sha256": "d60931937426130ddad9f1975c010543f0da99e67edb1c6070656b7947f633b6", "license": "MIT"},
     {"name": "nv-codec-headers", "source_url": "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/n13.0.19.0.tar.gz", "sha256": "86d15d1a7c0ac73a0eafdfc57bebfeba7da8264595bf531cf4d8db1c22940116", "license": "MIT; build/header input"},
@@ -82,13 +80,12 @@ CURL_CFFI_NATIVE_RECIPE = {
     "curl_impersonate_source": "https://github.com/lexiforest/curl-impersonate/tree/v1.5.2",
     "curl_version": "8.15.0",
     "curl_source": "https://github.com/curl/curl/tree/curl-8_15_0",
-    "build_note": "curl-cffi 0.15.0 downloads libcurl-impersonate v1.5.2; Linux links the release mega archive statically into _wrapper, while Windows links the release DLL plus its native libraries.",
+    "build_note": "curl-cffi 0.15.0 downloads libcurl-impersonate v1.5.2. Linux links its release mega archive statically into _wrapper; Windows links the release DLL and native libraries.",
 }
 
-# Project distribution policy. This is deliberately a denylist rather than a
-# broad allowlist: metadata must be present, and licenses that would introduce
-# network copyleft, source-available restrictions, or unresolved custom terms
-# into the shipped Rust/frontend closure are blocked until explicitly reviewed.
+# Deliberately a small denylist, not an arbitrary allowlist. Unknown metadata
+# also fails. These markers require explicit project review before being folded
+# into production Rust/frontend code.
 PROHIBITED_LICENSE_MARKERS = (
     "AGPL-",
     "SSPL-",
@@ -98,7 +95,6 @@ PROHIBITED_LICENSE_MARKERS = (
     "LicenseRef-",
     "UNLICENSED",
 )
-
 LICENSE_FILE_PREFIXES = ("license", "licence", "copying", "notice", "copyright")
 
 
@@ -114,17 +110,11 @@ def _json_write(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _platform_key() -> str:
-    key = static_ffmpeg_run.get_platform_key()
-    if key not in STATIC_FFMPEG_ARCHIVES:
-        raise RuntimeError(f"Scriptotar packaging has no reviewed FFmpeg provenance baseline for {key}")
-    return key
-
-
 def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str, Any]]:
-    """Fetch the static-ffmpeg 3.0 payload while enforcing the reviewed LFS digest."""
-    key = _platform_key()
-    spec = STATIC_FFMPEG_ARCHIVES[key]
+    key = static_ffmpeg_run.get_platform_key()
+    spec = STATIC_FFMPEG_ARCHIVES.get(key)
+    if not spec:
+        raise RuntimeError(f"no reviewed FFmpeg archive baseline for packaging platform: {key}")
     url = static_ffmpeg_run.get_platform_http_zip()
     if url != spec["url"]:
         raise RuntimeError(f"static-ffmpeg provider URL drifted for {key}: {url}")
@@ -133,16 +123,14 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
     archive = destination / f"{key}.zip"
     with urllib.request.urlopen(url, timeout=600) as response, archive.open("wb") as output:
         shutil.copyfileobj(response, output, length=1024 * 1024)
-
     actual_hash = _sha256(archive)
     if actual_hash != spec["sha256"]:
         raise RuntimeError(
             f"static FFmpeg archive checksum drift for {key}: expected {spec['sha256']}, got {actual_hash}"
         )
-    actual_size = archive.stat().st_size
-    if actual_size != spec["size"]:
+    if archive.stat().st_size != spec["size"]:
         raise RuntimeError(
-            f"static FFmpeg archive size drift for {key}: expected {spec['size']}, got {actual_size}"
+            f"static FFmpeg archive size drift for {key}: expected {spec['size']}, got {archive.stat().st_size}"
         )
 
     extract_root = destination / "extracted"
@@ -153,17 +141,16 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
     ffmpeg = executable_dir / f"ffmpeg{suffix}"
     ffprobe = executable_dir / f"ffprobe{suffix}"
     if not ffmpeg.is_file() or not ffprobe.is_file():
-        raise RuntimeError(f"verified static FFmpeg archive did not contain expected executables: {executable_dir}")
+        raise RuntimeError(f"verified FFmpeg archive lacks expected executables: {executable_dir}")
     if key != "win32":
         ffmpeg.chmod(ffmpeg.stat().st_mode | 0o555)
         ffprobe.chmod(ffprobe.stat().st_mode | 0o555)
-
     return ffmpeg, ffprobe, {
         "provider": "zackees/ffmpeg_bins via static-ffmpeg 3.0 URL mapping",
         "platform_key": key,
         "download_url": url,
         "archive_sha256": actual_hash,
-        "archive_size": actual_size,
+        "archive_size": archive.stat().st_size,
         "git_lfs_oid_sha256": spec["sha256"],
         "git_lfs_pointer_blob": spec["git_lfs_pointer_blob"],
         "checksum_verified": True,
@@ -172,7 +159,6 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
 
 def _download_installed_wheel(project: str) -> dict[str, Any]:
     dist = metadata.distribution(project)
-    version = dist.version
     with tempfile.TemporaryDirectory(prefix=f"scriptotar-{project}-wheel-") as raw:
         destination = Path(raw)
         subprocess.run(
@@ -186,7 +172,7 @@ def _download_installed_wheel(project: str) -> dict[str, Any]:
                 "--no-deps",
                 "--dest",
                 str(destination),
-                f"{project}=={version}",
+                f"{project}=={dist.version}",
             ],
             check=True,
             capture_output=True,
@@ -195,11 +181,11 @@ def _download_installed_wheel(project: str) -> dict[str, Any]:
         )
         wheels = sorted(destination.glob("*.whl"))
         if len(wheels) != 1:
-            raise RuntimeError(f"expected one wheel for {project}=={version}, found {[p.name for p in wheels]}")
+            raise RuntimeError(f"expected one wheel for {project}=={dist.version}, found {[p.name for p in wheels]}")
         wheel = wheels[0]
         return {
             "project": project,
-            "version": version,
+            "version": dist.version,
             "filename": wheel.name,
             "sha256": _sha256(wheel),
             "size": wheel.stat().st_size,
@@ -226,92 +212,105 @@ def _extract_ffmpeg_revision(version_line: str) -> str | None:
     return match.group(1) if match else None
 
 
-def _copy_license_candidates(package_root: Path, destination: Path) -> list[str]:
-    copied: list[str] = []
+def _copy_license_candidates(package_root: Path, destination: Path, runtime_root: Path) -> list[str]:
     if not package_root.is_dir():
-        return copied
-    candidates = []
-    for child in package_root.iterdir():
-        if child.is_file() and child.name.lower().startswith(LICENSE_FILE_PREFIXES):
-            candidates.append(child)
-    if not candidates:
-        return copied
-    destination.mkdir(parents=True, exist_ok=True)
+        return []
+    candidates = [
+        child
+        for child in package_root.iterdir()
+        if child.is_file() and child.name.lower().startswith(LICENSE_FILE_PREFIXES)
+    ]
+    copied: list[str] = []
     for index, source in enumerate(sorted(candidates), start=1):
+        destination.mkdir(parents=True, exist_ok=True)
         target = destination / f"{index:02d}-{source.name}"
         shutil.copy2(source, target)
-        copied.append(str(target))
+        copied.append(str(target.relative_to(runtime_root)).replace("\\", "/"))
     return copied
 
 
-def _rust_inventory(repo_root: Path, legal_root: Path) -> dict[str, Any]:
-    rustc = subprocess.run(
+def _cargo_checksums(repo_root: Path) -> dict[tuple[str, str, str], str]:
+    lock = tomllib.loads((repo_root / "Cargo.lock").read_text(encoding="utf-8"))
+    result: dict[tuple[str, str, str], str] = {}
+    for package in lock.get("package", []):
+        checksum = package.get("checksum")
+        source = package.get("source")
+        if checksum and source:
+            result[(str(package["name"]), str(package["version"]), str(source))] = str(checksum)
+    return result
+
+
+def _rust_inventory(repo_root: Path, runtime_root: Path) -> dict[str, Any]:
+    rustc_output = subprocess.run(
         ["rustc", "-vV"], check=True, capture_output=True, text=True, timeout=30
     ).stdout
-    host = next((line.split(":", 1)[1].strip() for line in rustc.splitlines() if line.startswith("host:")), None)
+    host = next((line.split(":", 1)[1].strip() for line in rustc_output.splitlines() if line.startswith("host:")), None)
     if not host:
-        raise RuntimeError("could not determine Rust host target for license inventory")
-    completed = subprocess.run(
-        ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=600,
+        raise RuntimeError("could not determine Rust host target")
+    data = json.loads(
+        subprocess.run(
+            ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+        ).stdout
     )
-    data = json.loads(completed.stdout)
     packages = {package["id"]: package for package in data.get("packages", [])}
     nodes = {node["id"]: node for node in (data.get("resolve") or {}).get("nodes", [])}
     desktop_ids = [pid for pid, package in packages.items() if package.get("name") == "scriptotar-desktop"]
     if len(desktop_ids) != 1:
-        raise RuntimeError(f"could not identify exactly one scriptotar-desktop Cargo package: {desktop_ids}")
+        raise RuntimeError(f"expected one scriptotar-desktop package, found {desktop_ids}")
 
     categories: dict[str, str] = {desktop_ids[0]: "runtime"}
     queue = [desktop_ids[0]]
     while queue:
         current = queue.pop(0)
         current_category = categories[current]
-        node = nodes.get(current) or {}
-        for dep in node.get("deps", []):
+        for dep in (nodes.get(current) or {}).get("deps", []):
             dep_id = dep.get("pkg")
             if dep_id not in packages:
                 continue
-            kinds = {kind.get("kind") or "normal" for kind in dep.get("dep_kinds", [])}
-            if not kinds:
-                kinds = {"normal"}
+            kinds = {kind.get("kind") or "normal" for kind in dep.get("dep_kinds", [])} or {"normal"}
             if kinds == {"dev"}:
                 continue
-            candidate_category = current_category
+            candidate = current_category
             if current_category == "runtime" and "normal" not in kinds:
-                candidate_category = "build-only"
-            package_targets = packages[dep_id].get("targets", [])
-            if package_targets and all("proc-macro" in target.get("kind", []) for target in package_targets):
-                candidate_category = "build-only"
+                candidate = "build-only"
+            targets = packages[dep_id].get("targets") or []
+            if targets and all("proc-macro" in target.get("kind", []) for target in targets):
+                candidate = "build-only"
             previous = categories.get(dep_id)
-            if previous == "runtime":
+            if previous == "runtime" or previous == candidate:
                 continue
-            if previous == candidate_category:
-                continue
-            categories[dep_id] = candidate_category
+            categories[dep_id] = candidate
             queue.append(dep_id)
 
+    checksums = _cargo_checksums(repo_root)
     records = []
-    rust_legal_root = legal_root / "rust"
-    for package_id, category in sorted(categories.items(), key=lambda item: (packages[item[0]]["name"], packages[item[0]]["version"])):
+    for package_id, category in sorted(
+        categories.items(), key=lambda item: (packages[item[0]]["name"], packages[item[0]]["version"])
+    ):
         package = packages[package_id]
-        license_expression = package.get("license") or ""
+        license_expression = str(package.get("license") or "")
         if not license_expression:
             raise RuntimeError(f"Cargo package has no license metadata: {package['name']} {package['version']}")
-        if category == "runtime" and any(marker.lower() in license_expression.lower() for marker in PROHIBITED_LICENSE_MARKERS):
+        if category == "runtime" and any(
+            marker.lower() in license_expression.lower() for marker in PROHIBITED_LICENSE_MARKERS
+        ):
             raise RuntimeError(
-                f"Cargo runtime package uses a license blocked by project policy: {package['name']} {package['version']} {license_expression}"
+                f"Cargo runtime package license requires explicit review: {package['name']} {package['version']} {license_expression}"
             )
         manifest_path = Path(package["manifest_path"])
+        source = str(package.get("source") or "workspace")
         copied = []
-        if category == "runtime" and package.get("source"):
-            package_dest = rust_legal_root / f"{package['name']}-{package['version']}"
-            copied_paths = _copy_license_candidates(manifest_path.parent, package_dest)
-            copied = [str(Path(path).relative_to(legal_root.parent)).replace("\\", "/") for path in copied_paths]
+        if category == "runtime" and source != "workspace":
+            copied = _copy_license_candidates(
+                manifest_path.parent,
+                runtime_root / "legal" / "rust" / f"{package['name']}-{package['version']}",
+                runtime_root,
+            )
         records.append(
             {
                 "name": package["name"],
@@ -320,16 +319,9 @@ def _rust_inventory(repo_root: Path, legal_root: Path) -> dict[str, Any]:
                 "license": license_expression,
                 "license_file_metadata": package.get("license_file"),
                 "copied_license_files": copied,
-                "source": package.get("source") or "workspace",
+                "source": source,
                 "repository": package.get("repository"),
-                "checksum": next(
-                    (
-                        entry.get("checksum")
-                        for entry in json.loads((repo_root / "Cargo.lock").read_text(encoding="utf-8")).get("package", [])
-                        if False
-                    ),
-                    None,
-                ),
+                "cargo_lock_checksum": checksums.get((package["name"], package["version"], source)),
             }
         )
     return {
@@ -339,7 +331,7 @@ def _rust_inventory(repo_root: Path, legal_root: Path) -> dict[str, Any]:
         "policy": {
             "unknown_license_metadata": "fail",
             "runtime_prohibited_markers": list(PROHIBITED_LICENSE_MARKERS),
-            "dev_dependencies": "excluded from shipped closure",
+            "dev_dependencies": "excluded",
             "build_and_proc_macro_dependencies": "recorded as build-only",
         },
         "packages": records,
@@ -349,35 +341,31 @@ def _rust_inventory(repo_root: Path, legal_root: Path) -> dict[str, Any]:
 def _npm_name(path_key: str, entry: dict[str, Any]) -> str:
     if entry.get("name"):
         return str(entry["name"])
-    marker = "node_modules/"
-    if marker not in path_key:
-        return path_key
-    return path_key.rsplit(marker, 1)[1]
+    return path_key.rsplit("node_modules/", 1)[-1]
 
 
 def _frontend_inventory(repo_root: Path) -> dict[str, Any]:
     lock_path = repo_root / "apps" / "desktop-ui" / "package-lock.json"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    if lock.get("lockfileVersion") != 3:
-        raise RuntimeError(f"unsupported frontend package-lock version: {lock.get('lockfileVersion')}")
-    packages = lock.get("packages")
-    if not isinstance(packages, dict):
-        raise RuntimeError("frontend package-lock has no packages map")
+    if lock.get("lockfileVersion") != 3 or not isinstance(lock.get("packages"), dict):
+        raise RuntimeError("frontend inventory requires package-lock.json lockfileVersion 3 packages map")
     records = []
-    for path_key, entry in sorted(packages.items()):
+    for path_key, entry in sorted(lock["packages"].items()):
         if not path_key or not isinstance(entry, dict):
             continue
         name = _npm_name(path_key, entry)
         version = str(entry.get("version") or "")
+        license_expression = str(entry.get("license") or "")
         if not version:
             raise RuntimeError(f"frontend lock entry has no version: {path_key}")
-        category = "build-only" if entry.get("dev") is True else "production"
-        license_expression = str(entry.get("license") or "")
         if not license_expression:
             raise RuntimeError(f"frontend lock entry has no license metadata: {name} {version}")
-        if category == "production" and any(marker.lower() in license_expression.lower() for marker in PROHIBITED_LICENSE_MARKERS):
+        category = "build-only" if entry.get("dev") is True else "production"
+        if category == "production" and any(
+            marker.lower() in license_expression.lower() for marker in PROHIBITED_LICENSE_MARKERS
+        ):
             raise RuntimeError(
-                f"frontend production package uses a license blocked by project policy: {name} {version} {license_expression}"
+                f"frontend production package license requires explicit review: {name} {version} {license_expression}"
             )
         records.append(
             {
@@ -390,16 +378,14 @@ def _frontend_inventory(repo_root: Path) -> dict[str, Any]:
                 "optional": bool(entry.get("optional")),
             }
         )
-    production_names = sorted(record["name"] for record in records if record["category"] == "production")
     return {
         "schema": SCHEMA_VERSION,
         "source_of_truth": "apps/desktop-ui/package-lock.json lockfileVersion 3",
         "policy": {
             "unknown_license_metadata": "fail",
             "production_prohibited_markers": list(PROHIBITED_LICENSE_MARKERS),
-            "dev_true": "build-only and not claimed as shipped frontend code",
+            "dev_true": "build-only",
         },
-        "production_package_names": production_names,
         "packages": records,
     }
 
@@ -419,48 +405,48 @@ def _generated_notice(
     standalone = provenance["standalone_ffmpeg"]
     pyav = native_inventory["pyav"]
     curl = native_inventory["curl_cffi"]
-    lines = [
-        "# Scriptotar generated third-party notices",
-        "",
-        "This file is generated from the exact package build. Machine-readable inventories beside it are authoritative if this summary and an inventory disagree.",
-        "",
-        "## Bundled in the installer",
-        "",
-        f"- Scriptotar desktop Rust/Tauri runtime closure: {len(rust_runtime)} Cargo packages. See `RUST-LICENSES.json` and `legal/rust/`.",
-        f"- Production frontend closure: {len(frontend_prod)} npm packages. See `FRONTEND-LICENSES.json`.",
-        f"- Packaged Python closure: {len(python_components)} distributions. See `RUNTIME-LICENSES.json` and `legal/python/`.",
-        f"- Standalone FFmpeg/ffprobe archive: `{standalone['archive']['download_url']}` with SHA-256 `{standalone['archive']['archive_sha256']}`; effective FFmpeg license `{standalone['runtime']['license']}`.",
-        f"- PyAV {pyav['wheel']['version']} wheel `{pyav['wheel']['filename']}` with SHA-256 `{pyav['wheel']['sha256']}`. FFmpeg core groups report `{runtime_manifest.get('pyav_ffmpeg', {}).get('license')}`, while the native payload also contains separately licensed codec/TLS libraries listed in `NATIVE-COMPONENTS.json`.",
-        f"- curl-cffi {curl['wheel']['version']} wheel `{curl['wheel']['filename']}` with SHA-256 `{curl['wheel']['sha256']}`. Native payload hashes and curl-impersonate source lineage are in `NATIVE-COMPONENTS.json`.",
-        "- Embedded CPython and PyInstaller bootloader notices are under `legal/python-runtime/` and `legal/build-tools/`.",
-        "- GNU GPLv3 and LGPLv3 texts for the audited FFmpeg paths are `legal/FFMPEG-GPL-3.0.txt` and `legal/FFMPEG-LGPL-3.0.txt`.",
-        "",
-        "## Build-only, not copied as tools into the installer",
-        "",
-        f"- Cargo build/proc-macro closure: {len(rust_build)} packages, inventoried in `RUST-LICENSES.json`.",
-        f"- npm development/build closure: {len(frontend_build)} packages, inventoried in `FRONTEND-LICENSES.json`.",
-        "- Rust toolchain, Cargo, Node.js/npm, Vite CLI, TypeScript CLI, PyInstaller CLI and static-ffmpeg fetcher are build tooling; generated code/bootloaders are inventoried where they are actually shipped.",
-        "",
-        "## System-provided",
-        "",
-        "- Linux WebKitGTK/GTK and declared Debian runtime dependencies are supplied by the operating system package manager.",
-        "- Windows WebView/platform components are supplied by the Windows environment rather than the transcription runtime resource tree.",
-        "",
-        "## Downloaded after installation",
-        "",
-        "- Whisper model weights are downloaded on first uncached use and are not installer payloads.",
-        "- User-requested remote media is not a Scriptotar-distributed component.",
-        "",
-        "## Evidence and remaining legal interpretation",
-        "",
-        "- The standalone FFmpeg archive is byte-pinned and its binaries/configuration are hashed, but the current zackees/ffmpeg_bins provider does not publish a complete build-to-Corresponding-Source mapping for every statically linked GPL component. The manifest therefore marks standalone Corresponding Source as unresolved rather than presenting a homepage link as compliance.",
-        "- PyAV source/build coordinates are pinned to PyAV 18.0.0 and pyav-ffmpeg's FFmpeg 8.1.2 recipe. LGPL relinking/replacement obligations and the GPL treatment of separately shipped x264/x265 libraries still require distribution-policy review.",
-        "- curl-cffi native shape is hash-pinned and its exact curl/curl-impersonate build lineage is recorded. Native third-party license conclusions remain component-specific; do not infer them from curl-cffi's top-level MIT metadata alone.",
-        "",
-        "This engineering inventory is not a legal opinion.",
-        "",
-    ]
-    return "\n".join(lines)
+    return "\n".join(
+        [
+            "# Scriptotar generated third-party notices",
+            "",
+            "This file is generated from the exact package build. Machine-readable inventories beside it are authoritative if this summary and an inventory disagree.",
+            "",
+            "## Bundled in the installer",
+            "",
+            f"- Rust/Tauri shipped closure: {len(rust_runtime)} Cargo packages. See `RUST-LICENSES.json` and `legal/rust/`.",
+            f"- Production frontend closure: {len(frontend_prod)} npm packages. See `FRONTEND-LICENSES.json`.",
+            f"- Packaged Python closure: {len(python_components)} distributions. See `RUNTIME-LICENSES.json` and `legal/python/`.",
+            f"- Standalone FFmpeg/ffprobe archive SHA-256: `{standalone['archive']['archive_sha256']}` from `{standalone['archive']['download_url']}`; effective FFmpeg license `{standalone['runtime']['license']}`.",
+            f"- PyAV {pyav['wheel']['version']} wheel `{pyav['wheel']['filename']}` SHA-256 `{pyav['wheel']['sha256']}`. Its native payload is component-inventoried in `NATIVE-COMPONENTS.json`.",
+            f"- curl-cffi {curl['wheel']['version']} wheel `{curl['wheel']['filename']}` SHA-256 `{curl['wheel']['sha256']}`. Its native payload and curl-impersonate lineage are in `NATIVE-COMPONENTS.json`.",
+            "- CPython/PyInstaller notices are under `legal/python-runtime/` and `legal/build-tools/`.",
+            "- GNU GPLv3/LGPLv3 texts are `legal/FFMPEG-GPL-3.0.txt` and `legal/FFMPEG-LGPL-3.0.txt`.",
+            "",
+            "## Build-only, not copied as tools",
+            "",
+            f"- Cargo build/proc-macro closure: {len(rust_build)} packages.",
+            f"- npm development/build closure: {len(frontend_build)} packages.",
+            "- Rust/Cargo, Node/npm, Vite/TypeScript CLIs, PyInstaller CLI and static-ffmpeg are build tooling; generated/runtime material is inventoried where shipped.",
+            "",
+            "## System-provided",
+            "",
+            "- Linux WebKitGTK/GTK and Debian runtime dependencies are supplied by the OS package manager.",
+            "- Windows WebView/platform components are supplied by Windows rather than the transcription-runtime resources.",
+            "",
+            "## Downloaded after installation",
+            "",
+            "- Whisper model weights and user-requested remote media are not installer payloads.",
+            "",
+            "## Evidence and remaining legal interpretation",
+            "",
+            "- The standalone FFmpeg archive is byte-pinned and its binaries/configuration are hashed. zackees/ffmpeg_bins does not publish a complete build-to-Corresponding-Source mapping for every statically linked GPL component, so the provenance manifest marks this unresolved instead of presenting a homepage link as proof.",
+            "- PyAV source/build coordinates are pinned to PyAV 18.0.0 and pyav-ffmpeg's FFmpeg 8.1.2 recipe. The wheel's FFmpeg core reports LGPLv3, while separately bundled x264/x265 libraries are GPL components; LGPL replacement/relinking and GPL source-delivery treatment require distribution-policy review.",
+            "- curl-cffi native files are hash-pinned and the exact curl 8.15.0 / curl-impersonate 1.5.2 build lineage is recorded. curl-cffi's top-level MIT metadata is not used as a blanket license for linked native dependencies.",
+            "",
+            "This engineering inventory is not a legal opinion.",
+            "",
+        ]
+    )
 
 
 def write_distribution_compliance_bundle(
@@ -470,10 +456,7 @@ def write_distribution_compliance_bundle(
 ) -> None:
     runtime_root = runtime_root.resolve()
     repo_root = repo_root.resolve()
-    legal_root = runtime_root / "legal"
-    manifest_path = runtime_root / "RUNTIME-LICENSES.json"
-    runtime_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-
+    runtime_manifest = json.loads((runtime_root / "RUNTIME-LICENSES.json").read_text(encoding="utf-8"))
     standalone_record = runtime_manifest.get("ffmpeg") or {}
     version_line = str(standalone_record.get("version_line") or "")
     upstream_revision = _extract_ffmpeg_revision(version_line)
@@ -490,23 +473,21 @@ def write_distribution_compliance_bundle(
             ),
             "corresponding_source": {
                 "status": "provider-lineage-incomplete",
-                "reason": "The redistributed archive is byte-pinned, but zackees/ffmpeg_bins does not publish a complete mapping from this archive to source/build inputs for every statically linked dependency.",
+                "reason": "The archive is byte-pinned, but zackees/ffmpeg_bins does not map this build to complete source/build inputs for every statically linked dependency.",
             },
         },
     }
 
     pyav_dist = metadata.distribution("av")
     if pyav_dist.version != PYAV_VERSION:
-        raise RuntimeError(f"PyAV version changed from reviewed native recipe: {pyav_dist.version}")
-    pyav_wheel = _download_installed_wheel("av")
+        raise RuntimeError(f"PyAV changed from reviewed version {PYAV_VERSION}: {pyav_dist.version}")
     pyav_native = _distribution_native_files("av")
     if not pyav_native:
-        raise RuntimeError("PyAV distribution contains no native libraries")
+        raise RuntimeError("PyAV distribution contains no native library payload")
 
     curl_dist = metadata.distribution("curl-cffi")
     if curl_dist.version != CURL_CFFI_VERSION:
-        raise RuntimeError(f"curl-cffi version changed from reviewed native recipe: {curl_dist.version}")
-    curl_wheel = _download_installed_wheel("curl-cffi")
+        raise RuntimeError(f"curl-cffi changed from reviewed version {CURL_CFFI_VERSION}: {curl_dist.version}")
     curl_native = _distribution_native_files("curl-cffi")
     if not curl_native:
         raise RuntimeError("curl-cffi distribution contains no native payload")
@@ -514,31 +495,29 @@ def write_distribution_compliance_bundle(
     native_inventory = {
         "schema": SCHEMA_VERSION,
         "pyav": {
-            "wheel": pyav_wheel,
+            "wheel": _download_installed_wheel("av"),
             "native_file_sha256": pyav_native,
             "ffmpeg_runtime_report": runtime_manifest.get("pyav_ffmpeg"),
             "build_recipe": PYAV_BUILD_RECIPE,
             "source_components": PYAV_SOURCE_COMPONENTS,
-            "license_scope_note": "PyAV's FFmpeg core license report does not replace the licenses of separately bundled native libraries such as x264/x265; inspect source_components and native_file_sha256 together.",
-            "relinking_note": "The wheel conveys shared FFmpeg/native libraries. Whether the packaged application satisfies LGPL installation/replacement/relinking requirements is a legal/distribution interpretation, not inferred by this generator.",
+            "license_scope_note": "The FFmpeg core report does not replace licenses of separately bundled native libraries such as x264/x265.",
+            "relinking_note": "The wheel conveys shared FFmpeg/native libraries. LGPL installation/replacement/relinking compliance is a legal/distribution interpretation, not inferred by this generator.",
         },
         "curl_cffi": {
-            "wheel": curl_wheel,
+            "wheel": _download_installed_wheel("curl-cffi"),
             "native_file_sha256": curl_native,
             "recipe": CURL_CFFI_NATIVE_RECIPE,
-            "license_scope_note": "curl-cffi's MIT metadata covers curl-cffi itself; the linked curl-impersonate/native dependency stack retains its own licenses.",
+            "license_scope_note": "curl-cffi's MIT metadata covers curl-cffi itself; linked curl-impersonate/native dependencies retain their own licenses.",
         },
     }
-
-    rust_inventory = _rust_inventory(repo_root, legal_root)
+    rust_inventory = _rust_inventory(repo_root, runtime_root)
     frontend_inventory = _frontend_inventory(repo_root)
 
     _json_write(runtime_root / "RUNTIME-PROVENANCE.json", provenance)
     _json_write(runtime_root / "NATIVE-COMPONENTS.json", native_inventory)
     _json_write(runtime_root / "RUST-LICENSES.json", rust_inventory)
     _json_write(runtime_root / "FRONTEND-LICENSES.json", frontend_inventory)
-
-    generated_notice = _generated_notice(
-        runtime_manifest, provenance, rust_inventory, frontend_inventory, native_inventory
+    (runtime_root / "legal" / "THIRD_PARTY_NOTICES.md").write_text(
+        _generated_notice(runtime_manifest, provenance, rust_inventory, frontend_inventory, native_inventory),
+        encoding="utf-8",
     )
-    (legal_root / "THIRD_PARTY_NOTICES.md").write_text(generated_notice, encoding="utf-8")
