@@ -61,7 +61,8 @@ jobs:
             librsvg2-dev \
             libgtk-3-dev \
             libssl-dev \
-            patchelf
+            patchelf \
+            xvfb
       - name: Install pinned Tauri CLI
         run: cargo install tauri-cli --version '2.11.2' --locked
       - name: Install pinned runtime bundler dependencies
@@ -107,6 +108,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Verify frontend Tauri command contract
+        working-directory: apps/desktop-ui
+        run: npm test -- src/api/tauriClient.test.ts
       - name: Build locked Linux deb
         working-directory: apps/desktop
         run: cargo tauri build --bundles deb -- --locked
@@ -144,7 +148,42 @@ jobs:
           command -v zenity >/dev/null
           RUNTIME_MARKER="$(dpkg -L "$PACKAGE_NAME" | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
           test -n "$RUNTIME_MARKER"
-          python sidecars/transcription/validate_runtime.py "$(dirname "$RUNTIME_MARKER")"
+          RUNTIME_DIR="$(dirname "$RUNTIME_MARKER")"
+          python sidecars/transcription/validate_runtime.py "$RUNTIME_DIR"
+          APP_BIN="$(dpkg -L "$PACKAGE_NAME" | grep '^/usr/bin/' | head -n 1 || true)"
+          test -n "$APP_BIN"
+          test -x "$APP_BIN"
+          printf 'SCRIPTOTAR_E2E_RUNTIME_DIR=%s\n' "$RUNTIME_DIR" >> "$GITHUB_ENV"
+          printf 'SCRIPTOTAR_INSTALLED_BIN=%s\n' "$APP_BIN" >> "$GITHUB_ENV"
+      - name: Launch installed Scriptotar Next shell
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/scriptotar-installed-launch"
+          SCRIPTOTAR_DATA_DIR="$RUNNER_TEMP/scriptotar-installed-launch" \
+            timeout --signal=TERM 8s xvfb-run -a "$SCRIPTOTAR_INSTALLED_BIN" \
+            > dist/INSTALLED-LAUNCH.log 2>&1
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 124 ]; then
+            cat dist/INSTALLED-LAUNCH.log
+            echo "Installed Scriptotar process exited unexpectedly with status $STATUS" >&2
+            exit 1
+          fi
+          if grep -Eqi 'panicked at|failed to run Scriptotar desktop shell' dist/INSTALLED-LAUNCH.log; then
+            cat dist/INSTALLED-LAUNCH.log
+            echo 'Installed Scriptotar shell reported a fatal startup error.' >&2
+            exit 1
+          fi
+      - name: Run installed-app IPC and persistence E2E repeatedly
+        run: |
+          set -euo pipefail
+          test -d "$SCRIPTOTAR_E2E_RUNTIME_DIR"
+          for attempt in 1 2 3; do
+            echo "Installed-app E2E attempt $attempt/3"
+            cargo test -p scriptotar-desktop --lib \
+              installed_app_e2e::installed_app_e2e_round_trip_survives_restart \
+              -- --ignored --exact --nocapture
+          done
       - name: Remove installed preview package
         if: always()
         run: |
@@ -164,4 +203,5 @@ jobs:
             dist/RUNTIME-VERSIONS.txt
             dist/SHA256SUMS.txt
             dist/DEB-CONTENTS.txt
+            dist/INSTALLED-LAUNCH.log
           if-no-files-found: error
