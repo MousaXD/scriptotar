@@ -9,6 +9,7 @@ use std::{
 };
 
 use rusqlite::{backup::Backup, Connection, OpenFlags};
+use uuid::Uuid;
 
 use crate::dto::{UiMigrationCandidate, UiMigrationStatus};
 
@@ -189,7 +190,7 @@ fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
 fn choose_candidate_from_roots(
     data_dir: &Path,
     roots: &[PathBuf],
-    candidate_id: &str,
+    selected_id: &str,
 ) -> Preparation {
     let pending = data_dir.join(PENDING_STAGE_NAME);
     if pending.exists() {
@@ -199,16 +200,10 @@ fn choose_candidate_from_roots(
         Ok(candidates) => candidates,
         Err(error) => return classify_discovery_error(&error),
     };
-    let Some(index) = candidate_id
-        .strip_prefix("candidate-")
-        .and_then(|value| value.parse::<usize>().ok())
+    let Some(candidate) = candidates
+        .iter()
+        .find(|candidate| candidate_id(candidate) == selected_id)
     else {
-        return Preparation::Failed(
-            "The selected migration candidate is no longer valid. Refresh migration discovery and choose again."
-                .to_owned(),
-        );
-    };
-    let Some(candidate) = candidates.get(index) else {
         return Preparation::Failed(
             "The selected migration candidate is no longer available. Refresh migration discovery and choose again."
                 .to_owned(),
@@ -275,12 +270,17 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
     Ok(candidates)
 }
 
+fn candidate_id(path: &Path) -> String {
+    let value = Uuid::new_v5(&Uuid::NAMESPACE_URL, path.to_string_lossy().as_bytes());
+    format!("candidate-{value}")
+}
+
 fn candidate_labels(candidates: &[PathBuf]) -> Vec<UiMigrationCandidate> {
     candidates
         .iter()
         .enumerate()
         .map(|(index, path)| UiMigrationCandidate {
-            id: format!("candidate-{index}"),
+            id: candidate_id(path),
             label: candidate_label(path, index),
         })
         .collect()
@@ -492,6 +492,13 @@ mod tests {
             .unwrap();
     }
 
+    fn fixture_value(path: &Path) -> String {
+        Connection::open(path)
+            .unwrap()
+            .query_row("SELECT value FROM fixture LIMIT 1", [], |row| row.get(0))
+            .unwrap()
+    }
+
     #[test]
     fn no_legacy_database_is_structured_not_an_error() {
         let temp = TempDir::new().unwrap();
@@ -535,9 +542,26 @@ mod tests {
         assert_eq!(candidates.len(), 2);
         assert!(!data_dir.join(PENDING_STAGE_NAME).exists());
 
-        let selected = choose_candidate_from_roots(&data_dir, &[root], &candidates[0].id);
+        let selected = candidates
+            .iter()
+            .find(|candidate| candidate.label.contains("WeSamBoss"))
+            .unwrap()
+            .id
+            .clone();
+        let earlier_root = temp.path().join("000-earlier-root");
+        real_sqlite(
+            &earlier_root.join("scriptotar/history.sqlite3"),
+            "newly-discovered",
+        );
+        let selected = choose_candidate_from_roots(
+            &data_dir,
+            &[earlier_root, root],
+            &selected,
+        );
         assert!(matches!(selected, Preparation::Ready));
-        assert!(data_dir.join(PENDING_STAGE_NAME).is_file());
+        let pending = data_dir.join(PENDING_STAGE_NAME);
+        assert!(pending.is_file());
+        assert_eq!(fixture_value(&pending), "second");
         assert_eq!(fs::read(&first).unwrap(), first_before);
         assert_eq!(fs::read(&second).unwrap(), second_before);
     }
