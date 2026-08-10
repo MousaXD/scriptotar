@@ -46,13 +46,13 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Simplify completed-migration startup branch
+      - name: Apply final migration surface hardening
         shell: python
         run: |
           from pathlib import Path
 
-          path = Path('apps/desktop/src-tauri/src/lib.rs')
-          text = path.read_text()
+          lib = Path('apps/desktop/src-tauri/src/lib.rs')
+          text = lib.read_text()
           needle = '            let preparation = if let Some(status) = completed_status_if_marked(&data_dir) {'
           replacement = (
               ' ' * 12 + 'let preparation = if completed_status_if_marked(&data_dir).is_some() {\n'
@@ -64,20 +64,104 @@ jobs:
           if needle in text:
               start = text.index(needle)
               end = text.index('            let operational_store = ', start)
-              path.write_text(text[:start] + replacement + text[end:])
-          elif replacement.strip() not in text:
-              raise SystemExit('expected startup branch was not found')
+              text = text[:start] + replacement + text[end:]
+
+          command_start = '#[tauri::command]\nfn import_legacy_data('
+          command_end = '#[tauri::command]\nfn save_watchlist('
+          if command_start in text:
+              start = text.index(command_start)
+              end = text.index(command_end, start)
+              text = text[:start] + text[end:]
+          text = text.replace('            import_legacy_data,\n', '')
+          lib.write_text(text)
+
+          services = Path('apps/desktop/src-tauri/src/services.rs')
+          text = services.read_text()
+          marker = '    #[test]\n    fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {'
+          test_name = 'fn secret_like_provider_error_is_not_persisted_or_displayable()'
+          if test_name not in text:
+              insertion = '''    #[test]
+    fn secret_like_provider_error_is_not_persisted_or_displayable() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let watchlist = store
+            .upsert_watchlist(
+                project.id,
+                "Creator",
+                "https://www.youtube.com/@creator",
+                25,
+            )
+            .unwrap();
+        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let safe = safe_watchlist_error(raw);
+        store
+            .record_watchlist_refresh_failure(
+                watchlist.id,
+                "2026-08-10T10:00:00Z",
+                &safe,
+                None,
+            )
+            .unwrap();
+        let displayable = store
+            .watchlist_refresh_status(watchlist.id)
+            .unwrap()
+            .unwrap()
+            .last_error
+            .unwrap();
+        assert_eq!(displayable, safe);
+        for forbidden in [
+            "super-secret",
+            "query-secret",
+            "/home/user",
+            "<html>",
+            "Traceback",
+            "Bearer",
+        ] {
+            assert!(!displayable.contains(forbidden));
+        }
+    }
+
+'''
+              if marker not in text:
+                  raise SystemExit('services test insertion marker not found')
+              text = text.replace(marker, insertion + marker, 1)
+              services.write_text(text)
+
+          client = Path('apps/desktop-ui/src/api/client.ts')
+          text = client.read_text()
+          text = text.replace('  LegacyImportReport,\n', '')
+          text = text.replace('  importLegacyData(): Promise<LegacyImportReport>;\n', '')
+          client.write_text(text)
+
+          tauri_client = Path('apps/desktop-ui/src/api/tauriClient.ts')
+          text = tauri_client.read_text()
+          text = text.replace('  LegacyImportReport,\n', '')
+          text = text.replace("    importLegacyData: () => invoke<LegacyImportReport>('import_legacy_data')\n", '')
+          tauri_client.write_text(text)
+
+          mock_client = Path('apps/desktop-ui/src/api/mockClient.ts')
+          text = mock_client.read_text()
+          start_marker = '    async importLegacyData() {'
+          if start_marker in text:
+              start = text.index(start_marker)
+              end_marker = '\n    }\n  };'
+              end = text.index(end_marker, start)
+              text = text[:start] + text[end + len('\n    }'):]
+              mock_client.write_text(text)
       - name: Apply Rustfmt
         run: cargo fmt --all
-      - name: Commit formatter output
+      - name: Commit hardened source changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -u
           if git diff --cached --quiet; then
-            echo "No formatting changes required"
+            echo "No source changes required"
           else
-            git commit -m "style: apply rustfmt after operational hardening"
+            git commit -m "fix: close migration bypass and verify sanitized persistence"
             git push origin HEAD:${{ github.event.pull_request.head.ref }}
           fi
       - name: Rustfmt
