@@ -12,6 +12,7 @@ A production bundle contains this resource layout:
 transcription-runtime/
   scriptotar-transcription[.exe]   JSONL protocol v1 supervisor
   sidecar.py                        packaged runtime marker / compatibility path
+  scriptotar-ytdlp[.exe]           dedicated yt-dlp CLI for creator research
   engine/
     scriptotar-engine[.exe]         isolated heavy transcription engine
     ...                             PyInstaller runtime and Python dependencies
@@ -23,7 +24,9 @@ transcription-runtime/
 
 The Rust orchestrator still owns durable jobs and speaks the existing JSON Lines protocol v1. The supervisor remains a separate process, and the heavy engine remains a child process so cancellation can terminate transcription/media descendants without moving Python execution into Rust or Svelte.
 
-Release startup resolves the runtime from Tauri's application resource directory. Development builds keep the existing source-tree/Python workflow unless `SCRIPTOTAR_SIDECAR_*` overrides are supplied.
+Creator research uses the dedicated packaged `scriptotar-ytdlp` executable. Production never treats the packaged transcription supervisor as a Python interpreter.
+
+Release startup resolves the runtime from Tauri's application resource directory. Development builds keep the existing source-tree/Python workflow unless `SCRIPTOTAR_SIDECAR_*` or `SCRIPTOTAR_YTDLP_EXECUTABLE` overrides are supplied.
 
 ## What is bundled
 
@@ -31,6 +34,7 @@ The packaging build pins and bundles:
 
 - a Python 3.12 runtime through PyInstaller;
 - Scriptotar's transcription supervisor and engine worker;
+- a dedicated packaged yt-dlp command for creator research;
 - `faster-whisper==1.2.1` and its packaged runtime dependencies;
 - `yt-dlp[default,curl-cffi]==2026.7.4`;
 - FFmpeg and ffprobe from the pinned `static-ffmpeg==3.0` packaging dependency;
@@ -50,7 +54,7 @@ This keeps installer size bounded and avoids shipping several large model varian
 
 A first transcription therefore needs network access when its selected model is not already cached. If model retrieval or another engine dependency fails, the job returns an explicit, retryable engine error that explains the first-use model requirement. Scriptotar does not report a fake successful transcription or silently fall back to another model.
 
-Once the requested model is cached, local-file transcription does not require model download access. URL transcription can still require network access to the source platform.
+Once the requested model is cached, local-file transcription does not require model download access. URL transcription and creator research can still require network access to the source platform.
 
 ## CPU and CUDA behavior
 
@@ -91,7 +95,7 @@ The Windows artifact remains labeled a preview until the final integration/relea
 The Linux lane validates:
 
 - the self-contained runtime before bundling;
-- the `.deb` contents include the supervisor, engine, FFmpeg and ffprobe;
+- the `.deb` contents include the supervisor, dedicated yt-dlp command, engine, FFmpeg and ffprobe;
 - package installation on a clean GitHub-hosted Ubuntu runner;
 - packaged-runtime discovery and protocol/dependency self-test from the installed resource directory;
 - package removal;
@@ -101,7 +105,7 @@ This is a Scriptotar Next preview artifact. It does not replace the legacy Debia
 
 ## Runtime validation
 
-`sidecars/transcription/validate_runtime.py` is the packaging smoke test. It does not contact social platforms or download a Whisper model. It proves that the packaged heavy engine can import the pinned runtime, resolve private FFmpeg/ffprobe executables, and that the public supervisor can complete protocol-v1 startup, ping and orderly shutdown.
+`sidecars/transcription/validate_runtime.py` is the packaging smoke test. It does not contact social platforms or download a Whisper model. It proves that the packaged heavy engine can import the pinned runtime, resolve private FFmpeg/ffprobe executables, that the dedicated yt-dlp command is available for creator research, and that the public supervisor can complete protocol-v1 startup, ping and orderly shutdown.
 
 This distinction is intentional: package CI should prove the installed runtime boundary without making success depend on a live third-party media platform or a multi-gigabyte model download.
 
@@ -113,6 +117,7 @@ These environment variables remain supported for development, test fixtures and 
 - `SCRIPTOTAR_SIDECAR_SCRIPT`
 - `SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE`
 - `SCRIPTOTAR_SIDECAR_ENGINE_WORKER`
+- `SCRIPTOTAR_YTDLP_EXECUTABLE`
 - `SCRIPTOTAR_DATA_DIR` for isolated test/application-data roots
 - `HF_HOME` for model-cache placement
 
@@ -140,9 +145,10 @@ For a supported packaged build:
 2. launch the app;
 3. Scriptotar creates its application-data directory and Rust-owned SQLite database;
 4. transcription starts the bundled supervisor and engine from application resources;
-5. bundled FFmpeg/ffprobe and Python dependencies are used automatically;
-6. on the first job using an uncached Whisper model, the model is downloaded to the app-data model cache;
-7. subsequent jobs can reuse the cached model and persistent engine process.
+5. creator research invokes the bundled dedicated yt-dlp command;
+6. bundled FFmpeg/ffprobe and Python dependencies are used automatically;
+7. on the first job using an uncached Whisper model, the model is downloaded to the app-data model cache;
+8. subsequent jobs can reuse the cached model and persistent engine process.
 
 No repository checkout, virtual environment setup, `pip install`, or system FFmpeg installation is part of the end-user path.
 
@@ -154,4 +160,4 @@ No repository checkout, virtual environment setup, `pip install`, or system FFmp
 - No macOS distributable is produced by this work.
 - The Linux Next artifact is Debian-format only in this packaging wave; the legacy AppImage/Flatpak pipelines remain separate.
 - Package smoke tests intentionally avoid live Instagram/TikTok/YouTube availability and do not spend bandwidth downloading Whisper weights.
-- Final replacement of the Python/Tkinter application is an integration-level decision and is not implied by a successful Agent 1 package build.
+- Final replacement of the Python/Tkinter application is an integration-level decision and is not implied by a successful Scriptotar Next package build.
