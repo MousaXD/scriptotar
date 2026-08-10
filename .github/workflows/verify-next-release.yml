@@ -1,0 +1,76 @@
+name: Temporary Next Release Verification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-next-release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: tauri-next-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify rolling release and assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          EXPECTED_ASSETS=(
+            Scriptotar-Next-latest-x64-setup.exe
+            Scriptotar-Next-latest-amd64.deb
+            RUNTIME-VERSIONS-windows.txt
+            RUNTIME-VERSIONS-linux.txt
+            DEB-CONTENTS-linux.txt
+            SHA256SUMS.txt
+          )
+
+          for attempt in $(seq 1 60); do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --json name,tagName,isPrerelease,assets,url > release.json 2>/dev/null; then
+              NAME="$(jq -r '.name' release.json)"
+              TAG="$(jq -r '.tagName' release.json)"
+              PRERELEASE="$(jq -r '.isPrerelease' release.json)"
+              ASSETS="$(jq -r '.assets[].name' release.json)"
+
+              missing=0
+              for expected in "${EXPECTED_ASSETS[@]}"; do
+                if ! grep -Fxq "$expected" <<< "$ASSETS"; then
+                  missing=1
+                  break
+                fi
+              done
+
+              if [ "$NAME" = 'Scriptotar Next Preview' ] \
+                && [ "$TAG" = "$RELEASE_TAG" ] \
+                && [ "$PRERELEASE" = true ] \
+                && [ "$missing" -eq 0 ]; then
+                MAIN_SHA="$(git ls-remote origin refs/heads/main | cut -f1)"
+                TAG_SHA="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+                test -n "$MAIN_SHA"
+                test "$TAG_SHA" = "$MAIN_SHA" || {
+                  echo "Release tag $TAG_SHA does not match main $MAIN_SHA" >&2
+                  exit 1
+                }
+                cat release.json
+                exit 0
+              fi
+            fi
+
+            echo "Release not fully published yet ($attempt/60)."
+            sleep 5
+          done
+
+          echo 'Scriptotar Next preview did not reach the expected published state.' >&2
+          if [ -f release.json ]; then
+            cat release.json >&2
+          fi
+          exit 1
