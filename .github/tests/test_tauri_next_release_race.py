@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/tauri-next-release.yml"
 WINDOWS_WORKFLOW = ROOT / ".github/workflows/windows-tauri.yml"
+LINUX_WORKFLOW = ROOT / ".github/workflows/linux-tauri.yml"
 GUARD = ROOT / ".github/scripts/assert-tauri-next-current-main.sh"
 
 
@@ -87,7 +88,10 @@ class WorkflowRaceContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
-        cls.windows = WINDOWS_WORKFLOW.read_text(encoding="utf-8")
+        cls.packagers = {
+            "windows": WINDOWS_WORKFLOW.read_text(encoding="utf-8"),
+            "linux": LINUX_WORKFLOW.read_text(encoding="utf-8"),
+        }
 
     def test_rolling_publisher_is_globally_serialized(self) -> None:
         self.assertIn("group: tauri-next-release-publisher", self.workflow)
@@ -129,7 +133,7 @@ class WorkflowRaceContractTests(unittest.TestCase):
         always = self.workflow.index("if: always()", cleanup)
         self.assertGreater(always, cleanup)
 
-    def test_windows_packager_cannot_race_the_authoritative_publisher(self) -> None:
+    def test_packagers_cannot_race_the_authoritative_publisher(self) -> None:
         forbidden = (
             "gh release create",
             "gh release edit",
@@ -137,8 +141,9 @@ class WorkflowRaceContractTests(unittest.TestCase):
             "git tag -f tauri-next-latest",
             "contents: write",
         )
-        for token in forbidden:
-            self.assertNotIn(token, self.windows, token)
+        for platform, workflow in self.packagers.items():
+            for token in forbidden:
+                self.assertNotIn(token, workflow, f"{platform}: {token}")
 
 
 if __name__ == "__main__":
