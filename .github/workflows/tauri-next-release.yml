@@ -194,12 +194,12 @@ jobs:
           cat > RELEASE-NOTES.md <<NOTES
           # Scriptotar Next Preview
 
-          Built automatically from validated Windows and Linux package jobs on `main`.
+          Built automatically from validated Windows and Linux package jobs on main.
 
           - Tauri app version: ${WINDOWS_VERSION}
           - Commit: ${SOURCE_SHA}
-          - Windows: `Scriptotar-Next-latest-x64-setup.exe`
-          - Linux: `Scriptotar-Next-latest-amd64.deb`
+          - Windows asset: Scriptotar-Next-latest-x64-setup.exe
+          - Linux asset: Scriptotar-Next-latest-amd64.deb
 
           Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
 
@@ -229,8 +229,6 @@ jobs:
               --notes-file RELEASE-NOTES.md \
               --prerelease \
               --latest=false
-            gh release delete-asset "$RELEASE_TAG" RUNTIME-VERSIONS.txt \
-              --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
           else
             gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
               --repo "$GITHUB_REPOSITORY" \
@@ -278,7 +276,7 @@ jobs:
           {
             echo '## Scriptotar Next preview published'
             echo
-            echo "- Commit: \`$SOURCE_SHA\`"
+            echo "- Commit: $SOURCE_SHA"
             echo "- Release: $RELEASE_URL"
             echo '- Windows NSIS and Linux Debian assets verified.'
           } >> "$GITHUB_STEP_SUMMARY"
