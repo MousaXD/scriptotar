@@ -72,6 +72,16 @@ impl UiMigrationStatus {
         }
     }
 
+    pub fn in_progress() -> Self {
+        Self {
+            state: "in_progress".to_owned(),
+            message: "Scriptotar is importing the prepared legacy snapshot. The source database remains untouched."
+                .to_owned(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
     pub fn requires_choice(candidates: Vec<UiMigrationCandidate>) -> Self {
         Self {
             state: "requires_choice".to_owned(),
@@ -95,6 +105,16 @@ impl UiMigrationStatus {
         Self {
             state: "failed".to_owned(),
             message: message.into(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
+    pub fn previously_completed() -> Self {
+        Self {
+            state: "completed".to_owned(),
+            message: "Legacy migration was already completed on this installation. Scriptotar will not automatically import the source database again."
+                .to_owned(),
             candidates: Vec::new(),
             report: None,
         }
