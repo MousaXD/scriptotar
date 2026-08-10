@@ -538,35 +538,39 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| UiLibraryItem {
-            id: format!("research:{}", item.id),
-            kind: "Research".to_owned(),
-            title: item.title.clone(),
-            subtitle: item.creator.clone(),
-            project_id: active_project.to_string(),
-            platform: Some(item.platform.clone()),
-            metric: item.views.map(|views| format!("{views} views")),
-            date: item
-                .published_at
-                .clone()
-                .unwrap_or_else(|| "Unknown date".to_owned()),
+        library.extend(ui_research.iter().map(|item| {
+            UiLibraryItem {
+                id: format!("research:{}", item.id),
+                kind: "Research".to_owned(),
+                title: item.title.clone(),
+                subtitle: item.creator.clone(),
+                project_id: active_project.to_string(),
+                platform: Some(item.platform.clone()),
+                metric: item.views.map(|views| format!("{views} views")),
+                date: item
+                    .published_at
+                    .clone()
+                    .unwrap_or_else(|| "Unknown date".to_owned()),
+            }
         }));
-        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
-            id: format!("ai:{}", run.id),
-            kind: "AI run".to_owned(),
-            title: run.task.clone(),
-            subtitle: run
-                .provider
-                .clone()
-                .map(|provider| match &run.model {
-                    Some(model) => format!("{provider} · {model}"),
-                    None => provider,
-                })
-                .unwrap_or_else(|| "Copy Prompt".to_owned()),
-            project_id: run.project_id.to_string(),
-            platform: None,
-            metric: None,
-            date: run.created_at.clone(),
+        library.extend(ai_runs.iter().map(|run| {
+            UiLibraryItem {
+                id: format!("ai:{}", run.id),
+                kind: "AI run".to_owned(),
+                title: run.task.clone(),
+                subtitle: run
+                    .provider
+                    .clone()
+                    .map(|provider| match &run.model {
+                        Some(model) => format!("{provider} · {model}"),
+                        None => provider,
+                    })
+                    .unwrap_or_else(|| "Copy Prompt".to_owned()),
+                project_id: run.project_id.to_string(),
+                platform: None,
+                metric: None,
+                date: run.created_at.clone(),
+            }
         }));
 
         Ok(BootstrapData {
@@ -772,7 +776,11 @@ fn build_ai_prompt_text(input: &AiPromptInput) -> Result<String, String> {
         input.task.trim(),
         task_instructions(&input.task)
     )];
-    push_prompt_field(&mut sections, "Source transcript / context", &input.source_text);
+    push_prompt_field(
+        &mut sections,
+        "Source transcript / context",
+        &input.source_text,
+    );
     push_prompt_field(&mut sections, "Topic / goal", &input.topic);
     push_prompt_field(&mut sections, "Audience", &input.audience);
     push_prompt_field(&mut sections, "Target duration", &input.duration);

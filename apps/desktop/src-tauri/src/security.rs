@@ -442,11 +442,15 @@ mod tests {
         let writer = Connection::open(&source).unwrap();
         writer.pragma_update(None, "journal_mode", "WAL").unwrap();
         writer.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
-        writer.execute("CREATE TABLE fixture(value TEXT)", []).unwrap();
+        writer
+            .execute("CREATE TABLE fixture(value TEXT)", [])
+            .unwrap();
         writer
             .execute("INSERT INTO fixture(value) VALUES ('before')", [])
             .unwrap();
-        writer.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        writer
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
 
         let reader = Connection::open(&source).unwrap();
         reader

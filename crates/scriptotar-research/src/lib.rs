@@ -682,7 +682,10 @@ mod tests {
         let validated = NetworkPolicy
             .validate("https://www.youtube.com/@creator")
             .unwrap();
-        assert!(matches!(provider.scan(&validated, 25), Err(ResearchError::Provider(_))));
+        assert!(matches!(
+            provider.scan(&validated, 25),
+            Err(ResearchError::Provider(_))
+        ));
 
         let (_temp, empty) = fixture_script("exit 0");
         let provider = YtDlpProvider::new(YtDlpCommand::executable(empty));

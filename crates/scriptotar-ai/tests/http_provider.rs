@@ -6,9 +6,7 @@ use std::{
     time::Duration,
 };
 
-use scriptotar_ai::{
-    AiError, AiProvider, AiRequest, EndpointPolicy, HttpAiProvider, ProviderKind,
-};
+use scriptotar_ai::{AiError, AiProvider, AiRequest, EndpointPolicy, HttpAiProvider, ProviderKind};
 
 fn spawn_server(
     status: u16,
@@ -75,12 +73,7 @@ fn endpoint(base: &str) -> scriptotar_ai::ValidatedEndpoint {
     EndpointPolicy.validate(base).unwrap()
 }
 
-fn generate(
-    kind: ProviderKind,
-    base: &str,
-    model: &str,
-    key: &str,
-) -> Result<String, AiError> {
+fn generate(kind: ProviderKind, base: &str, model: &str, key: &str) -> Result<String, AiError> {
     let provider = HttpAiProvider::with_timeout(kind, Duration::from_millis(500)).unwrap();
     provider
         .generate(
@@ -119,7 +112,13 @@ fn openai_anthropic_gemini_and_compatible_success() {
         Duration::ZERO,
     );
     assert_eq!(
-        generate(ProviderKind::Anthropic, &base, "claude-test", "anthropic-secret").unwrap(),
+        generate(
+            ProviderKind::Anthropic,
+            &base,
+            "claude-test",
+            "anthropic-secret"
+        )
+        .unwrap(),
         "anthropic ok"
     );
     assert!(request
@@ -196,12 +195,7 @@ fn timeout_is_reported_without_panicking() {
 }
 
 fn assert_redirect_blocked(location: &str) {
-    let (base, captured) = spawn_server(
-        302,
-        &[("Location", location)],
-        "",
-        Duration::ZERO,
-    );
+    let (base, captured) = spawn_server(302, &[("Location", location)], "", Duration::ZERO);
     let error = generate(ProviderKind::OpenAi, &base, "gpt-test", "redirect-secret").unwrap_err();
     assert_eq!(error, AiError::RedirectBlocked(302));
     let request = captured.lock().unwrap().clone();

@@ -147,7 +147,11 @@ impl ResearchRepository for SqliteStore {
                 .execute(
                     "UPDATE creators SET platform = ?1, display_name = COALESCE(?2, display_name)
                      WHERE id = ?3",
-                    params![creator.platform, creator.display_name, existing.id.to_string()],
+                    params![
+                        creator.platform,
+                        creator.display_name,
+                        existing.id.to_string()
+                    ],
                 )
                 .map_err(storage_error)?;
             return connection
@@ -191,7 +195,9 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_creator)
                 .map_err(storage_error)?
         } else {
-            statement.query_map([], row_creator).map_err(storage_error)?
+            statement
+                .query_map([], row_creator)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -304,7 +310,9 @@ impl ResearchRepository for SqliteStore {
                 .query_map(params![project_id.to_string()], row_research)
                 .map_err(storage_error)?
         } else {
-            statement.query_map([], row_research).map_err(storage_error)?
+            statement
+                .query_map([], row_research)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
