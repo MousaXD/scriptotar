@@ -62,6 +62,7 @@ jobs:
             libgtk-3-dev \
             libssl-dev \
             patchelf \
+            xauth \
             xvfb
       - name: Install pinned Tauri CLI
         run: cargo install tauri-cli --version '2.11.2' --locked
