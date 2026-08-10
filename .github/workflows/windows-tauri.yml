@@ -150,39 +150,60 @@ jobs:
           }
 
           New-Item -ItemType Directory -Force $dataDir | Out-Null
-          $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-          $startInfo.FileName = $app.FullName
-          $startInfo.UseShellExecute = $false
-          $startInfo.Environment['SCRIPTOTAR_DATA_DIR'] = $dataDir
-          $appProcess = [System.Diagnostics.Process]::new()
-          $appProcess.StartInfo = $startInfo
-          if (-not $appProcess.Start()) {
-            throw 'Installed Scriptotar application process could not be started.'
+          $guiInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $guiInfo.FileName = $app.FullName
+          $guiInfo.UseShellExecute = $false
+          $guiInfo.Environment['SCRIPTOTAR_DATA_DIR'] = $dataDir
+          $guiProcess = [System.Diagnostics.Process]::new()
+          $guiProcess.StartInfo = $guiInfo
+          if (-not $guiProcess.Start()) {
+            throw 'Installed Scriptotar GUI process could not be started.'
           }
-
           try {
-            $database = Join-Path $dataDir 'scriptotar.sqlite3'
-            $created = $false
-            for ($i = 0; $i -lt 40; $i++) {
-              Start-Sleep -Milliseconds 500
-              if ($appProcess.HasExited) {
-                throw "Installed Scriptotar application exited during startup with code $($appProcess.ExitCode)"
-              }
-              if (Test-Path $database) {
-                $created = $true
-                break
-              }
-            }
-            if (-not $created) {
-              throw "Installed Scriptotar application did not initialize its data directory: $dataDir"
+            Start-Sleep -Seconds 5
+            if ($guiProcess.HasExited) {
+              throw "Installed Scriptotar GUI exited during startup with code $($guiProcess.ExitCode)"
             }
           }
           finally {
-            if (-not $appProcess.HasExited) {
-              Stop-Process -Id $appProcess.Id -Force
-              $appProcess.WaitForExit()
+            if (-not $guiProcess.HasExited) {
+              Stop-Process -Id $guiProcess.Id -Force
+              $guiProcess.WaitForExit()
             }
-            $appProcess.Dispose()
+            $guiProcess.Dispose()
+          }
+
+          Remove-Item -Recurse -Force $dataDir -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $dataDir | Out-Null
+          $probeInfo = [System.Diagnostics.ProcessStartInfo]::new()
+          $probeInfo.FileName = $app.FullName
+          $probeInfo.UseShellExecute = $false
+          $probeInfo.Environment['SCRIPTOTAR_DATA_DIR'] = $dataDir
+          $probeInfo.ArgumentList.Add('--scriptotar-installed-backend-smoke')
+          $probe = [System.Diagnostics.Process]::new()
+          $probe.StartInfo = $probeInfo
+          if (-not $probe.Start()) {
+            throw 'Installed Scriptotar backend smoke process could not be started.'
+          }
+          try {
+            if (-not $probe.WaitForExit(20000)) {
+              throw 'Installed Scriptotar backend smoke timed out.'
+            }
+            if ($probe.ExitCode -ne 0) {
+              throw "Installed Scriptotar backend smoke exited with code $($probe.ExitCode)"
+            }
+          }
+          finally {
+            if (-not $probe.HasExited) {
+              Stop-Process -Id $probe.Id -Force
+              $probe.WaitForExit()
+            }
+            $probe.Dispose()
+          }
+
+          $database = Join-Path $dataDir 'scriptotar.sqlite3'
+          if (-not (Test-Path $database)) {
+            throw "Installed Scriptotar backend smoke did not initialize SQLite: $database"
           }
 
           $runtime = Get-ChildItem -Path $installDir -Recurse -Directory -Filter 'transcription-runtime' | Select-Object -First 1
