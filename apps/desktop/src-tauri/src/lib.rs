@@ -1,15 +1,21 @@
 mod dto;
+mod migration;
 mod security;
 mod services;
 
 use std::{
+    collections::HashMap,
     env, io,
     path::{Path, PathBuf},
     process::Command,
 };
 
-use dto::{AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiSettings};
-use scriptotar_core::{Job, LegacyImportReport};
+use dto::{
+    AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
+    UiWatchlistStatus,
+};
+use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
+use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use services::AppServices;
 use tauri::Manager;
 use uuid::Uuid;
@@ -17,6 +23,12 @@ use uuid::Uuid;
 #[derive(Debug, serde::Serialize)]
 struct BackendHealth {
     schema_version: u32,
+}
+
+#[derive(Clone)]
+struct OperationalState {
+    data_dir: PathBuf,
+    store: SqliteStore,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +88,29 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
     }
 }
 
+fn complete_prepared_migration(services: &AppServices, data_dir: &Path) -> UiMigrationStatus {
+    if let Err(error) = migration::activate_pending_stage(data_dir) {
+        let status = UiMigrationStatus::failed(error);
+        migration::set_status(status.clone());
+        return status;
+    }
+    match services.import_legacy_data() {
+        Ok(report) => {
+            let status = UiMigrationStatus::completed(report);
+            migration::set_status(status.clone());
+            status
+        }
+        Err(error) => {
+            eprintln!("[scriptotar-migration] import failed: {error}");
+            let status = UiMigrationStatus::failed(
+                "The legacy snapshot was prepared safely, but importing it failed. The source database was not modified. Retry after resolving the local database error.",
+            );
+            migration::set_status(status.clone());
+            status
+        }
+    }
+}
+
 #[tauri::command]
 fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
     Ok(BackendHealth {
@@ -91,6 +126,93 @@ fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, 
 #[tauri::command]
 fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
     state.list_jobs().map_err(command_error)
+}
+
+#[tauri::command]
+fn get_watchlist_statuses(
+    state: tauri::State<'_, OperationalState>,
+) -> Result<Vec<UiWatchlistStatus>, String> {
+    let watchlists = state.store.list_watchlists(None).map_err(command_error)?;
+    let persisted = state
+        .store
+        .list_watchlist_refresh_status(None)
+        .map_err(command_error)?
+        .into_iter()
+        .map(|status| (status.watchlist_id, status))
+        .collect::<HashMap<_, _>>();
+    let auto_watch = state
+        .store
+        .load_settings()
+        .map_err(command_error)?
+        .auto_watch;
+
+    Ok(watchlists
+        .into_iter()
+        .map(|watchlist| {
+            let status = persisted.get(&watchlist.id);
+            let mut state_name = status
+                .map(|status| status.state.as_str())
+                .unwrap_or_else(|| {
+                    if watchlist.last_scan_at.is_some() {
+                        "healthy"
+                    } else {
+                        "never_scanned"
+                    }
+                })
+                .to_owned();
+            if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
+                state_name = "failed".to_owned();
+            }
+            UiWatchlistStatus {
+                watchlist_id: watchlist.id.to_string(),
+                project_id: watchlist.project_id.to_string(),
+                label: watchlist.label,
+                state: state_name,
+                last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
+                last_successful_scan_at: status
+                    .and_then(|status| status.last_success_at.clone())
+                    .or(watchlist.last_scan_at),
+                last_error: status.and_then(|status| status.last_error.clone()),
+                next_retry_at: if auto_watch {
+                    status.and_then(|status| status.next_retry_at.clone())
+                } else {
+                    None
+                },
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn get_migration_status() -> UiMigrationStatus {
+    migration::current_status()
+}
+
+#[tauri::command]
+fn retry_legacy_migration(
+    services: tauri::State<'_, AppServices>,
+    operational: tauri::State<'_, OperationalState>,
+) -> UiMigrationStatus {
+    match migration::retry_discovery(&operational.data_dir) {
+        migration::Preparation::Ready => {
+            complete_prepared_migration(&services, &operational.data_dir)
+        }
+        _ => migration::current_status(),
+    }
+}
+
+#[tauri::command]
+fn select_legacy_migration_candidate(
+    candidate_id: String,
+    services: tauri::State<'_, AppServices>,
+    operational: tauri::State<'_, OperationalState>,
+) -> UiMigrationStatus {
+    match migration::choose_candidate(&operational.data_dir, &candidate_id) {
+        migration::Preparation::Ready => {
+            complete_prepared_migration(&services, &operational.data_dir)
+        }
+        _ => migration::current_status(),
+    }
 }
 
 #[tauri::command]
@@ -115,7 +237,7 @@ fn enqueue_local_media(
     project_id: Uuid,
     path: String,
     state: tauri::State<'_, AppServices>,
-) -> Result<Job, String> {
+) -> Result<scriptotar_core::Job, String> {
     let path = security::validated_local_media_path(&path)?;
     state
         .enqueue_local_media(project_id, path)
@@ -127,7 +249,7 @@ fn enqueue_url(
     project_id: Uuid,
     url: String,
     state: tauri::State<'_, AppServices>,
-) -> Result<Job, String> {
+) -> Result<scriptotar_core::Job, String> {
     security::validate_url_argument("media URL", &url)?;
     state.enqueue_url(project_id, url).map_err(command_error)
 }
@@ -148,7 +270,10 @@ fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), 
 }
 
 #[tauri::command]
-fn retry_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<Job, String> {
+fn retry_job(
+    job_id: Uuid,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_core::Job, String> {
     state.retry_job(job_id).map_err(command_error)
 }
 
@@ -164,7 +289,19 @@ fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> 
 
 #[tauri::command]
 fn import_legacy_data(state: tauri::State<'_, AppServices>) -> Result<LegacyImportReport, String> {
-    state.import_legacy_data().map_err(command_error)
+    match state.import_legacy_data() {
+        Ok(report) => {
+            migration::set_status(UiMigrationStatus::completed(report.clone()));
+            Ok(report)
+        }
+        Err(error) => {
+            eprintln!("[scriptotar-migration] manual import failed: {error}");
+            migration::set_status(UiMigrationStatus::failed(
+                "Legacy import failed. The source database was left untouched; retry after resolving the local database error.",
+            ));
+            Err("Legacy import failed. Check migration status for recovery options.".to_owned())
+        }
+    }
 }
 
 #[tauri::command]
@@ -313,12 +450,21 @@ pub fn run() {
                 let resource_dir = app.path().resource_dir()?;
                 configure_packaged_runtime(&resource_dir, &data_dir);
             }
-            match security::prepare_legacy_import_bridge(&data_dir) {
-                Ok(Some(message)) => eprintln!("[scriptotar-migration] {message}"),
-                Ok(None) => {}
-                Err(error) => eprintln!("[scriptotar-migration] {error}"),
+
+            let preparation = migration::prepare_startup(&data_dir);
+            let operational_store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
+            operational_store.run_integration_migrations()?;
+            operational_store.recover_interrupted_watchlist_refreshes()?;
+
+            let services = AppServices::new(&data_dir)?;
+            if matches!(preparation, migration::Preparation::Ready) {
+                complete_prepared_migration(&services, &data_dir);
             }
-            let services = AppServices::new(data_dir)?;
+
+            app.manage(OperationalState {
+                data_dir: data_dir.clone(),
+                store: operational_store,
+            });
             app.manage(services);
             Ok(())
         })
@@ -326,6 +472,10 @@ pub fn run() {
             backend_health,
             bootstrap_app,
             list_jobs,
+            get_watchlist_statuses,
+            get_migration_status,
+            retry_legacy_migration,
+            select_legacy_migration_candidate,
             select_project,
             create_project,
             enqueue_local_media,
