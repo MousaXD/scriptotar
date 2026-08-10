@@ -40,7 +40,7 @@ const WATCHLIST_TICK: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct WatchlistRefresher {
-    inner: Arc<WatchlistRefresherInner>,
+    _inner: Arc<WatchlistRefresherInner>,
 }
 
 struct WatchlistRefresherInner {
@@ -249,43 +249,6 @@ impl AppServices {
             settings.cookie_browser.as_deref(),
         )?;
         Ok(())
-    }
-
-    pub fn refresh_watchlists(&self) -> Result<usize, String> {
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
-        let watchlists = self
-            .store
-            .list_watchlists(Some(active_project))
-            .map_err(|error| error.to_string())?;
-        let settings = self
-            .store
-            .load_settings()
-            .map_err(|error| error.to_string())?;
-        let mut saved_items = 0_usize;
-        let mut errors = Vec::new();
-        for watchlist in watchlists {
-            match scan_and_persist_research(
-                &self.store,
-                &self.research_command,
-                watchlist.project_id,
-                &watchlist.profile_url,
-                watchlist.limit_count.min(200) as u16,
-                settings.cookie_browser.as_deref(),
-            ) {
-                Ok(count) => saved_items += count,
-                Err(error) => errors.push(format!("{}: {error}", watchlist.label)),
-            }
-        }
-        if errors.is_empty() {
-            Ok(saved_items)
-        } else {
-            Err(format!(
-                "some watchlists could not be refreshed: {}",
-                errors.join("; ")
-            ))
-        }
     }
 
     pub fn queue_research(&self, ids: Vec<String>) -> Result<(), String> {
@@ -690,7 +653,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
         }
     });
     WatchlistRefresher {
-        inner: Arc::new(WatchlistRefresherInner {
+        _inner: Arc::new(WatchlistRefresherInner {
             stop,
             handle: Mutex::new(Some(handle)),
         }),
