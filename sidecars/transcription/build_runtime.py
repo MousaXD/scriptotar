@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from compliance_enrichment import write_compliance_enrichment
 from distribution_compliance import (
     fetch_pinned_static_ffmpeg,
     write_distribution_compliance_bundle,
@@ -149,10 +150,12 @@ def build(output: Path) -> None:
         )
         (output / "RUNTIME-VERSIONS.txt").write_text(versions, encoding="utf-8")
 
-        # Generate the Python/runtime legal inventory first, then enrich it with
-        # exact archive/wheel provenance plus Rust/frontend/native inventories.
+        # Generate the exact Python/runtime legal inventory first, then the
+        # transitive/native inventories, and finally enrich them with pinned
+        # native notice material plus production-bundle frontend evidence.
         write_runtime_legal_bundle(output, ffmpeg_source, REPO_ROOT)
         write_distribution_compliance_bundle(output, REPO_ROOT, ffmpeg_fetch)
+        write_compliance_enrichment(output, REPO_ROOT)
 
 
 def main() -> int:
