@@ -47,6 +47,40 @@ pub struct WatchlistRefreshStatus {
     pub next_retry_at: Option<String>,
 }
 
+struct RefreshStatusRow {
+    watchlist_id: String,
+    state: String,
+    last_attempt_at: Option<String>,
+    last_success_at: Option<String>,
+    last_error: Option<String>,
+    next_retry_at: Option<String>,
+}
+
+impl RefreshStatusRow {
+    fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            watchlist_id: row.get(0)?,
+            state: row.get(1)?,
+            last_attempt_at: row.get(2)?,
+            last_success_at: row.get(3)?,
+            last_error: row.get(4)?,
+            next_retry_at: row.get(5)?,
+        })
+    }
+
+    fn into_status(self) -> RepositoryResult<WatchlistRefreshStatus> {
+        Ok(WatchlistRefreshStatus {
+            watchlist_id: Uuid::parse_str(&self.watchlist_id)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?,
+            state: WatchlistRefreshState::from_str(&self.state)?,
+            last_attempt_at: self.last_attempt_at,
+            last_success_at: self.last_success_at,
+            last_error: self.last_error,
+            next_retry_at: self.next_retry_at,
+        })
+    }
+}
+
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
 }
@@ -199,44 +233,17 @@ impl SqliteStore {
              ORDER BY watchlist_id"
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
-        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )> {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-            ))
-        };
         let rows = if let Some(project_id) = project_id {
             statement
-                .query_map(params![project_id.to_string()], map_row)
+                .query_map(params![project_id.to_string()], RefreshStatusRow::read)
                 .map_err(storage_error)?
         } else {
-            statement.query_map([], map_row).map_err(storage_error)?
+            statement
+                .query_map([], RefreshStatusRow::read)
+                .map_err(storage_error)?
         };
-        rows.map(|row| {
-            let (watchlist_id, state, last_attempt_at, last_success_at, last_error, next_retry_at) =
-                row.map_err(storage_error)?;
-            Ok(WatchlistRefreshStatus {
-                watchlist_id: Uuid::parse_str(&watchlist_id)
-                    .map_err(|error| RepositoryError::Storage(error.to_string()))?,
-                state: WatchlistRefreshState::from_str(&state)?,
-                last_attempt_at,
-                last_success_at,
-                last_error,
-                next_retry_at,
-            })
-        })
-        .collect()
+        rows.map(|row| row.map_err(storage_error)?.into_status())
+            .collect()
     }
 
     pub fn watchlist_refresh_status(
@@ -251,33 +258,11 @@ impl SqliteStore {
                 "SELECT watchlist_id, state, last_attempt_at, last_success_at, last_error, next_retry_at
                  FROM watchlist_refresh_status WHERE watchlist_id = ?1",
                 params![watchlist_id.to_string()],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, Option<String>>(3)?,
-                        row.get::<_, Option<String>>(4)?,
-                        row.get::<_, Option<String>>(5)?,
-                    ))
-                },
+                RefreshStatusRow::read,
             )
             .optional()
             .map_err(storage_error)?;
-        row.map(
-            |(watchlist_id, state, last_attempt_at, last_success_at, last_error, next_retry_at)| {
-                Ok(WatchlistRefreshStatus {
-                    watchlist_id: Uuid::parse_str(&watchlist_id)
-                        .map_err(|error| RepositoryError::Storage(error.to_string()))?,
-                    state: WatchlistRefreshState::from_str(&state)?,
-                    last_attempt_at,
-                    last_success_at,
-                    last_error,
-                    next_retry_at,
-                })
-            },
-        )
-        .transpose()
+        row.map(RefreshStatusRow::into_status).transpose()
     }
 }
 
