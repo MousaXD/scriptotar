@@ -1,3 +1,4 @@
+# Keep this standalone sidecar contract independently runnable alongside Tauri integration.
 name: Transcription Sidecar
 
 on:
