@@ -553,11 +553,7 @@ mod tests {
             &earlier_root.join("scriptotar/history.sqlite3"),
             "newly-discovered",
         );
-        let selected = choose_candidate_from_roots(
-            &data_dir,
-            &[earlier_root, root],
-            &selected,
-        );
+        let selected = choose_candidate_from_roots(&data_dir, &[earlier_root, root], &selected);
         assert!(matches!(selected, Preparation::Ready));
         let pending = data_dir.join(PENDING_STAGE_NAME);
         assert!(pending.is_file());
