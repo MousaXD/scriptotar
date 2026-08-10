@@ -5,9 +5,11 @@ mod services;
 
 use std::{
     collections::HashMap,
-    env, io,
+    env, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
+    sync::{Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
 use dto::{
@@ -19,6 +21,9 @@ use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use services::AppServices;
 use tauri::Manager;
 use uuid::Uuid;
+
+const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
+static MIGRATION_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Debug, serde::Serialize)]
 struct BackendHealth {
@@ -35,6 +40,12 @@ struct OperationalState {
 enum NativePicker {
     MediaFile,
     OutputDirectory,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MigrationLockError {
+    Busy,
+    Poisoned,
 }
 
 fn command_error(error: impl ToString) -> String {
@@ -88,18 +99,103 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
     }
 }
 
+fn try_migration_operation() -> Result<MutexGuard<'static, ()>, MigrationLockError> {
+    match MIGRATION_OPERATION.get_or_init(|| Mutex::new(())).try_lock() {
+        Ok(guard) => Ok(guard),
+        Err(TryLockError::WouldBlock) => Err(MigrationLockError::Busy),
+        Err(TryLockError::Poisoned(_)) => Err(MigrationLockError::Poisoned),
+    }
+}
+
+fn migration_completed(data_dir: &Path) -> Result<bool, String> {
+    let marker = data_dir.join(MIGRATION_COMPLETED_MARKER);
+    match fs::symlink_metadata(&marker) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            "The legacy migration completion marker is unsafe. Scriptotar refused to follow it."
+                .to_owned(),
+        ),
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err("Scriptotar could not inspect the migration completion marker.".to_owned()),
+    }
+}
+
+fn mark_migration_completed(data_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(data_dir)
+        .map_err(|_| "Scriptotar could not prepare migration state storage.".to_owned())?;
+    let marker = data_dir.join(MIGRATION_COMPLETED_MARKER);
+    let mut file = match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return if migration_completed(data_dir)? {
+                harden_migration_marker_permissions(&marker)
+            } else {
+                Err("Scriptotar could not validate the migration completion marker.".to_owned())
+            };
+        }
+        Err(_) => {
+            return Err("Scriptotar could not create the migration completion marker.".to_owned())
+        }
+    };
+    let result = file
+        .write_all(b"scriptotar-legacy-migration-completed-v1\n")
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "Scriptotar could not persist the migration completion marker.".to_owned())
+        .and_then(|_| harden_migration_marker_permissions(&marker));
+    if result.is_err() {
+        drop(file);
+        let _ = fs::remove_file(&marker);
+    }
+    result
+}
+
+#[cfg(unix)]
+fn harden_migration_marker_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|_| "Scriptotar could not restrict migration marker permissions.".to_owned())
+}
+
+#[cfg(not(unix))]
+fn harden_migration_marker_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn finalize_migration_success(report: LegacyImportReport, data_dir: &Path) -> UiMigrationStatus {
+    if let Err(error) = mark_migration_completed(data_dir) {
+        eprintln!("[scriptotar-migration] could not finalize completion marker: {error}");
+        let status = UiMigrationStatus::failed(
+            "Legacy data was imported, but Scriptotar could not persist the one-time migration completion marker. The source database was not modified. Restart and retry migration finalization.",
+        );
+        migration::set_status(status.clone());
+        return status;
+    }
+
+    let active_stage = data_dir.join("history.sqlite3");
+    if let Err(error) = fs::remove_file(&active_stage) {
+        if error.kind() != io::ErrorKind::NotFound {
+            eprintln!("[scriptotar-migration] could not remove completed staging snapshot");
+        }
+    }
+    let status = UiMigrationStatus::completed(report);
+    migration::set_status(status.clone());
+    status
+}
+
 fn complete_prepared_migration(services: &AppServices, data_dir: &Path) -> UiMigrationStatus {
+    let in_progress = UiMigrationStatus::in_progress();
+    migration::set_status(in_progress);
     if let Err(error) = migration::activate_pending_stage(data_dir) {
         let status = UiMigrationStatus::failed(error);
         migration::set_status(status.clone());
         return status;
     }
     match services.import_legacy_data() {
-        Ok(report) => {
-            let status = UiMigrationStatus::completed(report);
-            migration::set_status(status.clone());
-            status
-        }
+        Ok(report) => finalize_migration_success(report, data_dir),
         Err(error) => {
             eprintln!("[scriptotar-migration] import failed: {error}");
             let status = UiMigrationStatus::failed(
@@ -108,6 +204,31 @@ fn complete_prepared_migration(services: &AppServices, data_dir: &Path) -> UiMig
             migration::set_status(status.clone());
             status
         }
+    }
+}
+
+fn completed_status_if_marked(data_dir: &Path) -> Option<UiMigrationStatus> {
+    match migration_completed(data_dir) {
+        Ok(true) => {
+            let status = UiMigrationStatus::previously_completed();
+            migration::set_status(status.clone());
+            Some(status)
+        }
+        Ok(false) => None,
+        Err(error) => {
+            let status = UiMigrationStatus::failed(error);
+            migration::set_status(status.clone());
+            Some(status)
+        }
+    }
+}
+
+fn migration_lock_status(error: MigrationLockError) -> UiMigrationStatus {
+    match error {
+        MigrationLockError::Busy => UiMigrationStatus::in_progress(),
+        MigrationLockError::Poisoned => UiMigrationStatus::failed(
+            "Migration coordination is unavailable. Restart Scriptotar before retrying migration.",
+        ),
     }
 }
 
@@ -193,6 +314,13 @@ fn retry_legacy_migration(
     services: tauri::State<'_, AppServices>,
     operational: tauri::State<'_, OperationalState>,
 ) -> UiMigrationStatus {
+    let _guard = match try_migration_operation() {
+        Ok(guard) => guard,
+        Err(error) => return migration_lock_status(error),
+    };
+    if let Some(status) = completed_status_if_marked(&operational.data_dir) {
+        return status;
+    }
     match migration::retry_discovery(&operational.data_dir) {
         migration::Preparation::Ready => {
             complete_prepared_migration(&services, &operational.data_dir)
@@ -207,6 +335,13 @@ fn select_legacy_migration_candidate(
     services: tauri::State<'_, AppServices>,
     operational: tauri::State<'_, OperationalState>,
 ) -> UiMigrationStatus {
+    let _guard = match try_migration_operation() {
+        Ok(guard) => guard,
+        Err(error) => return migration_lock_status(error),
+    };
+    if let Some(status) = completed_status_if_marked(&operational.data_dir) {
+        return status;
+    }
     match migration::choose_candidate(&operational.data_dir, &candidate_id) {
         migration::Preparation::Ready => {
             complete_prepared_migration(&services, &operational.data_dir)
@@ -288,11 +423,30 @@ fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> 
 }
 
 #[tauri::command]
-fn import_legacy_data(state: tauri::State<'_, AppServices>) -> Result<LegacyImportReport, String> {
+fn import_legacy_data(
+    state: tauri::State<'_, AppServices>,
+    operational: tauri::State<'_, OperationalState>,
+) -> Result<LegacyImportReport, String> {
+    let _guard = try_migration_operation().map_err(|error| match error {
+        MigrationLockError::Busy => "Legacy migration is already in progress.".to_owned(),
+        MigrationLockError::Poisoned => {
+            "Migration coordination is unavailable. Restart Scriptotar before retrying migration."
+                .to_owned()
+        }
+    })?;
+    if migration_completed(&operational.data_dir)? {
+        migration::set_status(UiMigrationStatus::previously_completed());
+        return Err("Legacy migration is already complete on this installation.".to_owned());
+    }
+    migration::set_status(UiMigrationStatus::in_progress());
     match state.import_legacy_data() {
         Ok(report) => {
-            migration::set_status(UiMigrationStatus::completed(report.clone()));
-            Ok(report)
+            let status = finalize_migration_success(report.clone(), &operational.data_dir);
+            if status.state == "completed" {
+                Ok(report)
+            } else {
+                Err("Legacy data was imported, but migration finalization needs recovery.".to_owned())
+            }
         }
         Err(error) => {
             eprintln!("[scriptotar-migration] manual import failed: {error}");
@@ -451,13 +605,21 @@ pub fn run() {
                 configure_packaged_runtime(&resource_dir, &data_dir);
             }
 
-            let preparation = migration::prepare_startup(&data_dir);
+            let preparation = if let Some(status) = completed_status_if_marked(&data_dir) {
+                if status.state == "completed" {
+                    None
+                } else {
+                    None
+                }
+            } else {
+                Some(migration::prepare_startup(&data_dir))
+            };
             let operational_store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
             operational_store.run_integration_migrations()?;
             operational_store.recover_interrupted_watchlist_refreshes()?;
 
             let services = AppServices::new(&data_dir)?;
-            if matches!(preparation, migration::Preparation::Ready) {
+            if matches!(preparation, Some(migration::Preparation::Ready)) {
                 complete_prepared_migration(&services, &data_dir);
             }
 
@@ -495,4 +657,52 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Scriptotar desktop shell");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn migration_completion_marker_survives_restart_and_is_private() {
+        let temp = TempDir::new().unwrap();
+        assert!(!migration_completed(temp.path()).unwrap());
+        mark_migration_completed(temp.path()).unwrap();
+        assert!(migration_completed(temp.path()).unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(temp.path().join(MIGRATION_COMPLETED_MARKER))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn migration_operation_rejects_a_second_concurrent_request() {
+        let first = try_migration_operation().unwrap();
+        assert!(matches!(
+            try_migration_operation(),
+            Err(MigrationLockError::Busy)
+        ));
+        drop(first);
+        assert!(try_migration_operation().is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_completion_marker_refuses_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let target = temp.path().join("target");
+        fs::write(&target, b"marker").unwrap();
+        symlink(&target, temp.path().join(MIGRATION_COMPLETED_MARKER)).unwrap();
+        assert!(migration_completed(temp.path()).is_err());
+        assert!(mark_migration_completed(temp.path()).is_err());
+    }
 }
