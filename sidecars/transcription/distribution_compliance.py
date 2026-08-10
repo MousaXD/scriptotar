@@ -18,21 +18,33 @@ from typing import Any
 from static_ffmpeg import run as static_ffmpeg_run
 
 SCHEMA_VERSION = 1
+FFMPEG_BINS_GENERATION_COMMIT = "df95abcb0ce6efff710dda5ef28a2f6f1dc21493"
+STATIC_FFMPEG_WORKFLOW_RUN = 21077413996
+STATIC_FFMPEG_WORKFLOW_REVISION = "1d859d5285e966fb01bb95cd980407621afd5b79"
 
 # static-ffmpeg 3.0 maps these platforms to zackees/ffmpeg_bins v8.0. The
 # expected digests are the Git LFS OIDs committed for the provider archives.
+# The same ffmpeg_bins commit records that both archives were rebuilt from the
+# static_ffmpeg workflow run below. That workflow's platform matrix identifies
+# BtbN as the Linux x64 provider and gyan.dev as the Windows x64 provider.
 STATIC_FFMPEG_ARCHIVES = {
     "linux": {
         "url": "https://github.com/zackees/ffmpeg_bins/raw/main/v8.0/linux.zip",
         "sha256": "ca75b05e887c7a97676632f673031875847be83daa9794298fed9cef8cac14ad",
         "size": 142008975,
         "git_lfs_pointer_blob": "f833867af9e7631772f23e1f9b8b4ba9fca05fd0",
+        "upstream_provider": "BtbN/FFmpeg-Builds",
+        "upstream_provider_url": "https://github.com/BtbN/FFmpeg-Builds",
+        "upstream_selection": "static_ffmpeg download-binaries workflow linux/x64 resolver selects the latest versioned GPL BtbN release asset available before the workflow run date",
     },
     "win32": {
         "url": "https://github.com/zackees/ffmpeg_bins/raw/main/v8.0/win32.zip",
         "sha256": "92662c2241e93fe71b3f3a01e94a0b0dc8cfad726019f96b83bc109ce44c5d0b",
         "size": 72065209,
         "git_lfs_pointer_blob": "39673f4510bc9fb54e7d2d3300a462299394c0c7",
+        "upstream_provider": "gyan.dev FFmpeg builds",
+        "upstream_provider_url": "https://www.gyan.dev/ffmpeg/builds/",
+        "upstream_selection": "static_ffmpeg download-binaries workflow windows/x64 resolver downloads https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-{requested_version}-essentials_build.zip",
     },
 }
 
@@ -153,6 +165,12 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
         "archive_size": archive.stat().st_size,
         "git_lfs_oid_sha256": spec["sha256"],
         "git_lfs_pointer_blob": spec["git_lfs_pointer_blob"],
+        "ffmpeg_bins_generation_commit": FFMPEG_BINS_GENERATION_COMMIT,
+        "static_ffmpeg_workflow_run": STATIC_FFMPEG_WORKFLOW_RUN,
+        "static_ffmpeg_workflow_revision": STATIC_FFMPEG_WORKFLOW_REVISION,
+        "upstream_provider": spec["upstream_provider"],
+        "upstream_provider_url": spec["upstream_provider_url"],
+        "upstream_selection": spec["upstream_selection"],
         "checksum_verified": True,
     }
 
@@ -177,6 +195,8 @@ def _download_installed_wheel(project: str) -> dict[str, Any]:
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
         wheels = sorted(destination.glob("*.whl"))
@@ -241,22 +261,34 @@ def _cargo_checksums(repo_root: Path) -> dict[tuple[str, str, str], str]:
 
 
 def _rust_inventory(repo_root: Path, runtime_root: Path) -> dict[str, Any]:
-    rustc_output = subprocess.run(
-        ["rustc", "-vV"], check=True, capture_output=True, text=True, timeout=30
-    ).stdout
+    rustc_completed = subprocess.run(
+        ["rustc", "-vV"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+    )
+    rustc_output = rustc_completed.stdout.decode("utf-8", errors="strict")
     host = next((line.split(":", 1)[1].strip() for line in rustc_output.splitlines() if line.startswith("host:")), None)
     if not host:
         raise RuntimeError("could not determine Rust host target")
-    data = json.loads(
-        subprocess.run(
-            ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        ).stdout
+
+    metadata_completed = subprocess.run(
+        ["cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=600,
     )
+    if metadata_completed.returncode != 0:
+        stderr = metadata_completed.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"cargo metadata --locked failed ({metadata_completed.returncode}): {stderr}")
+    try:
+        data = json.loads(metadata_completed.stdout.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        stderr = metadata_completed.stderr.decode("utf-8", errors="replace")
+        raise RuntimeError(f"cargo metadata produced invalid UTF-8 JSON; stderr={stderr}") from exc
+
     packages = {package["id"]: package for package in data.get("packages", [])}
     nodes = {node["id"]: node for node in (data.get("resolve") or {}).get("nodes", [])}
     desktop_ids = [pid for pid, package in packages.items() if package.get("name") == "scriptotar-desktop"]
@@ -345,7 +377,11 @@ def _npm_name(path_key: str, entry: dict[str, Any]) -> str:
 
 
 def _frontend_inventory(repo_root: Path) -> dict[str, Any]:
+    package_path = repo_root / "apps" / "desktop-ui" / "package.json"
     lock_path = repo_root / "apps" / "desktop-ui" / "package-lock.json"
+    package_json = json.loads(package_path.read_text(encoding="utf-8"))
+    declared_runtime_dependencies = sorted((package_json.get("dependencies") or {}).keys())
+    declared_dev_dependencies = sorted((package_json.get("devDependencies") or {}).keys())
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     if lock.get("lockfileVersion") != 3 or not isinstance(lock.get("packages"), dict):
         raise RuntimeError("frontend inventory requires package-lock.json lockfileVersion 3 packages map")
@@ -378,13 +414,22 @@ def _frontend_inventory(repo_root: Path) -> dict[str, Any]:
                 "optional": bool(entry.get("optional")),
             }
         )
+
+    production_names = {record["name"] for record in records if record["category"] == "production"}
+    missing_direct = sorted(set(declared_runtime_dependencies) - production_names)
+    if missing_direct:
+        raise RuntimeError(f"frontend runtime dependencies are missing from production lock closure: {missing_direct}")
     return {
         "schema": SCHEMA_VERSION,
-        "source_of_truth": "apps/desktop-ui/package-lock.json lockfileVersion 3",
+        "source_of_truth": "apps/desktop-ui/package.json plus package-lock.json lockfileVersion 3",
+        "declared_runtime_dependencies": declared_runtime_dependencies,
+        "declared_dev_dependencies": declared_dev_dependencies,
+        "production_package_count": len(production_names),
         "policy": {
             "unknown_license_metadata": "fail",
             "production_prohibited_markers": list(PROHIBITED_LICENSE_MARKERS),
             "dev_true": "build-only",
+            "empty_production_closure": "valid only when package.json declares no dependencies",
         },
         "packages": records,
     }
@@ -414,9 +459,9 @@ def _generated_notice(
             "## Bundled in the installer",
             "",
             f"- Rust/Tauri shipped closure: {len(rust_runtime)} Cargo packages. See `RUST-LICENSES.json` and `legal/rust/`.",
-            f"- Production frontend closure: {len(frontend_prod)} npm packages. See `FRONTEND-LICENSES.json`.",
+            f"- Production frontend npm dependency closure: {len(frontend_prod)} packages. This project currently builds the UI entirely from dev/build dependencies, so zero is valid when `package.json` has no `dependencies`. See `FRONTEND-LICENSES.json`.",
             f"- Packaged Python closure: {len(python_components)} distributions. See `RUNTIME-LICENSES.json` and `legal/python/`.",
-            f"- Standalone FFmpeg/ffprobe archive SHA-256: `{standalone['archive']['archive_sha256']}` from `{standalone['archive']['download_url']}`; effective FFmpeg license `{standalone['runtime']['license']}`.",
+            f"- Standalone FFmpeg/ffprobe archive SHA-256: `{standalone['archive']['archive_sha256']}` from `{standalone['archive']['download_url']}`; upstream provider `{standalone['archive']['upstream_provider']}`; effective FFmpeg license `{standalone['runtime']['license']}`.",
             f"- PyAV {pyav['wheel']['version']} wheel `{pyav['wheel']['filename']}` SHA-256 `{pyav['wheel']['sha256']}`. Its native payload is component-inventoried in `NATIVE-COMPONENTS.json`.",
             f"- curl-cffi {curl['wheel']['version']} wheel `{curl['wheel']['filename']}` SHA-256 `{curl['wheel']['sha256']}`. Its native payload and curl-impersonate lineage are in `NATIVE-COMPONENTS.json`.",
             "- CPython/PyInstaller notices are under `legal/python-runtime/` and `legal/build-tools/`.",
@@ -439,7 +484,7 @@ def _generated_notice(
             "",
             "## Evidence and remaining legal interpretation",
             "",
-            "- The standalone FFmpeg archive is byte-pinned and its binaries/configuration are hashed. zackees/ffmpeg_bins does not publish a complete build-to-Corresponding-Source mapping for every statically linked GPL component, so the provenance manifest marks this unresolved instead of presenting a homepage link as proof.",
+            "- The standalone FFmpeg archive is byte-pinned and its binaries/configuration are hashed. Its ffmpeg_bins generation commit and static_ffmpeg workflow run identify BtbN as the Linux x64 upstream provider and gyan.dev as the Windows x64 upstream provider. The current provider chain still does not publish a complete build-to-Corresponding-Source mapping for every statically linked GPL component, so the provenance manifest marks that source-delivery status unresolved instead of presenting a homepage link as proof.",
             "- PyAV source/build coordinates are pinned to PyAV 18.0.0 and pyav-ffmpeg's FFmpeg 8.1.2 recipe. The wheel's FFmpeg core reports LGPLv3, while separately bundled x264/x265 libraries are GPL components; LGPL replacement/relinking and GPL source-delivery treatment require distribution-policy review.",
             "- curl-cffi native files are hash-pinned and the exact curl 8.15.0 / curl-impersonate 1.5.2 build lineage is recorded. curl-cffi's top-level MIT metadata is not used as a blanket license for linked native dependencies.",
             "",
@@ -473,7 +518,7 @@ def write_distribution_compliance_bundle(
             ),
             "corresponding_source": {
                 "status": "provider-lineage-incomplete",
-                "reason": "The archive is byte-pinned, but zackees/ffmpeg_bins does not map this build to complete source/build inputs for every statically linked dependency.",
+                "reason": "The archive is byte-pinned and the immediate upstream provider is identified, but the current provider chain does not map the build to complete source/build inputs for every statically linked dependency.",
             },
         },
     }
