@@ -54,7 +54,6 @@ describe('Tauri client command contract', () => {
       watchInterval: '60 min',
       appearance: 'dark'
     });
-    await api.importLegacyData();
     await api.listJobs();
 
     expect(invokeMock).toHaveBeenCalledWith('bootstrap_app');
@@ -91,7 +90,7 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('save_settings', {
       settings: expect.objectContaining({ whisperModel: 'medium', outputDirectory: null })
     });
-    expect(invokeMock).toHaveBeenCalledWith('import_legacy_data');
     expect(invokeMock).toHaveBeenCalledWith('list_jobs');
+    expect(invokeMock).not.toHaveBeenCalledWith('import_legacy_data');
   });
 });
