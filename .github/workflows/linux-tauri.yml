@@ -132,6 +132,13 @@ jobs:
           grep -q 'scriptotar-engine' dist/DEB-CONTENTS.txt
           grep -q 'ffmpeg' dist/DEB-CONTENTS.txt
           grep -q 'ffprobe' dist/DEB-CONTENTS.txt
+          grep -q 'RUNTIME-PROVENANCE.json' dist/DEB-CONTENTS.txt
+          grep -q 'NATIVE-COMPONENTS.json' dist/DEB-CONTENTS.txt
+          grep -q 'RUST-LICENSES.json' dist/DEB-CONTENTS.txt
+          grep -q 'FRONTEND-LICENSES.json' dist/DEB-CONTENTS.txt
+          grep -q 'FRONTEND-BUNDLE-LICENSES.json' dist/DEB-CONTENTS.txt
+          grep -q 'legal/curl-native' dist/DEB-CONTENTS.txt
+          grep -q 'legal/frontend' dist/DEB-CONTENTS.txt
           (cd dist && sha256sum "Scriptotar-Next-${VERSION}-amd64.deb" RUNTIME-VERSIONS.txt > SHA256SUMS.txt)
           printf '%s\n' "$VERSION" > dist/TAURI_VERSION
           printf '%s\n' "$PACKAGE_NAME" > dist/DEB_PACKAGE
@@ -144,7 +151,9 @@ jobs:
           command -v zenity >/dev/null
           RUNTIME_MARKER="$(dpkg -L "$PACKAGE_NAME" | grep '/transcription-runtime/RUNTIME-VERSIONS.txt$' | head -n 1 || true)"
           test -n "$RUNTIME_MARKER"
-          python sidecars/transcription/validate_runtime.py "$(dirname "$RUNTIME_MARKER")"
+          RUNTIME_DIR="$(dirname "$RUNTIME_MARKER")"
+          python sidecars/transcription/validate_runtime.py "$RUNTIME_DIR"
+          python sidecars/transcription/compliance_finalize.py --validate "$RUNTIME_DIR"
       - name: Remove installed preview package
         if: always()
         run: |
