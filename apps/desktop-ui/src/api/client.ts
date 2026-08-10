@@ -5,7 +5,9 @@ import type {
   BackendJob,
   BootstrapData,
   Job,
-  LegacyImportReport
+  LegacyImportReport,
+  MigrationStatus,
+  WatchlistStatus
 } from '../types';
 
 export interface ResearchQuery {
@@ -31,6 +33,10 @@ export interface AiPromptInput {
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
   listJobs(): Promise<Job[]>;
+  getWatchlistStatuses(): Promise<WatchlistStatus[]>;
+  getMigrationStatus(): Promise<MigrationStatus>;
+  retryLegacyMigration(): Promise<MigrationStatus>;
+  selectLegacyMigrationCandidate(candidateId: string): Promise<MigrationStatus>;
   selectProject(projectId: string): Promise<BootstrapData>;
   createProject(name: string): Promise<BootstrapData>;
   chooseLocalMedia(): Promise<string | null>;
