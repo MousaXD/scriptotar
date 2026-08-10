@@ -1,3 +1,4 @@
+use scriptotar_core::LegacyImportReport;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,6 +21,107 @@ pub struct UiCreator {
     pub avatar: Option<String>,
     pub watchlisted: bool,
     pub last_scanned_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiWatchlistStatus {
+    pub watchlist_id: String,
+    pub project_id: String,
+    pub label: String,
+    pub state: String,
+    pub last_attempt_at: Option<String>,
+    pub last_successful_scan_at: Option<String>,
+    pub last_error: Option<String>,
+    pub next_retry_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiMigrationCandidate {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiMigrationStatus {
+    pub state: String,
+    pub message: String,
+    pub candidates: Vec<UiMigrationCandidate>,
+    pub report: Option<LegacyImportReport>,
+}
+
+impl UiMigrationStatus {
+    pub fn no_legacy_database() -> Self {
+        Self {
+            state: "no_legacy_db".to_owned(),
+            message: "No Scriptotar Classic database was found in the standard legacy locations."
+                .to_owned(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
+    pub fn ready() -> Self {
+        Self {
+            state: "ready".to_owned(),
+            message: "A safe legacy database snapshot is prepared for import.".to_owned(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
+    pub fn requires_choice(candidates: Vec<UiMigrationCandidate>) -> Self {
+        Self {
+            state: "requires_choice".to_owned(),
+            message: "Multiple legacy databases were found. Choose which snapshot Scriptotar should import; no source database will be overwritten."
+                .to_owned(),
+            candidates,
+            report: None,
+        }
+    }
+
+    pub fn invalid_database(message: impl Into<String>) -> Self {
+        Self {
+            state: "invalid_db".to_owned(),
+            message: message.into(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
+    pub fn failed(message: impl Into<String>) -> Self {
+        Self {
+            state: "failed".to_owned(),
+            message: message.into(),
+            candidates: Vec::new(),
+            report: None,
+        }
+    }
+
+    pub fn completed(report: LegacyImportReport) -> Self {
+        let message = if report.skipped {
+            "Legacy migration was already completed for this snapshot; no duplicate rows were created."
+                .to_owned()
+        } else {
+            format!(
+                "Legacy migration completed: {} projects, {} jobs, {} transcripts, {} research items, {} watchlists, {} AI runs.",
+                report.projects,
+                report.jobs,
+                report.transcripts,
+                report.research_items,
+                report.watchlists,
+                report.ai_runs,
+            )
+        };
+        Self {
+            state: "completed".to_owned(),
+            message,
+            candidates: Vec::new(),
+            report: Some(report),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
