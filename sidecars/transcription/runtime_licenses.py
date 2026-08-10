@@ -20,9 +20,30 @@ SUPPORTED_FFMPEG_LICENSE = "GPL-3.0-or-later"
 FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.GPLv3"
 FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
 
+# Some binary wheels omit usable License-Expression/License-File metadata even
+# though the upstream project has an explicit license. Keep fallbacks narrow,
+# version-specific and hash-pinned so an upstream/version change cannot silently
+# inherit an old legal assumption.
+LICENSE_METADATA_FALLBACKS: dict[str, dict[str, str]] = {
+    "tokenizers": {
+        "version": "0.23.1",
+        "license": "Apache-2.0",
+        "url": "https://raw.githubusercontent.com/huggingface/tokenizers/v0.23.1/LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    },
+}
+
 
 def _canonical_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def classify_ffmpeg_license(version_output: str) -> str:
@@ -62,7 +83,9 @@ def _requirement_is_active(requirement: object, selected_extras: set[str]) -> bo
     return any(marker.evaluate({**environment, "extra": extra}) for extra in selected_extras)
 
 
-def collect_runtime_distributions(root_requirements: Iterable[str] = ENGINE_REQUIREMENTS) -> list[tuple[metadata.Distribution, set[str]]]:
+def collect_runtime_distributions(
+    root_requirements: Iterable[str] = ENGINE_REQUIREMENTS,
+) -> list[tuple[metadata.Distribution, set[str]]]:
     """Resolve the installed distribution closure actually needed by the engine.
 
     This works from installed wheel metadata rather than a hand-maintained list,
@@ -183,19 +206,60 @@ def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
     )
 
 
-def _write_verified_ffmpeg_license(legal_root: Path, output_root: Path) -> str:
-    request = urllib.request.Request(FFMPEG_GPL3_URL, headers={"User-Agent": "Scriptotar-runtime-builder"})
+def _write_verified_remote_file(
+    url: str,
+    expected_sha256: str,
+    destination: Path,
+    output_root: Path,
+    label: str,
+) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "Scriptotar-runtime-builder"})
     with urllib.request.urlopen(request, timeout=30) as response:
         data = response.read()
     actual = hashlib.sha256(data).hexdigest()
-    if actual != FFMPEG_GPL3_SHA256:
+    if actual != expected_sha256:
         raise RuntimeError(
-            "FFmpeg GPLv3 license text hash changed; refusing to package an unreviewed legal artifact "
-            f"(expected {FFMPEG_GPL3_SHA256}, got {actual})"
+            f"{label} hash changed; refusing to package an unreviewed legal artifact "
+            f"(expected {expected_sha256}, got {actual})"
         )
-    destination = legal_root / "FFMPEG-GPL-3.0.txt"
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(data)
     return destination.relative_to(output_root).as_posix()
+
+
+def _write_verified_ffmpeg_license(legal_root: Path, output_root: Path) -> str:
+    return _write_verified_remote_file(
+        FFMPEG_GPL3_URL,
+        FFMPEG_GPL3_SHA256,
+        legal_root / "FFMPEG-GPL-3.0.txt",
+        output_root,
+        "FFmpeg GPLv3 license text",
+    )
+
+
+def _apply_license_metadata_fallback(
+    dist: metadata.Distribution,
+    canonical: str,
+    legal_root: Path,
+    output_root: Path,
+) -> tuple[str | None, list[str], str | None]:
+    fallback = LICENSE_METADATA_FALLBACKS.get(canonical)
+    if fallback is None:
+        return None, [], None
+    expected_version = fallback["version"]
+    if dist.version != expected_version:
+        raise RuntimeError(
+            f"license metadata fallback for {canonical} is reviewed only for {expected_version}, "
+            f"but packaging resolved {dist.version}"
+        )
+    license_file = _write_verified_remote_file(
+        fallback["url"],
+        fallback["sha256"],
+        legal_root / "python" / canonical / "UPSTREAM-LICENSE.txt",
+        output_root,
+        f"{canonical} {dist.version} upstream license text",
+    )
+    return fallback["license"], [license_file], fallback["url"]
 
 
 def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
@@ -219,18 +283,29 @@ def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
         )
 
     configuration = next(
-        (line.partition(":")[2].strip() for line in output.splitlines() if line.lower().startswith("configuration:")),
+        (
+            line.partition(":")[2].strip()
+            for line in output.splitlines()
+            if line.lower().startswith("configuration:")
+        ),
         "",
     )
     version_line = next((line.strip() for line in output.splitlines() if line.strip()), "")
     crumb = ffmpeg_executable.parent / "installed.crumb"
     source_record = crumb.read_text(encoding="utf-8", errors="replace").strip() if crumb.is_file() else None
+    ffprobe_name = "ffprobe.exe" if ffmpeg_executable.suffix.lower() == ".exe" else "ffprobe"
+    ffprobe_executable = ffmpeg_executable.with_name(ffprobe_name)
+    binary_sha256 = {"ffmpeg": _sha256_file(ffmpeg_executable)}
+    if ffprobe_executable.is_file():
+        binary_sha256["ffprobe"] = _sha256_file(ffprobe_executable)
+
     return {
         "component": "FFmpeg and ffprobe",
         "license": inferred_license,
         "version_line": version_line,
         "configuration": configuration,
         "source_record": source_record,
+        "binary_sha256": binary_sha256,
         "redistribution_guard": "--enable-nonfree is rejected at package build time",
     }
 
@@ -262,18 +337,31 @@ def write_runtime_legal_bundle(
     python_components: list[dict[str, object]] = []
     for dist, extras in collect_runtime_distributions():
         canonical = _canonical_name(dist.metadata.get("Name") or "unknown")
-        license_files = _copy_distribution_licenses(
-            dist,
-            legal_root / "python" / canonical,
-            output_root,
-        )
+        component_dir = legal_root / "python" / canonical
+        license_files = _copy_distribution_licenses(dist, component_dir, output_root)
+        license_declared = _license_declaration(dist)
+        license_reference: str | None = None
+        license_source = "installed-wheel-metadata"
+
+        if not license_declared and not license_files:
+            license_declared, license_files, license_reference = _apply_license_metadata_fallback(
+                dist,
+                canonical,
+                legal_root,
+                output_root,
+            )
+            if license_declared or license_files:
+                license_source = "version-pinned-upstream-fallback"
+
         python_components.append(
             {
                 "name": dist.metadata.get("Name") or canonical,
                 "version": dist.version,
                 "selected_extras": sorted(extras),
-                "license_declared": _license_declaration(dist),
+                "license_declared": license_declared,
                 "license_files": license_files,
+                "license_source": license_source,
+                "license_reference": license_reference,
                 "project_url": _project_url(dist),
                 "distribution": "bundled into the PyInstaller transcription engine/runtime",
             }
