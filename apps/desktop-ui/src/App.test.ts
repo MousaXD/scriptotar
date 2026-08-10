@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { APPEARANCE_STORAGE_KEY } from './appearance';
-import { createMockClient } from './api/mockClient';
+import { createMockClient, mockBootstrap } from './api/mockClient';
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -176,6 +176,29 @@ describe('desktop workstation', () => {
     expect(migration).toHaveTextContent('No Scriptotar Classic database was found');
     await fireEvent.click(screen.getByRole('button', { name: 'Retry migration discovery' }));
     await waitFor(() => expect(retryLegacyMigration).toHaveBeenCalledTimes(1));
+  });
+
+  it('requires an explicit opaque choice when multiple legacy databases are found', async () => {
+    const api = createMockClient();
+    vi.spyOn(api, 'bootstrap').mockResolvedValue({
+      ...structuredClone(mockBootstrap),
+      migrationStatus: {
+        state: 'requires_choice',
+        message: 'Multiple legacy databases were found. Choose one safely.',
+        candidates: [
+          { id: 'candidate-11111111-1111-5111-8111-111111111111', label: 'Scriptotar Classic database (data, option 1)' },
+          { id: 'candidate-22222222-2222-5222-8222-222222222222', label: 'WeSamBoss database (data, option 2)' }
+        ]
+      }
+    });
+    const selectCandidate = vi.spyOn(api, 'selectLegacyMigrationCandidate');
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+    const migration = screen.getByTestId('migration-status');
+    expect(migration).toHaveTextContent('Choice required');
+    expect(migration).toHaveTextContent('Multiple legacy databases were found');
+    await fireEvent.click(screen.getByRole('button', { name: 'WeSamBoss database (data, option 2)' }));
+    await waitFor(() => expect(selectCandidate).toHaveBeenCalledWith('candidate-22222222-2222-5222-8222-222222222222'));
   });
 
   it('shows a recoverable error state when bootstrap fails', async () => {
