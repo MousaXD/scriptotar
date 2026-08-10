@@ -1,0 +1,282 @@
+name: Scriptotar Next Preview Release
+
+on:
+  workflow_run:
+    workflows:
+      - Windows Tauri Installer
+    types: [completed]
+    branches: [main]
+  pull_request:
+    paths:
+      - '.github/workflows/tauri-next-release.yml'
+      - '.github/workflows/windows-tauri.yml'
+      - '.github/workflows/linux-tauri.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tauri-next-release-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  validate-contract:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify package workflow contracts
+        run: |
+          set -euo pipefail
+          grep -F 'name: Build and smoke-test NSIS setup.exe' .github/workflows/windows-tauri.yml
+          grep -F 'name: scriptotar-windows-tauri' .github/workflows/windows-tauri.yml
+          grep -F 'name: Build and validate Tauri deb' .github/workflows/linux-tauri.yml
+          grep -F 'name: scriptotar-linux-tauri' .github/workflows/linux-tauri.yml
+
+  publish-preview:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      RELEASE_TAG: tauri-next-latest
+    steps:
+      - name: Check out the packaged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve matching Windows and Linux package runs
+        id: runs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          find_run() {
+            local workflow="$1"
+            local runs
+            runs="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --branch main \
+              --event push \
+              --commit "$SOURCE_SHA" \
+              --limit 20 \
+              --json databaseId,headSha,createdAt)"
+            printf '%s' "$runs" | jq -r --arg sha "$SOURCE_SHA" \
+              '[.[] | select(.headSha == $sha)] | sort_by(.createdAt) | last | .databaseId // empty'
+          }
+
+          WINDOWS_RUN_ID=""
+          LINUX_RUN_ID=""
+          for attempt in $(seq 1 20); do
+            WINDOWS_RUN_ID="$(find_run windows-tauri.yml)"
+            LINUX_RUN_ID="$(find_run linux-tauri.yml)"
+            if [ -n "$WINDOWS_RUN_ID" ] && [ -n "$LINUX_RUN_ID" ]; then
+              break
+            fi
+            echo "Waiting for matching package workflow runs for $SOURCE_SHA ($attempt/20)..."
+            sleep 15
+          done
+
+          test -n "$WINDOWS_RUN_ID" || { echo 'No Windows package run found for this main commit.' >&2; exit 1; }
+          test -n "$LINUX_RUN_ID" || { echo 'No Linux package run found for this main commit.' >&2; exit 1; }
+
+          echo "windows_run_id=$WINDOWS_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "linux_run_id=$LINUX_RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for both package workflows to finish
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_status() {
+            gh run view "$1" --repo "$GITHUB_REPOSITORY" --json status --jq '.status'
+          }
+
+          WINDOWS_RUN_ID='${{ steps.runs.outputs.windows_run_id }}'
+          LINUX_RUN_ID='${{ steps.runs.outputs.linux_run_id }}'
+
+          for attempt in $(seq 1 160); do
+            WINDOWS_STATUS="$(run_status "$WINDOWS_RUN_ID")"
+            LINUX_STATUS="$(run_status "$LINUX_RUN_ID")"
+            if [ "$WINDOWS_STATUS" = completed ] && [ "$LINUX_STATUS" = completed ]; then
+              exit 0
+            fi
+            echo "Waiting for package workflows: windows=$WINDOWS_STATUS linux=$LINUX_STATUS ($attempt/160)"
+            sleep 30
+          done
+
+          echo 'Timed out waiting for both package workflows to complete.' >&2
+          exit 1
+
+      - name: Verify package build jobs succeeded
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WINDOWS_RESULT="$(gh run view '${{ steps.runs.outputs.windows_run_id }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --json jobs | jq -r '.jobs[] | select(.name == "Build and smoke-test NSIS setup.exe") | .conclusion' | tail -n 1)"
+          LINUX_RESULT="$(gh run view '${{ steps.runs.outputs.linux_run_id }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --json jobs | jq -r '.jobs[] | select(.name == "Build and validate Tauri deb") | .conclusion' | tail -n 1)"
+
+          test "$WINDOWS_RESULT" = success || { echo "Windows package build job is $WINDOWS_RESULT, refusing to publish." >&2; exit 1; }
+          test "$LINUX_RESULT" = success || { echo "Linux package build job is $LINUX_RESULT, refusing to publish." >&2; exit 1; }
+
+      - name: Download validated package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/windows dist/linux
+          gh run download '${{ steps.runs.outputs.windows_run_id }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --name scriptotar-windows-tauri \
+            --dir dist/windows
+          gh run download '${{ steps.runs.outputs.linux_run_id }}' \
+            --repo "$GITHUB_REPOSITORY" \
+            --name scriptotar-linux-tauri \
+            --dir dist/linux
+
+      - name: Stage one cross-platform preview release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          WINDOWS_VERSION_FILE="$(find dist/windows -type f -name TAURI_VERSION -print -quit)"
+          LINUX_VERSION_FILE="$(find dist/linux -type f -name TAURI_VERSION -print -quit)"
+          test -n "$WINDOWS_VERSION_FILE"
+          test -n "$LINUX_VERSION_FILE"
+
+          WINDOWS_VERSION="$(tr -d '\r\n' < "$WINDOWS_VERSION_FILE")"
+          LINUX_VERSION="$(tr -d '\r\n' < "$LINUX_VERSION_FILE")"
+          test -n "$WINDOWS_VERSION"
+          test "$WINDOWS_VERSION" = "$LINUX_VERSION" || {
+            echo "Package version mismatch: Windows=$WINDOWS_VERSION Linux=$LINUX_VERSION" >&2
+            exit 1
+          }
+
+          WINDOWS_INSTALLER="$(find dist/windows -type f -name 'Scriptotar-Next-*-x64-setup.exe' -print -quit)"
+          LINUX_DEB="$(find dist/linux -type f -name 'Scriptotar-Next-*-amd64.deb' -print -quit)"
+          WINDOWS_RUNTIME="$(find dist/windows -type f -name RUNTIME-VERSIONS.txt -print -quit)"
+          LINUX_RUNTIME="$(find dist/linux -type f -name RUNTIME-VERSIONS.txt -print -quit)"
+          LINUX_CONTENTS="$(find dist/linux -type f -name DEB-CONTENTS.txt -print -quit)"
+
+          for file in "$WINDOWS_INSTALLER" "$LINUX_DEB" "$WINDOWS_RUNTIME" "$LINUX_RUNTIME" "$LINUX_CONTENTS"; do
+            test -n "$file" && test -s "$file" || { echo 'Required release asset is missing.' >&2; exit 1; }
+          done
+
+          mkdir -p latest
+          cp "$WINDOWS_INSTALLER" latest/Scriptotar-Next-latest-x64-setup.exe
+          cp "$LINUX_DEB" latest/Scriptotar-Next-latest-amd64.deb
+          cp "$WINDOWS_RUNTIME" latest/RUNTIME-VERSIONS-windows.txt
+          cp "$LINUX_RUNTIME" latest/RUNTIME-VERSIONS-linux.txt
+          cp "$LINUX_CONTENTS" latest/DEB-CONTENTS-linux.txt
+
+          (
+            cd latest
+            sha256sum \
+              Scriptotar-Next-latest-x64-setup.exe \
+              Scriptotar-Next-latest-amd64.deb \
+              RUNTIME-VERSIONS-windows.txt \
+              RUNTIME-VERSIONS-linux.txt \
+              DEB-CONTENTS-linux.txt \
+              > SHA256SUMS.txt
+          )
+
+          cat > RELEASE-NOTES.md <<NOTES
+          # Scriptotar Next Preview
+
+          Built automatically from validated Windows and Linux package jobs on main.
+
+          - Tauri app version: ${WINDOWS_VERSION}
+          - Commit: ${SOURCE_SHA}
+          - Windows asset: Scriptotar-Next-latest-x64-setup.exe
+          - Linux asset: Scriptotar-Next-latest-amd64.deb
+
+          Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
+
+          Whisper model weights are downloaded on first uncached use. Windows preview builds remain unsigned unless release signing credentials are configured.
+          NOTES
+
+      - name: Create or update unified Scriptotar Next preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          ASSETS=(
+            latest/Scriptotar-Next-latest-x64-setup.exe
+            latest/Scriptotar-Next-latest-amd64.deb
+            latest/RUNTIME-VERSIONS-windows.txt
+            latest/RUNTIME-VERSIONS-linux.txt
+            latest/DEB-CONTENTS-linux.txt
+            latest/SHA256SUMS.txt
+          )
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title 'Scriptotar Next Preview' \
+              --notes-file RELEASE-NOTES.md \
+              --prerelease \
+              --latest=false
+          else
+            gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title 'Scriptotar Next Preview' \
+              --notes-file RELEASE-NOTES.md \
+              --prerelease
+          fi
+
+          git tag -f "$RELEASE_TAG" "$SOURCE_SHA"
+          git push origin "refs/tags/$RELEASE_TAG" --force
+
+      - name: Verify published release and rolling tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json name,tagName,isPrerelease,assets,url \
+            > release.json
+
+          test "$(jq -r '.tagName' release.json)" = "$RELEASE_TAG"
+          test "$(jq -r '.isPrerelease' release.json)" = true
+          ASSET_NAMES="$(jq -r '.assets[].name' release.json)"
+          for expected in \
+            Scriptotar-Next-latest-x64-setup.exe \
+            Scriptotar-Next-latest-amd64.deb \
+            RUNTIME-VERSIONS-windows.txt \
+            RUNTIME-VERSIONS-linux.txt \
+            DEB-CONTENTS-linux.txt \
+            SHA256SUMS.txt; do
+            grep -Fxq "$expected" <<< "$ASSET_NAMES" || {
+              echo "Published release is missing $expected" >&2
+              exit 1
+            }
+          done
+
+          REMOTE_TAG="$(git ls-remote origin "refs/tags/$RELEASE_TAG" | cut -f1)"
+          test "$REMOTE_TAG" = "$SOURCE_SHA" || {
+            echo "Release tag points to $REMOTE_TAG instead of $SOURCE_SHA" >&2
+            exit 1
+          }
+
+          RELEASE_URL="$(jq -r '.url' release.json)"
+          {
+            echo '## Scriptotar Next preview published'
+            echo
+            echo "- Commit: $SOURCE_SHA"
+            echo "- Release: $RELEASE_URL"
+            echo '- Windows NSIS and Linux Debian assets verified.'
+          } >> "$GITHUB_STEP_SUMMARY"
