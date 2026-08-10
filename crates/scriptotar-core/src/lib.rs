@@ -474,8 +474,10 @@ mod tests {
     #[test]
     fn active_project_id_round_trips_when_valid() {
         let project_id = Uuid::new_v4();
-        let mut settings = ApplicationSettings::default();
-        settings.active_project_id = Some(project_id);
+        let settings = ApplicationSettings {
+            active_project_id: Some(project_id),
+            ..ApplicationSettings::default()
+        };
         let json = serde_json::to_string(&settings).unwrap();
         let restored: ApplicationSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.active_project_id, Some(project_id));
