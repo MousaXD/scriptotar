@@ -547,39 +547,35 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| {
-            UiLibraryItem {
-                id: format!("research:{}", item.id),
-                kind: "Research".to_owned(),
-                title: item.title.clone(),
-                subtitle: item.creator.clone(),
-                project_id: active_project.to_string(),
-                platform: Some(item.platform.clone()),
-                metric: item.views.map(|views| format!("{views} views")),
-                date: item
-                    .published_at
-                    .clone()
-                    .unwrap_or_else(|| "Unknown date".to_owned()),
-            }
+        library.extend(ui_research.iter().map(|item| UiLibraryItem {
+            id: format!("research:{}", item.id),
+            kind: "Research".to_owned(),
+            title: item.title.clone(),
+            subtitle: item.creator.clone(),
+            project_id: active_project.to_string(),
+            platform: Some(item.platform.clone()),
+            metric: item.views.map(|views| format!("{views} views")),
+            date: item
+                .published_at
+                .clone()
+                .unwrap_or_else(|| "Unknown date".to_owned()),
         }));
-        library.extend(ai_runs.iter().map(|run| {
-            UiLibraryItem {
-                id: format!("ai:{}", run.id),
-                kind: "AI run".to_owned(),
-                title: run.task.clone(),
-                subtitle: run
-                    .provider
-                    .clone()
-                    .map(|provider| match &run.model {
-                        Some(model) => format!("{provider} · {model}"),
-                        None => provider,
-                    })
-                    .unwrap_or_else(|| "Copy Prompt".to_owned()),
-                project_id: run.project_id.to_string(),
-                platform: None,
-                metric: None,
-                date: run.created_at.clone(),
-            }
+        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
+            id: format!("ai:{}", run.id),
+            kind: "AI run".to_owned(),
+            title: run.task.clone(),
+            subtitle: run
+                .provider
+                .clone()
+                .map(|provider| match &run.model {
+                    Some(model) => format!("{provider} · {model}"),
+                    None => provider,
+                })
+                .unwrap_or_else(|| "Copy Prompt".to_owned()),
+            project_id: run.project_id.to_string(),
+            platform: None,
+            metric: None,
+            date: run.created_at.clone(),
         }));
 
         Ok(BootstrapData {
@@ -651,7 +647,9 @@ fn persisted_watchlist_retry_deadlines(store: &SqliteStore) -> HashMap<Uuid, Ins
         .filter(|status| status.state == WatchlistRefreshState::RetryScheduled)
         .filter_map(|status| {
             let retry_at = status.next_retry_at.as_deref()?;
-            let retry_at = DateTime::parse_from_rfc3339(retry_at).ok()?.with_timezone(&Utc);
+            let retry_at = DateTime::parse_from_rfc3339(retry_at)
+                .ok()?
+                .with_timezone(&Utc);
             let remaining = retry_at.signed_duration_since(now).to_std().ok()?;
             if remaining.is_zero() {
                 return None;
@@ -728,7 +726,8 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
                 }
 
                 let attempted_at = now_rfc3339();
-                if let Err(error) = store.record_watchlist_refresh_attempt(watchlist.id, &attempted_at)
+                if let Err(error) =
+                    store.record_watchlist_refresh_attempt(watchlist.id, &attempted_at)
                 {
                     eprintln!(
                         "[scriptotar-watchlist] could not persist refresh attempt for {}: {error}",
@@ -746,10 +745,9 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
                 ) {
                     Ok(_) => {
                         failed_until.remove(&watchlist.id);
-                        if let Err(error) = store.record_watchlist_refresh_success(
-                            watchlist.id,
-                            &now_rfc3339(),
-                        ) {
+                        if let Err(error) =
+                            store.record_watchlist_refresh_success(watchlist.id, &now_rfc3339())
+                        {
                             eprintln!(
                                 "[scriptotar-watchlist] could not persist refresh success for {}: {error}",
                                 watchlist.id
