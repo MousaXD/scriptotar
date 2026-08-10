@@ -1,7 +1,7 @@
 use std::{
-    collections::HashSet,
+    collections::{hash_map::DefaultHasher, HashSet},
     env, fs,
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process,
@@ -386,14 +386,7 @@ fn candidate_label(path: &Path, index: usize) -> String {
     } else {
         "Legacy Scriptotar"
     };
-    let root_hint = path
-        .parent()
-        .and_then(Path::parent)
-        .and_then(Path::file_name)
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("data");
-    format!("{app} database ({root_hint}, option {})", index + 1)
+    format!("{app} database (option {})", index + 1)
 }
 
 fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> {
