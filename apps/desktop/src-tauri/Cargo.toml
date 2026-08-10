@@ -30,4 +30,5 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+tauri = { workspace = true, features = ["test"] }
 tempfile.workspace = true
