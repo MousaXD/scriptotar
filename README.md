@@ -89,13 +89,18 @@ AI Studio estimates spoken duration from the source text so a creator can target
 
 ### Latest automatic builds
 
-Every successful push or merge to `main` refreshes the rolling **Scriptotar Latest** GitHub release with three Linux packages:
+Every successful push or merge to `main` refreshes the rolling **Scriptotar Latest** GitHub release once the Debian package lane succeeds.
 
-- `scriptotar-latest_all.deb` for Debian, Ubuntu, Pop!_OS, and derivatives;
+The Debian artifact is the required rolling-release package:
+
+- `scriptotar-latest_all.deb` for Debian, Ubuntu, Pop!_OS, and derivatives.
+
+The portable packaging lane is independent. When it succeeds, the same rolling release also includes:
+
 - `Scriptotar-latest-x86_64.AppImage` as the portable x86_64 build;
 - `Scriptotar-latest-x86_64.flatpak` as a single-file Flatpak bundle.
 
-The rolling release always points at the newest successfully packaged `main` commit. Permanent releases are created from version tags such as `v1.2.0`.
+A temporary AppImage or Flatpak packaging failure therefore does not block publication of a valid Debian rolling build. Permanent version-tag releases such as `v1.2.0` require the Debian and portable packaging jobs to succeed and publish all three formats.
 
 ### Debian / Ubuntu / Pop!_OS
 
