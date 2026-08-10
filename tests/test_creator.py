@@ -1,5 +1,6 @@
 import json
 import unittest
+from unittest.mock import patch
 
 from creator import (
     build_prompt,
@@ -61,13 +62,10 @@ class CreatorTests(unittest.TestCase):
         self.assertEqual(json.loads(item["raw_json"])["id"], "abc")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class ProviderAdapterTests(unittest.TestCase):
     def test_openai_response_parser(self):
         import creator
-        from unittest.mock import patch
+
         payload = {"output": [{"content": [{"type": "output_text", "text": "hello"}]}]}
         with patch.object(creator, "_post_json", return_value=payload) as post:
             result = creator.request_ai("OpenAI", "gpt-test", "secret", "prompt")
@@ -79,7 +77,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
     def test_anthropic_response_parser(self):
         import creator
-        from unittest.mock import patch
+
         payload = {"content": [{"type": "text", "text": "claude result"}]}
         with patch.object(creator, "_post_json", return_value=payload) as post:
             result = creator.request_ai("Anthropic", "claude-sonnet-5", "secret", "prompt")
@@ -88,14 +86,107 @@ class ProviderAdapterTests(unittest.TestCase):
 
     def test_gemini_response_parser(self):
         import creator
-        from unittest.mock import patch
+
         payload = {"candidates": [{"content": {"parts": [{"text": "gemini result"}]}}]}
         with patch.object(creator, "_post_json", return_value=payload) as post:
             result = creator.request_ai("Gemini", "gemini-3.6-flash", "secret", "prompt")
         self.assertEqual(result, "gemini result")
         self.assertIn("gemini-3.6-flash:generateContent", post.call_args.args[0])
 
-    def test_custom_provider_requires_http_url(self):
+    def test_custom_provider_rejects_unsupported_scheme(self):
         import creator
-        with self.assertRaises(ValueError):
-            creator.request_ai("OpenAI-compatible", "model", "secret", "prompt", base_url="file:///tmp")
+
+        with patch.object(creator, "_post_json") as post:
+            with self.assertRaises(ValueError):
+                creator.request_ai(
+                    "OpenAI-compatible",
+                    "model",
+                    "secret",
+                    "prompt",
+                    base_url="file:///tmp",
+                )
+        post.assert_not_called()
+
+    def test_custom_provider_rejects_remote_plaintext_before_key_is_sent(self):
+        import creator
+
+        with patch.object(creator, "_post_json") as post:
+            with self.assertRaisesRegex(ValueError, "Plaintext HTTP"):
+                creator.request_ai(
+                    "OpenAI-compatible",
+                    "model",
+                    "secret-value-that-must-not-be-sent",
+                    "prompt",
+                    base_url="http://example.com/v1",
+                )
+        post.assert_not_called()
+
+    def test_custom_provider_allows_plaintext_loopback(self):
+        import creator
+
+        payload = {"choices": [{"message": {"content": "local result"}}]}
+        for base_url in (
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:8080/v1",
+            "http://[::1]:8080/v1",
+        ):
+            with self.subTest(base_url=base_url):
+                with patch.object(creator, "_post_json", return_value=payload) as post:
+                    result = creator.request_ai(
+                        "OpenAI-compatible",
+                        "model",
+                        "secret",
+                        "prompt",
+                        base_url=base_url,
+                    )
+                self.assertEqual(result, "local result")
+                self.assertTrue(post.call_args.args[0].endswith("/chat/completions"))
+
+    def test_custom_provider_allows_remote_https(self):
+        import creator
+
+        payload = {"choices": [{"message": {"content": "secure result"}}]}
+        with patch.object(creator, "_post_json", return_value=payload) as post:
+            result = creator.request_ai(
+                "OpenAI-compatible",
+                "model",
+                "secret",
+                "prompt",
+                base_url="https://example.com/v1",
+            )
+        self.assertEqual(result, "secure result")
+        self.assertEqual(post.call_args.args[0], "https://example.com/v1/chat/completions")
+
+    def test_custom_provider_rejects_embedded_credentials(self):
+        import creator
+
+        with patch.object(creator, "_post_json") as post:
+            with self.assertRaisesRegex(ValueError, "Credentials must not be embedded"):
+                creator.request_ai(
+                    "OpenAI-compatible",
+                    "model",
+                    "secret",
+                    "prompt",
+                    base_url="https://user:pass@example.com/v1",
+                )
+        post.assert_not_called()
+
+    def test_custom_provider_rejects_malformed_host_or_port(self):
+        import creator
+
+        for base_url in ("http://:8080/v1", "https://example.com:99999/v1"):
+            with self.subTest(base_url=base_url):
+                with patch.object(creator, "_post_json") as post:
+                    with self.assertRaises(ValueError):
+                        creator.request_ai(
+                            "OpenAI-compatible",
+                            "model",
+                            "secret",
+                            "prompt",
+                            base_url=base_url,
+                        )
+                post.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

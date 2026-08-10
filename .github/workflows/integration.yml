@@ -15,6 +15,7 @@ on:
     branches:
       - main
       - 'rewrite/tauri-integration'
+      - 'improve/scriptotar-next-integration'
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
