@@ -27,11 +27,11 @@ ROLLING_TAG = "tauri-next-latest"
 
 GH_RELEASE = re.compile(r"\bgh\s+release\s+(?:create|edit|upload)\b", re.IGNORECASE)
 FORCE_TAG = re.compile(
-    r"\bgit\s+tag\b(?=[^\n;]*?(?:\s-f\b|\s--force\b))[^\n;]*?\btauri-next-latest\b",
+    r"\bgit\s+tag\b(?=[^\n;]*?(?:\s-f\b|\s--force\b))",
     re.IGNORECASE,
 )
-FORCE_PUSH_TAG = re.compile(
-    r"\bgit\s+push\b(?=[^\n;]*?(?:\s-f\b|\s--force\b))[^\n;]*?(?:refs/tags/)?tauri-next-latest\b",
+FORCE_PUSH = re.compile(
+    r"\bgit\s+push\b(?=[^\n;]*?(?:\s-f\b|\s--force\b))",
     re.IGNORECASE,
 )
 
@@ -48,7 +48,7 @@ def load_workflow(path: Path) -> dict[str, Any]:
 
 def normalize_shell(text: str) -> str:
     # Remove shell line continuations, then collapse formatting-only whitespace so
-    # split commands such as `gh  release \\n upload` are still detected.
+    # split commands are still detected.
     text = re.sub(r"\\\s*\n\s*", " ", text)
     return re.sub(r"[\t ]+", " ", text)
 
@@ -97,8 +97,10 @@ def assert_packaging_contract(path: Path, expected: dict[str, str]) -> None:
     for run in runs:
         if GH_RELEASE.search(run):
             raise AssertionError(f"{rel} must not create, edit, or upload GitHub Releases")
-        if FORCE_TAG.search(run) or FORCE_PUSH_TAG.search(run):
+        if FORCE_TAG.search(run) and ROLLING_TAG in run:
             raise AssertionError(f"{rel} must not force-move {ROLLING_TAG}")
+        if FORCE_PUSH.search(run) and ROLLING_TAG in run:
+            raise AssertionError(f"{rel} must not force-push {ROLLING_TAG}")
 
     jobs = data.get("jobs", {})
     if not isinstance(jobs, dict):
@@ -140,7 +142,7 @@ def assert_single_rolling_release_owner() -> None:
         raise AssertionError(f"{PUBLISHER.relative_to(ROOT)} needs contents: write to publish")
     if not GH_RELEASE.search(publisher_runs):
         raise AssertionError(f"{PUBLISHER.relative_to(ROOT)} must contain release mutation logic")
-    if not (FORCE_TAG.search(publisher_runs) or FORCE_PUSH_TAG.search(publisher_runs)):
+    if not (FORCE_TAG.search(publisher_runs) or FORCE_PUSH.search(publisher_runs)):
         raise AssertionError(f"{PUBLISHER.relative_to(ROOT)} must contain rolling-tag mutation logic")
 
     for path in sorted([*WORKFLOWS.glob("*.yml"), *WORKFLOWS.glob("*.yaml")]):
@@ -154,7 +156,7 @@ def assert_single_rolling_release_owner() -> None:
         # mutation commands is another potential owner, even when the command uses
         # an environment variable rather than spelling the tag inline.
         if ROLLING_TAG in text and (
-            GH_RELEASE.search(runs) or FORCE_TAG.search(runs) or FORCE_PUSH_TAG.search(runs)
+            GH_RELEASE.search(runs) or FORCE_TAG.search(runs) or FORCE_PUSH.search(runs)
         ):
             raise AssertionError(
                 f"{path.relative_to(ROOT)} can mutate {ROLLING_TAG}; only "
