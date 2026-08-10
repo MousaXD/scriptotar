@@ -89,11 +89,20 @@ impl AppServices {
             store.create_project(&inbox)?;
             projects.push(inbox);
         }
-        let active_project = projects
+        let fallback_project = projects
             .iter()
             .find(|project| project.name.eq_ignore_ascii_case("Inbox"))
             .unwrap_or(&projects[0])
             .id;
+        let mut settings = store.load_settings()?;
+        let active_project = settings
+            .active_project_id
+            .filter(|project_id| projects.iter().any(|project| project.id == *project_id))
+            .unwrap_or(fallback_project);
+        if settings.active_project_id != Some(active_project) {
+            settings.active_project_id = Some(active_project);
+            store.save_settings(&settings)?;
+        }
         let orchestrator = JobOrchestrator::start(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
@@ -130,11 +139,15 @@ impl AppServices {
 
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
-        *self
+        let mut active_project = self
             .active_project
             .lock()
-            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))? =
-            project_id;
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let mut settings = self.store.load_settings()?;
+        settings.active_project_id = Some(project_id);
+        self.store.save_settings(&settings)?;
+        *active_project = project_id;
+        drop(active_project);
         self.bootstrap_for(project_id)
     }
 
@@ -205,8 +218,13 @@ impl AppServices {
     }
 
     pub fn save_settings(&self, settings: UiSettings) -> RepositoryResult<()> {
+        let active_project = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
         let current = self.store.load_settings()?;
-        let settings = settings_from_ui(settings, current)?;
+        let mut settings = settings_from_ui(settings, current)?;
+        settings.active_project_id = Some(*active_project);
         self.store.save_settings(&settings)
     }
 
@@ -897,7 +915,6 @@ fn stage_label(state: JobState) -> String {
     }
     .to_owned()
 }
-
 fn transcript_to_ui(bundle: &TranscriptBundle) -> UiTranscript {
     let language = bundle
         .transcript
@@ -1170,6 +1187,8 @@ fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::{params, Connection};
+    use tempfile::TempDir;
 
     fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
@@ -1188,6 +1207,14 @@ mod tests {
         }
     }
 
+    fn bootstrap_active_id(bootstrap: &BootstrapData) -> Uuid {
+        Uuid::parse_str(&bootstrap.active_project_id).unwrap()
+    }
+
+    fn database_path(temp: &TempDir) -> PathBuf {
+        temp.path().join("scriptotar.sqlite3")
+    }
+
     #[test]
     fn ai_prompt_never_contains_session_key_and_has_grounding_rules() {
         let prompt = build_ai_prompt_text(&prompt_input("Hook ideas")).unwrap();
@@ -1197,7 +1224,6 @@ mod tests {
         assert!(prompt.contains("copyrighted wording"));
         assert!(prompt.contains("clean Markdown"));
     }
-
     #[test]
     fn supported_ai_actions_have_task_specific_instructions() {
         for task in [
@@ -1254,5 +1280,144 @@ mod tests {
             None
         );
         std::fs::remove_dir_all(&temp).unwrap();
+    }
+
+    #[test]
+    fn first_start_defaults_to_inbox_and_persists_selection() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let bootstrap = services.bootstrap().unwrap();
+        let active_project = bootstrap_active_id(&bootstrap);
+        let inbox = bootstrap
+            .projects
+            .iter()
+            .find(|project| project.name.eq_ignore_ascii_case("Inbox"))
+            .unwrap();
+
+        assert_eq!(inbox.id, active_project.to_string());
+        assert_eq!(
+            services.store.load_settings().unwrap().active_project_id,
+            Some(active_project)
+        );
+    }
+
+    #[test]
+    fn selected_project_survives_service_restart() {
+        let temp = TempDir::new().unwrap();
+        let selected_project = {
+            let services = AppServices::new(temp.path()).unwrap();
+            let bootstrap = services.create_project("Project X".to_owned()).unwrap();
+            let selected_project = bootstrap_active_id(&bootstrap);
+            assert_eq!(
+                services.store.load_settings().unwrap().active_project_id,
+                Some(selected_project)
+            );
+            selected_project
+        };
+
+        let restarted = AppServices::new(temp.path()).unwrap();
+        assert_eq!(
+            bootstrap_active_id(&restarted.bootstrap().unwrap()),
+            selected_project
+        );
+    }
+
+    #[test]
+    fn missing_selected_project_falls_back_to_inbox_and_repairs_settings() {
+        let temp = TempDir::new().unwrap();
+        let (inbox_id, selected_project) = {
+            let services = AppServices::new(temp.path()).unwrap();
+            let initial = services.bootstrap().unwrap();
+            let inbox_id = bootstrap_active_id(&initial);
+            let selected = services.create_project("Temporary".to_owned()).unwrap();
+            (inbox_id, bootstrap_active_id(&selected))
+        };
+
+        let connection = Connection::open(database_path(&temp)).unwrap();
+        connection
+            .execute(
+                "DELETE FROM projects WHERE id = ?1",
+                params![selected_project.to_string()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let restarted = AppServices::new(temp.path()).unwrap();
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            restarted.store.load_settings().unwrap().active_project_id,
+            Some(inbox_id)
+        );
+    }
+
+    #[test]
+    fn legacy_settings_without_active_project_fall_back_safely() {
+        let temp = TempDir::new().unwrap();
+        let inbox_id = {
+            let services = AppServices::new(temp.path()).unwrap();
+            bootstrap_active_id(&services.bootstrap().unwrap())
+        };
+
+        let connection = Connection::open(database_path(&temp)).unwrap();
+        let raw: String = connection
+            .query_row(
+                "SELECT settings_json FROM application_settings WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut value: Value = serde_json::from_str(&raw).unwrap();
+        value.as_object_mut().unwrap().remove("active_project_id");
+        connection
+            .execute(
+                "UPDATE application_settings SET settings_json = ?1 WHERE singleton = 1",
+                params![serde_json::to_string(&value).unwrap()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let restarted = AppServices::new(temp.path()).unwrap();
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            restarted.store.load_settings().unwrap().active_project_id,
+            Some(inbox_id)
+        );
+    }
+
+    #[test]
+    fn malformed_active_project_id_does_not_break_startup() {
+        let temp = TempDir::new().unwrap();
+        let inbox_id = {
+            let services = AppServices::new(temp.path()).unwrap();
+            bootstrap_active_id(&services.bootstrap().unwrap())
+        };
+
+        let connection = Connection::open(database_path(&temp)).unwrap();
+        let raw: String = connection
+            .query_row(
+                "SELECT settings_json FROM application_settings WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut value: Value = serde_json::from_str(&raw).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .insert("active_project_id".to_owned(), Value::String("broken-id".to_owned()));
+        connection
+            .execute(
+                "UPDATE application_settings SET settings_json = ?1 WHERE singleton = 1",
+                params![serde_json::to_string(&value).unwrap()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let restarted = AppServices::new(temp.path()).unwrap();
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            restarted.store.load_settings().unwrap().active_project_id,
+            Some(inbox_id)
+        );
     }
 }
