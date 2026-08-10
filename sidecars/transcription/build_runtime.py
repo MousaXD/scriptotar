@@ -35,6 +35,7 @@ def build(output: Path) -> None:
         temp = Path(temp_raw)
         supervisor_dist = temp / "supervisor-dist"
         engine_dist = temp / "engine-dist"
+        ytdlp_dist = temp / "ytdlp-dist"
         work = temp / "work"
         specs = temp / "specs"
 
@@ -90,11 +91,38 @@ def build(output: Path) -> None:
             ]
         )
 
+        _run_pyinstaller(
+            [
+                "--noconfirm",
+                "--clean",
+                "--onefile",
+                "--name",
+                "scriptotar-ytdlp",
+                "--distpath",
+                str(ytdlp_dist),
+                "--workpath",
+                str(work / "ytdlp"),
+                "--specpath",
+                str(specs),
+                "--collect-all",
+                "yt_dlp",
+                "--collect-all",
+                "curl_cffi",
+                "--copy-metadata",
+                "yt-dlp",
+                str(ROOT / "ytdlp_entry.py"),
+            ]
+        )
+
         shutil.copy2(
             supervisor_dist / _exe_name("scriptotar-transcription"),
             output / _exe_name("scriptotar-transcription"),
         )
         shutil.copytree(engine_dist / "scriptotar-engine", output / "engine")
+        shutil.copy2(
+            ytdlp_dist / _exe_name("scriptotar-ytdlp"),
+            output / _exe_name("scriptotar-ytdlp"),
+        )
 
     shutil.copy2(ROOT / "sidecar.py", output / "sidecar.py")
     ffmpeg_dir = output / "ffmpeg"
@@ -108,7 +136,7 @@ def build(output: Path) -> None:
         "PyInstaller=6.21.0\n"
         "static-ffmpeg=3.0 (FFmpeg/ffprobe 8.0)\n"
         "faster-whisper=1.2.1\n"
-        "yt-dlp=2026.7.4\n"
+        "yt-dlp=2026.7.4 (dedicated scriptotar-ytdlp executable)\n"
     )
     (output / "RUNTIME-VERSIONS.txt").write_text(versions, encoding="utf-8")
 

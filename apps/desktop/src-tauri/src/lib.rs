@@ -56,6 +56,10 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
             .join("engine")
             .join(packaged_executable("scriptotar-engine")),
     );
+    set_path_env_if_missing(
+        "SCRIPTOTAR_YTDLP_EXECUTABLE",
+        &runtime_dir.join(packaged_executable("scriptotar-ytdlp")),
+    );
     set_path_env_if_missing("HF_HOME", &data_dir.join("models"));
 
     if env::var_os("PYTHONUNBUFFERED").is_none() {

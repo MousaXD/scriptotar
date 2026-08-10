@@ -17,6 +17,7 @@ def _runtime_env(root: Path) -> dict[str, str]:
     env = os.environ.copy()
     engine = root / "engine" / _exe_name("scriptotar-engine")
     env["SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE"] = str(engine)
+    env["SCRIPTOTAR_YTDLP_EXECUTABLE"] = str(root / _exe_name("scriptotar-ytdlp"))
     env["PATH"] = str(root / "ffmpeg") + os.pathsep + env.get("PATH", "")
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("HF_HOME", str(root / "model-cache-smoke"))
@@ -41,6 +42,23 @@ def _validate_engine(root: Path, env: dict[str, str]) -> None:
     for tool in ("ffmpeg", "ffprobe"):
         if not report.get(tool, {}).get("path"):
             raise RuntimeError(f"engine self-test did not resolve {tool}")
+
+
+def _validate_ytdlp(root: Path, env: dict[str, str]) -> None:
+    ytdlp = root / _exe_name("scriptotar-ytdlp")
+    if not ytdlp.is_file():
+        raise RuntimeError(f"packaged yt-dlp executable is missing: {ytdlp}")
+    completed = subprocess.run(
+        [str(ytdlp), "--version"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    version = completed.stdout.strip()
+    if not version:
+        raise RuntimeError("packaged yt-dlp executable returned no version")
 
 
 def _validate_supervisor(root: Path, env: dict[str, str]) -> None:
@@ -85,6 +103,7 @@ def validate(root: Path) -> None:
         env = _runtime_env(root)
         env["HF_HOME"] = model_cache
         _validate_engine(root, env)
+        _validate_ytdlp(root, env)
         _validate_supervisor(root, env)
 
 

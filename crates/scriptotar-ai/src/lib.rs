@@ -68,6 +68,8 @@ pub enum AiError {
     InsecureEndpoint,
     #[error("credentials must not be embedded in provider URLs")]
     EmbeddedCredentials,
+    #[error("provider redirect was blocked (HTTP {0})")]
+    RedirectBlocked(u16),
     #[error("provider request timed out")]
     Timeout,
     #[error("provider response is too large")]
@@ -181,6 +183,7 @@ impl HttpAiProvider {
     pub fn with_timeout(provider: ProviderKind, timeout: Duration) -> Result<Self, AiError> {
         let client = Client::builder()
             .timeout(timeout)
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent("Scriptotar-Next/0.1")
             .build()
             .map_err(|error| AiError::Provider(safe_transport_error(&error)))?;
@@ -348,13 +351,16 @@ fn parse_json_response(
     api_key: &str,
     parser: fn(&Value) -> Result<String, AiError>,
 ) -> Result<AiResponse, AiError> {
+    let status = response.status();
+    if status.is_redirection() {
+        return Err(AiError::RedirectBlocked(status.as_u16()));
+    }
     if response
         .content_length()
         .is_some_and(|size| size > MAX_RESPONSE_BYTES)
     {
         return Err(AiError::ResponseTooLarge);
     }
-    let status = response.status();
     let body = response.text().map_err(map_transport_error)?;
     if body.len() as u64 > MAX_RESPONSE_BYTES {
         return Err(AiError::ResponseTooLarge);

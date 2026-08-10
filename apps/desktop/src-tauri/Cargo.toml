@@ -14,6 +14,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build.workspace = true
 
 [dependencies]
+chrono.workspace = true
 scriptotar-ai = { path = "../../../crates/scriptotar-ai" }
 scriptotar-core = { path = "../../../crates/scriptotar-core" }
 scriptotar-db = { path = "../../../crates/scriptotar-db" }
@@ -21,10 +22,10 @@ scriptotar-jobs = { path = "../../../crates/scriptotar-jobs" }
 scriptotar-media = { path = "../../../crates/scriptotar-media" }
 scriptotar-orchestrator = { path = "../../../crates/scriptotar-orchestrator" }
 scriptotar-research = { path = "../../../crates/scriptotar-research" }
-rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true
+url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

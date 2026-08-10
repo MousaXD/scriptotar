@@ -1,34 +1,72 @@
 use std::{
+    collections::{HashMap, HashSet},
     env,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{self, RecvTimeoutError, Sender},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+    time::{Duration, Instant},
 };
 
-use scriptotar_ai::{EndpointPolicy, ProviderConfig, ProviderKind};
+use chrono::{DateTime, Utc};
+use scriptotar_ai::{
+    AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind,
+};
 use scriptotar_core::{
-    ApplicationSettings, ContentRepository, Job, JobInput, JobRepository, Project,
-    ProjectRepository, RepositoryError, RepositoryResult, SettingsRepository, SourceType,
-    TranscriptBundle, WatchlistRepository,
+    now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository,
+    Creator, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, RepositoryError,
+    RepositoryResult, ResearchItem, ResearchRepository, SettingsRepository, SourceType,
+    TranscriptBundle, Watchlist, WatchlistRepository,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
-use scriptotar_research::NetworkPolicy;
+use scriptotar_research::{NetworkPolicy, ResearchService, YtDlpCommand, YtDlpProvider};
 use serde_json::Value;
 use uuid::Uuid;
 
 use crate::dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiCreator, UiJob, UiLibraryItem, UiProject,
-    UiSettings, UiTranscript, UiTranscriptSegment,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
+    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
 };
 
-#[derive(Debug, Clone)]
+const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
+const MAX_AI_SOURCE_CHARS: usize = 450_000;
+const MAX_AI_CONTEXT_CHARS: usize = 20_000;
+const WATCHLIST_TICK: Duration = Duration::from_secs(60);
+
+#[derive(Clone)]
+struct WatchlistRefresher {
+    inner: Arc<WatchlistRefresherInner>,
+}
+
+struct WatchlistRefresherInner {
+    stop: Sender<()>,
+    handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Drop for WatchlistRefresherInner {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Ok(handle) = self.handle.get_mut() {
+            if let Some(handle) = handle.take() {
+                let _ = handle.join();
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct AppServices {
     store: SqliteStore,
     orchestrator: JobOrchestrator<SqliteStore>,
     active_project: Arc<Mutex<Uuid>>,
     legacy_path: PathBuf,
+    research_command: YtDlpCommand,
+    _watchlist_refresher: WatchlistRefresher,
 }
 
 impl AppServices {
@@ -60,12 +98,17 @@ impl AppServices {
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
         );
+        let research_command = YtDlpCommand::from_environment();
+        let watchlist_refresher =
+            spawn_watchlist_refresher(store.clone(), research_command.clone());
 
         Ok(Self {
             store,
             orchestrator,
             active_project: Arc::new(Mutex::new(active_project)),
             legacy_path,
+            research_command,
+            _watchlist_refresher: watchlist_refresher,
         })
     }
 
@@ -74,10 +117,7 @@ impl AppServices {
     }
 
     pub fn bootstrap(&self) -> RepositoryResult<BootstrapData> {
-        let active_project = *self
-            .active_project
-            .lock()
-            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let active_project = self.active_project_id()?;
         self.bootstrap_for(active_project)
     }
 
@@ -168,26 +208,15 @@ impl AppServices {
     }
 
     pub fn save_watchlist(&self, query: ResearchQuery) -> Result<BootstrapData, String> {
-        if !(1..=200).contains(&query.limit) {
-            return Err("research limit must be between 1 and 200".to_owned());
-        }
+        validate_research_limit(query.limit)?;
         let validated = NetworkPolicy
             .validate(&query.profile_url)
             .map_err(|error| error.to_string())?;
         let profile_url = validated.as_url().to_string();
-        let label = validated
-            .as_url()
-            .path_segments()
-            .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
-            .filter(|segment| !segment.is_empty())
-            .or_else(|| validated.as_url().host_str())
-            .unwrap_or("Watchlist")
-            .trim_start_matches('@')
-            .to_owned();
-        let active_project = *self
-            .active_project
-            .lock()
-            .map_err(|_| "active project lock poisoned".to_owned())?;
+        let label = profile_label(validated.as_url());
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         self.store
             .upsert_watchlist(active_project, &label, &profile_url, u32::from(query.limit))
             .map_err(|error| error.to_string())?;
@@ -196,55 +225,159 @@ impl AppServices {
     }
 
     pub fn scan_creator(&self, query: ResearchQuery) -> Result<(), String> {
-        if !(1..=200).contains(&query.limit) {
-            return Err("research limit must be between 1 and 200".to_owned());
-        }
-        NetworkPolicy
-            .validate(&query.profile_url)
+        validate_research_limit(query.limit)?;
+        let active_project = self
+            .active_project_id()
             .map_err(|error| error.to_string())?;
-        Err("research provider execution is not integrated yet; URL policy passed".to_owned())
+        let settings = self
+            .store
+            .load_settings()
+            .map_err(|error| error.to_string())?;
+        scan_and_persist_research(
+            &self.store,
+            &self.research_command,
+            active_project,
+            &query.profile_url,
+            query.limit,
+            settings.cookie_browser.as_deref(),
+        )?;
+        Ok(())
+    }
+
+    pub fn refresh_watchlists(&self) -> Result<usize, String> {
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
+        let watchlists = self
+            .store
+            .list_watchlists(Some(active_project))
+            .map_err(|error| error.to_string())?;
+        let settings = self
+            .store
+            .load_settings()
+            .map_err(|error| error.to_string())?;
+        let mut saved_items = 0_usize;
+        let mut errors = Vec::new();
+        for watchlist in watchlists {
+            match scan_and_persist_research(
+                &self.store,
+                &self.research_command,
+                watchlist.project_id,
+                &watchlist.profile_url,
+                watchlist.limit_count.min(200) as u16,
+                settings.cookie_browser.as_deref(),
+            ) {
+                Ok(count) => saved_items += count,
+                Err(error) => errors.push(format!("{}: {error}", watchlist.label)),
+            }
+        }
+        if errors.is_empty() {
+            Ok(saved_items)
+        } else {
+            Err(format!(
+                "some watchlists could not be refreshed: {}",
+                errors.join("; ")
+            ))
+        }
     }
 
     pub fn queue_research(&self, ids: Vec<String>) -> Result<(), String> {
         if ids.is_empty() {
             return Err("select at least one research item".to_owned());
         }
-        Err("research queue persistence is not integrated yet".to_owned())
+        if ids.len() > MAX_RESEARCH_QUEUE_ITEMS {
+            return Err(format!(
+                "select at most {MAX_RESEARCH_QUEUE_ITEMS} research items at once"
+            ));
+        }
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
+        let mut unique = Vec::new();
+        let mut seen = HashSet::new();
+        for raw in ids {
+            let id = Uuid::parse_str(raw.trim())
+                .map_err(|_| format!("invalid research item ID: {raw}"))?;
+            if seen.insert(id) {
+                unique.push(id);
+            }
+        }
+        let items = self
+            .store
+            .get_research_items(&unique)
+            .map_err(|error| error.to_string())?;
+        if items.iter().any(|item| item.project_id != active_project) {
+            return Err("research selection contains an item from another project".to_owned());
+        }
+        let mut existing_sources = self
+            .store
+            .list_jobs(Some(active_project))
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|job| job.state == JobState::Queued || job.state.is_active())
+            .filter_map(|job| match job.input {
+                JobInput::Url(url) => Some(url),
+                JobInput::LocalFile(_) => None,
+            })
+            .collect::<HashSet<_>>();
+
+        for item in items {
+            let validated = NetworkPolicy
+                .validate(&item.source_url)
+                .map_err(|error| error.to_string())?;
+            let source_url = validated.as_url().to_string();
+            if !existing_sources.insert(source_url.clone()) {
+                continue;
+            }
+            let job = JobService::new(self.store.clone())
+                .enqueue(active_project, JobInput::Url(source_url))
+                .map_err(|error| error.to_string())?;
+            self.orchestrator
+                .enqueue(job.id)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub fn build_ai_prompt(&self, input: &AiPromptInput) -> Result<String, String> {
-        if input.task.trim().is_empty() {
-            return Err("AI task cannot be empty".to_owned());
-        }
-        let mut sections = vec![format!("Task: {}", input.task.trim())];
-        push_prompt_field(&mut sections, "Source context", &input.source_text);
-        push_prompt_field(&mut sections, "Topic / goal", &input.topic);
-        push_prompt_field(&mut sections, "Audience", &input.audience);
-        push_prompt_field(&mut sections, "Target duration", &input.duration);
-        push_prompt_field(&mut sections, "CTA", &input.cta);
-        push_prompt_field(&mut sections, "Voice / style", &input.voice);
-        sections.push(
-            "Return a useful creator-workstation result. Preserve factual uncertainty and do not invent source details."
-                .to_owned(),
-        );
-        Ok(sections.join("\n\n"))
+        build_ai_prompt_text(input)
     }
 
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
+        let prompt = self.build_ai_prompt(input)?;
+        let active_project = self
+            .active_project_id()
+            .map_err(|error| error.to_string())?;
         if !input.mode.eq_ignore_ascii_case("byok") {
-            return self.build_ai_prompt(input);
+            self.store
+                .insert_ai_run(&AiRun {
+                    id: Uuid::new_v4(),
+                    project_id: active_project,
+                    task: input.task.trim().to_owned(),
+                    mode: AiRunMode::CopyPrompt,
+                    provider: None,
+                    model: None,
+                    prompt: prompt.clone(),
+                    result: None,
+                    created_at: now_rfc3339(),
+                })
+                .map_err(|error| error.to_string())?;
+            return Ok(prompt);
         }
-        if input
+
+        let api_key = input
             .api_key
             .as_deref()
-            .is_none_or(|key| key.trim().is_empty())
-        {
-            return Err("an API key is required for BYOK mode".to_owned());
-        }
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| "an API key is required for BYOK mode".to_owned())?;
         let provider = provider_kind(&input.provider)?;
+        if provider == ProviderKind::Local {
+            return Err("local AI provider execution is not enabled yet".to_owned());
+        }
         let config = ProviderConfig {
             provider,
-            model: input.model.clone(),
+            model: input.model.trim().to_owned(),
             base_url: input
                 .base_url
                 .as_deref()
@@ -255,32 +388,110 @@ impl AppServices {
         EndpointPolicy
             .endpoint_for(&config)
             .map_err(|error| error.to_string())?;
-        Err("AI provider execution is not integrated yet; endpoint policy passed and no key was persisted".to_owned())
+        let provider_client = HttpAiProvider::new(provider).map_err(|error| error.to_string())?;
+        let response = AiService::new(provider_client)
+            .generate(
+                &config,
+                api_key,
+                &AiRequest {
+                    prompt: prompt.clone(),
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        self.store
+            .insert_ai_run(&AiRun {
+                id: Uuid::new_v4(),
+                project_id: active_project,
+                task: input.task.trim().to_owned(),
+                mode: AiRunMode::Byok,
+                provider: Some(input.provider.clone()),
+                model: Some(config.model),
+                prompt,
+                result: Some(response.text.clone()),
+                created_at: now_rfc3339(),
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(response.text)
+    }
+
+    fn active_project_id(&self) -> RepositoryResult<Uuid> {
+        self.active_project
+            .lock()
+            .map(|value| *value)
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))
     }
 
     fn bootstrap_for(&self, active_project: Uuid) -> RepositoryResult<BootstrapData> {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
         let transcripts = self.store.list_transcripts(Some(active_project))?;
-        let creators = self
-            .store
-            .list_watchlists(Some(active_project))?
-            .into_iter()
-            .map(|watchlist| UiCreator {
-                id: watchlist.id.to_string(),
-                name: watchlist.label,
-                handle: watchlist.profile_url.clone(),
-                platform: source_platform(&watchlist.profile_url, SourceType::Url),
-                avatar: None,
-                watchlisted: true,
-                last_scanned_at: watchlist.last_scan_at,
+        let research_items = self.store.list_research_items(Some(active_project))?;
+        let ai_runs = self.store.list_ai_runs(Some(active_project))?;
+        let stored_creators = self.store.list_creators(Some(active_project))?;
+        let watchlists = self.store.list_watchlists(Some(active_project))?;
+        let watch_by_url = watchlists
+            .iter()
+            .map(|watchlist| (watchlist.profile_url.clone(), watchlist))
+            .collect::<HashMap<_, _>>();
+        let creator_by_id = stored_creators
+            .iter()
+            .map(|creator| (creator.id, creator))
+            .collect::<HashMap<_, _>>();
+        let mut creator_urls = HashSet::new();
+        let mut creators = stored_creators
+            .iter()
+            .map(|creator| {
+                creator_urls.insert(creator.profile_url.clone());
+                let watchlist = watch_by_url.get(&creator.profile_url).copied();
+                UiCreator {
+                    id: creator.id.to_string(),
+                    name: creator
+                        .display_name
+                        .clone()
+                        .or_else(|| watchlist.map(|watchlist| watchlist.label.clone()))
+                        .unwrap_or_else(|| profile_label_from_raw(&creator.profile_url)),
+                    handle: creator.profile_url.clone(),
+                    platform: creator.platform.clone(),
+                    avatar: None,
+                    watchlisted: watchlist.is_some(),
+                    last_scanned_at: watchlist.and_then(|watchlist| watchlist.last_scan_at.clone()),
+                }
             })
             .collect::<Vec<_>>();
+        creators.extend(
+            watchlists
+                .iter()
+                .filter(|watchlist| !creator_urls.contains(&watchlist.profile_url))
+                .map(|watchlist| UiCreator {
+                    id: watchlist.id.to_string(),
+                    name: watchlist.label.clone(),
+                    handle: watchlist.profile_url.clone(),
+                    platform: source_platform(&watchlist.profile_url, SourceType::Url),
+                    avatar: None,
+                    watchlisted: true,
+                    last_scanned_at: watchlist.last_scan_at.clone(),
+                }),
+        );
+
         let jobs = all_jobs
             .iter()
             .filter(|job| job.project_id == active_project)
             .map(job_to_ui)
             .collect::<Vec<_>>();
+        let queued_sources = all_jobs
+            .iter()
+            .filter(|job| job.project_id == active_project)
+            .filter(|job| job.state == JobState::Queued || job.state.is_active())
+            .filter_map(|job| match &job.input {
+                JobInput::Url(url) => Some(url.clone()),
+                JobInput::LocalFile(_) => None,
+            })
+            .collect::<HashSet<_>>();
+        let ui_research = research_items
+            .iter()
+            .map(|item| research_to_ui(item, &creator_by_id, &queued_sources))
+            .collect::<Vec<_>>();
+        let ui_ai_runs = ai_runs.iter().map(ai_run_to_ui).collect::<Vec<_>>();
         let ui_transcripts = transcripts.iter().map(transcript_to_ui).collect::<Vec<_>>();
         let ui_projects = projects
             .iter()
@@ -327,18 +538,336 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
+        library.extend(ui_research.iter().map(|item| UiLibraryItem {
+            id: format!("research:{}", item.id),
+            kind: "Research".to_owned(),
+            title: item.title.clone(),
+            subtitle: item.creator.clone(),
+            project_id: active_project.to_string(),
+            platform: Some(item.platform.clone()),
+            metric: item.views.map(|views| format!("{views} views")),
+            date: item
+                .published_at
+                .clone()
+                .unwrap_or_else(|| "Unknown date".to_owned()),
+        }));
+        library.extend(ai_runs.iter().map(|run| UiLibraryItem {
+            id: format!("ai:{}", run.id),
+            kind: "AI run".to_owned(),
+            title: run.task.clone(),
+            subtitle: run
+                .provider
+                .clone()
+                .map(|provider| match &run.model {
+                    Some(model) => format!("{provider} · {model}"),
+                    None => provider,
+                })
+                .unwrap_or_else(|| "Copy Prompt".to_owned()),
+            project_id: run.project_id.to_string(),
+            platform: None,
+            metric: None,
+            date: run.created_at.clone(),
+        }));
 
         Ok(BootstrapData {
             projects: ui_projects,
             active_project_id: active_project.to_string(),
             creators,
-            research: Vec::new(),
+            research: ui_research,
             jobs,
             transcripts: ui_transcripts,
-            ai_runs: Vec::new(),
+            ai_runs: ui_ai_runs,
             library,
             settings: self.load_settings()?,
         })
+    }
+}
+
+fn scan_and_persist_research(
+    store: &SqliteStore,
+    command: &YtDlpCommand,
+    project_id: Uuid,
+    profile_url: &str,
+    limit: u16,
+    cookie_browser: Option<&str>,
+) -> Result<usize, String> {
+    validate_research_limit(limit)?;
+    store
+        .get_project(project_id)
+        .map_err(|error| error.to_string())?;
+    let validated = NetworkPolicy
+        .validate(profile_url.trim())
+        .map_err(|error| error.to_string())?;
+    if cookie_browser.is_some() && validated.as_url().scheme() != "https" {
+        return Err("authenticated creator scanning requires HTTPS".to_owned());
+    }
+    let canonical_url = validated.as_url().to_string();
+    let creator = store
+        .upsert_creator(&Creator {
+            id: Uuid::new_v4(),
+            project_id,
+            platform: source_platform(&canonical_url, SourceType::Url),
+            profile_url: canonical_url.clone(),
+            display_name: Some(profile_label(validated.as_url())),
+            created_at: now_rfc3339(),
+        })
+        .map_err(|error| error.to_string())?;
+    let provider = YtDlpProvider::new(command.clone())
+        .with_cookie_browser(cookie_browser)
+        .map_err(|error| error.to_string())?;
+    let items = ResearchService::new(provider)
+        .scan(project_id, Some(creator.id), &canonical_url, limit)
+        .map_err(|error| error.to_string())?;
+    let persisted = store
+        .upsert_research_items(&items)
+        .map_err(|error| error.to_string())?;
+    let scanned_at = now_rfc3339();
+    store
+        .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
+        .map_err(|error| error.to_string())?;
+    Ok(persisted.len())
+}
+
+fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+    let (stop, receiver) = mpsc::channel();
+    let handle = thread::spawn(move || {
+        let mut failed_until = HashMap::<Uuid, Instant>::new();
+        loop {
+            match receiver.recv_timeout(WATCHLIST_TICK) {
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            let Ok(settings) = store.load_settings() else {
+                continue;
+            };
+            if !settings.auto_watch {
+                continue;
+            }
+            let Ok(watchlists) = store.list_watchlists(None) else {
+                continue;
+            };
+            for watchlist in watchlists {
+                if failed_until
+                    .get(&watchlist.id)
+                    .is_some_and(|retry_at| *retry_at > Instant::now())
+                {
+                    continue;
+                }
+                if !watchlist_is_due(&watchlist, settings.watch_interval_minutes) {
+                    continue;
+                }
+                match scan_and_persist_research(
+                    &store,
+                    &command,
+                    watchlist.project_id,
+                    &watchlist.profile_url,
+                    watchlist.limit_count.min(200) as u16,
+                    settings.cookie_browser.as_deref(),
+                ) {
+                    Ok(_) => {
+                        failed_until.remove(&watchlist.id);
+                    }
+                    Err(_) => {
+                        failed_until.insert(
+                            watchlist.id,
+                            Instant::now()
+                                + watchlist_failure_retry(settings.watch_interval_minutes),
+                        );
+                    }
+                }
+            }
+        }
+    });
+    WatchlistRefresher {
+        inner: Arc::new(WatchlistRefresherInner {
+            stop,
+            handle: Mutex::new(Some(handle)),
+        }),
+    }
+}
+
+fn watchlist_failure_retry(interval_minutes: u32) -> Duration {
+    Duration::from_secs(u64::from(interval_minutes.max(5)) * 60)
+}
+
+fn watchlist_is_due(watchlist: &Watchlist, interval_minutes: u32) -> bool {
+    let Some(last_scan_at) = watchlist.last_scan_at.as_deref() else {
+        return true;
+    };
+    let Ok(last_scan_at) = DateTime::parse_from_rfc3339(last_scan_at) else {
+        return true;
+    };
+    Utc::now().signed_duration_since(last_scan_at.with_timezone(&Utc))
+        >= chrono::Duration::minutes(i64::from(interval_minutes.max(1)))
+}
+
+fn validate_research_limit(limit: u16) -> Result<(), String> {
+    if !(1..=200).contains(&limit) {
+        Err("research limit must be between 1 and 200".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_ai_input(input: &AiPromptInput) -> Result<(), String> {
+    if input.task.trim().is_empty() {
+        return Err("AI task cannot be empty".to_owned());
+    }
+    if input.task.chars().count() > 256 {
+        return Err("AI task is too long".to_owned());
+    }
+    if input.source_text.chars().count() > MAX_AI_SOURCE_CHARS {
+        return Err("AI source context is too large".to_owned());
+    }
+    for (field, value) in [
+        ("topic", &input.topic),
+        ("audience", &input.audience),
+        ("duration", &input.duration),
+        ("CTA", &input.cta),
+        ("voice", &input.voice),
+    ] {
+        if value.chars().count() > MAX_AI_CONTEXT_CHARS {
+            return Err(format!("AI {field} field is too large"));
+        }
+    }
+    Ok(())
+}
+
+fn task_instructions(task: &str) -> &'static str {
+    match task.trim() {
+        "Viral breakdown" => {
+            "Analyze why the source may retain attention. Return: Hook, Structure beats, Retention devices, Payoff, and Transferable lessons. Explain techniques without reproducing the source script."
+        }
+        "Hook ideas" => {
+            "Generate 10 distinct hooks grounded in the supplied facts. Vary the angle and mechanism; keep each hook to one or two lines and avoid copying distinctive source phrasing."
+        }
+        "New short-form script" => {
+            "Write an original short-form script for the requested goal and duration. Use a clear hook, concise body beats, payoff, and CTA. Preserve source facts but do not imitate or reproduce distinctive wording."
+        }
+        "Structure remix" => {
+            "First identify the source's high-level structural beats, then propose a materially new structure using the same supported facts. Do not perform sentence-level imitation."
+        }
+        "Content ideas" => {
+            "Generate 10 original content ideas. For each, provide a working title, core angle, audience value, and one concrete execution note grounded in the source context."
+        }
+        "Caption + CTA" => {
+            "Return three concise caption options followed by three CTA options. Keep claims supported by the source and make the variants meaningfully different."
+        }
+        "Voice profile" => {
+            "Describe observable communication traits such as pacing, sentence shape, vocabulary, rhetorical devices, energy, and recurring content patterns. Describe traits for adaptation, not identity impersonation or voice cloning."
+        }
+        "B-roll shot list" => {
+            "Create a practical ordered B-roll shot list. For each shot include the visual, its narrative purpose, and any useful on-screen text or graphic cue. Keep visuals consistent with supported source facts."
+        }
+        _ => {
+            "Complete the requested creator task with a clear, useful result grounded in the supplied source and brief."
+        }
+    }
+}
+
+fn build_ai_prompt_text(input: &AiPromptInput) -> Result<String, String> {
+    validate_ai_input(input)?;
+    let mut sections = vec![format!(
+        "Task: {}\n\nTask instructions:\n{}",
+        input.task.trim(),
+        task_instructions(&input.task)
+    )];
+    push_prompt_field(&mut sections, "Source transcript / context", &input.source_text);
+    push_prompt_field(&mut sections, "Topic / goal", &input.topic);
+    push_prompt_field(&mut sections, "Audience", &input.audience);
+    push_prompt_field(&mut sections, "Target duration", &input.duration);
+    push_prompt_field(&mut sections, "CTA", &input.cta);
+    push_prompt_field(&mut sections, "Voice / style instructions", &input.voice);
+    sections.push(
+        "Grounding and transformation rules:\n- Preserve factual meaning and uncertainty; do not invent source details, quotes, metrics, or events.\n- Transform, summarize, analyze, or create anew rather than reproducing lengthy or distinctive copyrighted wording from the source.\n- If the source does not support a requested claim, say what is missing.\n- Treat voice/style notes as creative constraints, not permission to impersonate a real person."
+            .to_owned(),
+    );
+    sections.push(
+        "Output format:\nReturn clean Markdown suitable for Scriptotar's result panel. Use short headings, bullets, or numbered sections where useful. Do not include process commentary or a generic preamble."
+            .to_owned(),
+    );
+    Ok(sections.join("\n\n"))
+}
+
+fn profile_label(url: &url::Url) -> String {
+    url.path_segments()
+        .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+        .filter(|segment| !segment.is_empty())
+        .or_else(|| url.host_str())
+        .unwrap_or("Creator")
+        .trim_start_matches('@')
+        .chars()
+        .take(256)
+        .collect()
+}
+
+fn profile_label_from_raw(raw: &str) -> String {
+    NetworkPolicy
+        .validate(raw)
+        .map(|validated| profile_label(validated.as_url()))
+        .unwrap_or_else(|_| "Creator".to_owned())
+}
+
+fn research_to_ui(
+    item: &ResearchItem,
+    creators: &HashMap<Uuid, &Creator>,
+    queued_sources: &HashSet<String>,
+) -> UiResearchItem {
+    let creator = item.creator_id.and_then(|id| creators.get(&id).copied());
+    let creator_name = creator
+        .and_then(|creator| creator.display_name.clone())
+        .or_else(|| creator.map(|creator| profile_label_from_raw(&creator.profile_url)))
+        .unwrap_or_else(|| "Creator".to_owned());
+    let thumbnail = item
+        .raw_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|value| {
+            value
+                .get("thumbnail")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    UiResearchItem {
+        id: item.id.to_string(),
+        creator_id: item.creator_id.map(|id| id.to_string()).unwrap_or_default(),
+        creator: creator_name,
+        title: item
+            .title
+            .clone()
+            .unwrap_or_else(|| "Untitled research item".to_owned()),
+        source_url: item.source_url.clone(),
+        platform: item.platform.clone(),
+        views: item.view_count,
+        likes: item.like_count,
+        comments: item.comment_count,
+        published_at: item.published_at.clone(),
+        duration_seconds: item.duration_seconds,
+        thumbnail,
+        queued: Some(queued_sources.contains(&item.source_url)),
+    }
+}
+
+fn ai_run_to_ui(run: &AiRun) -> UiAiRun {
+    let title = run
+        .result
+        .as_deref()
+        .and_then(|result| result.lines().find(|line| !line.trim().is_empty()))
+        .map(|line| line.trim().chars().take(120).collect())
+        .unwrap_or_else(|| run.task.clone());
+    UiAiRun {
+        id: run.id.to_string(),
+        task: run.task.clone(),
+        mode: match run.mode {
+            AiRunMode::CopyPrompt => "copy",
+            AiRunMode::Byok => "byok",
+        }
+        .to_owned(),
+        provider: run.provider.clone(),
+        model: run.model.clone(),
+        title,
+        created_at: run.created_at.clone(),
+        status: "completed".to_owned(),
     }
 }
 
@@ -376,17 +905,17 @@ fn job_to_ui(job: &Job) -> UiJob {
     }
 }
 
-fn stage_label(state: scriptotar_core::JobState) -> String {
+fn stage_label(state: JobState) -> String {
     match state {
-        scriptotar_core::JobState::Queued => "Queued",
-        scriptotar_core::JobState::Preparing => "Preparing",
-        scriptotar_core::JobState::Downloading => "Downloading",
-        scriptotar_core::JobState::Transcribing => "Transcribing",
-        scriptotar_core::JobState::Processing => "Processing",
-        scriptotar_core::JobState::Completed => "Completed",
-        scriptotar_core::JobState::Failed => "Failed",
-        scriptotar_core::JobState::Cancelled => "Cancelled",
-        scriptotar_core::JobState::Interrupted => "Interrupted",
+        JobState::Queued => "Queued",
+        JobState::Preparing => "Preparing",
+        JobState::Downloading => "Downloading",
+        JobState::Transcribing => "Transcribing",
+        JobState::Processing => "Processing",
+        JobState::Completed => "Completed",
+        JobState::Failed => "Failed",
+        JobState::Cancelled => "Cancelled",
+        JobState::Interrupted => "Interrupted",
     }
     .to_owned()
 }
@@ -663,26 +1192,49 @@ fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn ai_prompt_never_contains_session_key() {
-        let input = AiPromptInput {
+    fn prompt_input(task: &str) -> AiPromptInput {
+        AiPromptInput {
             mode: "byok".to_owned(),
             provider: "OpenAI".to_owned(),
             model: "model".to_owned(),
-            task: "Summarize".to_owned(),
-            source_text: "source".to_owned(),
-            topic: String::new(),
-            audience: String::new(),
-            duration: String::new(),
-            cta: String::new(),
-            voice: String::new(),
+            task: task.to_owned(),
+            source_text: "A source fact with uncertainty.".to_owned(),
+            topic: "Topic".to_owned(),
+            audience: "Audience".to_owned(),
+            duration: "45 seconds".to_owned(),
+            cta: "Follow for more".to_owned(),
+            voice: "Direct and concise".to_owned(),
             base_url: None,
             api_key: Some("super-secret".to_owned()),
-        };
-        let mut sections = vec![format!("Task: {}", input.task.trim())];
-        push_prompt_field(&mut sections, "Source context", &input.source_text);
-        let prompt = sections.join("\n\n");
+        }
+    }
+
+    #[test]
+    fn ai_prompt_never_contains_session_key_and_has_grounding_rules() {
+        let prompt = build_ai_prompt_text(&prompt_input("Hook ideas")).unwrap();
         assert!(!prompt.contains("super-secret"));
+        assert!(prompt.contains("10 distinct hooks"));
+        assert!(prompt.contains("Preserve factual meaning"));
+        assert!(prompt.contains("copyrighted wording"));
+        assert!(prompt.contains("clean Markdown"));
+    }
+
+    #[test]
+    fn supported_ai_actions_have_task_specific_instructions() {
+        for task in [
+            "Viral breakdown",
+            "Hook ideas",
+            "New short-form script",
+            "Structure remix",
+            "Content ideas",
+            "Caption + CTA",
+            "Voice profile",
+            "B-roll shot list",
+        ] {
+            let prompt = build_ai_prompt_text(&prompt_input(task)).unwrap();
+            assert!(prompt.contains(&format!("Task: {task}")));
+            assert!(!prompt.contains("Task instructions:\nComplete the requested creator task"));
+        }
     }
 
     #[test]
@@ -693,6 +1245,21 @@ mod tests {
             base_url: Some("http://example.com/v1".to_owned()),
         };
         assert!(EndpointPolicy.endpoint_for(&config).is_err());
+    }
+
+    #[test]
+    fn watchlist_interval_and_failed_refresh_backoff_are_bounded() {
+        let watchlist = Watchlist {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            label: "Creator".to_owned(),
+            profile_url: "https://www.youtube.com/@creator".to_owned(),
+            limit_count: 25,
+            last_scan_at: Some("not-a-time".to_owned()),
+        };
+        assert!(watchlist_is_due(&watchlist, 60));
+        assert_eq!(watchlist_failure_retry(30), Duration::from_secs(30 * 60));
+        assert_eq!(watchlist_failure_retry(0), Duration::from_secs(5 * 60));
     }
 
     #[test]
