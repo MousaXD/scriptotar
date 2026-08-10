@@ -11,13 +11,15 @@ on:
       - '.github/workflows/tauri-next-release.yml'
       - '.github/workflows/windows-tauri.yml'
       - '.github/workflows/linux-tauri.yml'
+      - '.github/scripts/assert-tauri-next-current-main.sh'
+      - '.github/tests/test_tauri_next_release_race.py'
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: tauri-next-release-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: tauri-next-release-publisher
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +35,8 @@ jobs:
           grep -F 'name: scriptotar-windows-tauri' .github/workflows/windows-tauri.yml
           grep -F 'name: Build and validate Tauri deb' .github/workflows/linux-tauri.yml
           grep -F 'name: scriptotar-linux-tauri' .github/workflows/linux-tauri.yml
+      - name: Verify rolling release race contract
+        run: python .github/tests/test_tauri_next_release_race.py
 
   publish-preview:
     if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'
@@ -45,6 +49,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
       RELEASE_TAG: tauri-next-latest
+      STAGING_TAG: tauri-next-staging-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out the packaged commit
         uses: actions/checkout@v4
@@ -206,7 +211,11 @@ jobs:
           Whisper model weights are downloaded on first uncached use. Windows preview builds remain unsigned unless release signing credentials are configured.
           NOTES
 
-      - name: Create or update unified Scriptotar Next preview
+      - name: Reject stale source before draft staging
+        shell: bash
+        run: bash .github/scripts/assert-tauri-next-current-main.sh
+
+      - name: Stage complete release as a draft
         shell: bash
         run: |
           set -euo pipefail
@@ -219,27 +228,82 @@ jobs:
             latest/SHA256SUMS.txt
           )
 
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
-            gh release edit "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title 'Scriptotar Next Preview' \
-              --notes-file RELEASE-NOTES.md \
-              --prerelease \
-              --latest=false
-          else
-            gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
-              --title 'Scriptotar Next Preview' \
-              --notes-file RELEASE-NOTES.md \
-              --prerelease
+          gh release create "$STAGING_TAG" "${ASSETS[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title 'Scriptotar Next Preview' \
+            --notes-file RELEASE-NOTES.md \
+            --prerelease \
+            --draft
+
+          STAGING_RELEASE_ID="$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+              jq -r --arg tag "$STAGING_TAG" \
+                '.[] | select(.tag_name == $tag and .draft == true) | .id' |
+              head -n 1
+          )"
+          test -n "$STAGING_RELEASE_ID" || {
+            echo "Unable to resolve draft release $STAGING_TAG after creation." >&2
+            exit 1
+          }
+          echo "STAGING_RELEASE_ID=$STAGING_RELEASE_ID" >> "$GITHUB_ENV"
+
+          gh release view "$STAGING_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,isPrerelease,assets \
+            > staged-release.json
+          test "$(jq -r '.tagName' staged-release.json)" = "$STAGING_TAG"
+          test "$(jq -r '.isDraft' staged-release.json)" = true
+          test "$(jq -r '.isPrerelease' staged-release.json)" = true
+
+          ASSET_NAMES="$(jq -r '.assets[].name' staged-release.json)"
+          for expected in \
+            Scriptotar-Next-latest-x64-setup.exe \
+            Scriptotar-Next-latest-amd64.deb \
+            RUNTIME-VERSIONS-windows.txt \
+            RUNTIME-VERSIONS-linux.txt \
+            DEB-CONTENTS-linux.txt \
+            SHA256SUMS.txt; do
+            grep -Fxq "$expected" <<< "$ASSET_NAMES" || {
+              echo "Staged release is missing $expected" >&2
+              exit 1
+            }
+          done
+
+      - name: Re-check current main before rolling switch
+        shell: bash
+        run: bash .github/scripts/assert-tauri-next-current-main.sh
+
+      - name: Switch rolling tag and publish staged release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OLD_RELEASE_ID="$(
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id' 2>/dev/null || true
+          )"
+
+          if [ -n "$OLD_RELEASE_ID" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$OLD_RELEASE_ID"
           fi
 
           git tag -f "$RELEASE_TAG" "$SOURCE_SHA"
           git push origin "refs/tags/$RELEASE_TAG" --force
+
+          gh api --method PATCH \
+            "repos/$GITHUB_REPOSITORY/releases/$STAGING_RELEASE_ID" \
+            -f tag_name="$RELEASE_TAG" \
+            -f target_commitish="$SOURCE_SHA" \
+            -f name='Scriptotar Next Preview' \
+            -F body=@RELEASE-NOTES.md \
+            -F draft=false \
+            -F prerelease=true \
+            -f make_latest=false \
+            > published-release.json
+
+          test "$(jq -r '.tag_name' published-release.json)" = "$RELEASE_TAG"
+          test "$(jq -r '.draft' published-release.json)" = false
+          test "$(jq -r '.prerelease' published-release.json)" = true
 
       - name: Verify published release and rolling tag
         shell: bash
@@ -247,11 +311,14 @@ jobs:
           set -euo pipefail
           gh release view "$RELEASE_TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --json name,tagName,isPrerelease,assets,url \
+            --json name,tagName,isDraft,isPrerelease,body,assets,url \
             > release.json
 
           test "$(jq -r '.tagName' release.json)" = "$RELEASE_TAG"
+          test "$(jq -r '.isDraft' release.json)" = false
           test "$(jq -r '.isPrerelease' release.json)" = true
+          jq -r '.body' release.json | grep -Fq -- "- Commit: $SOURCE_SHA"
+
           ASSET_NAMES="$(jq -r '.assets[].name' release.json)"
           for expected in \
             Scriptotar-Next-latest-x64-setup.exe \
@@ -280,3 +347,31 @@ jobs:
             echo "- Release: $RELEASE_URL"
             echo '- Windows NSIS and Linux Debian assets verified.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up unpublished staging release
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${STAGING_RELEASE_ID:-}" ]; then
+            STAGING_RELEASE_ID="$(
+              gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" 2>/dev/null |
+                jq -r --arg tag "$STAGING_TAG" \
+                  '.[] | select(.tag_name == $tag and .draft == true) | .id' |
+                head -n 1 || true
+            )"
+          fi
+
+          if [ -n "${STAGING_RELEASE_ID:-}" ]; then
+            IS_DRAFT="$(
+              gh api "repos/$GITHUB_REPOSITORY/releases/$STAGING_RELEASE_ID" --jq '.draft' 2>/dev/null || true
+            )"
+            if [ "$IS_DRAFT" = true ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$STAGING_RELEASE_ID"
+            fi
+          fi
+
+          if git ls-remote --exit-code origin "refs/tags/$STAGING_TAG" >/dev/null 2>&1; then
+            git push origin ":refs/tags/$STAGING_TAG" || true
+          fi
