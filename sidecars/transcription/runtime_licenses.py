@@ -13,21 +13,18 @@ from collections import deque
 from pathlib import Path
 from typing import Iterable
 
-
 SCHEMA_VERSION = 1
 ENGINE_REQUIREMENTS = ("faster-whisper", "yt-dlp[default,curl-cffi]")
 SUPPORTED_FFMPEG_LICENSE = "GPL-3.0-or-later"
-SUPPORTED_PYAV_FFMPEG_LICENSE = "GPL-3.0-or-later"
+SUPPORTED_PYAV_FFMPEG_LICENSE = "LGPL-3.0-or-later"
 FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.GPLv3"
 FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+FFMPEG_LGPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.LGPLv3"
+FFMPEG_LGPL3_SHA256 = "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
 CPYTHON_LICENSE_VERSION = "3.12.13"
 CPYTHON_LICENSE_URL = "https://raw.githubusercontent.com/python/cpython/v3.12.13/LICENSE"
 CPYTHON_LICENSE_SHA256 = "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
 
-# Some binary wheels omit usable License-Expression/License-File metadata even
-# though the upstream project has an explicit license. Keep fallbacks narrow,
-# version-specific and hash-pinned so an upstream/version change cannot silently
-# inherit an old legal assumption.
 LICENSE_METADATA_FALLBACKS: dict[str, dict[str, str]] = {
     "tokenizers": {
         "version": "0.23.1",
@@ -51,15 +48,7 @@ def _sha256_file(path: Path) -> str:
 
 
 def classify_ffmpeg_license(version_output: str) -> str:
-    """Infer FFmpeg's effective upstream license from its build switches.
-
-    FFmpeg is LGPL-2.1-or-later by default. Enabling GPL components changes the
-    whole FFmpeg build to GPL-2.0-or-later; --enable-version3 upgrades the
-    applicable LGPL/GPL family to version 3 or later. A --enable-nonfree build
-    is deliberately rejected because FFmpeg documents such builds as not
-    redistributable.
-    """
-
+    """Infer FFmpeg's effective license family from its configure switches."""
     switches = set(re.findall(r"--[A-Za-z0-9_-]+", version_output))
     if "--enable-nonfree" in switches:
         raise RuntimeError("FFmpeg was built with --enable-nonfree and must not be redistributed")
@@ -69,37 +58,22 @@ def classify_ffmpeg_license(version_output: str) -> str:
 
 
 def _requirement_is_active(requirement: object, selected_extras: set[str]) -> bool:
-    # packaging is intentionally imported lazily. It is a PyInstaller build
-    # dependency, while unit tests for the FFmpeg classifier do not need it.
     from packaging.markers import default_environment
 
     marker = requirement.marker
     if marker is None:
         return True
-
     environment = default_environment()
-    marker_text = str(marker)
-    if "extra" not in marker_text:
+    if "extra" not in str(marker):
         return marker.evaluate(environment)
-
-    # Evaluate once with no extra as well as every selected extra. This handles
-    # compound markers such as `extra == 'x' or sys_platform == 'win32'`.
-    extras_to_try = selected_extras or {""}
-    if "" not in extras_to_try:
-        extras_to_try = {*extras_to_try, ""}
-    return any(marker.evaluate({**environment, "extra": extra}) for extra in extras_to_try)
+    extras = {*selected_extras, ""}
+    return any(marker.evaluate({**environment, "extra": extra}) for extra in extras)
 
 
 def collect_runtime_distributions(
     root_requirements: Iterable[str] = ENGINE_REQUIREMENTS,
 ) -> list[tuple[metadata.Distribution, set[str]]]:
-    """Resolve the installed distribution closure actually needed by the engine.
-
-    This works from installed wheel metadata rather than a hand-maintained list,
-    so transitive dependencies such as CTranslate2, tokenizers, huggingface-hub,
-    PyAV and curl-cffi are represented at the exact versions packaged by CI.
-    """
-
+    """Resolve the installed dependency closure used by the packaged engine."""
     from packaging.requirements import Requirement
 
     queue: deque[tuple[str, set[str]]] = deque()
@@ -115,7 +89,7 @@ def collect_runtime_distributions(
         name, extras = queue.popleft()
         canonical = _canonical_name(name)
         selected = selected_extras.setdefault(canonical, set())
-        previous = set(selected)
+        before = set(selected)
         selected.update(extras)
 
         if canonical not in resolved:
@@ -124,17 +98,14 @@ def collect_runtime_distributions(
             except metadata.PackageNotFoundError as exc:
                 raise RuntimeError(f"required packaged Python distribution is missing: {name}") from exc
 
-        already_processed = processed_extras.get(canonical)
-        if already_processed is not None and selected == already_processed and selected == previous:
+        if canonical in processed_extras and selected == processed_extras[canonical] and selected == before:
             continue
-
-        dist = resolved[canonical]
         processed_extras[canonical] = set(selected)
-        for raw_dependency in dist.requires or []:
+
+        for raw_dependency in resolved[canonical].requires or []:
             dependency = Requirement(raw_dependency)
-            if not _requirement_is_active(dependency, selected):
-                continue
-            queue.append((dependency.name, set(dependency.extras)))
+            if _requirement_is_active(dependency, selected):
+                queue.append((dependency.name, set(dependency.extras)))
 
     return [(resolved[name], selected_extras[name]) for name in sorted(resolved)]
 
@@ -149,24 +120,22 @@ def _project_url(dist: metadata.Distribution) -> str | None:
 
 def _license_declaration(dist: metadata.Distribution) -> str | None:
     value = dist.metadata.get("License-Expression") or dist.metadata.get("License")
-    if value:
-        compact = " ".join(value.split())
-        if compact and compact.upper() != "UNKNOWN":
-            return compact[:500]
-    return None
+    if not value:
+        return None
+    compact = " ".join(value.split())
+    return compact[:500] if compact and compact.upper() != "UNKNOWN" else None
 
 
 def _license_candidates(dist: metadata.Distribution) -> list[metadata.PackagePath]:
     declared = [entry.replace("\\", "/") for entry in (dist.metadata.get_all("License-File") or [])]
     candidates: list[metadata.PackagePath] = []
     seen: set[str] = set()
-
     for entry in dist.files or []:
         text = str(entry).replace("\\", "/")
         basename = Path(text).name.lower()
-        declared_match = any(text.endswith(item) for item in declared)
-        conventional = basename.startswith(("license", "copying", "notice", "copyright"))
-        if not declared_match and not conventional:
+        if not any(text.endswith(item) for item in declared) and not basename.startswith(
+            ("license", "copying", "notice", "copyright")
+        ):
             continue
         if text in seen:
             continue
@@ -178,19 +147,33 @@ def _license_candidates(dist: metadata.Distribution) -> list[metadata.PackagePat
 
 
 def _copy_distribution_licenses(
-    dist: metadata.Distribution,
-    destination: Path,
-    output_root: Path,
+    dist: metadata.Distribution, destination: Path, output_root: Path
 ) -> list[str]:
     destination.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
     for index, entry in enumerate(_license_candidates(dist), start=1):
         source = Path(dist.locate_file(entry))
-        basename = Path(str(entry)).name
-        target = destination / f"{index:02d}-{basename}"
+        target = destination / f"{index:02d}-{Path(str(entry)).name}"
         shutil.copy2(source, target)
         copied.append(target.relative_to(output_root).as_posix())
     return copied
+
+
+def _write_verified_remote_file(
+    url: str, expected_sha256: str, destination: Path, output_root: Path, label: str
+) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "Scriptotar-runtime-builder"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read()
+    actual = hashlib.sha256(data).hexdigest()
+    if actual != expected_sha256:
+        raise RuntimeError(
+            f"{label} hash changed; refusing to package an unreviewed legal artifact "
+            f"(expected {expected_sha256}, got {actual})"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(data)
+    return destination.relative_to(output_root).as_posix()
 
 
 def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
@@ -224,50 +207,15 @@ def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
     )
 
 
-def _write_verified_remote_file(
-    url: str,
-    expected_sha256: str,
-    destination: Path,
-    output_root: Path,
-    label: str,
-) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "Scriptotar-runtime-builder"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        data = response.read()
-    actual = hashlib.sha256(data).hexdigest()
-    if actual != expected_sha256:
-        raise RuntimeError(
-            f"{label} hash changed; refusing to package an unreviewed legal artifact "
-            f"(expected {expected_sha256}, got {actual})"
-        )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(data)
-    return destination.relative_to(output_root).as_posix()
-
-
-def _write_verified_ffmpeg_license(legal_root: Path, output_root: Path) -> str:
-    return _write_verified_remote_file(
-        FFMPEG_GPL3_URL,
-        FFMPEG_GPL3_SHA256,
-        legal_root / "FFMPEG-GPL-3.0.txt",
-        output_root,
-        "FFmpeg GPLv3 license text",
-    )
-
-
 def _apply_license_metadata_fallback(
-    dist: metadata.Distribution,
-    canonical: str,
-    legal_root: Path,
-    output_root: Path,
+    dist: metadata.Distribution, canonical: str, legal_root: Path, output_root: Path
 ) -> tuple[str | None, list[str], str | None]:
     fallback = LICENSE_METADATA_FALLBACKS.get(canonical)
     if fallback is None:
         return None, [], None
-    expected_version = fallback["version"]
-    if dist.version != expected_version:
+    if dist.version != fallback["version"]:
         raise RuntimeError(
-            f"license metadata fallback for {canonical} is reviewed only for {expected_version}, "
+            f"license metadata fallback for {canonical} is reviewed only for {fallback['version']}, "
             f"but packaging resolved {dist.version}"
         )
     license_file = _write_verified_remote_file(
@@ -280,7 +228,7 @@ def _apply_license_metadata_fallback(
     return fallback["license"], [license_file], fallback["url"]
 
 
-def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
+def _standalone_ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
     completed = subprocess.run(
         [str(ffmpeg_executable), "-version"],
         check=True,
@@ -291,15 +239,12 @@ def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
     output = completed.stdout + completed.stderr
     if not output.strip():
         raise RuntimeError("bundled FFmpeg returned no version/build information")
-
-    inferred_license = classify_ffmpeg_license(output)
-    if inferred_license != SUPPORTED_FFMPEG_LICENSE:
+    inferred = classify_ffmpeg_license(output)
+    if inferred != SUPPORTED_FFMPEG_LICENSE:
         raise RuntimeError(
-            "FFmpeg license changed from the packaged legal baseline: "
-            f"expected {SUPPORTED_FFMPEG_LICENSE}, got {inferred_license}. "
-            "Review the binary source and ship the matching license/source-compliance artifacts before packaging."
+            "standalone FFmpeg license changed from the packaged baseline: "
+            f"expected {SUPPORTED_FFMPEG_LICENSE}, got {inferred}"
         )
-
     configuration = next(
         (
             line.partition(":")[2].strip()
@@ -313,24 +258,22 @@ def _ffmpeg_report(ffmpeg_executable: Path) -> dict[str, object]:
     source_record = crumb.read_text(encoding="utf-8", errors="replace").strip() if crumb.is_file() else None
     ffprobe_name = "ffprobe.exe" if ffmpeg_executable.suffix.lower() == ".exe" else "ffprobe"
     ffprobe_executable = ffmpeg_executable.with_name(ffprobe_name)
-    binary_sha256 = {"ffmpeg": _sha256_file(ffmpeg_executable)}
+    hashes = {"ffmpeg": _sha256_file(ffmpeg_executable)}
     if ffprobe_executable.is_file():
-        binary_sha256["ffprobe"] = _sha256_file(ffprobe_executable)
-
+        hashes["ffprobe"] = _sha256_file(ffprobe_executable)
     return {
         "component": "FFmpeg and ffprobe executables fetched by static-ffmpeg",
-        "license": inferred_license,
+        "license": inferred,
         "version_line": version_line,
         "configuration": configuration,
         "source_record": source_record,
-        "binary_sha256": binary_sha256,
+        "binary_sha256": hashes,
         "redistribution_guard": "--enable-nonfree is rejected at package build time",
     }
 
 
 def parse_pyav_ffmpeg_report(output: str) -> dict[str, object]:
-    """Parse `python -m av --version` and enforce the FFmpeg wheel baseline."""
-
+    """Parse `python -m av --version` and enforce the audited wheel baseline."""
     pyav_version = ""
     groups: list[dict[str, object]] = []
     current: dict[str, object] | None = None
@@ -341,18 +284,14 @@ def parse_pyav_ffmpeg_report(output: str) -> dict[str, object]:
             continue
         if line.startswith("PyAV v"):
             pyav_version = line.removeprefix("PyAV v").strip()
-            continue
-        if line.startswith("library configuration:"):
-            configuration = line.partition(":")[2].strip()
-            current = {"configuration": configuration, "libraries": []}
+        elif line.startswith("library configuration:"):
+            current = {"configuration": line.partition(":")[2].strip(), "libraries": []}
             groups.append(current)
-            continue
-        if line.startswith("library license:"):
+        elif line.startswith("library license:"):
             if current is None:
                 raise RuntimeError("PyAV reported a library license before a configuration")
             current["reported_license"] = line.partition(":")[2].strip()
-            continue
-        if current is not None and re.match(r"^lib[A-Za-z0-9_]+\s+\-?\d+", line):
+        elif current is not None and re.match(r"^lib[A-Za-z0-9_]+\s+\-?\d+", line):
             libraries = current["libraries"]
             assert isinstance(libraries, list)
             libraries.append(line)
@@ -362,8 +301,8 @@ def parse_pyav_ffmpeg_report(output: str) -> dict[str, object]:
 
     for group in groups:
         configuration = str(group.get("configuration") or "")
-        reported_license = str(group.get("reported_license") or "")
-        if not configuration or not reported_license:
+        reported = str(group.get("reported_license") or "")
+        if not configuration or not reported:
             raise RuntimeError(f"incomplete PyAV FFmpeg build group: {group}")
         inferred = classify_ffmpeg_license(configuration)
         if inferred != SUPPORTED_PYAV_FFMPEG_LICENSE:
@@ -371,11 +310,8 @@ def parse_pyav_ffmpeg_report(output: str) -> dict[str, object]:
                 "PyAV's bundled FFmpeg library license changed from the audited baseline: "
                 f"expected {SUPPORTED_PYAV_FFMPEG_LICENSE}, got {inferred}"
             )
-        if reported_license.lower() != "gpl version 3 or later":
-            raise RuntimeError(
-                "PyAV's FFmpeg runtime reported an unexpected license string: "
-                f"{reported_license}"
-            )
+        if reported.lower() != "lgpl version 3 or later":
+            raise RuntimeError(f"PyAV's FFmpeg runtime reported an unexpected license string: {reported}")
         group["inferred_license"] = inferred
 
     return {"pyav_version": pyav_version, "library_groups": groups}
@@ -399,7 +335,7 @@ def _pyav_native_library_hashes(dist: metadata.Distribution) -> dict[str, str]:
     return dict(sorted(hashes.items()))
 
 
-def _pyav_ffmpeg_report(ffmpeg_license_file: str) -> dict[str, object]:
+def _pyav_ffmpeg_report(license_file: str) -> dict[str, object]:
     completed = subprocess.run(
         [sys.executable, "-m", "av", "--version"],
         check=True,
@@ -407,8 +343,7 @@ def _pyav_ffmpeg_report(ffmpeg_license_file: str) -> dict[str, object]:
         text=True,
         timeout=30,
     )
-    output = completed.stdout + completed.stderr
-    parsed = parse_pyav_ffmpeg_report(output)
+    parsed = parse_pyav_ffmpeg_report(completed.stdout + completed.stderr)
     av_dist = metadata.distribution("av")
     native_hashes = _pyav_native_library_hashes(av_dist)
     if not native_hashes:
@@ -420,22 +355,17 @@ def _pyav_ffmpeg_report(ffmpeg_license_file: str) -> dict[str, object]:
         {
             "component": "FFmpeg shared libraries bundled by the PyAV binary wheel",
             "license": SUPPORTED_PYAV_FFMPEG_LICENSE,
-            "license_file": ffmpeg_license_file,
+            "license_file": license_file,
             "native_library_sha256": native_hashes,
             "wheel_project_url": _project_url(av_dist),
-            "redistribution_guard": "every PyAV FFmpeg library group must be GPLv3 and must not use --enable-nonfree",
+            "redistribution_guard": "every PyAV FFmpeg group must remain LGPLv3 and exclude --enable-nonfree",
         }
     )
     return parsed
 
 
-def write_runtime_legal_bundle(
-    output_root: Path,
-    ffmpeg_executable: Path,
-    repo_root: Path,
-) -> Path:
-    """Write legal notices and an exact installed-dependency manifest into a runtime."""
-
+def write_runtime_legal_bundle(output_root: Path, ffmpeg_executable: Path, repo_root: Path) -> Path:
+    """Write notices and an exact installed-dependency manifest into a runtime."""
     output_root = output_root.resolve()
     legal_root = output_root / "legal"
     legal_root.mkdir(parents=True, exist_ok=True)
@@ -450,28 +380,37 @@ def write_runtime_legal_bundle(
             raise RuntimeError(f"required distribution notice/license is missing: {source}")
         shutil.copy2(source, destination)
 
-    ffmpeg_license_file = _write_verified_ffmpeg_license(legal_root, output_root)
+    gpl_file = _write_verified_remote_file(
+        FFMPEG_GPL3_URL,
+        FFMPEG_GPL3_SHA256,
+        legal_root / "FFMPEG-GPL-3.0.txt",
+        output_root,
+        "FFmpeg GPLv3 license text",
+    )
+    lgpl_file = _write_verified_remote_file(
+        FFMPEG_LGPL3_URL,
+        FFMPEG_LGPL3_SHA256,
+        legal_root / "FFMPEG-LGPL-3.0.txt",
+        output_root,
+        "FFmpeg LGPLv3 license text",
+    )
     python_license = _copy_python_runtime_license(legal_root, output_root)
 
     python_components: list[dict[str, object]] = []
     for dist, extras in collect_runtime_distributions():
         canonical = _canonical_name(dist.metadata.get("Name") or "unknown")
-        component_dir = legal_root / "python" / canonical
-        license_files = _copy_distribution_licenses(dist, component_dir, output_root)
+        license_files = _copy_distribution_licenses(
+            dist, legal_root / "python" / canonical, output_root
+        )
         license_declared = _license_declaration(dist)
         license_reference: str | None = None
         license_source = "installed-wheel-metadata"
-
         if not license_declared and not license_files:
             license_declared, license_files, license_reference = _apply_license_metadata_fallback(
-                dist,
-                canonical,
-                legal_root,
-                output_root,
+                dist, canonical, legal_root, output_root
             )
             if license_declared or license_files:
                 license_source = "version-pinned-upstream-fallback"
-
         python_components.append(
             {
                 "name": dist.metadata.get("Name") or canonical,
@@ -488,14 +427,12 @@ def write_runtime_legal_bundle(
 
     pyinstaller = metadata.distribution("PyInstaller")
     pyinstaller_licenses = _copy_distribution_licenses(
-        pyinstaller,
-        legal_root / "build-tools" / "pyinstaller",
-        output_root,
+        pyinstaller, legal_root / "build-tools" / "pyinstaller", output_root
     )
 
-    ffmpeg = _ffmpeg_report(ffmpeg_executable)
-    ffmpeg["license_file"] = ffmpeg_license_file
-    pyav_ffmpeg = _pyav_ffmpeg_report(ffmpeg_license_file)
+    ffmpeg = _standalone_ffmpeg_report(ffmpeg_executable)
+    ffmpeg["license_file"] = gpl_file
+    pyav_ffmpeg = _pyav_ffmpeg_report(lgpl_file)
 
     manifest = {
         "schema": SCHEMA_VERSION,
@@ -528,7 +465,6 @@ def write_runtime_legal_bundle(
             "Linux WebKitGTK/GTK runtime libraries (system package dependencies)",
         ],
     }
-
     manifest_path = output_root / "RUNTIME-LICENSES.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + os.linesep, encoding="utf-8")
     return manifest_path
