@@ -269,6 +269,9 @@ impl SqliteStore {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
     use scriptotar_core::{Project, ProjectRepository};
     use tempfile::tempdir;
 
@@ -303,6 +306,34 @@ mod tests {
     }
 
     #[test]
+    fn current_main_schema_upgrades_without_preexisting_operational_table() {
+        let (temp, store, watchlist_id) = store_with_watchlist();
+        let database = temp.path().join("scriptotar.sqlite3");
+        let connection = Connection::open(&database).unwrap();
+        connection
+            .execute_batch("DROP TABLE IF EXISTS watchlist_refresh_status;")
+            .unwrap();
+        drop(connection);
+        drop(store);
+
+        let reopened = SqliteStore::open(&database).unwrap();
+        assert!(reopened
+            .watchlist_refresh_status(watchlist_id)
+            .unwrap()
+            .is_none());
+        assert!(reopened.list_watchlist_refresh_status(None).unwrap().is_empty());
+        let table_exists: i64 = Connection::open(&database)
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watchlist_refresh_status'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_exists, 1);
+    }
+
+    #[test]
     fn refresh_claim_is_atomic_and_released_by_completion() {
         let (_temp, store, watchlist_id) = store_with_watchlist();
         assert!(store
@@ -317,6 +348,34 @@ mod tests {
         assert!(store
             .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:02:00Z")
             .unwrap());
+    }
+
+    #[test]
+    fn simultaneous_manual_and_automatic_claims_have_exactly_one_winner() {
+        let (_temp, store, watchlist_id) = store_with_watchlist();
+        let barrier = Arc::new(Barrier::new(3));
+        let first_store = store.clone();
+        let first_barrier = barrier.clone();
+        let first = thread::spawn(move || {
+            first_barrier.wait();
+            first_store
+                .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
+                .unwrap()
+        });
+        let second_store = store.clone();
+        let second_barrier = barrier.clone();
+        let second = thread::spawn(move || {
+            second_barrier.wait();
+            second_store
+                .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z")
+                .unwrap()
+        });
+        barrier.wait();
+        let winners = [first.join().unwrap(), second.join().unwrap()]
+            .into_iter()
+            .filter(|claimed| *claimed)
+            .count();
+        assert_eq!(winners, 1);
     }
 
     #[test]
