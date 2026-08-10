@@ -16,13 +16,13 @@ def read(path: str) -> str:
 
 def assignment(path: str, name: str) -> str:
     match = re.search(
-        rf'^\s*{re.escape(name)}\s*=\s*["\']([^"\']+)["\']\s*$',
+        rf'^\s*{re.escape(name)}\s*=\s*(?:["\']([^"\']+)["\']|([^\s#]+))\s*(?:#.*)?$',
         read(path),
         re.MULTILINE,
     )
     if match is None:
         raise AssertionError(f"could not resolve {name} from {path}")
-    return match.group(1)
+    return match.group(1) or match.group(2)
 
 
 class VersionIdentityTests(unittest.TestCase):
