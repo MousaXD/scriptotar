@@ -8,7 +8,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 REQUIRED_PYTHON_COMPONENTS = {
     "faster-whisper",
     "ctranslate2",
@@ -23,6 +22,7 @@ REQUIRED_LEGAL_FILES = {
     "legal/NOTICE",
     "legal/SCRIPTOTAR-APACHE-2.0.txt",
     "legal/FFMPEG-GPL-3.0.txt",
+    "legal/FFMPEG-LGPL-3.0.txt",
 }
 
 
@@ -32,8 +32,9 @@ def _exe_name(stem: str) -> str:
 
 def _runtime_env(root: Path) -> dict[str, str]:
     env = os.environ.copy()
-    engine = root / "engine" / _exe_name("scriptotar-engine")
-    env["SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE"] = str(engine)
+    env["SCRIPTOTAR_SIDECAR_ENGINE_EXECUTABLE"] = str(
+        root / "engine" / _exe_name("scriptotar-engine")
+    )
     env["SCRIPTOTAR_YTDLP_EXECUTABLE"] = str(root / _exe_name("scriptotar-ytdlp"))
     env["PATH"] = str(root / "ffmpeg") + os.pathsep + env.get("PATH", "")
     env["PYTHONUNBUFFERED"] = "1"
@@ -46,12 +47,7 @@ def _validate_engine(root: Path, env: dict[str, str]) -> None:
     if not engine.is_file():
         raise RuntimeError(f"packaged engine executable is missing: {engine}")
     completed = subprocess.run(
-        [str(engine), "--self-test"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=45,
+        [str(engine), "--self-test"], env=env, check=True, capture_output=True, text=True, timeout=45
     )
     report = json.loads(completed.stdout.strip())
     if report.get("ok") is not True:
@@ -66,15 +62,9 @@ def _validate_ytdlp(root: Path, env: dict[str, str]) -> None:
     if not ytdlp.is_file():
         raise RuntimeError(f"packaged yt-dlp executable is missing: {ytdlp}")
     completed = subprocess.run(
-        [str(ytdlp), "--version"],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=30,
+        [str(ytdlp), "--version"], env=env, check=True, capture_output=True, text=True, timeout=30
     )
-    version = completed.stdout.strip()
-    if not version:
+    if not completed.stdout.strip():
         raise RuntimeError("packaged yt-dlp executable returned no version")
 
 
@@ -85,7 +75,6 @@ def _validate_supervisor(root: Path, env: dict[str, str]) -> None:
         raise RuntimeError(f"packaged supervisor executable is missing: {supervisor}")
     if not marker.is_file():
         raise RuntimeError(f"packaged sidecar marker is missing: {marker}")
-
     payload = (
         '{"protocol":1,"type":"ping","request_id":"runtime-smoke"}\n'
         '{"protocol":1,"type":"shutdown","request_id":"runtime-shutdown"}\n'
@@ -120,28 +109,30 @@ def _require_relative_file(root: Path, relative: str) -> Path:
     return candidate
 
 
-def _validate_ffmpeg_record(root: Path, ffmpeg: dict[str, object], label: str) -> None:
-    if ffmpeg.get("license") != "GPL-3.0-or-later":
-        raise RuntimeError(f"unexpected {label} license: {ffmpeg.get('license')}")
-    configuration = str(ffmpeg.get("configuration") or "")
+def _validate_standalone_ffmpeg(root: Path, record: object) -> None:
+    if not isinstance(record, dict):
+        raise RuntimeError("runtime license manifest is missing standalone FFmpeg/ffprobe information")
+    if record.get("license") != "GPL-3.0-or-later":
+        raise RuntimeError(f"unexpected standalone FFmpeg license: {record.get('license')}")
+    configuration = str(record.get("configuration") or "")
     if "--enable-gpl" not in configuration or "--enable-version3" not in configuration:
-        raise RuntimeError(f"{label} GPLv3 build switches are not present in manifest: {configuration}")
+        raise RuntimeError(f"standalone FFmpeg GPLv3 switches are missing: {configuration}")
     if "--enable-nonfree" in configuration:
-        raise RuntimeError(f"{label} manifest contains --enable-nonfree")
-    ffmpeg_license = ffmpeg.get("license_file")
-    if not isinstance(ffmpeg_license, str):
-        raise RuntimeError(f"runtime license manifest does not identify the {label} license text")
-    _require_relative_file(root, ffmpeg_license)
+        raise RuntimeError("standalone FFmpeg configuration contains --enable-nonfree")
+    license_file = record.get("license_file")
+    if not isinstance(license_file, str):
+        raise RuntimeError("standalone FFmpeg inventory does not identify its GPL license text")
+    _require_relative_file(root, license_file)
 
 
 def _validate_pyav_ffmpeg(root: Path, record: object) -> None:
     if not isinstance(record, dict):
         raise RuntimeError("runtime license manifest is missing the PyAV-bundled FFmpeg inventory")
-    if record.get("license") != "GPL-3.0-or-later":
+    if record.get("license") != "LGPL-3.0-or-later":
         raise RuntimeError(f"unexpected PyAV FFmpeg license: {record.get('license')}")
     license_file = record.get("license_file")
     if not isinstance(license_file, str):
-        raise RuntimeError("PyAV FFmpeg inventory does not identify its GPL license text")
+        raise RuntimeError("PyAV FFmpeg inventory does not identify its LGPL license text")
     _require_relative_file(root, license_file)
 
     groups = record.get("library_groups")
@@ -153,12 +144,12 @@ def _validate_pyav_ffmpeg(root: Path, record: object) -> None:
         configuration = str(group.get("configuration") or "")
         reported = str(group.get("reported_license") or "")
         inferred = str(group.get("inferred_license") or "")
-        if inferred != "GPL-3.0-or-later":
+        if inferred != "LGPL-3.0-or-later":
             raise RuntimeError(f"unexpected inferred PyAV FFmpeg license: {inferred}")
-        if reported.lower() != "gpl version 3 or later":
+        if reported.lower() != "lgpl version 3 or later":
             raise RuntimeError(f"unexpected reported PyAV FFmpeg license: {reported}")
-        if "--enable-gpl" not in configuration or "--enable-version3" not in configuration:
-            raise RuntimeError(f"PyAV FFmpeg GPLv3 build switches are missing: {configuration}")
+        if "--enable-version3" not in configuration or "--enable-gpl" in configuration:
+            raise RuntimeError(f"PyAV FFmpeg LGPLv3 switches are unexpected: {configuration}")
         if "--enable-nonfree" in configuration:
             raise RuntimeError("PyAV FFmpeg configuration contains --enable-nonfree")
 
@@ -177,7 +168,6 @@ def _validate_licenses(root: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema") != 1:
         raise RuntimeError(f"unsupported runtime license manifest schema: {manifest.get('schema')}")
-
     for relative in REQUIRED_LEGAL_FILES:
         _require_relative_file(root, relative)
 
@@ -187,10 +177,7 @@ def _validate_licenses(root: Path) -> None:
         raise RuntimeError("runtime license manifest does not identify the embedded Python license")
     _require_relative_file(root, python_license)
 
-    ffmpeg = manifest.get("ffmpeg")
-    if not isinstance(ffmpeg, dict):
-        raise RuntimeError("runtime license manifest is missing bundled FFmpeg/ffprobe information")
-    _validate_ffmpeg_record(root, ffmpeg, "bundled FFmpeg/ffprobe")
+    _validate_standalone_ffmpeg(root, manifest.get("ffmpeg"))
     _validate_pyav_ffmpeg(root, manifest.get("pyav_ffmpeg"))
 
     components = manifest.get("python_components")
@@ -210,8 +197,7 @@ def _validate_licenses(root: Path) -> None:
             raise RuntimeError("runtime license manifest contains a malformed Python component entry")
         name = str(component.get("name") or "unknown")
         license_files = component.get("license_files") or []
-        declaration = component.get("license_declared")
-        if not declaration and not license_files:
+        if not component.get("license_declared") and not license_files:
             raise RuntimeError(f"no license metadata or license file was found for bundled Python component: {name}")
         if not isinstance(license_files, list):
             raise RuntimeError(f"license_files is malformed for bundled Python component: {name}")
@@ -225,9 +211,8 @@ def validate(root: Path) -> None:
     root = root.resolve()
     if not root.is_dir():
         raise RuntimeError(f"runtime directory does not exist: {root}")
-    versions = root / "RUNTIME-VERSIONS.txt"
-    if not versions.is_file():
-        raise RuntimeError(f"runtime provenance file is missing: {versions}")
+    if not (root / "RUNTIME-VERSIONS.txt").is_file():
+        raise RuntimeError(f"runtime provenance file is missing: {root / 'RUNTIME-VERSIONS.txt'}")
     _validate_licenses(root)
     with tempfile.TemporaryDirectory(prefix="scriptotar-runtime-smoke-") as model_cache:
         env = _runtime_env(root)
