@@ -1,0 +1,125 @@
+name: Weekly Real Whisper Canary
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+  # Branch-only verification trigger. Removed after the first real canary run is proven.
+  push:
+    branches:
+      - test/whisper-runtime-canary
+    paths:
+      - '.github/workflows/whisper-runtime-canary.yml'
+      - 'sidecars/transcription/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-real-whisper-canary
+  cancel-in-progress: false
+
+jobs:
+  real-whisper-canary:
+    name: Build runtime and run real Whisper inference
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      CANARY_MODEL: small
+      CANARY_RUNTIME: ${{ runner.temp }}/scriptotar-transcription-runtime
+      CANARY_WORK: ${{ runner.temp }}/whisper-canary-work
+      CANARY_SUMMARY: ${{ runner.temp }}/whisper-canary-summary.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            sidecars/transcription/requirements-engine.txt
+            sidecars/transcription/requirements-bundle.txt
+
+      - name: Install deterministic speech fixture generator
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends espeak-ng
+
+      - name: Install pinned packaged-runtime dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
+          python -m pip check
+
+      - name: Build self-contained transcription runtime
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/build_runtime.py --output "$CANARY_RUNTIME"
+
+      - name: Validate packaged runtime before real inference
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/validate_runtime.py "$CANARY_RUNTIME"
+
+      - name: Download model and run real packaged inference twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          python sidecars/transcription/whisper_runtime_canary.py \
+            --runtime "$CANARY_RUNTIME" \
+            --work-dir "$CANARY_WORK" \
+            --model "$CANARY_MODEL" \
+            --timeout-seconds 1200 \
+            --summary-json "$CANARY_SUMMARY" \
+            2>&1 | tee whisper-canary.log
+
+      - name: Publish canary proof summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          summary_path = Path(os.environ["CANARY_SUMMARY"])
+          output = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          lines = ["## Weekly real Whisper canary", ""]
+          if not summary_path.is_file():
+              lines.extend([
+                  "The canary did not reach the inference summary stage.",
+                  "Inspect the failed build/runtime step and attached log artifact if present.",
+              ])
+          else:
+              data = json.loads(summary_path.read_text(encoding="utf-8"))
+              lines.append(f"- Status: **{data.get('status', 'unknown')}**")
+              lines.append(f"- Model: `{data.get('model', 'unknown')}`")
+              if data.get("status") == "passed":
+                  lines.append(f"- Fixture duration: {data.get('fixture_duration_seconds')} s")
+                  lines.append(f"- First download + inference: {data.get('download_and_first_inference_seconds')} s")
+                  lines.append(f"- Offline cached inference: {data.get('offline_cached_inference_seconds')} s")
+                  lines.append(f"- Canary runtime: {data.get('total_seconds')} s")
+                  lines.append(f"- Cache: `{data.get('cache')}`")
+                  lines.append(f"- Cache size: {data.get('cache_bytes')} bytes across {data.get('cache_files')} files")
+                  lines.append(f"- First transcript: `{data.get('first_transcript', '')}`")
+                  lines.append(f"- Offline transcript: `{data.get('offline_transcript', '')}`")
+                  lines.append("- Proof: " + ", ".join(data.get("proof", [])))
+              else:
+                  lines.append(f"- Failure class: `{data.get('failure_kind', 'unknown')}`")
+                  lines.append(f"- Error: `{str(data.get('error', 'unknown'))[:1500]}`")
+          output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Upload canary diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-runtime-canary-diagnostics
+          path: |
+            whisper-canary.log
+            ${{ runner.temp }}/whisper-canary-summary.json
+            ${{ runner.temp }}/scriptotar-transcription-runtime/RUNTIME-VERSIONS.txt
+          if-no-files-found: warn
+          retention-days: 14
