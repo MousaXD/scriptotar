@@ -915,6 +915,7 @@ fn stage_label(state: JobState) -> String {
     }
     .to_owned()
 }
+
 fn transcript_to_ui(bundle: &TranscriptBundle) -> UiTranscript {
     let language = bundle
         .transcript
@@ -1224,6 +1225,7 @@ mod tests {
         assert!(prompt.contains("copyrighted wording"));
         assert!(prompt.contains("clean Markdown"));
     }
+
     #[test]
     fn supported_ai_actions_have_task_specific_instructions() {
         for task in [
@@ -1343,7 +1345,10 @@ mod tests {
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            bootstrap_active_id(&restarted.bootstrap().unwrap()),
+            inbox_id
+        );
         assert_eq!(
             restarted.store.load_settings().unwrap().active_project_id,
             Some(inbox_id)
@@ -1377,7 +1382,10 @@ mod tests {
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            bootstrap_active_id(&restarted.bootstrap().unwrap()),
+            inbox_id
+        );
         assert_eq!(
             restarted.store.load_settings().unwrap().active_project_id,
             Some(inbox_id)
@@ -1401,10 +1409,10 @@ mod tests {
             )
             .unwrap();
         let mut value: Value = serde_json::from_str(&raw).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert("active_project_id".to_owned(), Value::String("broken-id".to_owned()));
+        value.as_object_mut().unwrap().insert(
+            "active_project_id".to_owned(),
+            Value::String("broken-id".to_owned()),
+        );
         connection
             .execute(
                 "UPDATE application_settings SET settings_json = ?1 WHERE singleton = 1",
@@ -1414,7 +1422,10 @@ mod tests {
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(
+            bootstrap_active_id(&restarted.bootstrap().unwrap()),
+            inbox_id
+        );
         assert_eq!(
             restarted.store.load_settings().unwrap().active_project_id,
             Some(inbox_id)
