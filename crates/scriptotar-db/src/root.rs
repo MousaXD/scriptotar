@@ -6,6 +6,6 @@ mod integration;
 pub use integration::*;
 
 mod ai_research;
-mod watchlists;
 mod operational_status;
+mod watchlists;
 pub use operational_status::*;
