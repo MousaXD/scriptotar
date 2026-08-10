@@ -54,19 +54,19 @@ jobs:
           path = Path('apps/desktop/src-tauri/src/lib.rs')
           text = path.read_text()
           old = '''            let preparation = if let Some(status) = completed_status_if_marked(&data_dir) {
-                              if status.state == "completed" {
-                                  None
-                              } else {
-                                  None
-                              }
-                          } else {
-                              Some(migration::prepare_startup(&data_dir))
-                          };'''
+                if status.state == "completed" {
+                    None
+                } else {
+                    None
+                }
+            } else {
+                Some(migration::prepare_startup(&data_dir))
+            };'''
           new = '''            let preparation = if completed_status_if_marked(&data_dir).is_some() {
-                              None
-                          } else {
-                              Some(migration::prepare_startup(&data_dir))
-                          };'''
+                None
+            } else {
+                Some(migration::prepare_startup(&data_dir))
+            };'''
           if old in text:
               path.write_text(text.replace(old, new, 1))
           elif new not in text:
