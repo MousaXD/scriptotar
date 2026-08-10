@@ -19,10 +19,23 @@
     completed: 'Completed',
     no_legacy_db: 'No legacy database found',
     ready: 'Ready to import',
+    in_progress: 'Importing',
     requires_choice: 'Choice required',
     invalid_db: 'Invalid legacy database',
     failed: 'Migration failed'
   };
+
+  const progressStatus = (): MigrationStatus => ({
+    state: 'in_progress',
+    message: 'Scriptotar is importing the prepared legacy snapshot. The source database remains untouched.',
+    candidates: []
+  });
+
+  const failedStatus = (): MigrationStatus => ({
+    state: 'failed',
+    message: 'The migration request could not be completed. The legacy source database was not modified; retry when the local error is resolved.',
+    candidates: []
+  });
 
   async function save() {
     if (busy) return;
@@ -68,10 +81,14 @@
   async function retryMigration() {
     if (migrationBusy) return;
     migrationBusy = true;
+    migrationStatus = progressStatus();
     try {
       const next = await api.retryLegacyMigration();
       migrationStatus = next;
       await onMigrationStatus(next);
+    } catch {
+      migrationStatus = failedStatus();
+      await onMigrationStatus(migrationStatus);
     } finally {
       migrationBusy = false;
     }
@@ -80,10 +97,14 @@
   async function chooseMigrationCandidate(candidateId: string) {
     if (migrationBusy) return;
     migrationBusy = true;
+    migrationStatus = progressStatus();
     try {
       const next = await api.selectLegacyMigrationCandidate(candidateId);
       migrationStatus = next;
       await onMigrationStatus(next);
+    } catch {
+      migrationStatus = failedStatus();
+      await onMigrationStatus(migrationStatus);
     } finally {
       migrationBusy = false;
     }
@@ -107,7 +128,7 @@
 
   <section class="panel settings-section migration-section">
     <div><span class="eyebrow">Legacy migration</span><h2>Import Scriptotar Classic data</h2><p>Discovery uses a read-only, WAL-aware SQLite snapshot. Source databases are never selected by raw frontend paths and are not overwritten.</p></div>
-    <div class="migration-status" data-testid="migration-status">
+    <div class="migration-status" data-testid="migration-status" data-state={migrationStatus.state} aria-live="polite">
       <div class="migration-heading"><strong>{migrationLabel[migrationStatus.state]}</strong><span class={`migration-pill migration-${migrationStatus.state}`}>{migrationStatus.state.replaceAll('_', ' ')}</span></div>
       <p>{migrationStatus.message}</p>
       {#if migrationStatus.state === 'completed' && migrationStatus.report}
@@ -119,7 +140,7 @@
             <button class="button secondary" disabled={migrationBusy} on:click={() => chooseMigrationCandidate(candidate.id)}>{candidate.label}</button>
           {/each}
         </div>
-      {:else if migrationStatus.state !== 'completed'}
+      {:else if migrationStatus.state !== 'completed' && migrationStatus.state !== 'in_progress'}
         <button class="button secondary" disabled={migrationBusy} on:click={retryMigration}>{migrationBusy ? 'Checking…' : migrationStatus.state === 'ready' ? 'Import prepared snapshot' : 'Retry migration discovery'}</button>
       {/if}
     </div>
@@ -143,7 +164,7 @@
   .migration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .migration-pill { padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
   .migration-failed, .migration-invalid_db { color: var(--danger, #ff8c8c); }
-  .migration-requires_choice, .migration-ready { color: var(--accent); }
+  .migration-requires_choice, .migration-ready, .migration-in_progress { color: var(--accent); }
   .migration-status p { margin: 0; color: var(--muted); line-height: 1.5; }
   .migration-counts { color: var(--text) !important; }
   .migration-candidates { display: flex; flex-wrap: wrap; gap: 8px; }
