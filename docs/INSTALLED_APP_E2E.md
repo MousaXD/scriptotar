@@ -39,4 +39,11 @@ This layered design keeps the installed-package gate deterministic on Linux whil
 
 ## Windows
 
-The installed functional E2E currently runs on Linux. Windows continues to have its existing package/install/startup validation. Extending the deterministic engine wrapper and installed-runtime functional test to Windows is intentionally separate so the Linux proof does not depend on platform-specific shell glue.
+The installed functional transcription E2E currently runs on Linux. Windows retains a strict installed-package smoke with two independent checks:
+
+1. the normally installed GUI executable must launch and remain alive during its startup window;
+2. the same installed executable is invoked with the CI-only `--scriptotar-installed-backend-smoke` flag against a clean `SCRIPTOTAR_DATA_DIR`; that path constructs the real `AppServices`, runs database migrations/recovery, creates the default project when needed, exercises bootstrap, exits successfully, and must leave `scriptotar.sqlite3` behind.
+
+The Windows job then validates the packaged transcription runtime from the installed directory and requires a successful NSIS uninstall. Separating GUI liveness from backend initialization avoids making SQLite proof depend on WebView initialization in a headless Windows runner while preserving both assertions.
+
+Extending the deterministic transcription engine wrapper and full installed-runtime functional round trip to Windows is intentionally separate so the Linux proof does not depend on platform-specific shell glue.
