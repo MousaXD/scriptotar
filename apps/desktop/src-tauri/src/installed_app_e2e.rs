@@ -16,13 +16,13 @@ use tauri::{
 };
 use tempfile::TempDir;
 
+use super::AppServices;
 use crate::{
     __cmd__bootstrap_app, __cmd__create_project, __cmd__enqueue_local_media, __cmd__list_jobs,
-    __cmd__select_project, __tauri_command_name_bootstrap_app,
-    __tauri_command_name_create_project, __tauri_command_name_enqueue_local_media,
-    __tauri_command_name_list_jobs, __tauri_command_name_select_project,
+    __cmd__select_project, __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
+    __tauri_command_name_enqueue_local_media, __tauri_command_name_list_jobs,
+    __tauri_command_name_select_project,
 };
-use super::AppServices;
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
 const E2E_TIMEOUT: Duration = Duration::from_secs(15);
