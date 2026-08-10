@@ -8,9 +8,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from runtime_licenses import write_runtime_legal_bundle
 from static_ffmpeg import run as static_ffmpeg_run
 
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parents[1]
 
 
 def _run_pyinstaller(args: list[str]) -> None:
@@ -139,6 +141,11 @@ def build(output: Path) -> None:
         "yt-dlp=2026.7.4 (dedicated scriptotar-ytdlp executable)\n"
     )
     (output / "RUNTIME-VERSIONS.txt").write_text(versions, encoding="utf-8")
+
+    # Generate this last so a runtime cannot be considered package-ready unless
+    # its exact Python dependency closure, Python license and FFmpeg build flags
+    # have been inspected and the required legal files copied into the bundle.
+    write_runtime_legal_bundle(output, ffmpeg_source, REPO_ROOT)
 
 
 def main() -> int:
