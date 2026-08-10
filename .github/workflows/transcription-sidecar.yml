@@ -69,9 +69,6 @@ jobs:
     timeout-minutes: 60
     env:
       CANARY_MODEL: small
-      CANARY_RUNTIME: ${{ runner.temp }}/scriptotar-transcription-runtime
-      CANARY_WORK: ${{ runner.temp }}/whisper-canary-work
-      CANARY_SUMMARY: ${{ runner.temp }}/whisper-canary-summary.json
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -94,21 +91,23 @@ jobs:
       - name: Build self-contained transcription runtime
         run: |
           set -euo pipefail
-          python sidecars/transcription/build_runtime.py --output "$CANARY_RUNTIME"
+          python sidecars/transcription/build_runtime.py \
+            --output "$RUNNER_TEMP/scriptotar-transcription-runtime"
       - name: Validate packaged runtime before real inference
         run: |
           set -euo pipefail
-          python sidecars/transcription/validate_runtime.py "$CANARY_RUNTIME"
+          python sidecars/transcription/validate_runtime.py \
+            "$RUNNER_TEMP/scriptotar-transcription-runtime"
       - name: Download model and run real packaged inference twice
         shell: bash
         run: |
           set -euo pipefail
           python sidecars/transcription/whisper_runtime_canary.py \
-            --runtime "$CANARY_RUNTIME" \
-            --work-dir "$CANARY_WORK" \
+            --runtime "$RUNNER_TEMP/scriptotar-transcription-runtime" \
+            --work-dir "$RUNNER_TEMP/whisper-canary-work" \
             --model "$CANARY_MODEL" \
             --timeout-seconds 1200 \
-            --summary-json "$CANARY_SUMMARY" \
+            --summary-json "$RUNNER_TEMP/whisper-canary-summary.json" \
             2>&1 | tee whisper-canary.log
       - name: Upload canary diagnostics
         if: always()
