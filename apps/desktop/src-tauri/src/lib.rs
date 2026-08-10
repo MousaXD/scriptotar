@@ -305,6 +305,24 @@ fn native_picker(_kind: NativePicker) -> Result<Option<String>, String> {
     Err("native file picking is not available on this platform".to_owned())
 }
 
+#[doc(hidden)]
+pub fn run_installed_backend_smoke() -> Result<(), String> {
+    let data_dir = env::var_os("SCRIPTOTAR_DATA_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| "SCRIPTOTAR_DATA_DIR is required for installed backend smoke".to_owned())?;
+
+    match security::prepare_legacy_import_bridge(&data_dir) {
+        Ok(Some(message)) => eprintln!("[scriptotar-migration] {message}"),
+        Ok(None) => {}
+        Err(error) => eprintln!("[scriptotar-migration] {error}"),
+    }
+
+    let services = AppServices::new(&data_dir).map_err(command_error)?;
+    services.schema_version().map_err(command_error)?;
+    services.bootstrap().map_err(command_error)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
