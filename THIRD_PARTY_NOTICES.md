@@ -23,7 +23,7 @@ When this document and the generated manifest disagree, treat the discrepancy as
 
 - **Scriptotar Rust crates** are Apache-2.0 and are compiled into the desktop executable.
 - **Tauri 2** and its Rust runtime are compiled/linked into the desktop application. Upstream Tauri declares `Apache-2.0 OR MIT`. Exact dependency versions are locked by `Cargo.lock`.
-- **rusqlite** is built with its `bundled` feature in this repository, so the desktop application uses a bundled SQLite build rather than relying on a system SQLite installation. Exact Rust dependency identity is recorded in `Cargo.lock`.
+- **rusqlite** and **libsqlite3-sys** are MIT-licensed upstream. This repository enables rusqlite's `bundled` feature, which compiles SQLite into the application instead of relying on a system SQLite library. The core SQLite code delivered this way is dedicated to the public domain by the SQLite project. Exact Rust dependency identity is recorded in `Cargo.lock`.
 
 The Rust toolchain and Tauri CLI used by CI are build tools; their command-line programs are not copied into the installer.
 
@@ -114,5 +114,7 @@ Scriptotar Classic remains a separate Python/Tkinter application in this reposit
 - curl-cffi: https://github.com/lexiforest/curl_cffi
 - Hugging Face Hub: https://github.com/huggingface/huggingface_hub
 - tokenizers: https://github.com/huggingface/tokenizers
+- rusqlite: https://github.com/rusqlite/rusqlite
+- SQLite: https://www.sqlite.org/copyright.html
 - Tauri: https://github.com/tauri-apps/tauri
 - Svelte: https://github.com/sveltejs/svelte
