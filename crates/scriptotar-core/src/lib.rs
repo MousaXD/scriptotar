@@ -1,7 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -300,6 +300,8 @@ pub struct ApplicationSettings {
     pub watch_interval_minutes: u32,
     #[serde(default = "default_appearance")]
     pub appearance: String,
+    #[serde(default, deserialize_with = "deserialize_optional_uuid_lenient")]
+    pub active_project_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -311,6 +313,17 @@ pub enum AiMode {
 
 fn default_appearance() -> String {
     "dark".to_owned()
+}
+
+fn deserialize_optional_uuid_lenient<'de, D>(deserializer: D) -> Result<Option<Uuid>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(match value {
+        serde_json::Value::String(raw) => Uuid::parse_str(raw.trim()).ok(),
+        _ => None,
+    })
 }
 
 impl Default for ApplicationSettings {
@@ -334,6 +347,7 @@ impl Default for ApplicationSettings {
             auto_watch: false,
             watch_interval_minutes: 60,
             appearance: default_appearance(),
+            active_project_id: None,
         }
     }
 }
@@ -430,5 +444,42 @@ mod tests {
         value.as_object_mut().unwrap().remove("appearance");
         let settings: ApplicationSettings = serde_json::from_value(value).unwrap();
         assert_eq!(settings.appearance, "dark");
+    }
+
+    #[test]
+    fn legacy_settings_json_defaults_active_project() {
+        let mut value = serde_json::to_value(ApplicationSettings::default()).unwrap();
+        value.as_object_mut().unwrap().remove("active_project_id");
+        let settings: ApplicationSettings = serde_json::from_value(value).unwrap();
+        assert_eq!(settings.active_project_id, None);
+    }
+
+    #[test]
+    fn malformed_active_project_id_is_treated_as_unset() {
+        for malformed in [
+            serde_json::Value::String("not-a-uuid".to_owned()),
+            serde_json::json!({"unexpected": "shape"}),
+            serde_json::json!(42),
+        ] {
+            let mut value = serde_json::to_value(ApplicationSettings::default()).unwrap();
+            value
+                .as_object_mut()
+                .unwrap()
+                .insert("active_project_id".to_owned(), malformed);
+            let settings: ApplicationSettings = serde_json::from_value(value).unwrap();
+            assert_eq!(settings.active_project_id, None);
+        }
+    }
+
+    #[test]
+    fn active_project_id_round_trips_when_valid() {
+        let project_id = Uuid::new_v4();
+        let settings = ApplicationSettings {
+            active_project_id: Some(project_id),
+            ..ApplicationSettings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let restored: ApplicationSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.active_project_id, Some(project_id));
     }
 }
