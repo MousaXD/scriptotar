@@ -7,7 +7,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -20,7 +20,7 @@ use scriptotar_core::{
     RepositoryResult, ResearchItem, ResearchRepository, SettingsRepository, SourceType,
     TranscriptBundle, Watchlist, WatchlistRepository,
 };
-use scriptotar_db::SqliteStore;
+use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
@@ -37,6 +37,7 @@ const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
 const MAX_AI_CONTEXT_CHARS: usize = 20_000;
 const WATCHLIST_TICK: Duration = Duration::from_secs(60);
+const MAX_PERSISTED_RETRY_DELAY: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone)]
 struct WatchlistRefresher {
@@ -76,12 +77,10 @@ impl AppServices {
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
         store.run_integration_migrations()?;
+        store.recover_interrupted_watchlist_refreshes()?;
         JobService::new(store.clone()).recover_after_unclean_shutdown()?;
 
         let legacy_path = data_dir.join("history.sqlite3");
-        if legacy_path.is_file() {
-            store.import_legacy_database(&legacy_path)?;
-        }
 
         let mut projects = store.list_projects()?;
         if projects.is_empty() {
@@ -258,15 +257,63 @@ impl AppServices {
             .store
             .load_settings()
             .map_err(|error| error.to_string())?;
-        scan_and_persist_research(
+        let validated = NetworkPolicy
+            .validate(&query.profile_url)
+            .map_err(|error| error.to_string())?;
+        let canonical_url = validated.as_url().to_string();
+        let watchlist = self
+            .store
+            .list_watchlists(Some(active_project))
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|watchlist| watchlist.profile_url == canonical_url);
+        let attempted_at = now_rfc3339();
+        if let Some(watchlist) = &watchlist {
+            let claimed = self
+                .store
+                .try_begin_watchlist_refresh(watchlist.id, &attempted_at)
+                .map_err(|error| error.to_string())?;
+            if !claimed {
+                return Err(
+                    "A refresh for this saved watchlist is already running. Try again after it finishes."
+                        .to_owned(),
+                );
+            }
+        }
+        let result = scan_and_persist_research(
             &self.store,
             &self.research_command,
             active_project,
-            &query.profile_url,
+            &canonical_url,
             query.limit,
             settings.cookie_browser.as_deref(),
-        )?;
-        Ok(())
+        );
+        match result {
+            Ok(_) => {
+                if let Some(watchlist) = watchlist {
+                    self.store
+                        .record_watchlist_refresh_success(watchlist.id, &now_rfc3339())
+                        .map_err(|error| error.to_string())?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                let safe_error = safe_watchlist_error(&error);
+                if let Some(watchlist) = watchlist {
+                    if let Err(status_error) = self.store.record_watchlist_refresh_failure(
+                        watchlist.id,
+                        &attempted_at,
+                        &safe_error,
+                        None,
+                    ) {
+                        eprintln!(
+                            "[scriptotar-watchlist] could not persist manual refresh failure: {status_error}"
+                        );
+                    }
+                }
+                Err(safe_error)
+            }
+        }
     }
 
     pub fn queue_research(&self, ids: Vec<String>) -> Result<(), String> {
@@ -620,52 +667,150 @@ fn scan_and_persist_research(
     Ok(persisted.len())
 }
 
+fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
+    let retry_at = DateTime::parse_from_rfc3339(value)
+        .ok()?
+        .with_timezone(&Utc);
+    let remaining = retry_at.signed_duration_since(now).to_std().ok()?;
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining.min(MAX_PERSISTED_RETRY_DELAY))
+    }
+}
+
+fn safe_watchlist_error(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("cookie")
+        || lower.contains("login")
+        || lower.contains("auth")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("401")
+        || lower.contains("403")
+    {
+        "Creator refresh needs valid browser authentication or provider access.".to_owned()
+    } else if lower.contains("timeout")
+        || lower.contains("network")
+        || lower.contains("connection")
+        || lower.contains("dns")
+    {
+        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff."
+            .to_owned()
+    } else if lower.contains("yt-dlp") || lower.contains("executable") || lower.contains("spawn") {
+        "The local research runtime could not start. Repair the packaged runtime before retrying."
+            .to_owned()
+    } else if lower.contains("unsupported") || lower.contains("invalid") {
+        "The creator profile could not be scanned because the provider rejected or does not support it."
+            .to_owned()
+    } else {
+        "Creator refresh failed. Open Research and run a manual scan for more detail.".to_owned()
+    }
+}
+
 fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
     let (stop, receiver) = mpsc::channel();
-    let handle = thread::spawn(move || {
-        let mut failed_until = HashMap::<Uuid, Instant>::new();
-        loop {
-            match receiver.recv_timeout(WATCHLIST_TICK) {
-                Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) => {}
-            }
-            let Ok(settings) = store.load_settings() else {
-                continue;
-            };
-            if !settings.auto_watch {
+    let handle = thread::spawn(move || loop {
+        match receiver.recv_timeout(WATCHLIST_TICK) {
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        let settings = match store.load_settings() {
+            Ok(settings) => settings,
+            Err(error) => {
+                eprintln!("[scriptotar-watchlist] could not load refresh settings: {error}");
                 continue;
             }
-            let Ok(watchlists) = store.list_watchlists(None) else {
+        };
+        if !settings.auto_watch {
+            continue;
+        }
+        let watchlists = match store.list_watchlists(None) {
+            Ok(watchlists) => watchlists,
+            Err(error) => {
+                eprintln!("[scriptotar-watchlist] could not load watchlists: {error}");
                 continue;
-            };
-            for watchlist in watchlists {
-                if failed_until
-                    .get(&watchlist.id)
-                    .is_some_and(|retry_at| *retry_at > Instant::now())
-                {
+            }
+        };
+        let persisted = match store.list_watchlist_refresh_status(None) {
+            Ok(statuses) => statuses
+                .into_iter()
+                .map(|status| (status.watchlist_id, status))
+                .collect::<HashMap<_, _>>(),
+            Err(error) => {
+                eprintln!("[scriptotar-watchlist] could not load refresh status: {error}");
+                continue;
+            }
+        };
+        let now = Utc::now();
+        for watchlist in watchlists {
+            if persisted.get(&watchlist.id).is_some_and(|status| {
+                status.state == WatchlistRefreshState::RetryScheduled
+                    && status
+                        .next_retry_at
+                        .as_deref()
+                        .and_then(|retry_at| persisted_retry_delay(retry_at, now))
+                        .is_some()
+            }) {
+                continue;
+            }
+            if !watchlist_is_due(&watchlist, settings.watch_interval_minutes) {
+                continue;
+            }
+
+            let attempted_at = now_rfc3339();
+            match store.try_begin_watchlist_refresh(watchlist.id, &attempted_at) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    eprintln!(
+                        "[scriptotar-watchlist] could not claim refresh for {}: {error}",
+                        watchlist.id
+                    );
                     continue;
                 }
-                if !watchlist_is_due(&watchlist, settings.watch_interval_minutes) {
-                    continue;
-                }
-                match scan_and_persist_research(
-                    &store,
-                    &command,
-                    watchlist.project_id,
-                    &watchlist.profile_url,
-                    watchlist.limit_count.min(200) as u16,
-                    settings.cookie_browser.as_deref(),
-                ) {
-                    Ok(_) => {
-                        failed_until.remove(&watchlist.id);
-                    }
-                    Err(_) => {
-                        failed_until.insert(
-                            watchlist.id,
-                            Instant::now()
-                                + watchlist_failure_retry(settings.watch_interval_minutes),
+            }
+
+            match scan_and_persist_research(
+                &store,
+                &command,
+                watchlist.project_id,
+                &watchlist.profile_url,
+                watchlist.limit_count.min(200) as u16,
+                settings.cookie_browser.as_deref(),
+            ) {
+                Ok(_) => {
+                    if let Err(error) =
+                        store.record_watchlist_refresh_success(watchlist.id, &now_rfc3339())
+                    {
+                        eprintln!(
+                            "[scriptotar-watchlist] could not persist refresh success for {}: {error}",
+                            watchlist.id
                         );
                     }
+                }
+                Err(error) => {
+                    let retry = watchlist_failure_retry(settings.watch_interval_minutes);
+                    let retry_at = Utc::now()
+                        + chrono::Duration::from_std(retry)
+                            .unwrap_or_else(|_| chrono::Duration::hours(6));
+                    let retry_at = retry_at.to_rfc3339();
+                    let safe_error = safe_watchlist_error(&error);
+                    if let Err(status_error) = store.record_watchlist_refresh_failure(
+                        watchlist.id,
+                        &attempted_at,
+                        &safe_error,
+                        Some(&retry_at),
+                    ) {
+                        eprintln!(
+                            "[scriptotar-watchlist] could not persist refresh failure for {}: {status_error}",
+                            watchlist.id
+                        );
+                    }
+                    eprintln!(
+                        "[scriptotar-watchlist] refresh failed for {}: {safe_error}; retry scheduled for {retry_at}",
+                        watchlist.id
+                    );
                 }
             }
         }
@@ -1267,6 +1412,82 @@ mod tests {
         assert!(watchlist_is_due(&watchlist, 60));
         assert_eq!(watchlist_failure_retry(30), Duration::from_secs(30 * 60));
         assert_eq!(watchlist_failure_retry(0), Duration::from_secs(5 * 60));
+    }
+
+    #[test]
+    fn persisted_retry_timestamps_handle_clock_changes_safely() {
+        let now = DateTime::parse_from_rfc3339("2026-08-10T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(persisted_retry_delay("2026-08-10T09:59:59Z", now).is_none());
+        assert!(persisted_retry_delay("not-a-time", now).is_none());
+        assert_eq!(
+            persisted_retry_delay("2036-08-10T10:00:00Z", now),
+            Some(MAX_PERSISTED_RETRY_DELAY)
+        );
+        assert_eq!(
+            persisted_retry_delay("2026-08-10T10:05:00Z", now),
+            Some(Duration::from_secs(5 * 60))
+        );
+    }
+
+    #[test]
+    fn watchlist_provider_errors_are_safe_for_persistent_and_displayable_status() {
+        let raw_errors = [
+            "ERROR 403 cookie=/home/user/.mozilla/profile token=super-secret",
+            "Authorization: Bearer super-secret https://provider.invalid/?token=query-secret",
+            "<html><body>500 provider exploded</body></html> /home/user/private/db.sqlite3",
+            "Traceback (most recent call last): /home/user/app.py api_key=super-secret",
+        ];
+        for raw in raw_errors {
+            let safe = safe_watchlist_error(raw);
+            assert!(safe.len() < 180);
+            assert!(!safe.contains("super-secret"));
+            assert!(!safe.contains("query-secret"));
+            assert!(!safe.contains("/home/user"));
+            assert!(!safe.contains("<html>"));
+            assert!(!safe.contains("Traceback"));
+            assert!(!safe.contains("Bearer"));
+        }
+    }
+
+    #[test]
+    fn secret_like_provider_error_is_not_persisted_or_displayable() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let watchlist = store
+            .upsert_watchlist(
+                project.id,
+                "Creator",
+                "https://www.youtube.com/@creator",
+                25,
+            )
+            .unwrap();
+        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let safe = safe_watchlist_error(raw);
+        store
+            .record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None)
+            .unwrap();
+        let displayable = store
+            .watchlist_refresh_status(watchlist.id)
+            .unwrap()
+            .unwrap()
+            .last_error
+            .unwrap();
+        assert_eq!(displayable, safe);
+        for forbidden in [
+            "super-secret",
+            "query-secret",
+            "/home/user",
+            "<html>",
+            "Traceback",
+            "Bearer",
+        ] {
+            assert!(!displayable.contains(forbidden));
+        }
     }
 
     #[test]

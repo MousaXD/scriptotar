@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { getApi, type ScriptotarApi } from './api';
   import { applyAppearance, loadAppearance } from './appearance';
-  import type { AppSettings, BootstrapData, Job, LibraryItem, ViewId, WorkspaceSearchResult } from './types';
+  import type { AppSettings, BootstrapData, Job, LibraryItem, MigrationStatus, ViewId, WorkspaceSearchResult } from './types';
   import AppShell from './components/AppShell.svelte';
   import ErrorState from './components/ErrorState.svelte';
   import DashboardView from './views/DashboardView.svelte';
@@ -18,10 +18,12 @@
   let loading = true;
   let error = '';
   let switchError = '';
+  let operationalError = '';
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
   let selectedTranscriptId = '';
   let jobRefreshInFlight = false;
+  let operationalRefreshInFlight = false;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
@@ -82,6 +84,25 @@
       else data = { ...data, jobs };
     } finally {
       jobRefreshInFlight = false;
+    }
+  }
+
+  async function refreshOperationalStatus() {
+    if (!data || operationalRefreshInFlight) return;
+    operationalRefreshInFlight = true;
+    try {
+      const [watchlistStatuses, migrationStatus] = await Promise.all([
+        api.getWatchlistStatuses(),
+        api.getMigrationStatus()
+      ]);
+      if (data) data = { ...data, watchlistStatuses, migrationStatus };
+      operationalError = '';
+    } catch (cause) {
+      operationalError = cause instanceof Error
+        ? cause.message
+        : 'Could not refresh background operation status.';
+    } finally {
+      operationalRefreshInFlight = false;
     }
   }
 
@@ -152,9 +173,18 @@
     globalSearch = '';
   }
 
-  function settingsSaved(settings: AppSettings) {
+  async function settingsSaved(settings: AppSettings) {
     if (data) data = { ...data, settings: structuredClone(settings) };
     applyAppearance(settings.appearance);
+    await refreshOperationalStatus();
+  }
+
+  async function migrationStatusChanged(status: MigrationStatus) {
+    if (status.state === 'completed') {
+      await refresh();
+      return;
+    }
+    if (data) data = { ...data, migrationStatus: status };
   }
 
   function keyNav(event: KeyboardEvent) {
@@ -167,10 +197,14 @@
 
   onMount(() => {
     void load();
-    const poll = window.setInterval(() => {
+    const jobPoll = window.setInterval(() => {
       if (data?.jobs.some((job) => activeStates.has(job.state))) void refreshJobs();
     }, 1000);
-    return () => window.clearInterval(poll);
+    const operationalPoll = window.setInterval(() => void refreshOperationalStatus(), 15000);
+    return () => {
+      window.clearInterval(jobPoll);
+      window.clearInterval(operationalPoll);
+    };
   });
 </script>
 <svelte:window onkeydown={keyNav} />
@@ -184,10 +218,13 @@
     {#if switchError}
       <ErrorState title="Could not switch projects" message={switchError} />
     {/if}
+    {#if operationalError}
+      <ErrorState title="Background status unavailable" message={operationalError} onRetry={refreshOperationalStatus} />
+    {/if}
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
     {:else if activeView === 'research'}
-      <ResearchView items={data.research} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
+      <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
     {:else if activeView === 'jobs'}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
     {:else if activeView === 'transcript'}
@@ -197,7 +234,7 @@
     {:else if activeView === 'library'}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
     {:else if activeView === 'settings'}
-      <SettingsView settings={data.settings} {api} onSaved={settingsSaved} />
+      <SettingsView settings={data.settings} migrationStatus={data.migrationStatus} {api} onSaved={settingsSaved} onMigrationStatus={migrationStatusChanged} />
     {/if}
   </AppShell>
 {/if}
