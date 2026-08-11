@@ -8,12 +8,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-from compliance_enrichment import write_compliance_enrichment
 from compliance_finalize import (
     finalize_compliance_bundle,
     prepare_frontend_bundle,
     validate_final_compliance,
 )
+from compliance_platform import write_compliance_enrichment
 from distribution_compliance import (
     fetch_pinned_static_ffmpeg,
     write_distribution_compliance_bundle,
