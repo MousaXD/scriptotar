@@ -9,7 +9,15 @@ The packaging workflows are artifact producers only:
 
 Neither packaging workflow may create or edit a GitHub Release, upload assets directly to a GitHub Release, grant `contents: write` for publishing, or move the rolling `tauri-next-latest` tag.
 
-`.github/workflows/tauri-next-release.yml` publishes the rolling `tauri-next-latest` prerelease only after proving the complete mandatory release suite for the exact `SOURCE_SHA` being published. The required push-workflow runs on `main` are:
+## Distribution approval gate
+
+Building and validating packages is intentionally separate from publicly publishing them. The `publish-preview` job runs only when the repository variable `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` is exactly `true`.
+
+If that variable is absent or has any other value, Windows and Linux package CI can still build and validate artifacts, but the rolling Scriptotar Next GitHub prerelease and `tauri-next-latest` tag are not mutated.
+
+Keep this approval disabled while a known distribution/compliance blocker remains unresolved. Enabling the variable is an explicit repository-maintainer decision and does not bypass any of the technical gates below.
+
+`.github/workflows/tauri-next-release.yml` publishes the rolling `tauri-next-latest` prerelease only after distribution approval is enabled and the workflow proves the complete mandatory release suite for the exact `SOURCE_SHA` being published. The required push-workflow runs on `main` are:
 
 - `Tauri migration integration` (`integration.yml`), including Rust workspace, Svelte frontend, Python sidecar, Rust ↔ sidecar integration, supply-chain, and integrated Tauri build jobs;
 - `Security hygiene` (`security-hygiene.yml`), including the repository-hygiene job;
