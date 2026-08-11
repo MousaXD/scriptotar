@@ -20,6 +20,10 @@ describe('Tauri client command contract', () => {
     const api = createTauriClient(invokeMock as unknown as TauriInvoke);
 
     await api.bootstrap();
+    await api.getWatchlistStatuses();
+    await api.getMigrationStatus();
+    await api.retryLegacyMigration();
+    await api.selectLegacyMigrationCandidate('candidate-1');
     await api.selectProject('project-id');
     await api.createProject('Client A');
     await api.chooseLocalMedia();
@@ -50,26 +54,43 @@ describe('Tauri client command contract', () => {
       watchInterval: '60 min',
       appearance: 'dark'
     });
-    await api.importLegacyData();
     await api.listJobs();
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, 'bootstrap_app');
-    expect(invokeMock).toHaveBeenNthCalledWith(2, 'select_project', { projectId: 'project-id' });
-    expect(invokeMock).toHaveBeenNthCalledWith(3, 'create_project', { name: 'Client A' });
-    expect(invokeMock).toHaveBeenNthCalledWith(4, 'choose_local_media');
-    expect(invokeMock).toHaveBeenNthCalledWith(5, 'choose_output_directory');
-    expect(invokeMock).toHaveBeenNthCalledWith(6, 'enqueue_local_media', { projectId: 'project-id', path: '/tmp/a.mp4' });
-    expect(invokeMock).toHaveBeenNthCalledWith(7, 'enqueue_url', { projectId: 'project-id', url: 'https://www.youtube.com/watch?v=fixture' });
-    expect(invokeMock).toHaveBeenNthCalledWith(8, 'retry_job', { jobId: 'job-id' });
-    expect(invokeMock).toHaveBeenNthCalledWith(9, 'save_watchlist', { query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 } });
-    expect(invokeMock).toHaveBeenNthCalledWith(10, 'scan_creator', { query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 } });
-    expect(invokeMock).toHaveBeenNthCalledWith(11, 'queue_research', { ids: ['research-id'] });
-    expect(invokeMock).toHaveBeenNthCalledWith(12, 'cancel_job', { jobId: 'job-id' });
-    expect(invokeMock).toHaveBeenNthCalledWith(13, 'build_ai_prompt', { input: aiInput });
-    expect(invokeMock).toHaveBeenNthCalledWith(14, 'run_ai', { input: aiInput });
-    expect(invokeMock).toHaveBeenNthCalledWith(15, 'get_settings');
-    expect(invokeMock).toHaveBeenNthCalledWith(16, 'save_settings', { settings: expect.objectContaining({ whisperModel: 'medium', outputDirectory: null }) });
-    expect(invokeMock).toHaveBeenNthCalledWith(17, 'import_legacy_data');
-    expect(invokeMock).toHaveBeenNthCalledWith(18, 'list_jobs');
+    expect(invokeMock).toHaveBeenCalledWith('bootstrap_app');
+    expect(invokeMock).toHaveBeenCalledWith('get_watchlist_statuses');
+    expect(invokeMock).toHaveBeenCalledWith('get_migration_status');
+    expect(invokeMock).toHaveBeenCalledWith('retry_legacy_migration');
+    expect(invokeMock).toHaveBeenCalledWith('select_legacy_migration_candidate', {
+      candidateId: 'candidate-1'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('select_project', { projectId: 'project-id' });
+    expect(invokeMock).toHaveBeenCalledWith('create_project', { name: 'Client A' });
+    expect(invokeMock).toHaveBeenCalledWith('choose_local_media');
+    expect(invokeMock).toHaveBeenCalledWith('choose_output_directory');
+    expect(invokeMock).toHaveBeenCalledWith('enqueue_local_media', {
+      projectId: 'project-id',
+      path: '/tmp/a.mp4'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
+      projectId: 'project-id',
+      url: 'https://www.youtube.com/watch?v=fixture'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('retry_job', { jobId: 'job-id' });
+    expect(invokeMock).toHaveBeenCalledWith('save_watchlist', {
+      query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('scan_creator', {
+      query: { profileUrl: 'https://www.youtube.com/@fixture', limit: 25 }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('queue_research', { ids: ['research-id'] });
+    expect(invokeMock).toHaveBeenCalledWith('cancel_job', { jobId: 'job-id' });
+    expect(invokeMock).toHaveBeenCalledWith('build_ai_prompt', { input: aiInput });
+    expect(invokeMock).toHaveBeenCalledWith('run_ai', { input: aiInput });
+    expect(invokeMock).toHaveBeenCalledWith('get_settings');
+    expect(invokeMock).toHaveBeenCalledWith('save_settings', {
+      settings: expect.objectContaining({ whisperModel: 'medium', outputDirectory: null })
+    });
+    expect(invokeMock).toHaveBeenCalledWith('list_jobs');
+    expect(invokeMock).not.toHaveBeenCalledWith('import_legacy_data');
   });
 });

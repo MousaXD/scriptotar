@@ -13,6 +13,23 @@ export const mockBootstrap: BootstrapData = {
     { id: 'c-2', name: 'Frame Foundry', handle: '@framefoundry', platform: 'YouTube', watchlisted: true, lastScannedAt: '2 h ago' },
     { id: 'c-3', name: 'Maya Makes', handle: '@mayamakes', platform: 'Instagram', watchlisted: false, lastScannedAt: 'Yesterday' }
   ],
+  watchlistStatuses: [
+    {
+      watchlistId: 'w-1', projectId: 'p-creator-lab', label: 'Nora Edits', state: 'healthy',
+      lastAttemptAt: '2026-08-09T08:10:00+04:00', lastSuccessfulScanAt: '2026-08-09T08:10:00+04:00'
+    },
+    {
+      watchlistId: 'w-2', projectId: 'p-creator-lab', label: 'Frame Foundry', state: 'retry_scheduled',
+      lastAttemptAt: '2026-08-09T08:15:00+04:00', lastSuccessfulScanAt: '2026-08-09T06:10:00+04:00',
+      lastError: 'Creator refresh needs valid browser authentication or provider access.',
+      nextRetryAt: '2026-08-09T09:15:00+04:00'
+    }
+  ],
+  migrationStatus: {
+    state: 'no_legacy_db',
+    message: 'No Scriptotar Classic database was found in the standard legacy locations.',
+    candidates: []
+  },
   research: [
     { id: 'r-1', creatorId: 'c-1', creator: 'Nora Edits', title: 'Three cuts that make a hook feel faster', sourceUrl: 'https://example.com/r/1', platform: 'TikTok', views: 2400000, likes: 184000, comments: 3400, publishedAt: '2026-08-07', durationSeconds: 38 },
     { id: 'r-2', creatorId: 'c-2', creator: 'Frame Foundry', title: 'Why this 17-second reveal keeps retention', sourceUrl: 'https://example.com/r/2', platform: 'YouTube', views: 918000, likes: 62000, comments: 1200, publishedAt: '2026-08-08', durationSeconds: 17 },
@@ -75,10 +92,20 @@ function backendJob(projectId: string, kind: 'url' | 'local_file', value: string
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
   let settings = structuredClone(mockBootstrap.settings);
-  const snapshot = (): BootstrapData => ({ ...structuredClone(mockBootstrap), activeProjectId: active, settings: structuredClone(settings) });
+  let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
+  const snapshot = (): BootstrapData => ({
+    ...structuredClone(mockBootstrap),
+    activeProjectId: active,
+    settings: structuredClone(settings),
+    migrationStatus: structuredClone(migrationStatus)
+  });
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
+    async getWatchlistStatuses() { return structuredClone(snapshot().watchlistStatuses); },
+    async getMigrationStatus() { return structuredClone(migrationStatus); },
+    async retryLegacyMigration() { return structuredClone(migrationStatus); },
+    async selectLegacyMigrationCandidate(_candidateId: string) { return structuredClone(migrationStatus); },
     async selectProject(projectId: string) { active = projectId; return snapshot(); },
     async createProject(_name: string) { return snapshot(); },
     async chooseLocalMedia() { return '/mock/selected-video.mp4'; },
@@ -96,18 +123,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
-    async importLegacyData() {
-      return {
-        skipped: false,
-        backup_path: '/mock/history.sqlite3.scriptotar-next.bak',
-        projects: 1,
-        jobs: 2,
-        transcripts: 1,
-        research_items: 3,
-        watchlists: 1,
-        ai_runs: 1
-      };
-    }
+
   };
   return { ...client, ...overrides };
 }

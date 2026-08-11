@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { ResearchItem } from '../types';
+  import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
   import EmptyState from '../components/EmptyState.svelte';
   export let items: ResearchItem[];
+  export let watchlistStatuses: WatchlistStatus[] = [];
   export let onQueue: (ids: string[]) => Promise<void> | void;
   export let onScan: (url: string, limit: number) => Promise<void> | void;
   export let onSave: (url: string, limit: number) => Promise<void> | void;
@@ -16,6 +17,14 @@
   let saving = false;
   let status = '';
 
+  const stateLabel: Record<WatchlistOperationalState, string> = {
+    healthy: 'Healthy',
+    never_scanned: 'Never scanned',
+    refreshing: 'Refreshing',
+    retry_scheduled: 'Retry scheduled',
+    failed: 'Failed'
+  };
+
   $: filtered = items
     .filter((item) => platform === 'All' || item.platform === platform)
     .filter((item) => `${item.creator} ${item.title}`.toLowerCase().includes(query.toLowerCase()))
@@ -23,6 +32,12 @@
       if (sort === 'date') return (b.publishedAt || '').localeCompare(a.publishedAt || '');
       return (b[sort] || 0) - (a[sort] || 0);
     });
+
+  function displayTime(value?: string) {
+    if (!value) return '—';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  }
 
   function toggle(id: string) {
     selected = new Set(selected);
@@ -58,6 +73,40 @@
   <button class="button secondary" disabled={saving || !profileUrl.trim()} on:click={save}>{saving ? 'Saving…' : 'Save watchlist'}</button>
 </section>
 {#if status}<p class="status-copy" role="status">{status}</p>{/if}
+
+<section class="panel watch-health" aria-labelledby="watch-health-title">
+  <div class="watch-health-head">
+    <div><span class="eyebrow">Background refresh</span><h2 id="watch-health-title">Watchlist health</h2></div>
+    <small>Failures and retry timing are stored locally, including across restarts.</small>
+  </div>
+  {#if watchlistStatuses.length === 0}
+    <p class="watch-empty">No saved watchlists in this project yet.</p>
+  {:else}
+    <div class="watch-health-grid">
+      {#each watchlistStatuses as watchlist (watchlist.watchlistId)}
+        <article class={`watch-health-card state-${watchlist.state}`} data-testid={`watchlist-status-${watchlist.watchlistId}`}>
+          <div class="watch-health-title-row">
+            <strong>{watchlist.label}</strong>
+            <span class="watch-state">{stateLabel[watchlist.state]}</span>
+          </div>
+          <dl>
+            <div><dt>Last attempt</dt><dd>{displayTime(watchlist.lastAttemptAt)}</dd></div>
+            <div><dt>Last success</dt><dd>{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
+            {#if watchlist.nextRetryAt}<div><dt>Next retry</dt><dd>{displayTime(watchlist.nextRetryAt)}</dd></div>{/if}
+          </dl>
+          {#if watchlist.lastError}
+            <p class="watch-error">{watchlist.lastError}</p>
+          {:else if watchlist.state === 'never_scanned'}
+            <p class="watch-note">This creator has not completed a watchlist scan yet.</p>
+          {:else if watchlist.state === 'refreshing'}
+            <p class="watch-note">A background creator scan is currently running.</p>
+          {/if}
+        </article>
+      {/each}
+    </div>
+  {/if}
+</section>
+
 <section class="panel research-panel">
   <div class="filter-bar">
     <label class="search-field"><span>⌕</span><input aria-label="Filter research" bind:value={query} placeholder="Filter title or creator…" /></label>
@@ -83,3 +132,24 @@
     </div>
   {/if}
 </section>
+
+<style>
+  .watch-health { display: grid; gap: 14px; }
+  .watch-health-head { display: flex; gap: 18px; align-items: end; justify-content: space-between; }
+  .watch-health-head h2 { margin: 3px 0 0; }
+  .watch-health-head small, .watch-empty { color: var(--muted); }
+  .watch-health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+  .watch-health-card { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.018); }
+  .watch-health-title-row { display: flex; gap: 10px; justify-content: space-between; align-items: center; }
+  .watch-state { font-size: 11px; font-weight: 650; padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; }
+  .state-healthy .watch-state { color: var(--text); }
+  .state-refreshing .watch-state, .state-retry_scheduled .watch-state { color: var(--accent); }
+  .state-failed .watch-state { color: var(--danger, #ff8c8c); }
+  dl { display: grid; gap: 5px; margin: 0; }
+  dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; text-align: right; }
+  .watch-error { margin: 0; padding: 9px 10px; border-radius: 8px; background: rgba(255, 92, 92, .08); font-size: 12px; line-height: 1.45; }
+  .watch-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  @media (max-width: 720px) { .watch-health-head { align-items: start; flex-direction: column; } }
+</style>

@@ -86,7 +86,10 @@ def main() -> int:
 
         if input_kind == "url":
             emit("progress", job_id=job_id, stage="downloading", percent=40.0, message="fixture download")
-            time.sleep(0.05)
+            # Keep the transient state observable even on heavily loaded CI
+            # runners. This is test-fixture latency only; production code is
+            # unaffected.
+            time.sleep(0.5)
         emit("progress", job_id=job_id, stage="transcribing", percent=50.0, message="fixture")
         if "progress-hold" in name:
             time.sleep(0.15)
