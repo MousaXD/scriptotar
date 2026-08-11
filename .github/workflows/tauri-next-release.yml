@@ -45,7 +45,7 @@ jobs:
         run: python .github/tests/test_tauri_next_release_race.py
 
   publish-preview:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
