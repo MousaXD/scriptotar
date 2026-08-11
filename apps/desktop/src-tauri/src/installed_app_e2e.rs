@@ -156,9 +156,14 @@ fn completed_job(bootstrap: &Value, job_id: &str) -> bool {
 
 fn assert_completed_state(bootstrap: &Value, project_id: &str, job_id: &str) {
     assert_eq!(bootstrap["activeProjectId"], project_id);
-    assert!(completed_job(bootstrap, job_id), "completed job missing: {bootstrap:#}");
+    assert!(
+        completed_job(bootstrap, job_id),
+        "completed job missing: {bootstrap:#}"
+    );
 
-    let transcripts = bootstrap["transcripts"].as_array().expect("transcripts array");
+    let transcripts = bootstrap["transcripts"]
+        .as_array()
+        .expect("transcripts array");
     let transcript = transcripts
         .iter()
         .find(|item| item["text"] == EXPECTED_TRANSCRIPT)
@@ -194,8 +199,16 @@ fn installed_app_e2e_round_trip_survives_restart() {
     let runtime = packaged_runtime();
     let supervisor = runtime.join(executable_name("scriptotar-transcription"));
     let sidecar_script = runtime.join("sidecar.py");
-    assert!(supervisor.is_file(), "missing installed supervisor: {}", supervisor.display());
-    assert!(sidecar_script.is_file(), "missing installed sidecar: {}", sidecar_script.display());
+    assert!(
+        supervisor.is_file(),
+        "missing installed supervisor: {}",
+        supervisor.display()
+    );
+    assert!(
+        sidecar_script.is_file(),
+        "missing installed sidecar: {}",
+        sidecar_script.display()
+    );
 
     let temp = TempDir::new().expect("create E2E temp directory");
     let fixture_engine = create_fixture_engine_wrapper(&temp);
@@ -208,7 +221,10 @@ fn installed_app_e2e_round_trip_survives_restart() {
     ]);
 
     let data_dir = temp.path().join("app-data");
-    assert!(!data_dir.exists(), "E2E must begin with a clean app-data directory");
+    assert!(
+        !data_dir.exists(),
+        "E2E must begin with a clean app-data directory"
+    );
     let media = temp.path().join("fixture.mp4");
     fs::write(&media, b"deterministic local media fixture").expect("write media fixture");
 
@@ -220,7 +236,10 @@ fn installed_app_e2e_round_trip_survives_restart() {
     assert_eq!(initial["jobs"].as_array().unwrap().len(), 0);
 
     let created = ipc(&webview, "create_project", json!({"name": "Installed E2E"}));
-    let project_id = created["activeProjectId"].as_str().expect("created project ID").to_owned();
+    let project_id = created["activeProjectId"]
+        .as_str()
+        .expect("created project ID")
+        .to_owned();
 
     let queued = ipc(
         &webview,
@@ -241,7 +260,9 @@ fn installed_app_e2e_round_trip_survives_restart() {
             .unwrap_or_else(|| panic!("queued job {job_id} disappeared: {jobs:#}"));
         match job["state"].as_str().unwrap_or_default() {
             "completed" => break ipc(&webview, "bootstrap_app", json!({})),
-            "failed" | "cancelled" | "interrupted" => panic!("job became terminal without completing: {job:#}"),
+            "failed" | "cancelled" | "interrupted" => {
+                panic!("job became terminal without completing: {job:#}")
+            }
             _ if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             _ => panic!("job {job_id} did not complete within {E2E_TIMEOUT:?}: {job:#}"),
         }
