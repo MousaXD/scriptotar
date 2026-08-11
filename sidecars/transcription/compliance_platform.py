@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata as metadata
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,31 @@ from compliance_enrichment import (
     _rewrite_generated_notice,
     _write_json,
     write_compliance_enrichment as _write_compliance_enrichment,
+)
+
+WINDOWS_PLATFORM_RUNTIME_DLLS = {
+    "advapi32.dll",
+    "bcrypt.dll",
+    "crypt32.dll",
+    "iphlpapi.dll",
+    "kernel32.dll",
+    "normaliz.dll",
+    "ntdll.dll",
+    "ole32.dll",
+    "rpcrt4.dll",
+    "secur32.dll",
+    "shell32.dll",
+    "user32.dll",
+    "wldap32.dll",
+    "ws2_32.dll",
+}
+WINDOWS_RUNTIME_PATTERNS = (
+    re.compile(r"api-ms-win-[a-z0-9-]+\.dll$"),
+    re.compile(r"ext-ms-win-[a-z0-9-]+\.dll$"),
+    re.compile(r"python3(?:\d{1,2})?\.dll$"),
+    re.compile(r"vcruntime\d+(?:_\d+)?\.dll$"),
+    re.compile(r"msvcp\d+(?:_\d+)?\.dll$"),
+    re.compile(r"ucrtbase\.dll$"),
 )
 
 
@@ -41,11 +67,20 @@ def _windows_native_roots() -> tuple[Path, list[Path]]:
     return site_root, [root for root in roots if root.is_dir()]
 
 
+def _is_windows_platform_runtime(import_name: str) -> bool:
+    lower = import_name.lower()
+    if lower in WINDOWS_PLATFORM_RUNTIME_DLLS:
+        return True
+    return any(pattern.fullmatch(lower) for pattern in WINDOWS_RUNTIME_PATTERNS)
+
+
 def _windows_curl_binary_evidence() -> dict[str, Any]:
-    # curl-cffi's reviewed Windows build is repaired with delvewheel. The
-    # distribution metadata does not reliably enumerate delvewheel's adjacent
-    # DLL directory on every Python/pip combination, so inspect the installed
-    # repaired payload itself and then validate the PE import table.
+    # curl-cffi's reviewed Windows build is repaired with delvewheel. The final
+    # wheel shape, not the pre-repair linker command, is the distribution
+    # evidence we validate here. Some repaired wheels expose the reviewed curl
+    # stack through _wrapper.pyd without one separately enumerable DLL per
+    # upstream component, so require and hash the actual installed payload and
+    # fail closed on unexpected external PE imports instead of inventing DLLs.
     site_root, roots = _windows_native_roots()
     native_files: dict[str, str] = {}
     wrapper: Path | None = None
@@ -91,44 +126,45 @@ def _windows_curl_binary_evidence() -> dict[str, Any]:
     finally:
         pe.close()
 
-    libcurl_imports = [name for name in imports if "libcurl" in name]
-    if not libcurl_imports:
-        raise RuntimeError(
-            f"Windows curl-cffi _wrapper.pyd no longer imports libcurl-impersonate: {imports}"
-        )
+    if not imports:
+        raise RuntimeError("Windows curl-cffi _wrapper.pyd exposes no PE import table")
 
-    resolved_imports: dict[str, str] = {}
+    resolved_repaired_imports: dict[str, str] = {}
+    platform_runtime_imports: list[str] = []
+    unexpected_external_imports: list[str] = []
     for import_name in imports:
         candidate = by_name.get(import_name)
-        if candidate is None:
-            continue
-        try:
-            relative = candidate.relative_to(site_root).as_posix()
-        except ValueError:
-            relative = candidate.as_posix()
-        resolved_imports[import_name] = relative
+        if candidate is not None:
+            try:
+                relative = candidate.relative_to(site_root).as_posix()
+            except ValueError:
+                relative = candidate.as_posix()
+            resolved_repaired_imports[import_name] = relative
+        elif _is_windows_platform_runtime(import_name):
+            platform_runtime_imports.append(import_name)
+        else:
+            unexpected_external_imports.append(import_name)
 
-    unresolved_libcurl = [name for name in libcurl_imports if name not in resolved_imports]
-    if unresolved_libcurl:
+    if unexpected_external_imports:
         raise RuntimeError(
-            "Windows curl-cffi repaired wheel imports libcurl-impersonate but its DLL "
-            f"was not found beside the installed package: {unresolved_libcurl}; "
-            f"payload={sorted(native_files)}"
-        )
-
-    if len(native_files) < 2:
-        raise RuntimeError(
-            f"Windows curl-cffi repaired native payload is unexpectedly small: {sorted(native_files)}"
+            "Windows curl-cffi _wrapper.pyd gained unresolved non-system/native imports: "
+            f"{unexpected_external_imports}; payload={sorted(native_files)}"
         )
 
     return {
-        "inventory_method": "installed repaired wheel scan plus PE import table",
+        "inventory_method": "installed repaired wheel scan plus PE import-table classification",
+        "final_payload_model": (
+            "The final reviewed Windows wheel may fold curl native code into _wrapper.pyd; "
+            "upstream curl/curl-impersonate component records describe reviewed build lineage "
+            "and notices rather than asserting one final DLL per component."
+        ),
         "wrapper_path": wrapper.relative_to(site_root).as_posix(),
         "wrapper_sha256": _sha256_file(wrapper),
         "native_file_sha256": dict(sorted(native_files.items())),
         "pe_imports": imports,
-        "resolved_repaired_imports": dict(sorted(resolved_imports.items())),
-        "libcurl_imports": libcurl_imports,
+        "resolved_repaired_imports": dict(sorted(resolved_repaired_imports.items())),
+        "platform_runtime_imports": sorted(platform_runtime_imports),
+        "unexpected_external_imports": [],
     }
 
 
@@ -154,10 +190,9 @@ def write_compliance_enrichment(runtime_root: Path, repo_root: Path) -> None:
     ]
     evidence = _windows_curl_binary_evidence()
 
-    # Keep the original distribution-metadata inventory for provenance, but add
-    # the complete repaired-wheel scan as the authoritative Windows payload
-    # evidence. This preserves fail-closed behavior without fabricating file
-    # names that are absent from importlib.metadata on some runners.
+    # Keep importlib.metadata's native inventory as one provenance view, and add
+    # the complete repaired-wheel scan plus PE classification as authoritative
+    # Windows final-payload evidence.
     curl_section["reviewed_native_components"] = packaged_records
     curl_section["platform"] = "windows"
     curl_section["binary_component_evidence"] = evidence
@@ -165,8 +200,8 @@ def write_compliance_enrichment(runtime_root: Path, repo_root: Path) -> None:
     curl_section["system_provided_libraries"] = WINDOWS_SYSTEM_LIBRARIES
     curl_section["notice_policy"] = (
         "Versioned upstream notice text is copied into the installer and SHA-256 pinned in this manifest; "
-        "Windows additionally scans the repaired wheel payload and validates _wrapper.pyd PE imports, "
-        "including a resolvable libcurl-impersonate DLL."
+        "Windows additionally hashes the repaired wheel native payload, validates _wrapper.pyd's PE imports, "
+        "and rejects unresolved non-system external dependencies."
     )
     _write_json(native_path, native)
     _add_curl_notices_to_python_manifest(runtime_root, packaged_records)
