@@ -9,7 +9,16 @@ The packaging workflows are artifact producers only:
 
 Neither packaging workflow may create or edit a GitHub Release, upload assets directly to a GitHub Release, grant `contents: write` for publishing, or move the rolling `tauri-next-latest` tag.
 
-After the main-branch package runs complete, `.github/workflows/tauri-next-release.yml` resolves the matching Windows and Linux artifacts, verifies the package jobs, and publishes them together under the rolling `tauri-next-latest` GitHub prerelease. It is the sole owner of both the release and rolling tag.
+`.github/workflows/tauri-next-release.yml` publishes the rolling `tauri-next-latest` prerelease only after proving the complete mandatory release suite for the exact `SOURCE_SHA` being published. The required push-workflow runs on `main` are:
+
+- `Tauri migration integration` (`integration.yml`), including Rust workspace, Svelte frontend, Python sidecar, Rust ↔ sidecar integration, supply-chain, and integrated Tauri build jobs;
+- `Security hygiene` (`security-hygiene.yml`), including the repository-hygiene job;
+- `Windows Tauri Installer` (`windows-tauri.yml`), including `Build and smoke-test NSIS setup.exe`;
+- `Linux Tauri Package` (`linux-tauri.yml`), including `Build and validate Tauri deb`.
+
+The exact-SHA gate queries GitHub Actions by workflow file, `main`, `push` event, and exact commit SHA, then independently rechecks each selected run's `headSha`. If more than one push run exists for the same workflow and SHA, the newest run is authoritative. Runs for another SHA are ignored, and an older green run cannot replace a newer failing run for the same SHA.
+
+The publisher waits for required runs that are queued or in progress. Publication is refused when a required run is missing, fails, is cancelled, times out, is skipped, has the wrong SHA/event/branch, or when any named mandatory job is missing or not successful. The gate emits the exact Windows and Linux run IDs used to download artifacts, so publication cannot silently substitute packages from another commit.
 
 The unified preview release contains:
 
@@ -19,6 +28,6 @@ The unified preview release contains:
 - Linux package contents metadata
 - one combined `SHA256SUMS.txt`
 
-Publishing is refused if the two package versions differ or either validated package build failed. The rolling tag is moved only by the release workflow after release assets are staged successfully.
+Publishing is also refused if the two package versions differ or required release assets are missing. The rolling tag is moved only by the release workflow after validated release assets are staged successfully.
 
-`.github/scripts/validate_release_ownership.py`, enforced by `.github/workflows/release-ownership-contract.yml`, protects this ownership model. The contract fails if a packaging workflow regains GitHub Release mutation commands, force-moves `tauri-next-latest`, or grants release-capable `contents: write`, and it rejects any second workflow that can mutate the rolling release/tag.
+`.github/scripts/validate_release_ownership.py`, enforced by `.github/workflows/release-ownership-contract.yml`, protects the single-writer ownership model. The contract fails if a packaging workflow regains GitHub Release mutation commands, force-moves `tauri-next-latest`, or grants release-capable `contents: write`, and it rejects any second workflow that can mutate the rolling release/tag.
