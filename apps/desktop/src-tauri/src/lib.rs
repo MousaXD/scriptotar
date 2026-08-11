@@ -461,7 +461,7 @@ fn build_ai_prompt(
 #[tauri::command]
 fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.run_ai(input)
+    state.run_ai(&input)
 }
 
 fn command_output(command: &mut Command) -> Result<Option<String>, io::Error> {
