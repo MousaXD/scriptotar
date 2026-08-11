@@ -1,214 +1,202 @@
-# Scriptotar 1.2
+# Scriptotar
 
-Scriptotar is an Apache-2.0-licensed, local-first Linux desktop app for short-form video research, downloading, transcription, and AI-assisted content development.
+Scriptotar is an Apache-2.0-licensed, local-first desktop application for short-form video research, downloading, transcription, and AI-assisted content development.
 
-It accepts Instagram Reels, TikTok, YouTube/Shorts, creator/profile URLs supported by `yt-dlp`, and local video files. The media/transcription engine stays local. AI is optional.
+This repository currently contains **two supported desktop lines** while the product moves from Python/Tkinter to Rust/Tauri.
 
-## What 1.2 adds
+| Line | Current version | Status | Platforms / packages | Choose it when |
+| --- | --- | --- | --- | --- |
+| **Scriptotar Next** | **0.1.0** | **Preview** | Windows NSIS `.exe`, Linux Debian `.deb` | You want the current product direction and are comfortable running preview software. |
+| **Scriptotar Classic** | **1.2.0** | **Supported legacy/stable line** | Linux Debian `.deb`, AppImage, Flatpak | You want the established Python/Tkinter application or need the Classic portable Linux packages. |
 
-### Research / “viral finder” workflow
+For new Windows users, **Scriptotar Next is the only packaged Windows application**. For Linux users, choose Next for the new Rust/Tauri experience or Classic when you specifically need the established Classic line, AppImage, or Flatpak packaging.
 
-- Scan public creator/profile URLs through the same private `yt-dlp` engine.
-- Collect available title/description, views, likes, comments, publish date, duration, and source URL.
-- Sort research results by useful metrics.
-- Queue selected discoveries directly for download + Whisper transcription.
-- Export research results to CSV.
-- Save creator watchlists and optionally refresh them while Scriptotar is running.
-- No bundled scraped database and no claim of access to private metrics.
+## Scriptotar Next
 
-### Local content library
+Scriptotar Next is the current Rust + Tauri 2 + Svelte application. Rust owns application state, SQLite persistence, job orchestration, AI/research services, and the Tauri command boundary. Svelte owns the desktop UI. A packaged Python sidecar owns media execution and Faster Whisper transcription.
 
-Scriptotar now stores a unified SQLite library containing:
+### What Next includes
 
-- completed transcripts;
-- public creator research metadata;
-- AI prompts and AI results;
-- per-project organization.
+- Project-based local workspace with persistent jobs, transcripts, research items, watchlists, settings, and AI-run history.
+- URL and local-media transcription with cancellation, retry, interrupted-job recovery, word/segment timestamps, and transcript export formats.
+- A self-contained packaged transcription runtime containing Python, Faster Whisper, yt-dlp, FFmpeg, and ffprobe. A separate Python or FFmpeg installation is not required by the packaged app.
+- Creator/profile research using the packaged yt-dlp command and public metadata exposed by supported sources.
+- AI Studio with **Copy Prompt** mode and BYOK execution for OpenAI, Anthropic, Gemini, and OpenAI-compatible endpoints.
+- Local library/search, transcript workspace, native media/output pickers, and persistent application settings.
 
-This is the open-source equivalent of a hosted “viral library”: it is **your** library, built from sources you choose.
+Whisper model weights are intentionally **not** bundled. The selected model is downloaded on first uncached use and then reused from Scriptotar Next's model cache.
 
-### AI Studio: two modes
+### Install the Next preview
 
-Scriptotar’s AI layer is deliberately optional.
+The rolling GitHub prerelease channel is:
 
-**1. Copy prompt only**
+```text
+tauri-next-latest
+```
 
-- Works without an API key.
-- Scriptotar builds a complete prompt from the transcript/research, topic, audience, duration, CTA, and voice instructions.
-- Copy it into ChatGPT, Claude, Gemini, a local model, or any other tool.
-- Nothing is sent to an AI provider by Scriptotar.
+Its public package names are:
 
-**2. Use API key**
+```text
+Scriptotar-Next-latest-x64-setup.exe
+Scriptotar-Next-latest-amd64.deb
+```
 
-Bring your own key for:
+On Debian/Ubuntu/Pop!_OS:
 
-- OpenAI Responses API;
-- Anthropic Messages API;
-- Gemini `generateContent`;
-- custom OpenAI-compatible `/chat/completions` endpoints.
+```bash
+sudo apt install ./Scriptotar-Next-latest-amd64.deb
+```
 
-API keys are never written into `settings.json`. When Linux Secret Service is available, **Remember in keyring** uses `secret-tool`; otherwise the token remains in memory for that app session only.
+The Windows installer is currently a preview build and is **not claimed to be Authenticode-signed**. No macOS distributable is published yet.
 
-### AI tasks
+### Next data location
 
-- Viral breakdown
-- Hook ideas
-- New short-form script
-- Structure remix
-- Content ideas
-- Caption + CTA
-- Voice profile
-- B-roll shot list
+Scriptotar Next uses Tauri's application-data directory for bundle identifier:
 
-The Structure Remix prompt explicitly asks the model to reuse only abstract structure and **not** reproduce distinctive wording, catchphrases, jokes, or long phrases from a source creator.
+```text
+io.github.mousaxd.scriptotar.next
+```
 
-### Projects
+The default application-data root is therefore:
 
-Create separate local projects for brands, clients, niches, or channels. New transcripts, research, watchlists, and AI runs are attached to the active project.
+```text
+Linux:   ${XDG_DATA_HOME:-~/.local/share}/io.github.mousaxd.scriptotar.next
+Windows: %APPDATA%\io.github.mousaxd.scriptotar.next
+macOS:   ~/Library/Application Support/io.github.mousaxd.scriptotar.next   (development only; no package is published)
+```
 
-### Script timer
+Important data below that directory includes:
 
-AI Studio estimates spoken duration from the source text so a creator can target short-form runtime before recording.
+```text
+scriptotar.sqlite3        Rust-owned application database
+models/                   downloaded Whisper model cache
+transcription-output/     fallback transcription output location
+```
 
-## Existing transcription features preserved
+Tests and diagnostics can override the application-data root with `SCRIPTOTAR_DATA_DIR`.
 
-- Queue multiple URLs and local videos.
-- Persistent `faster-whisper` worker reuses the loaded model between jobs.
-- Whole-process-group cancellation, including FFmpeg children.
-- Interrupted-job recovery using `.partial` folders.
-- SQLite history.
-- Built-in editable transcript viewer with Arabic RTL alignment.
-- Word-level timestamps.
-- TXT, cleaned TXT, timestamped TXT, SRT, VTT, and JSON outputs.
-- 720p / 1080p / Best / Audio-only download choices.
-- Browser-cookie selection for sites that require an authenticated browser session.
-- `small`, `medium`, `turbo`, and `large-v3` Whisper model choices.
-- CPU/CUDA selection and optional batched inference.
+### Migration from Classic
 
-## Install
+Next does **not** overwrite or delete the Classic database.
 
-### Latest automatic builds
+On startup, Next looks for Classic/WesamBoss `history.sqlite3` databases in the supported XDG/home and Classic Flatpak data roots. If exactly one valid legacy database is found, Next creates a safe SQLite snapshot in the Next data directory and imports it idempotently into the Rust-owned database. The original database remains untouched.
 
-Every successful push or merge to `main` refreshes the rolling **Scriptotar Latest** GitHub release once the Debian package lane succeeds.
+If multiple distinct legacy databases are found, Next refuses to guess which one to import. Invalid, truncated, symlinked, or otherwise unsafe candidates are rejected rather than silently followed.
 
-The Debian artifact is the required rolling-release package:
+### Current Next limitations
 
-- `scriptotar-latest_all.deb` for Debian, Ubuntu, Pop!_OS, and derivatives.
+- Next is still a **0.1.x preview**, not the stable release channel.
+- Windows preview packages are unsigned unless signing credentials are configured outside the repository.
+- Linux Next packaging is Debian-only; Next AppImage/Flatpak packages are not published yet.
+- No macOS package/signing/notarization lane is release-ready.
+- Whisper model weights require network access on first uncached use.
+- CUDA acceleration depends on compatible host NVIDIA hardware/drivers; CPU is the portable path.
+- URL transcription and creator research still depend on the availability and behavior of third-party source platforms.
+- The active project currently falls back to Inbox when the app restarts; durable active-project selection is a separate follow-up.
 
-The portable packaging lane is independent. When it succeeds, the same rolling release also includes:
+See [`docs/NEXT_DISTRIBUTION.md`](docs/NEXT_DISTRIBUTION.md) and [`docs/NEXT_MIGRATION.md`](docs/NEXT_MIGRATION.md) for the detailed runtime and architecture contracts.
 
-- `Scriptotar-latest-x86_64.AppImage` as the portable x86_64 build;
-- `Scriptotar-latest-x86_64.flatpak` as a single-file Flatpak bundle.
+## Scriptotar Classic
 
-A temporary AppImage or Flatpak packaging failure therefore does not block publication of a valid Debian rolling build. Permanent version-tag releases such as `v1.2.0` require the Debian and portable packaging jobs to succeed and publish all three formats.
+Scriptotar Classic is the legacy Python/Tkinter application. It remains supported and is intentionally kept in this repository while Next matures.
 
-### Debian / Ubuntu / Pop!_OS
+Classic 1.2 provides:
+
+- URL/local-media queues and Faster Whisper transcription;
+- public creator/profile research and watchlists;
+- a local SQLite content library and projects;
+- Copy Prompt and BYOK AI workflows;
+- transcript editing/export, Arabic RTL handling, and word timestamps;
+- Debian, AppImage, and Flatpak packaging on Linux.
+
+### Install Classic
+
+The rolling Classic release is **Scriptotar Latest**, backed by the `continuous` tag. Its rolling asset names are:
+
+```text
+scriptotar-latest_all.deb
+Scriptotar-latest-x86_64.AppImage
+Scriptotar-latest-x86_64.flatpak
+```
+
+The Debian package is the required Classic rolling artifact; AppImage and Flatpak are included when their portable packaging lane succeeds. Permanent Classic releases use version tags such as `v1.2.0` and publish versioned Debian/AppImage/Flatpak artifacts.
+
+Debian/Ubuntu/Pop!_OS:
 
 ```bash
 sudo apt install ./scriptotar-latest_all.deb
 ```
 
-### AppImage
+AppImage:
 
 ```bash
 chmod +x Scriptotar-latest-x86_64.AppImage
 ./Scriptotar-latest-x86_64.AppImage
 ```
 
-The AppImage bundles the GUI Python/Tk runtime and FFmpeg-facing runtime libraries. On first launch it keeps a small persistent Python base under Scriptotar's data directory so the private Whisper virtualenv remains valid across AppImage remounts.
-
-### Flatpak bundle
+Flatpak:
 
 ```bash
 flatpak install --user ./Scriptotar-latest-x86_64.flatpak
 flatpak run io.github.mousaxd.scriptotar
 ```
 
-The Flatpak bundle references the Freedesktop 24.08 runtime. Flatpak may download that runtime during installation if it is not already installed. The Flatpak uses its own XDG data directory for settings, history, and the private Whisper engine.
+### Classic data location
 
-Launch the Debian install from your app menu or:
-
-```bash
-scriptotar
-```
-
-On first use click **Install / Repair Engine**. Scriptotar creates a private Python environment under:
+Classic stores normal Linux user data under:
 
 ```text
-~/.local/share/scriptotar/venv
+${XDG_DATA_HOME:-~/.local/share}/scriptotar/
 ```
 
-No system Python packages are overwritten.
-
-## Output
-
-A successful transcription creates a result directory containing:
+Important files/directories include:
 
 ```text
-video.* or audio.*
-transcript.txt
-transcript_clean.txt
-transcript_timestamps.txt
-transcript.srt
-transcript.vtt
-transcript.json
+history.sqlite3    Classic application database
+settings.json      Classic application settings
+venv/              private transcription-engine environment for the Debian/source path
 ```
 
-The application database lives at:
+The Classic Flatpak uses its sandboxed XDG data root, normally under:
 
 ```text
-~/.local/share/scriptotar/history.sqlite3
+~/.var/app/io.github.mousaxd.scriptotar/data/scriptotar/
 ```
+
+Classic also preserves migration support from the former `wesamboss` data directory.
+
+### Classic package/runtime model
+
+The Classic Debian package depends on system Python 3, Tk, FFmpeg, and Secret Service tooling, then manages its private Whisper engine environment under the Classic data directory. The AppImage and Flatpak use their own packaging/runtime arrangements. Classic and Next package internals are therefore intentionally different.
+
+## Release channels
+
+| Channel | Product line | Stability | Meaning |
+| --- | --- | --- | --- |
+| `tauri-next-latest` | Scriptotar Next 0.1.x | **Preview prerelease** | Rolling Windows + Linux Next preview. |
+| `continuous` / **Scriptotar Latest** | Scriptotar Classic 1.2.x | **Supported Classic rolling release** | Rolling Classic Linux release. |
+| `v1.2.0`-style tags | Scriptotar Classic | **Permanent versioned release** | Immutable Classic release snapshot whose tag must match the Classic app version. |
+
+There is **no stable Scriptotar Next release channel yet**. The Classic and Next version numbers are intentionally independent; see [`docs/VERSIONING.md`](docs/VERSIONING.md).
 
 ## Privacy model
 
-- Local video transcription happens on-device after model/media files are available.
-- URL downloads and creator scans contact the source website through `yt-dlp`.
-- Prompt-only AI mode sends nothing to an AI provider.
-- API mode sends the generated prompt to the provider selected by the user.
-- Scriptotar has no telemetry, hosted account, or mandatory cloud service.
-- Remembered AI tokens use the Linux desktop Secret Service, not Scriptotar’s settings file.
+- Media/transcription processing is local after required media/model files are available.
+- URL downloads and creator scans contact the selected source platform through yt-dlp.
+- Copy Prompt mode sends nothing to an AI provider.
+- Next BYOK credentials are request-time/session values and are not part of normal persisted application settings or SQLite data.
+- Classic can optionally remember an AI token through Linux Secret Service when the user explicitly chooses the keyring option.
+- Scriptotar has no mandatory hosted account or telemetry service.
 
 ## Responsible research
 
-Scriptotar is a research and transformation tool, not a license to republish other people’s work. Platform terms and copyright still apply. Metadata availability varies by platform, login state, region, extractor support, and source changes.
+Scriptotar is a research and transformation tool, not a license to republish other people's work. Platform terms and copyright still apply. Metadata availability varies by platform, login state, region, extractor support, and source changes.
 
-The app intentionally does not ship a copy of another service’s private “viral database”, paid stock catalog, branding, or copyrighted clip collection.
+The app intentionally does not ship another service's private database, paid stock catalog, branding, or copyrighted clip collection.
 
-## Build from source
+## Development
 
-On Debian/Ubuntu/Pop!_OS, build the Debian package with:
-
-```bash
-sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools dpkg-dev
-./build-deb.sh
-```
-
-Build the AppImage with:
-
-```bash
-sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools curl
-./packaging/build-appimage.sh
-```
-
-Build the Flatpak bundle with `flatpak-builder` using `io.github.mousaxd.scriptotar.yml`. GitHub Actions performs all three packaging builds automatically on `main` and on version tags.
-
-Run tests directly:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-## Engine versions
-
-The 1.2 application keeps the proven 1.1 transcription engine version, so upgrading the UI/research layer does not force existing users to reinstall Whisper unnecessarily.
-
-Pinned engine packages:
-
-```text
-faster-whisper==1.2.1
-yt-dlp[default,curl-cffi]==2026.7.4
-```
+Start with [`CONTRIBUTING.md`](CONTRIBUTING.md). It documents the Rust workspace, Tauri shell, Svelte frontend, Python sidecar, packaging lanes, and the preserved Classic Python application.
 
 ## License
 

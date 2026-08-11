@@ -1,22 +1,24 @@
-# Scriptotar Transcription Sidecar
+# Scriptotar Next transcription sidecar
 
-This directory is the Tauri-era boundary around Scriptotar's existing media and Faster Whisper behavior. It deliberately keeps Python responsible for media execution/transcription while Rust owns application persistence and orchestration.
+This directory contains the Python media/transcription boundary used by Scriptotar Next. Python owns media execution and Faster Whisper behavior; Rust owns application persistence, durable jobs, orchestration, AI/research state, and the desktop lifecycle.
+
+The sidecar component version is currently `0.1.0`. Its public JSON Lines wire protocol is independently versioned as protocol `1`.
 
 ## Responsibilities
 
-The sidecar owns:
+The transcription sidecar owns:
 
 - yt-dlp media download for the supported platform allowlist;
 - local media preparation;
 - Faster Whisper model loading and transcription;
 - segment and word timestamp generation;
 - TXT, cleaned TXT, timestamp TXT, SRT, VTT, and JSON artifacts;
-- stage-scoped partial artifact recovery;
+- conservative stage-scoped partial-artifact recovery;
 - media-engine process isolation and cancellation.
 
 It does **not** own:
 
-- Scriptotar's SQLite database;
+- Scriptotar Next's SQLite application database;
 - projects, creators, research/watchlist persistence, or job history;
 - Tauri application lifecycle;
 - AI provider credentials;
@@ -28,11 +30,16 @@ See [`PROTOCOL.md`](./PROTOCOL.md) for the complete versioned JSONL contract.
 
 ```text
 sidecars/transcription/
-  sidecar.py                      public stdin/stdout supervisor
-  bootstrap.py                    Python environment installer only
+  sidecar.py                      development/public supervisor entry point
+  build_runtime.py                production runtime builder
+  validate_runtime.py             packaged-runtime smoke test
+  ytdlp_entry.py                  dedicated packaged research yt-dlp entry point
+  engine_entry.py                 packaged heavy-engine entry point
+  bootstrap.py                    development Python environment installer
   requirements-engine.txt         pinned engine dependencies
+  requirements-bundle.txt         pinned packaging dependencies
   scriptotar_sidecar/
-    version.py                    single sidecar/protocol version source
+    version.py                    sidecar/protocol version sources
     protocol.py                   strict public JSONL parser/writer
     service.py                    persistent supervisor and cancellation
     engine_worker.py              private persistent engine process
@@ -44,73 +51,94 @@ sidecars/transcription/
   tests/
 ```
 
-The supervisor isolates the heavy engine in its own process group. Successful sequential jobs reuse that engine and therefore reuse loaded Whisper models. Cancellation kills the engine group and descendants, then the next job starts a fresh engine.
+The supervisor isolates the heavy engine in its own process group. Successful sequential jobs can reuse that engine and loaded Whisper model. Cancellation terminates the engine group and descendants; later work can start a fresh engine.
 
 ## Development run
 
-The public entry point is:
+The source entry point is:
 
 ```bash
 python3 sidecars/transcription/sidecar.py
 ```
 
-For a dedicated environment without modifying system Python:
+For a dedicated development environment without modifying system Python:
 
 ```bash
 python3 sidecars/transcription/bootstrap.py --venv ~/.local/share/scriptotar/transcription-venv
 ~/.local/share/scriptotar/transcription-venv/bin/python sidecars/transcription/sidecar.py
 ```
 
-`bootstrap.py` installs Python dependencies and verifies imports. It does **not** download a Whisper model. Faster Whisper downloads/uses the selected model when an actual transcription asks for it.
+`bootstrap.py` installs engine dependencies and verifies imports. It does **not** download a Whisper model. Faster Whisper obtains the selected model when an actual transcription requires an uncached model.
 
 ## Rust / Tauri host contract
 
-Agent 1's Rust host should spawn the sidecar with piped stdin/stdout/stderr. The recommended development command is:
+The integrated Rust orchestrator spawns this boundary with piped stdin/stdout/stderr.
+
+The host:
+
+1. launches without a shell;
+2. waits for `ready` and verifies protocol `1` compatibility;
+3. treats stdout as protocol traffic and stderr as diagnostics;
+4. persists the Rust-owned job before sending `transcribe`;
+5. translates progress/result/error events into Rust service/repository updates;
+6. sends `cancel` for user cancellation;
+7. sends `shutdown` on orderly application exit with a host-side kill fallback;
+8. treats unexpected sidecar death as interrupted/failed work, never successful completion.
+
+The frontend never spawns this process directly. The sidecar never opens or mutates Scriptotar Next's application SQLite database.
+
+## Packaged Next runtime
+
+Windows and Linux Scriptotar Next packages do not require a separately installed Python interpreter.
+
+`build_runtime.py` produces the `transcription-runtime/` resource tree used by the Tauri package workflows. It contains:
 
 ```text
-<sidecar-venv-python> <repo-or-bundle>/sidecars/transcription/sidecar.py
+scriptotar-transcription[.exe]   PyInstaller supervisor
+sidecar.py                        compatibility/runtime marker
+scriptotar-ytdlp[.exe]           dedicated research command
+engine/scriptotar-engine[.exe]   isolated heavy engine + Python dependencies
+ffmpeg/ffmpeg[.exe]
+ffmpeg/ffprobe[.exe]
+RUNTIME-VERSIONS.txt
 ```
 
-Recommended environment:
+Production Tauri startup resolves that resource directory and configures the Rust orchestrator through the `SCRIPTOTAR_SIDECAR_*` environment contract. Development/test overrides remain supported.
 
-```text
-PYTHONUNBUFFERED=1
-```
+The packaged runtime includes Faster Whisper, yt-dlp, FFmpeg and ffprobe. Whisper model weights are intentionally downloaded and cached on first uncached use rather than embedded in every installer.
 
-The parent should:
+See `../../docs/NEXT_DISTRIBUTION.md` for package-level details.
 
-1. spawn the sidecar without a shell and with piped stdin/stdout/stderr;
-2. wait for `ready` and verify protocol `1` is supported;
-3. keep stderr as diagnostics only;
-4. persist the Rust-owned job before sending `transcribe`;
-5. translate progress/result/error events into Rust service/repository updates;
-6. send `cancel` for user cancellation;
-7. send `shutdown` on orderly application exit and enforce a host-side timeout/kill fallback;
-8. treat unexpected sidecar process death as an interrupted Rust job, not as successful completion.
+## Dedicated creator-research command
 
-The frontend must never spawn this Python process directly. The sidecar must never open or mutate Scriptotar's application SQLite database.
+The packaged `scriptotar-ytdlp` executable is separate from the transcription supervisor. Rust research services use it for creator/profile metadata retrieval instead of treating the supervisor as a general Python command runner.
 
-For a packaged Tauri build, the exact bundled executable/venv strategy can change without changing protocol v1. The transport contract is stdin/stdout/stderr, not a hard-coded filesystem layout.
+This separation preserves a narrow public transcription protocol while allowing the package to remain self-contained for research dependencies.
 
 ## Security policy
 
 - stdout is reserved for protocol JSON only;
-- user-controlled subprocess values are always argument values, never shell command strings;
+- user-controlled subprocess values are arguments, never shell command strings;
 - no `shell=True` is used;
 - URL domains, schemes, ports, local extensions, model names, devices, qualities, languages, and cookie-browser selections are validated below the UI layer;
 - browser-cookie use over plaintext HTTP is rejected;
 - extractor metadata returned to Rust is reduced to an allowlist;
 - `job.json` does not persist the cookie-browser selection;
-- the sidecar applies a restrictive `umask` on POSIX and writes partial metadata with owner-only permissions;
-- no AI API key belongs in this sidecar protocol.
+- the sidecar applies restrictive POSIX file defaults for private partial state;
+- public/internal protocol messages are size-bounded and malformed/out-of-order host events fail closed;
+- AI API keys do not belong in the sidecar protocol.
 
 ## Recovery semantics
 
-A complete downloaded/copied media artifact may be reused only when its checkpoint and fingerprint prove it belongs to the same job inputs. Whisper output is never described as resumable: interrupted transcription restarts transcription from the beginning. See `PROTOCOL.md` for the exact rules.
+A complete downloaded/copied media artifact may be reused only when its checkpoint and fingerprint prove it belongs to the same job inputs.
+
+Whisper inference is not described as resumable. Interrupted transcription restarts transcription from the beginning. Unproven partial download fragments are not promoted to completed media.
+
+See `PROTOCOL.md` for the exact event and recovery rules.
 
 ## Tests
 
-Fast tests use a fake engine process, so they do not contact platforms or download models:
+Fast tests use fixture/fake engine processes, so they do not contact social platforms or download Whisper models:
 
 ```bash
 cd sidecars/transcription
@@ -118,10 +146,16 @@ PYTHONPATH=. python3 -m compileall -q .
 PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
 
-Coverage includes protocol parsing, ready/ping, malformed and unsupported protocol commands, URL/local validation, cancellation and descendant cleanup, sequential jobs, failed-then-successful jobs, engine crashes, interrupted partial state, transcript serialization, stdout/stderr separation, and clean shutdown.
+CI separately installs the real pinned engine dependencies, runs `pip check`, and verifies Faster Whisper/yt-dlp imports without downloading a model.
 
-CI separately installs the real pinned `yt-dlp` and `faster-whisper` dependencies and imports them. CI intentionally does not download a Whisper model and does not use live Instagram/TikTok/YouTube tests.
+Package workflows additionally build the PyInstaller runtime and run:
 
-## Known boundary
+```bash
+python sidecars/transcription/validate_runtime.py <runtime-directory>
+```
 
-The legacy root-level `worker.py` remains untouched so the existing Tkinter application keeps working during migration. Agent 4 can later switch the Rust host to this sidecar after Agent 1's job/persistence layer and Agent 2's frontend are integrated.
+That smoke test validates packaged imports, private FFmpeg/ffprobe resolution, the dedicated yt-dlp command, and supervisor protocol startup/ping/shutdown.
+
+## Classic boundary
+
+The root-level `worker.py` and Classic Python/Tkinter application remain a separate supported product line. Next's packaged sidecar does not require deleting or rewriting that Classic runtime.
