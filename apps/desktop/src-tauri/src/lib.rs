@@ -3,6 +3,9 @@ mod migration;
 mod security;
 mod services;
 
+#[cfg(test)]
+mod installed_app_e2e;
+
 use std::{
     collections::HashMap,
     env, fs,
@@ -458,7 +461,7 @@ fn build_ai_prompt(
 #[tauri::command]
 fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.run_ai(&input)
+    state.run_ai(input)
 }
 
 fn command_output(command: &mut Command) -> Result<Option<String>, io::Error> {
@@ -558,6 +561,24 @@ fn native_picker(kind: NativePicker) -> Result<Option<String>, String> {
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn native_picker(_kind: NativePicker) -> Result<Option<String>, String> {
     Err("native file picking is not available on this platform".to_owned())
+}
+
+#[doc(hidden)]
+pub fn run_installed_backend_smoke() -> Result<(), String> {
+    let data_dir = env::var_os("SCRIPTOTAR_DATA_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| "SCRIPTOTAR_DATA_DIR is required for installed backend smoke".to_owned())?;
+
+    let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3")).map_err(command_error)?;
+    store.run_integration_migrations().map_err(command_error)?;
+    store
+        .recover_interrupted_watchlist_refreshes()
+        .map_err(command_error)?;
+
+    let services = AppServices::new(&data_dir).map_err(command_error)?;
+    services.schema_version().map_err(command_error)?;
+    services.bootstrap().map_err(command_error)?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
