@@ -1,5 +1,8 @@
-<script lang="ts">
+<script module lang="ts">
   export type IconName = 'home' | 'research' | 'queue' | 'transcript' | 'sparkles' | 'library' | 'settings' | 'search' | 'globe' | 'panel' | 'command' | 'folder' | 'plus' | 'activity';
+</script>
+
+<script lang="ts">
   export let name: IconName;
   export let size = 18;
   export let strokeWidth = 1.8;
