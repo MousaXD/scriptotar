@@ -142,6 +142,12 @@
     (target as HTMLElement | null)?.focus?.({ preventScroll: true });
   }
 
+  async function jumpToSegment(segmentId: string) {
+    query = '';
+    searchCursor = 0;
+    await scrollToSegment(segmentId);
+  }
+
   async function jumpSearch(delta: number) {
     if (matchingSegments.length === 0) return;
     searchCursor = (searchCursor + delta + matchingSegments.length) % matchingSegments.length;
@@ -221,7 +227,7 @@
         {:else}
           {#each (query ? matchingSegments : selected.segments) as segment}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
-              <button class="timestamp" aria-label={`Jump to ${time(segment.startSeconds)}`} on:click={() => scrollToSegment(segment.id)}>{time(segment.startSeconds)}</button>
+              <button class="timestamp" aria-label={`Jump to ${time(segment.startSeconds)}`} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
               <p>{#each highlightParts(segment.text, query) as part}{#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}</p>
             </article>
           {/each}
@@ -295,9 +301,9 @@
 
   @media (max-width: 1150px) {
     .transcript-shell-v2 { grid-template-columns: 190px minmax(0, 1fr); }
-    .transcript-shell-v2:not(.details-hidden) .details-panel { display: none; }
-    .transcript-shell-v2 { grid-template-columns: 190px minmax(0, 1fr); }
     .transcript-shell-v2.list-hidden { grid-template-columns: minmax(0, 1fr); }
+    .details-panel { grid-column: 2; position: static; }
+    .list-hidden .details-panel { grid-column: 1; }
   }
   @media (max-width: 760px) {
     .transcript-shell-v2, .transcript-shell-v2.list-hidden, .transcript-shell-v2.details-hidden, .transcript-shell-v2.list-hidden.details-hidden { grid-template-columns: 1fr; }
@@ -308,6 +314,6 @@
     .transcript-search-row { grid-template-columns: 1fr; }
     .search-navigation { justify-content: flex-end; }
     .transcript-content { min-height: 430px; max-height: 65vh; }
-    .details-panel { position: static; }
+    .details-panel { position: static; grid-column: 1; }
   }
 </style>
