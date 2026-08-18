@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translator } from '../i18n/translate';
   import type { LibraryItem, LibraryKind } from '../types';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -25,6 +26,14 @@
     return result;
   }, {} as Record<'All' | LibraryKind, number>);
 
+  function kindLabel(value: LibraryKind) {
+    if (value === 'Transcript') return $translator('library.kind.transcript');
+    if (value === 'Research') return $translator('library.kind.research');
+    if (value === 'AI run') return $translator('library.kind.ai');
+    if (value === 'Project') return $translator('library.kind.project');
+    return $translator('library.kind.creator');
+  }
+
   async function open(item: LibraryItem) {
     actionError = '';
     try { await onOpen(item); }
@@ -34,7 +43,7 @@
 
 <section class="view-head library-head">
   <div><span class="eyebrow">Unified local index</span><h1>Library</h1><p>Browse the active project's transcripts, creator research, AI runs, projects, and creators, then open the related workspace directly.</p></div>
-  <span class="library-total"><strong>{items.length}</strong> local items</span>
+  <span class="library-total" data-i18n-ignore><strong>{items.length}</strong> {$translator('library.localItems', { count: items.length }).replace(String(items.length), '').trim()}</span>
 </section>
 
 <section class="panel library-panel">
@@ -51,17 +60,17 @@
     {/each}
   </div>
 
-  <div class="library-result-bar"><span aria-live="polite">{visible.length} {visible.length === 1 ? 'item' : 'items'}</span>{#if query.trim()}<span>matching “{query.trim()}”</span>{/if}</div>
+  <div class="library-result-bar"><span aria-live="polite">{visible.length} {visible.length === 1 ? 'item' : 'items'}</span>{#if query.trim()}<span data-i18n-ignore>{$translator('library.matching', { query: query.trim() })}</span>{/if}</div>
 
   {#if visible.length === 0}
     <EmptyState title="Nothing matches" message="Try a broader search or another library type." />
   {:else}
     <div class="library-list">
-      <div class="library-columns" aria-hidden="true"><span>Item</span><span>Source</span><span>Signal</span><span>Date</span></div>
+      <div class="library-columns" aria-hidden="true" data-i18n-ignore><span>{$translator('library.column.item')}</span><span>{$translator('library.column.source')}</span><span>{$translator('library.column.signal')}</span><span>{$translator('library.column.date')}</span></div>
       {#each visible as item}
         <button aria-label={`Open ${item.kind}: ${item.title}`} on:click={() => open(item)}>
           <span class={`kind-icon kind-${item.kind.toLowerCase().replaceAll(' ', '-')}`} aria-hidden="true">{item.kind.slice(0,1)}</span>
-          <span class="library-copy"><strong>{item.title}</strong><small><span class="kind-label">{item.kind}</span>{item.subtitle}</small></span>
+          <span class="library-copy"><strong>{item.title}</strong><small><span class="kind-label" data-i18n-ignore>{kindLabel(item.kind)}</span>{item.subtitle}</small></span>
           <span class="library-meta">{item.platform || 'Local'}</span>
           <span class="library-meta metric-copy">{item.metric || '—'}</span>
           <span class="library-date">{item.date}</span>
