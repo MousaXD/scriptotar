@@ -4,6 +4,7 @@ import { createTauriClient, setApi } from './api';
 import { initializeLocalization } from './i18n';
 import './app.css';
 import './theme.css';
+import './rtl.css';
 
 type GlobalTauri = {
   core?: {
