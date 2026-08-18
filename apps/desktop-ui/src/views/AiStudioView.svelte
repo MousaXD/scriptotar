@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translator } from '../i18n/translate';
   import type { AiMode, AiProvider } from '../types';
   import type { ScriptotarApi } from '../api/client';
   export let api: ScriptotarApi;
@@ -64,7 +65,7 @@
 </section>
 
 <section class="panel ai-setup">
-  <div class="setup-heading"><div><span class="eyebrow">1 · Configure</span><h2>Prompt setup</h2></div><p>{mode === 'copy' ? 'Everything stays local until you copy the prompt elsewhere.' : 'The API key exists for this session only.'}</p></div>
+  <div class="setup-heading"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.configure')}</span><h2>Prompt setup</h2></div><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
   <div class="ai-config-grid">
     <label><span>Task</span><select bind:value={task}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
     <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" bind:value={provider} disabled={mode === 'copy'}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
@@ -81,12 +82,12 @@
 
 <div class="ai-workspace">
   <section class="panel ai-source">
-    <div class="panel-head"><div><span class="eyebrow">2 · Source</span><h2>Source context</h2></div><span class="timer-chip">~{Math.floor(speakingSeconds/60)}:{String(speakingSeconds%60).padStart(2,'0')} spoken</span></div>
+    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>Source context</h2></div><span class="timer-chip">~{Math.floor(speakingSeconds/60)}:{String(speakingSeconds%60).padStart(2,'0')} spoken</span></div>
     <textarea bind:value={sourceText} placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
   <section class="panel brief-panel">
-    <div class="panel-head"><div><span class="eyebrow">3 · Direction</span><h2>Creative brief</h2></div><span class="brief-count">{briefFields}/4 filled</span></div>
+    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.direction')}</span><h2>Creative brief</h2></div><span class="brief-count" data-i18n-ignore>{$translator('ai.briefFilled', { count: briefFields })}</span></div>
     <div class="ai-brief-grid">
       <label><span>Topic / goal</span><input bind:value={topic} /></label>
       <label><span>Audience</span><input bind:value={audience} /></label>
@@ -97,7 +98,7 @@
   </section>
 
   <section class="panel ai-prompt">
-    <div class="panel-head"><div><span class="eyebrow">4 · Artifact</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip">Ready</span>{/if}</div>
+    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
     <textarea bind:value={prompt} placeholder="Build a prompt to preview it here…"></textarea>
   </section>
 </div>
