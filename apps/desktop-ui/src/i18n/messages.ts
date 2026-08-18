@@ -41,7 +41,16 @@ export const shellMessages = {
     'jobs.idle': 'Idle',
     'jobs.active': '{count} active',
     'palette.hint': '↑↓ move · Enter open · Esc close',
-    'palette.shortcut': 'Ctrl K'
+    'palette.shortcut': 'Ctrl K',
+    'transcript.hideList': 'Hide transcript list',
+    'transcript.showList': 'Show transcript list',
+    'transcript.hideDetails': 'Hide details',
+    'transcript.showDetails': 'Show details',
+    'transcript.previousMatch': 'Previous match',
+    'transcript.nextMatch': 'Next match',
+    'transcript.export': 'Export',
+    'transcript.matches': '{current} of {count}',
+    'transcript.noMatches': 'No matching segments'
   },
   ar: {
     'brand.subtitle': 'محطة عمل صانع المحتوى',
@@ -83,7 +92,16 @@ export const shellMessages = {
     'jobs.idle': 'خامل',
     'jobs.active': '{count} نشطة',
     'palette.hint': '↑↓ للتنقل · Enter للفتح · Esc للإغلاق',
-    'palette.shortcut': 'Ctrl K'
+    'palette.shortcut': 'Ctrl K',
+    'transcript.hideList': 'إخفاء قائمة النصوص',
+    'transcript.showList': 'إظهار قائمة النصوص',
+    'transcript.hideDetails': 'إخفاء التفاصيل',
+    'transcript.showDetails': 'إظهار التفاصيل',
+    'transcript.previousMatch': 'النتيجة السابقة',
+    'transcript.nextMatch': 'النتيجة التالية',
+    'transcript.export': 'تصدير',
+    'transcript.matches': '{current} من {count}',
+    'transcript.noMatches': 'لا توجد مقاطع مطابقة'
   }
 } as const satisfies Record<AppLocale, Record<string, string>>;
 
