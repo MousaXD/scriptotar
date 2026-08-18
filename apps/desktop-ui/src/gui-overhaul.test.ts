@@ -2,9 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { createMockClient } from './api/mockClient';
+import { setLocale } from './i18n';
 
 beforeEach(() => {
   window.localStorage.clear();
+  setLocale('en');
   delete document.documentElement.dataset.theme;
 });
 
