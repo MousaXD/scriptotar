@@ -79,26 +79,6 @@
     return segments.map((segment) => `[${time(segment.startSeconds)}] ${segment.text}`).join('\n');
   }
 
-  function highlightParts(value: string, needle: string) {
-    const cleanNeedle = needle.trim();
-    if (!cleanNeedle) return [{ text: value, match: false }];
-    const haystack = value.toLocaleLowerCase();
-    const target = cleanNeedle.toLocaleLowerCase();
-    const parts: { text: string; match: boolean }[] = [];
-    let cursor = 0;
-    while (cursor < value.length) {
-      const index = haystack.indexOf(target, cursor);
-      if (index === -1) {
-        parts.push({ text: value.slice(cursor), match: false });
-        break;
-      }
-      if (index > cursor) parts.push({ text: value.slice(cursor, index), match: false });
-      parts.push({ text: value.slice(index, index + cleanNeedle.length), match: true });
-      cursor = index + cleanNeedle.length;
-    }
-    return parts;
-  }
-
   function downloadFile(extension: string, content: string, mime = 'text/plain;charset=utf-8') {
     if (!selected) return;
     actionError = '';
@@ -228,7 +208,7 @@
           {#each (query ? matchingSegments : selected.segments) as segment}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
               <button class="timestamp" aria-label={`Jump to ${time(segment.startSeconds)}`} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
-              <p>{#each highlightParts(segment.text, query) as part}{#if part.match}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}</p>
+              <p>{segment.text}</p>
             </article>
           {/each}
         {/if}
@@ -287,7 +267,6 @@
   .segment:focus { outline: none; box-shadow: inset 3px 0 0 var(--accent-strong); }
   .segment p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.85; }
   .timestamp { align-self: start; padding: 4px 5px; border: 0; border-radius: 5px; background: var(--surface-2); color: var(--info); font-size: 10px; }
-  mark { padding: 1px 2px; border-radius: 3px; background: color-mix(in srgb, var(--warn) 36%, transparent); color: inherit; }
   .details-panel { position: sticky; top: 82px; padding: 14px; }
   .details-panel dl { margin: 15px 0; }
   .details-panel dl div { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 10px; }
