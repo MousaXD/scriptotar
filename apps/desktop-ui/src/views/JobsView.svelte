@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
   import JobRow from '../components/JobRow.svelte';
@@ -62,8 +63,8 @@
     localPath = selected;
     actionError = '';
     actionStatus = paths.length > 1
-      ? `Selected ${displayName(selected)}. Queue it when ready; only the first of ${paths.length} dropped files is selected.`
-      : `Dropped ${displayName(selected)}. Queue it when ready.`;
+      ? $translator('queue.dropMultiple', { name: displayName(selected), count: paths.length })
+      : $translator('queue.dropSelected', { name: displayName(selected) });
   }
 
   onMount(() => {
@@ -109,18 +110,18 @@
 
 <section class:drag-active={dragActive} class="panel jobs-capture" aria-label="Add transcription job" aria-busy={busy}>
   {#if dragActive}
-    <div class="drop-overlay" aria-live="polite"><div><strong>Drop to select media</strong><span>The file will still be validated by Scriptotar before it can be queued.</span></div></div>
+    <div class="drop-overlay" aria-live="polite" data-i18n-ignore><div><strong>{$translator('queue.dropTitle')}</strong><span>{$translator('queue.dropSafety')}</span></div></div>
   {/if}
 
   <div class="capture-heading">
     <span class="eyebrow">Add transcription job</span>
     <h2>Local media</h2>
-    <p>{nativeDropAvailable ? 'Choose a video or drop one anywhere in this window.' : 'Use the native desktop picker for normal operation.'}</p>
+    {#if nativeDropAvailable}<p data-i18n-ignore>{$translator('queue.dropHint')}</p>{:else}<p>Use the native desktop picker for normal operation.</p>{/if}
   </div>
 
   <div class="source-grid">
     <section class:ready={Boolean(localPath)} class:drop-ready={nativeDropAvailable} class="source-card local-source">
-      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong><small>{localPath ? displayName(localPath) : nativeDropAvailable ? 'Drop a video anywhere in this window' : 'No video selected'}</small></div></div>
+      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong>{#if localPath}<small data-i18n-ignore>{displayName(localPath)}</small>{:else if nativeDropAvailable}<small data-i18n-ignore>{$translator('queue.dropEmpty')}</small>{:else}<small>No video selected</small>{/if}</div></div>
       {#if localPath}<code class="selected-path">{localPath}</code>{/if}
       <div class="capture-actions">
         <button class="button secondary" disabled={busy} on:click={chooseLocal}>Choose video</button>
@@ -141,7 +142,7 @@
 </section>
 
 {#if actionError}<p class="status-copy queue-message error-message" role="alert">{actionError}</p>{/if}
-{#if actionStatus}<p class="status-copy queue-message" aria-live="polite">{actionStatus}</p>{/if}
+{#if actionStatus}<p class="status-copy queue-message" aria-live="polite" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <div class="queue-toolbar">
   <div class="segmented" role="group" aria-label="Job filters">
