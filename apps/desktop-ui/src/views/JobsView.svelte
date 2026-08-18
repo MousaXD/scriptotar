@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { Job, JobState } from '../types';
+  import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
   import JobRow from '../components/JobRow.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -18,6 +20,8 @@
   let actionError = '';
   let actionStatus = '';
   let busy = false;
+  let dragActive = false;
+  let nativeDropAvailable = false;
 
   const filters: { id: 'all' | 'active' | 'attention' | 'done'; label: string }[] = [
     { id: 'all', label: 'All' }, { id: 'active', label: 'Active' }, { id: 'attention', label: 'Needs attention' }, { id: 'done', label: 'Finished' }
@@ -50,26 +54,73 @@
   function displayName(path: string) {
     return path.split(/[\\/]/).filter(Boolean).at(-1) || path;
   }
+
+  function acceptDroppedPaths(paths: string[]) {
+    dragActive = false;
+    const selected = paths[0];
+    if (!selected) return;
+    localPath = selected;
+    actionError = '';
+    actionStatus = paths.length > 1
+      ? `Selected ${displayName(selected)}. Queue it when ready; only the first of ${paths.length} dropped files is selected.`
+      : `Dropped ${displayName(selected)}. Queue it when ready.`;
+  }
+
+  onMount(() => {
+    nativeDropAvailable = hasNativeFileDrop();
+    if (!nativeDropAvailable) return;
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void subscribeToNativeFileDrop((event) => {
+      if (event.type === 'enter' || event.type === 'over') {
+        dragActive = true;
+        return;
+      }
+      if (event.type === 'leave') {
+        dragActive = false;
+        return;
+      }
+      acceptDroppedPaths(event.paths);
+    }).then((next) => {
+      if (disposed) next?.();
+      else unlisten = next;
+    }).catch((error) => {
+      dragActive = false;
+      nativeDropAvailable = false;
+      actionError = error instanceof Error ? error.message : 'Native file drop could not be enabled.';
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  });
 </script>
 
 <section class="view-head queue-head">
-  <div><span class="eyebrow">Persistent activity</span><h1>Jobs</h1><p>Choose local media with the desktop picker or queue a supported URL. Rust still validates every path and owns queue state.</p></div>
+  <div><span class="eyebrow">Persistent activity</span><h1>Jobs</h1><p>Choose local media with the desktop picker, drop a file into the desktop app, or queue a supported URL. Rust still validates every path and owns queue state.</p></div>
   <div class="queue-summary" aria-label="Job filters">
     <span><strong>{activeCount}</strong> Active</span>
     {#if attentionCount > 0}<span class="attention-count"><strong>{attentionCount}</strong> Needs attention</span>{/if}
   </div>
 </section>
 
-<section class="panel jobs-capture" aria-label="Add transcription job" aria-busy={busy}>
+<section class:drag-active={dragActive} class="panel jobs-capture" aria-label="Add transcription job" aria-busy={busy}>
+  {#if dragActive}
+    <div class="drop-overlay" aria-live="polite"><div><strong>Drop to select media</strong><span>The file will still be validated by Scriptotar before it can be queued.</span></div></div>
+  {/if}
+
   <div class="capture-heading">
     <span class="eyebrow">Add transcription job</span>
     <h2>Local media</h2>
-    <p>Use the native desktop picker for normal operation.</p>
+    <p>{nativeDropAvailable ? 'Choose a video or drop one anywhere in this window.' : 'Use the native desktop picker for normal operation.'}</p>
   </div>
 
   <div class="source-grid">
-    <section class:ready={Boolean(localPath)} class="source-card local-source">
-      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong><small>{localPath ? displayName(localPath) : 'No video selected'}</small></div></div>
+    <section class:ready={Boolean(localPath)} class:drop-ready={nativeDropAvailable} class="source-card local-source">
+      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong><small>{localPath ? displayName(localPath) : nativeDropAvailable ? 'Drop a video anywhere in this window' : 'No video selected'}</small></div></div>
       {#if localPath}<code class="selected-path">{localPath}</code>{/if}
       <div class="capture-actions">
         <button class="button secondary" disabled={busy} on:click={chooseLocal}>Choose video</button>
@@ -123,7 +174,12 @@
   .queue-summary strong { color: var(--text); }
   .queue-summary .attention-count { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
 
-  .jobs-capture { display: grid; gap: 14px; margin-bottom: 14px; padding: 16px; }
+  .jobs-capture { position: relative; display: grid; gap: 14px; margin-bottom: 14px; padding: 16px; overflow: hidden; }
+  .jobs-capture.drag-active { border-color: color-mix(in srgb, var(--accent-strong) 72%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 32%, transparent), var(--shadow-1); }
+  .drop-overlay { position: absolute; inset: 0; z-index: 12; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--surface) 90%, var(--accent-strong) 10%); backdrop-filter: blur(5px); pointer-events: none; }
+  .drop-overlay > div { display: grid; gap: 7px; max-width: 420px; padding: 18px 22px; border: 1px dashed color-mix(in srgb, var(--accent-strong) 70%, var(--border)); border-radius: 12px; background: var(--surface); text-align: center; }
+  .drop-overlay strong { color: var(--text); font-size: 14px; }
+  .drop-overlay span { color: var(--muted); font-size: 11px; line-height: 1.5; }
   .capture-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .8fr); column-gap: 24px; align-items: end; padding-bottom: 13px; border-bottom: 1px solid var(--border); }
   .capture-heading .eyebrow { grid-column: 1 / -1; }
   .capture-heading h2, .capture-heading p { margin: 0; }
@@ -131,6 +187,7 @@
   .source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .source-card { display: grid; gap: 12px; min-height: 150px; padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
   .source-card.ready { border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 5%, var(--surface)); }
+  .source-card.drop-ready:not(.ready) { border-style: dashed; }
   .source-label { display: flex; align-items: center; gap: 10px; }
   .source-label strong, .source-label small { display: block; }
   .source-label small { margin-top: 4px; color: var(--muted); font-size: 11px; }
