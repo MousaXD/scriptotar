@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { translator } from '../i18n/translate';
   import type { AppSettings, MigrationStatus } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import { persistAppearance } from '../appearance';
@@ -115,20 +116,20 @@
 
 <section class="view-head settings-head">
   <div><span class="eyebrow">Local preferences</span><h1>Settings</h1><p>Transcription, downloads, storage, privacy, and appearance stay explicit. Settings are validated below the UI before they are persisted.</p></div>
-  <div class="save-cluster">{#if dirty}<span class="dirty-indicator"><span></span>Unsaved changes</span>{/if}<button class="button primary settings-save" disabled={busy} on:click={save}>Save changes</button></div>
+  <div class="save-cluster">{#if dirty}<span class="dirty-indicator" data-i18n-ignore><span></span>{$translator('settings.unsaved')}</span>{/if}<button class="button primary settings-save" disabled={busy} on:click={save}>Save changes</button></div>
 </section>
 
 <div class="settings-layout" aria-busy={busy || migrationBusy}>
-  <aside class="settings-nav panel" aria-label="Settings sections">
-    <span class="settings-nav-title">Preferences</span>
-    <a href="#settings-transcription">Transcription</a>
-    <a href="#settings-media">Media acquisition</a>
-    <a href="#settings-storage">Storage</a>
-    <a href="#settings-local">Local behavior</a>
-    <a href="#settings-watchlists">Watchlists</a>
-    <span class="settings-nav-title secondary-group">Advanced</span>
-    <a href="#settings-migration">Legacy migration</a>
-    <a href="#settings-interface">Interface</a>
+  <aside class="settings-nav panel" aria-label={$translator('settings.sections')} data-i18n-ignore>
+    <span class="settings-nav-title">{$translator('settings.preferences')}</span>
+    <a href="#settings-transcription">{$translator('settings.nav.transcription')}</a>
+    <a href="#settings-media">{$translator('settings.nav.media')}</a>
+    <a href="#settings-storage">{$translator('settings.nav.storage')}</a>
+    <a href="#settings-local">{$translator('settings.nav.local')}</a>
+    <a href="#settings-watchlists">{$translator('settings.nav.watchlists')}</a>
+    <span class="settings-nav-title secondary-group">{$translator('settings.advanced')}</span>
+    <a href="#settings-migration">{$translator('settings.nav.migration')}</a>
+    <a href="#settings-interface">{$translator('settings.nav.interface')}</a>
   </aside>
 
   <div class="settings-stack">
