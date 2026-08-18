@@ -18,11 +18,14 @@
   let actionError = '';
   let actionStatus = '';
   let busy = false;
+
   const filters: { id: 'all' | 'active' | 'attention' | 'done'; label: string }[] = [
     { id: 'all', label: 'All' }, { id: 'active', label: 'Active' }, { id: 'attention', label: 'Needs attention' }, { id: 'done', label: 'Finished' }
   ];
   const active = new Set<JobState>(['queued','preparing','downloading','transcribing','processing']);
   $: visible = jobs.filter((job) => filter === 'all' || (filter === 'active' && active.has(job.state)) || (filter === 'attention' && ['failed','interrupted'].includes(job.state)) || (filter === 'done' && ['completed','cancelled'].includes(job.state)));
+  $: activeCount = jobs.filter((job) => active.has(job.state)).length;
+  $: attentionCount = jobs.filter((job) => ['failed', 'interrupted'].includes(job.state)).length;
 
   async function run(action: () => Promise<void> | void) {
     if (busy) return;
@@ -49,29 +52,53 @@
   }
 </script>
 
-<section class="view-head"><div><span class="eyebrow">Persistent activity</span><h1>Jobs</h1><p>Choose local media with the desktop picker or queue a supported URL. Rust still validates every path and owns queue state.</p></div></section>
-<section class="panel jobs-capture" aria-label="Add transcription job">
-  <div class="local-file-choice">
-    <span class="field-label">Local media</span>
-    <strong>{localPath ? displayName(localPath) : 'No video selected'}</strong>
-    <small>{localPath || 'Use the native desktop picker for normal operation.'}</small>
+<section class="view-head queue-head">
+  <div><span class="eyebrow">Persistent activity</span><h1>Jobs</h1><p>Choose local media with the desktop picker or queue a supported URL. Rust still validates every path and owns queue state.</p></div>
+  <div class="queue-summary" aria-label="Job filters">
+    <span><strong>{activeCount}</strong> Active</span>
+    {#if attentionCount > 0}<span class="attention-count"><strong>{attentionCount}</strong> Needs attention</span>{/if}
   </div>
-  <div class="capture-actions">
-    <button class="button secondary" disabled={busy} on:click={chooseLocal}>Choose video</button>
-    <button class="button primary" disabled={busy || !localPath} on:click={() => run(async () => { await onEnqueueLocal(localPath); actionStatus = `Queued ${displayName(localPath)}.`; localPath = ''; })}>Queue selected</button>
+</section>
+
+<section class="panel jobs-capture" aria-label="Add transcription job" aria-busy={busy}>
+  <div class="capture-heading">
+    <span class="eyebrow">Add transcription job</span>
+    <h2>Local media</h2>
+    <p>Use the native desktop picker for normal operation.</p>
   </div>
-  <label class="url-capture"><span>Supported media URL</span><input aria-label="Media URL" bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
-  <button class="button secondary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = 'URL queued.'; })}>Queue URL</button>
+
+  <div class="source-grid">
+    <section class:ready={Boolean(localPath)} class="source-card local-source">
+      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong><small>{localPath ? displayName(localPath) : 'No video selected'}</small></div></div>
+      {#if localPath}<code class="selected-path">{localPath}</code>{/if}
+      <div class="capture-actions">
+        <button class="button secondary" disabled={busy} on:click={chooseLocal}>Choose video</button>
+        <button class="button primary" disabled={busy || !localPath} on:click={() => run(async () => { await onEnqueueLocal(localPath); actionStatus = `Queued ${displayName(localPath)}.`; localPath = ''; })}>Queue selected</button>
+      </div>
+    </section>
+
+    <section class:ready={Boolean(sourceUrl.trim())} class="source-card url-source">
+      <label class="url-capture"><span>Supported media URL</span><input aria-label="Media URL" bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
+      <div class="capture-actions single-action"><button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = 'URL queued.'; })}>Queue URL</button></div>
+    </section>
+  </div>
+
   <details class="advanced-path">
     <summary>Advanced: enter a local path manually</summary>
     <div><input aria-label="Manual local media path" bind:value={manualPath} placeholder="/home/me/video.mp4" /><button class="button secondary" disabled={busy || !manualPath.trim()} on:click={() => run(async () => { await onEnqueueLocal(manualPath.trim()); actionStatus = `Queued ${displayName(manualPath.trim())}.`; manualPath = ''; })}>Queue path</button></div>
   </details>
 </section>
-{#if actionError}<p class="status-copy" role="alert">{actionError}</p>{/if}
-{#if actionStatus}<p class="status-copy" aria-live="polite">{actionStatus}</p>{/if}
-<div class="segmented" role="group" aria-label="Job filters">
-  {#each filters as item}<button class:active={filter === item.id} aria-pressed={filter === item.id} on:click={() => filter = item.id}>{item.label}</button>{/each}
+
+{#if actionError}<p class="status-copy queue-message error-message" role="alert">{actionError}</p>{/if}
+{#if actionStatus}<p class="status-copy queue-message" aria-live="polite">{actionStatus}</p>{/if}
+
+<div class="queue-toolbar">
+  <div class="segmented" role="group" aria-label="Job filters">
+    {#each filters as item}<button class:active={filter === item.id} aria-pressed={filter === item.id} on:click={() => filter = item.id}>{item.label}</button>{/each}
+  </div>
+  <span class="visible-count">{visible.length} / {jobs.length}</span>
 </div>
+
 <section class="panel jobs-panel" aria-busy={busy}>
   {#if visible.length === 0}
     <EmptyState title="No jobs in this view" message="Change the filter or queue media above." />
@@ -90,18 +117,47 @@
 </section>
 
 <style>
-  .jobs-capture { display: grid; grid-template-columns: minmax(240px, 1fr) auto minmax(260px, 1fr) auto; gap: 12px; align-items: end; margin-bottom: 14px; padding: 14px; }
-  .local-file-choice { min-width: 0; }
-  .local-file-choice .field-label, .url-capture span { display: block; margin-bottom: 6px; color: var(--muted); font-size: 10px; }
-  .local-file-choice strong, .local-file-choice small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .local-file-choice strong { font-size: 12px; }
-  .local-file-choice small { margin-top: 5px; color: var(--faint); font-size: 10px; }
-  .capture-actions, .job-actions { display: flex; flex-wrap: wrap; gap: 7px; }
-  .url-capture { display: grid; gap: 0; }
-  .advanced-path { grid-column: 1 / -1; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
-  .advanced-path summary { cursor: pointer; }
-  .advanced-path div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
+  .queue-head { align-items: center; }
+  .queue-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+  .queue-summary > span { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+  .queue-summary strong { color: var(--text); }
+  .queue-summary .attention-count { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
+
+  .jobs-capture { display: grid; gap: 14px; margin-bottom: 14px; padding: 16px; }
+  .capture-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .8fr); column-gap: 24px; align-items: end; padding-bottom: 13px; border-bottom: 1px solid var(--border); }
+  .capture-heading .eyebrow { grid-column: 1 / -1; }
+  .capture-heading h2, .capture-heading p { margin: 0; }
+  .capture-heading p { justify-self: end; max-width: 420px; font-size: 11px; text-align: right; }
+  .source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .source-card { display: grid; gap: 12px; min-height: 150px; padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
+  .source-card.ready { border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 5%, var(--surface)); }
+  .source-label { display: flex; align-items: center; gap: 10px; }
+  .source-label strong, .source-label small { display: block; }
+  .source-label small { margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .source-icon { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--surface); font-size: 18px; }
+  .selected-path { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 9px; border-radius: 7px; color: var(--muted); font-size: 10px; }
+  .capture-actions, .job-actions { display: flex; flex-wrap: wrap; gap: 7px; align-self: end; }
+  .single-action { justify-content: flex-end; }
+  .url-capture { display: grid; gap: 7px; }
+  .url-capture span { color: var(--muted); font-size: 11px; }
+  .url-capture input { width: 100%; }
+  .advanced-path { padding-top: 2px; color: var(--muted); font-size: 11px; }
+  .advanced-path summary { width: fit-content; cursor: pointer; }
+  .advanced-path div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 10px; }
+  .queue-message { margin: -4px 0 12px; padding: 8px 10px; border-inline-start: 2px solid var(--accent-strong); background: color-mix(in srgb, var(--accent-strong) 5%, transparent); }
+  .error-message { border-color: var(--danger); }
+  .queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .visible-count { color: var(--faint); font-family: var(--font-technical); font-size: 10px; }
   .job-actions { justify-content: flex-end; }
-  @media (max-width: 1050px) { .jobs-capture { grid-template-columns: minmax(0, 1fr) auto; } }
-  @media (max-width: 700px) { .jobs-capture { grid-template-columns: 1fr; } .advanced-path { grid-column: 1; } .capture-actions, .job-actions { justify-content: flex-start; } }
+
+  @media (max-width: 900px) {
+    .source-grid { grid-template-columns: 1fr; }
+    .capture-heading { grid-template-columns: 1fr; }
+    .capture-heading p { justify-self: start; text-align: left; }
+  }
+  @media (max-width: 700px) {
+    .queue-summary { width: 100%; }
+    .advanced-path div { grid-template-columns: 1fr; }
+    .capture-actions, .job-actions { justify-content: flex-start; }
+  }
 </style>
