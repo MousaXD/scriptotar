@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { createTauriClient, setApi } from './api';
+import { initializeLocalization } from './i18n';
 import './app.css';
 import './theme.css';
 
@@ -27,3 +28,5 @@ if (globalTauri?.core?.invoke) {
 mount(App, {
   target: document.getElementById('app')!
 });
+
+initializeLocalization();
