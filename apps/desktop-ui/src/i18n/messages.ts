@@ -81,7 +81,8 @@ export const shellMessages = {
     'settings.nav.watchlists': 'Watchlists',
     'settings.nav.migration': 'Legacy migration',
     'settings.nav.interface': 'Interface',
-    'settings.unsaved': 'Unsaved changes'
+    'settings.unsaved': 'Unsaved changes',
+    'settings.languageControl': 'Settings interface language'
   },
   ar: {
     'brand.subtitle': 'محطة عمل صانع المحتوى',
@@ -163,7 +164,8 @@ export const shellMessages = {
     'settings.nav.watchlists': 'قوائم المتابعة',
     'settings.nav.migration': 'ترحيل البيانات القديمة',
     'settings.nav.interface': 'الواجهة',
-    'settings.unsaved': 'تغييرات غير محفوظة'
+    'settings.unsaved': 'تغييرات غير محفوظة',
+    'settings.languageControl': 'لغة الواجهة في الإعدادات'
   }
 } as const satisfies Record<AppLocale, Record<string, string>>;
 
