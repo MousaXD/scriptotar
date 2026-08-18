@@ -63,4 +63,16 @@ describe('Creator Control Room GUI', () => {
 
     await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
   });
+
+  it('switches the interface language from Settings and localizes new navigation chrome', async () => {
+    await ready();
+    await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
+
+    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+
+    await waitFor(() => expect(document.documentElement.dir).toBe('rtl'));
+    expect(window.localStorage.getItem('scriptotar.uiLanguage')).toBe('ar');
+    expect(screen.getByText('التفضيلات')).toBeInTheDocument();
+    expect(screen.getByText('ترحيل البيانات القديمة')).toBeInTheDocument();
+  });
 });
