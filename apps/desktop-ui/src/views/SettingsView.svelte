@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { locale, setLocale, type AppLocale } from '../i18n';
   import { translator } from '../i18n/translate';
   import type { AppSettings, MigrationStatus } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -39,6 +40,10 @@
     message: 'The migration request could not be completed. The legacy source database was not modified; retry when the local error is resolved.',
     candidates: []
   });
+
+  function changeLocale(event: Event) {
+    setLocale((event.currentTarget as HTMLSelectElement).value as AppLocale);
+  }
 
   async function save() {
     if (busy) return;
@@ -169,7 +174,7 @@
       </div>
     </section>
 
-    <section id="settings-interface" class="panel settings-section"><div><span class="eyebrow">Appearance</span><h2>Interface</h2><p>Dark stays fixed; System follows the operating-system light/dark preference. Appearance is a local UI preference and contains no sensitive data.</p></div><div class="settings-grid"><label><span>Theme</span><select aria-label="Theme" bind:value={draft.appearance}><option value="dark">Dark</option><option value="system">System</option></select></label></div></section>
+    <section id="settings-interface" class="panel settings-section"><div><span class="eyebrow">Appearance</span><h2>Interface</h2><p>Dark stays fixed; System follows the operating-system light/dark preference. Appearance is a local UI preference and contains no sensitive data.</p></div><div class="settings-grid"><label><span>Theme</span><select aria-label="Theme" bind:value={draft.appearance}><option value="dark">Dark</option><option value="system">System</option></select></label><label data-i18n-ignore><span>{$translator('language.label')}</span><select aria-label="Settings interface language" value={$locale} on:change={changeLocale}><option value="en">{$translator('language.english')}</option><option value="ar">{$translator('language.arabic')}</option></select></label></div></section>
   </div>
 </div>
 
