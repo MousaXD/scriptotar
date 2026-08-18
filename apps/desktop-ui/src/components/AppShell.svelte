@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { locale, setLocale, type AppLocale } from '../i18n';
   import type { Project, ViewId, WorkspaceSearchResult } from '../types';
 
   export let activeView: ViewId;
@@ -30,6 +31,10 @@
     await onProjectChange(requestedProjectId);
     await tick();
     select.value = activeProjectId;
+  }
+
+  function changeLocale(event: Event) {
+    setLocale((event.currentTarget as HTMLSelectElement).value as AppLocale);
   }
 
   function searchKeys(event: KeyboardEvent) {
@@ -93,10 +98,19 @@
           </div>
         {/if}
       </div>
-      <button class="activity-button" on:click={() => onNavigate('jobs')} aria-label="Open jobs">
-        <span class="activity-orb" class:busy={activeJobs > 0}></span>
-        <span>{activeJobs > 0 ? `${activeJobs} active` : 'Idle'}</span>
-      </button>
+      <div class="topbar-actions">
+        <label class="language-control">
+          <span>Language</span>
+          <select value={$locale} on:change={changeLocale} aria-label="Interface language">
+            <option value="en">English</option>
+            <option value="ar">Arabic</option>
+          </select>
+        </label>
+        <button class="activity-button" on:click={() => onNavigate('jobs')} aria-label="Open jobs">
+          <span class="activity-orb" class:busy={activeJobs > 0}></span>
+          <span>{activeJobs > 0 ? `${activeJobs} active` : 'Idle'}</span>
+        </button>
+      </div>
     </header>
     <main class="workspace"><slot /></main>
   </div>
@@ -112,4 +126,12 @@
   .search-results strong, .search-results small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .search-results small { margin-top: 3px; color: var(--muted); font-size: 10px; }
   .search-results b { color: var(--accent); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+  .topbar-actions { justify-self: end; display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .language-control { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; }
+  .language-control select { min-width: 104px; background: var(--surface); text-transform: none; letter-spacing: 0; }
+
+  @media (max-width: 820px) {
+    .language-control > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .language-control select { min-width: 88px; }
+  }
 </style>
