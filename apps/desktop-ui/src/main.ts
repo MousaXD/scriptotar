@@ -2,7 +2,9 @@ import { mount } from 'svelte';
 import App from './App.svelte';
 import { createTauriClient, setApi } from './api';
 import { initializeLocalization } from './i18n';
+import './design/tokens.css';
 import './app.css';
+import './design/base.css';
 import './theme.css';
 import './rtl.css';
 

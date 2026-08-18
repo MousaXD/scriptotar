@@ -4,7 +4,7 @@ html[dir='rtl'] body {
 
 html[dir='rtl'] .sidebar {
   border-right: 0;
-  border-left: 1px solid #17222b;
+  border-left: 1px solid var(--border);
 }
 
 html[dir='rtl'] .sidebar nav button,
@@ -23,6 +23,11 @@ html[dir='rtl'] .sidebar nav button.active::before {
 html[dir='rtl'] .activity-count {
   right: auto;
   left: 42px;
+}
+
+html[dir='rtl'] .shell-v2 .activity-count {
+  right: auto;
+  left: auto;
 }
 
 html[dir='rtl'] .pulse-dot {
