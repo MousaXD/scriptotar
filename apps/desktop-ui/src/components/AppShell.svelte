@@ -243,19 +243,19 @@
 
 {#if paletteOpen}
   <div class="palette-backdrop" role="presentation" on:mousedown={(event) => { if (event.currentTarget === event.target) closePalette(); }} data-i18n-ignore>
-    <section class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')}>
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')}>
       <label class="palette-search">
         <Icon name="search" size={19} />
         <span class="sr-only">{$translator('search.open')}</span>
-        <input bind:this={searchInput} bind:value={globalSearch} on:keydown={paletteKeys} placeholder={$translator('search.placeholder')} aria-label={$translator('search.open')} aria-controls="command-results" aria-activedescendant={paletteItems[paletteIndex] ? `palette-${paletteItems[paletteIndex].id}` : undefined} />
+        <input bind:this={searchInput} bind:value={globalSearch} on:keydown={paletteKeys} placeholder={$translator('search.placeholder')} aria-label={$translator('search.open')} aria-controls="command-results" />
         <kbd>Esc</kbd>
       </label>
-      <div id="command-results" class="palette-results" role="listbox" aria-label={$translator('search.results')}>
+      <div id="command-results" class="palette-results" aria-label={$translator('search.results')}>
         {#if paletteItems.length === 0}
           <div class="palette-empty">{$translator('search.empty')}</div>
         {:else}
           {#each paletteItems as item, index (item.id)}
-            <button id={`palette-${item.id}`} class:selected={index === paletteIndex} role="option" aria-selected={index === paletteIndex} on:mouseenter={() => paletteIndex = index} on:click={() => item.run()}>
+            <button id={`palette-${item.id}`} class:selected={index === paletteIndex} aria-current={index === paletteIndex ? 'true' : undefined} on:mouseenter={() => paletteIndex = index} on:click={() => item.run()}>
               <span class="palette-item-copy"><strong>{item.label}</strong><small>{item.meta}</small></span>
               <span class="palette-arrow" aria-hidden="true">↵</span>
             </button>
@@ -263,7 +263,7 @@
         {/if}
       </div>
       <footer class="palette-footer"><span>{$translator('palette.hint')}</span><span class="privacy-hint"><span class="local-dot"></span>{$translator('status.local')}</span></footer>
-    </section>
+    </div>
   </div>
 {/if}
 
