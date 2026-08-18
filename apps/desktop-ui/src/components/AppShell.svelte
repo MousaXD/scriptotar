@@ -116,6 +116,11 @@
     searchInput?.select();
   }
 
+  function topbarSearch(event: Event) {
+    globalSearch = (event.currentTarget as HTMLInputElement).value;
+    void openPalette();
+  }
+
   function closePalette() {
     paletteOpen = false;
     globalSearch = '';
@@ -211,11 +216,11 @@
         </select>
       </div>
 
-      <button class="command-trigger" type="button" on:click={openPalette} aria-haspopup="dialog" aria-expanded={paletteOpen}>
+      <label class="command-trigger">
         <Icon name="search" size={17} />
-        <span>{$translator('search.open')}</span>
+        <input aria-label={$translator('search.field')} value={globalSearch} on:focus={openPalette} on:input={topbarSearch} placeholder={$translator('search.open')} />
         <kbd>{$translator('palette.shortcut')}</kbd>
-      </button>
+      </label>
 
       <div class="topbar-actions">
         <label class="language-control" title={$translator('language.label')}>
@@ -316,9 +321,11 @@
   .project-control select { min-width: 0; border-color: transparent; background: transparent; font-weight: 650; }
   .project-control select:hover, .project-control select:focus-visible { border-color: var(--color-border); background: var(--color-surface); }
 
-  .command-trigger { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: var(--control-height); padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 86%, transparent); color: var(--color-text-faint); text-align: start; }
-  .command-trigger:hover { border-color: var(--color-border-strong); background: var(--color-surface-raised); color: var(--color-text-muted); }
-  .command-trigger span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+  .command-trigger { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: var(--control-height); padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 86%, transparent); color: var(--color-text-faint); text-align: start; cursor: text; }
+  .command-trigger:hover, .command-trigger:focus-within { border-color: var(--color-border-strong); background: var(--color-surface-raised); color: var(--color-text-muted); }
+  .command-trigger input { min-width: 0; min-height: 34px; padding: 0; border: 0; background: transparent; color: var(--color-text); outline: 0; box-shadow: none; font-size: var(--text-sm); }
+  .command-trigger input:focus-visible { box-shadow: none; }
+  .command-trigger input::placeholder { color: var(--color-text-faint); }
   .command-trigger kbd { justify-self: end; }
 
   .topbar-actions { justify-self: end; display: flex; align-items: center; gap: var(--space-2); }
