@@ -36,6 +36,9 @@ PR: #47
 - Manual path entry moved into Advanced.
 - Active and attention counts surfaced.
 - Existing cancel/retry/open-transcript behavior preserved.
+- Native Tauri file-drop events select dropped local media without bypassing the Rust enqueue validation path.
+- Drag-over state provides clear visual feedback and dropped files are never auto-enqueued.
+- Multiple-file drops explicitly select only the first path and report that choice to the user.
 
 ### Transcript workspace
 - Persisted collapsible transcript and metadata rails.
@@ -75,7 +78,8 @@ Added GUI-specific tests for:
 - keyboard command-palette execution,
 - transcript rail persistence and content preservation,
 - unsaved-settings feedback,
-- Arabic switching from Settings and explicit new chrome translation.
+- Arabic switching from Settings and explicit new chrome translation,
+- normalization and cleanup of native Tauri file-drop events.
 
 The pre-existing desktop interaction suite continues to cover project switching, queue operations, job refresh, transcript search, RTL transcript content, research/watchlist behavior, Library navigation, settings persistence, appearance, and legacy migration states.
 
@@ -92,15 +96,11 @@ A playback implementation should first add a Rust/Tauri-owned media access contr
 - timestamp-to-player synchronization,
 - persisted playback UI preferences where useful.
 
-### Native drag-and-drop local media
-The current normal flow uses the Tauri-owned desktop picker. Standard browser drag/drop does not provide a portable trusted local filesystem path, and the frontend package does not currently expose a typed Tauri drop-event contract.
-
-Before enabling native local-media drop, add a Tauri/Rust-owned drop-path handoff that performs the same path validation as the picker/enqueue flow. Then reuse `enqueueLocalMedia` only after backend validation.
+Tauri's asset protocol can expose local files, but enabling it changes the filesystem-to-WebView security boundary and should be scoped deliberately rather than broadly allowing home-directory media paths.
 
 ## Next implementation targets
 
 1. Complete migration of remaining redesigned view strings from the DOM translator to explicit translation keys.
-2. Add a Rust/Tauri safe media-resource contract, then implement transcript playback and timestamp synchronization.
-3. Add a Tauri-owned native file-drop contract, then enable drag/drop in Queue.
-4. Add rendered visual regression coverage for English dark, English system-light, Arabic dark RTL, and narrow-window layouts.
-5. Verify packaged Linux/Windows WebViews for sticky rails, command palette focus behavior, font fallback, and RTL geometry.
+2. Add a narrowly scoped Rust/Tauri media-resource contract, then implement transcript playback and timestamp synchronization.
+3. Add rendered visual regression coverage for English dark, English system-light, Arabic dark RTL, and narrow-window layouts.
+4. Verify packaged Linux/Windows WebViews for sticky rails, command palette focus behavior, native drag/drop, font fallback, and RTL geometry.
