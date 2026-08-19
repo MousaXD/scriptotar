@@ -34,15 +34,24 @@ jobs:
         with:
           ref: feature/technical-futures
           fetch-depth: 0
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            patchelf
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
         with:
-          toolchain: 1.97.1
           components: rustfmt, clippy
       - name: Apply exact Clippy cleanup
         run: python3 scripts/fix_phase2_clippy.py
       - name: Validate formatter and Clippy
         run: |
-          cargo +1.97.1 fmt --all
+          cargo fmt --all
           cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
           cargo test -p scriptotar-orchestrator --locked
       - name: Restore normal workflow and commit only intended files
