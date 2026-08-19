@@ -1,0 +1,119 @@
+name: Technical futures one-shot formatter repair
+
+on:
+  push:
+    branches:
+      - feature/technical-futures
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch with history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Rust formatter
+        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+        with:
+          toolchain: 1.97.1
+          components: rustfmt
+
+      - name: Restore known-good prompt code and reapply lineage edits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show 31df74e452781673efc4135f09eddbd53183344e:apps/desktop/src-tauri/src/services.rs > /tmp/services.rs
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('/tmp/services.rs')
+          text = path.read_text()
+
+          replacements = [
+              (
+                  '''    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
+        let active_project = self.active_project_id()?;
+        self.store
+            .list_jobs(Some(active_project))
+            .map(|jobs| jobs.iter().map(job_to_ui).collect())
+    }
+''',
+                  '''    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
+        let active_project = self.active_project_id()?;
+        let jobs = self.store.list_jobs(Some(active_project))?;
+        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
+        Ok(jobs
+            .iter()
+            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
+            .collect())
+    }
+''',
+              ),
+              (
+                  '''        let transcripts = self.store.list_transcripts(Some(active_project))?;
+        let research_items = self.store.list_research_items(Some(active_project))?;
+''',
+                  '''        let transcripts = self.store.list_transcripts(Some(active_project))?;
+        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
+        let research_items = self.store.list_research_items(Some(active_project))?;
+''',
+              ),
+              (
+                  '''        let jobs = all_jobs
+            .iter()
+            .filter(|job| job.project_id == active_project)
+            .map(job_to_ui)
+            .collect::<Vec<_>>();
+''',
+                  '''        let jobs = all_jobs
+            .iter()
+            .filter(|job| job.project_id == active_project)
+            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
+            .collect::<Vec<_>>();
+''',
+              ),
+              (
+                  'fn job_to_ui(job: &Job) -> UiJob {',
+                  'fn job_to_ui(job: &Job, completed_transcript_id: Option<Uuid>) -> UiJob {',
+              ),
+              (
+                  '''        updated_at: job.updated_at.clone(),
+        detail: job.last_error.clone(),
+    }
+''',
+                  '''        updated_at: job.updated_at.clone(),
+        detail: job.last_error.clone(),
+        completed_transcript_id: completed_transcript_id.map(|id| id.to_string()),
+    }
+''',
+              ),
+          ]
+
+          for index, (old, new) in enumerate(replacements, 1):
+              if old not in text:
+                  raise SystemExit(f'expected services.rs replacement #{index} was not found')
+              text = text.replace(old, new, 1)
+
+          Path('apps/desktop/src-tauri/src/services.rs').write_text(text)
+          PY
+
+      - name: Format Rust workspace
+        run: cargo +1.97.1 fmt --all
+
+      - name: Remove one-shot workflow and commit repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/technical-futures-autoformat.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/desktop/src-tauri/src/services.rs crates/scriptotar-db/src/integration.rs
+          git diff --cached --check
+          git commit -m "fix(rust): restore prompt literals and format lineage changes"
+          git push origin HEAD:feature/technical-futures
