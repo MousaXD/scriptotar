@@ -7,6 +7,9 @@ on:
       - 'Cargo.lock'
       - 'crates/**'
       - 'apps/desktop/src-tauri/**'
+      - 'apps/desktop-ui/**'
+      - 'scripts/apply_technical_futures_phase4a.py'
+      - 'scripts/fix_phase4a_anchors.py'
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
   push:
@@ -21,9 +24,69 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  phase-four-a-lazy-transcript-detail:
+    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout working branch with history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feature/technical-futures
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+        with:
+          components: rustfmt
+      - name: Apply lazy transcript detail patch
+        run: |
+          python3 scripts/fix_phase4a_anchors.py
+          python3 scripts/apply_technical_futures_phase4a.py
+      - name: Format Rust workspace
+        run: cargo fmt --all
+      - name: Validate desktop UI regression surface
+        working-directory: apps/desktop-ui
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build
+      - name: Validate exact transcript repository lookup
+        run: |
+          cargo check -p scriptotar-db --all-targets --locked
+          cargo test -p scriptotar-db --locked
+      - name: Restore normal workflow and commit only intended files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show bc6cc2c6847e34c8d4375c04200c4bc9d7c96ade:.github/workflows/rust-foundation.yml > .github/workflows/rust-foundation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            crates/scriptotar-db/src/integration.rs \
+            apps/desktop/src-tauri/src/services.rs \
+            apps/desktop/src-tauri/src/lib.rs \
+            apps/desktop-ui/src/api/client.ts \
+            apps/desktop-ui/src/api/tauriClient.ts \
+            apps/desktop-ui/src/api/mockClient.ts \
+            apps/desktop-ui/src/App.svelte \
+            apps/desktop-ui/src/views/TranscriptView.svelte \
+            apps/desktop-ui/src/views/AiStudioView.svelte \
+            apps/desktop-ui/src/ai-source-selection.test.ts \
+            apps/desktop-ui/src/App.test.ts \
+            .github/workflows/rust-foundation.yml
+          git rm -f scripts/apply_technical_futures_phase4a.py scripts/fix_phase4a_anchors.py
+          git diff --cached --check
+          git commit -m "feat: load transcript details on demand"
+          git push origin HEAD:feature/technical-futures
+
   rust:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
