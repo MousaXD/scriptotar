@@ -173,6 +173,7 @@ pub struct UiJob {
     pub progress: Option<u8>,
     pub updated_at: String,
     pub detail: Option<String>,
+    pub completed_transcript_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
