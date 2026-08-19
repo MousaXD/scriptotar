@@ -10,6 +10,7 @@ on:
       - 'apps/desktop-ui/**'
       - 'scripts/apply_technical_futures_phase4a.py'
       - 'scripts/fix_phase4a_anchors.py'
+      - 'scripts/fix_phase4a_selected_closures.py'
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
   push:
@@ -49,6 +50,7 @@ jobs:
         run: |
           python3 scripts/fix_phase4a_anchors.py
           python3 scripts/apply_technical_futures_phase4a.py
+          python3 scripts/fix_phase4a_selected_closures.py
       - name: Format Rust workspace
         run: cargo fmt --all
       - name: Validate desktop UI regression surface
@@ -82,7 +84,7 @@ jobs:
             apps/desktop-ui/src/ai-source-selection.test.ts \
             apps/desktop-ui/src/App.test.ts \
             .github/workflows/rust-foundation.yml
-          git rm -f scripts/apply_technical_futures_phase4a.py scripts/fix_phase4a_anchors.py
+          git rm -f scripts/apply_technical_futures_phase4a.py scripts/fix_phase4a_anchors.py scripts/fix_phase4a_selected_closures.py
           git diff --cached --check
           git commit -m "feat: load transcript details on demand"
           git push origin HEAD:feature/technical-futures
