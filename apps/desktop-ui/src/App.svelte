@@ -119,14 +119,9 @@
 
   async function createProject(name: string) {
     switchError = '';
-    try {
-      data = prepareData(await api.createProject(name));
-      selectedTranscriptId = data.transcripts[0]?.id || '';
-      activeView = 'dashboard';
-    } catch (cause) {
-      switchError = cause instanceof Error ? cause.message : 'Unable to create project.';
-      throw cause;
-    }
+    data = prepareData(await api.createProject(name));
+    selectedTranscriptId = data.transcripts[0]?.id || '';
+    activeView = 'dashboard';
   }
 
   async function enqueueLocal(path: string) {
