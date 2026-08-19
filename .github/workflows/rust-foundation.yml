@@ -10,7 +10,7 @@ on:
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
   push:
-    branches: [main]
+    branches: [main, feature/technical-futures]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -18,6 +18,7 @@ on:
       - 'apps/desktop/src-tauri/**'
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
+      - 'scripts/technical_futures_repair.py'
   workflow_dispatch:
 
 permissions:
@@ -25,7 +26,7 @@ permissions:
 
 jobs:
   repair-lineage-format:
-    if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/technical-futures' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
@@ -39,99 +40,26 @@ jobs:
         with:
           toolchain: 1.97.1
           components: rustfmt
-      - name: Restore known-good services file and reapply exact lineage edits
-        shell: bash
+      - name: Restore services and format workspace
         run: |
-          set -euo pipefail
-          git show 31df74e452781673efc4135f09eddbd53183344e:apps/desktop/src-tauri/src/services.rs > /tmp/services.rs
-          python3 - <<'PY'
-          from pathlib import Path
-
-          text = Path('/tmp/services.rs').read_text()
-          replacements = [
-              (
-                  '''    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
-        let active_project = self.active_project_id()?;
-        self.store
-            .list_jobs(Some(active_project))
-            .map(|jobs| jobs.iter().map(job_to_ui).collect())
-    }
-''',
-                  '''    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
-        let active_project = self.active_project_id()?;
-        let jobs = self.store.list_jobs(Some(active_project))?;
-        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
-        Ok(jobs
-            .iter()
-            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
-            .collect())
-    }
-''',
-              ),
-              (
-                  '''        let transcripts = self.store.list_transcripts(Some(active_project))?;
-        let research_items = self.store.list_research_items(Some(active_project))?;
-''',
-                  '''        let transcripts = self.store.list_transcripts(Some(active_project))?;
-        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
-        let research_items = self.store.list_research_items(Some(active_project))?;
-''',
-              ),
-              (
-                  '''        let jobs = all_jobs
-            .iter()
-            .filter(|job| job.project_id == active_project)
-            .map(job_to_ui)
-            .collect::<Vec<_>>();
-''',
-                  '''        let jobs = all_jobs
-            .iter()
-            .filter(|job| job.project_id == active_project)
-            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
-            .collect::<Vec<_>>();
-''',
-              ),
-              (
-                  'fn job_to_ui(job: &Job) -> UiJob {',
-                  'fn job_to_ui(job: &Job, completed_transcript_id: Option<Uuid>) -> UiJob {',
-              ),
-              (
-                  '''        updated_at: job.updated_at.clone(),
-        detail: job.last_error.clone(),
-    }
-''',
-                  '''        updated_at: job.updated_at.clone(),
-        detail: job.last_error.clone(),
-        completed_transcript_id: completed_transcript_id.map(|id| id.to_string()),
-    }
-''',
-              ),
-          ]
-
-          for index, (old, new) in enumerate(replacements, 1):
-              if old not in text:
-                  raise SystemExit(f'expected services.rs replacement #{index} was not found')
-              text = text.replace(old, new, 1)
-
-          Path('apps/desktop/src-tauri/src/services.rs').write_text(text)
-          PY
-      - name: Format Rust workspace
-        run: cargo +1.97.1 fmt --all
-      - name: Restore workflow files and push repair
+          python3 scripts/technical_futures_repair.py
+          cargo +1.97.1 fmt --all
+      - name: Restore CI files and push repair
         shell: bash
         run: |
           set -euo pipefail
           git show 31df74e452781673efc4135f09eddbd53183344e:.github/workflows/rust-foundation.yml > .github/workflows/rust-foundation.yml
-          rm -f .github/workflows/technical-futures-autoformat.yml
+          rm -f .github/workflows/technical-futures-autoformat.yml scripts/technical_futures_repair.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add apps/desktop/src-tauri/src/services.rs crates/scriptotar-db/src/integration.rs .github/workflows/rust-foundation.yml
-          git add -u .github/workflows/technical-futures-autoformat.yml || true
+          git add -u .github/workflows/technical-futures-autoformat.yml scripts/technical_futures_repair.py || true
           git diff --cached --check
           git commit -m "fix(rust): restore prompt literals and format lineage changes"
           git push origin HEAD:feature/technical-futures
 
   rust:
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
