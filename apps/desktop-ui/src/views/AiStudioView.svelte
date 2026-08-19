@@ -27,10 +27,6 @@
   $: words = sourceText.trim() ? sourceText.trim().split(/\s+/).length : 0;
   $: speakingSeconds = Math.round(words / 2.5);
   $: briefFields = [topic, audience, cta, voice].filter((value) => value.trim()).length;
-  $: if (selectedTranscriptId !== 'manual' && !selectedTranscript && transcripts.length > 0) {
-    selectedTranscriptId = transcripts[0].id;
-    sourceText = transcripts[0].text;
-  }
 
   function payload() {
     return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
