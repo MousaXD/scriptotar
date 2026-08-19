@@ -9,6 +9,7 @@ on:
       - 'apps/desktop/src-tauri/**'
       - 'apps/desktop-ui/**'
       - 'scripts/apply_technical_futures_phase3.py'
+      - 'scripts/fix_phase3_anchor.py'
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
   push:
@@ -55,7 +56,9 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Apply FTS search patch
-        run: python3 scripts/apply_technical_futures_phase3.py
+        run: |
+          python3 scripts/fix_phase3_anchor.py
+          python3 scripts/apply_technical_futures_phase3.py
       - name: Format Rust workspace
         run: cargo fmt --all
       - name: Validate desktop UI
@@ -87,7 +90,7 @@ jobs:
             apps/desktop-ui/src/App.svelte \
             apps/desktop-ui/src/App.test.ts \
             .github/workflows/rust-foundation.yml
-          git rm scripts/apply_technical_futures_phase3.py
+          git rm scripts/apply_technical_futures_phase3.py scripts/fix_phase3_anchor.py
           git diff --cached --check
           git commit -m "feat: move transcript search onto SQLite FTS"
           git push origin HEAD:feature/technical-futures
