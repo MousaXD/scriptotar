@@ -155,13 +155,10 @@
   }
 
   async function openCompletedJob(job: Job) {
-    const matches = data?.transcripts.filter((item) => item.source === job.source) || [];
-    if (matches.length !== 1) {
-      throw new Error(matches.length === 0
-        ? 'This job is complete, but no persisted transcript for its exact source is available in the active project yet. Refresh the workspace or open the transcript from Library.'
-        : 'More than one transcript matches this job source. Open the exact transcript from Library while this job is being relinked.');
+    if (!job.completedTranscriptId) {
+      throw new Error('This completed job has no safe persisted transcript link. Open the transcript from Library; Scriptotar will not guess by title or source.');
     }
-    openTranscript(matches[0].id);
+    openTranscript(job.completedTranscriptId);
   }
 
   async function openLibraryItem(item: LibraryItem) {
