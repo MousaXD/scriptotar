@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 1;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 2;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -101,7 +101,62 @@ impl SqliteStore {
             .map_err(storage_error)?;
             tx.commit().map_err(storage_error)?;
         }
+        if current < 2 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TABLE job_transcript_links (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                    transcript_id TEXT NOT NULL UNIQUE REFERENCES transcripts(id) ON DELETE CASCADE,
+                    linked_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_job_transcript_links_transcript
+                    ON job_transcript_links(transcript_id);",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(2, 'job_transcript_lineage', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
         Ok(())
+    }
+
+    pub fn list_job_transcript_links(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> RepositoryResult<HashMap<Uuid, Uuid>> {
+        self.run_integration_migrations()?;
+        let connection = connection(self)?;
+        let sql = if project_id.is_some() {
+            "SELECT l.job_id, l.transcript_id
+             FROM job_transcript_links l
+             JOIN jobs j ON j.id = l.job_id
+             WHERE j.project_id = ?1"
+        } else {
+            "SELECT l.job_id, l.transcript_id
+             FROM job_transcript_links l"
+        };
+        let mut statement = connection.prepare(sql).map_err(storage_error)?;
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(Uuid, Uuid)> {
+            Ok((
+                parse_uuid(row.get::<_, String>(0)?)?,
+                parse_uuid(row.get::<_, String>(1)?)?,
+            ))
+        };
+        let rows = if let Some(project_id) = project_id {
+            statement
+                .query_map(params![project_id.to_string()], map_row)
+                .map_err(storage_error)?
+        } else {
+            statement.query_map([], map_row).map_err(storage_error)?
+        };
+        rows.collect::<Result<HashMap<_, _>, _>>()
+            .map_err(storage_error)
     }
 
     pub fn import_legacy_database(
@@ -311,6 +366,19 @@ impl SqliteStore {
                             media_id.to_string(),
                             row.language,
                             text,
+                            row.created_at,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+                    tx.execute(
+                        "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+                         VALUES(?1, ?2, ?3)
+                         ON CONFLICT(job_id) DO UPDATE SET
+                            transcript_id = excluded.transcript_id,
+                            linked_at = excluded.linked_at",
+                        params![
+                            job_id.to_string(),
+                            transcript_id.to_string(),
                             row.created_at,
                         ],
                     )
@@ -690,6 +758,16 @@ impl ContentRepository for SqliteStore {
             ],
         )
         .map_err(storage_error)?;
+        tx.execute(
+            "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+             VALUES(?1, ?2, ?3)",
+            params![
+                job_id.to_string(),
+                transcript.id.to_string(),
+                now_rfc3339(),
+            ],
+        )
+        .map_err(storage_error)?;
         let changed = tx
             .execute(
                 "UPDATE jobs SET state = 'completed', progress = 1.0, last_error = NULL, updated_at = ?1
@@ -1003,6 +1081,13 @@ mod tests {
             .unwrap();
         assert_eq!(completed.state, JobState::Completed);
         assert_eq!(store.list_transcripts(Some(project.id)).unwrap().len(), 1);
+        assert_eq!(
+            store
+                .list_job_transcript_links(Some(project.id))
+                .unwrap()
+                .get(&job.id),
+            Some(&transcript.id)
+        );
     }
 
     #[test]
@@ -1048,6 +1133,15 @@ mod tests {
         assert_eq!(first.watchlists, 1);
         assert_eq!(first.ai_runs, 1);
         assert!(PathBuf::from(first.backup_path.unwrap()).is_file());
+        let legacy_job_id = legacy_uuid("job", "abc123");
+        let legacy_transcript_id = legacy_uuid("transcript", "abc123");
+        assert_eq!(
+            store
+                .list_job_transcript_links(None)
+                .unwrap()
+                .get(&legacy_job_id),
+            Some(&legacy_transcript_id)
+        );
         let second = store.import_legacy_database(&legacy_path).unwrap();
         assert!(second.skipped);
         assert_eq!(store.list_transcripts(None).unwrap().len(), 1);
