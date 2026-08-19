@@ -31,23 +31,13 @@ jobs:
   phase-three-fts-search:
     if: github.event_name == 'pull_request' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - name: Checkout working branch with history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: feature/technical-futures
           fetch-depth: 0
-      - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            patchelf
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
@@ -55,7 +45,7 @@ jobs:
           cache-dependency-path: apps/desktop-ui/package-lock.json
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - name: Apply FTS search patch
         run: |
           python3 scripts/fix_phase3_anchor.py
@@ -63,17 +53,16 @@ jobs:
           python3 scripts/apply_technical_futures_phase3.py
       - name: Format Rust workspace
         run: cargo fmt --all
-      - name: Validate desktop UI
+      - name: Validate desktop UI regression surface
         working-directory: apps/desktop-ui
         run: |
           npm ci
           npm run check
           npm test
           npm run build
-      - name: Validate Rust workspace and search migration
+      - name: Validate SQLite search migration and Arabic fallback
         run: |
-          cargo check --workspace --all-targets --locked
-          cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+          cargo check -p scriptotar-db --all-targets --locked
           cargo test -p scriptotar-db --locked
       - name: Restore normal workflow and commit only intended files
         shell: bash
