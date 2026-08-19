@@ -105,6 +105,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
+    async subscribeJobChanges(_listener: (jobId: string) => void) { return () => {}; },
     async getWatchlistStatuses() { return structuredClone(snapshot().watchlistStatuses); },
     async getMigrationStatus() { return structuredClone(migrationStatus); },
     async retryLegacyMigration() { return structuredClone(migrationStatus); },

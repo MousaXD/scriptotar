@@ -12,7 +12,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, MutexGuard, OnceLock, TryLockError},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
 use dto::{
@@ -22,7 +22,7 @@ use dto::{
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use services::AppServices;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
@@ -602,7 +602,11 @@ pub fn run() {
             operational_store.run_integration_migrations()?;
             operational_store.recover_interrupted_watchlist_refreshes()?;
 
-            let services = AppServices::new(&data_dir)?;
+            let app_handle = app.handle().clone();
+            let job_notifier = Arc::new(move |job_id: Uuid| {
+                let _ = app_handle.emit("scriptotar://job-changed", job_id.to_string());
+            });
+            let services = AppServices::new_with_job_notifier(&data_dir, job_notifier)?;
             if matches!(preparation, Some(migration::Preparation::Ready)) {
                 complete_prepared_migration(&services, &data_dir);
             }

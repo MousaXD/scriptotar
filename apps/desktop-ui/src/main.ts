@@ -12,6 +12,9 @@ type GlobalTauri = {
   core?: {
     invoke?: <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
   };
+  event?: {
+    listen?: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>;
+  };
 };
 
 type RuntimeWindow = Window & {
@@ -23,7 +26,11 @@ const runtimeWindow = window as RuntimeWindow;
 const globalTauri = runtimeWindow.__TAURI__;
 const isTauriRuntime = Boolean(globalTauri || runtimeWindow.__TAURI_INTERNALS__);
 if (globalTauri?.core?.invoke) {
-  setApi(createTauriClient(globalTauri.core.invoke));
+  const listen = globalTauri.event?.listen
+    ? <T>(event: string, handler: (event: { payload: T }) => void) =>
+        globalTauri.event!.listen!(event, handler)
+    : undefined;
+  setApi(createTauriClient(globalTauri.core.invoke, listen));
 } else if (isTauriRuntime) {
   throw new Error('Scriptotar is running inside Tauri, but the Tauri IPC bridge is unavailable.');
 }

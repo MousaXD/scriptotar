@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 2;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 3;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -118,6 +118,57 @@ impl SqliteStore {
             tx.execute(
                 "INSERT INTO integration_schema_migrations(version, name, applied_at)
                  VALUES(2, 'job_transcript_lineage', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
+        if current < 3 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            let linked_at = now_rfc3339();
+            tx.execute(
+                "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+                 SELECT j.id, t.id, ?1
+                 FROM jobs j
+                 JOIN sources s
+                   ON s.project_id = j.project_id
+                  AND s.source_type = j.input_kind
+                  AND s.locator = j.input_value
+                 JOIN media m ON m.source_id = s.id
+                 JOIN transcripts t ON t.media_id = m.id
+                 WHERE j.state = 'completed'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM job_transcript_links existing
+                       WHERE existing.job_id = j.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM job_transcript_links existing
+                       WHERE existing.transcript_id = t.id
+                   )
+                   AND (
+                       SELECT COUNT(*) FROM jobs sibling
+                       WHERE sibling.project_id = j.project_id
+                         AND sibling.input_kind = j.input_kind
+                         AND sibling.input_value = j.input_value
+                         AND sibling.state = 'completed'
+                   ) = 1
+                   AND (
+                       SELECT COUNT(*)
+                       FROM transcripts candidate
+                       JOIN media candidate_media ON candidate_media.id = candidate.media_id
+                       JOIN sources candidate_source ON candidate_source.id = candidate_media.source_id
+                       WHERE candidate_source.project_id = j.project_id
+                         AND candidate_source.source_type = j.input_kind
+                         AND candidate_source.locator = j.input_value
+                   ) = 1",
+                params![linked_at],
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(3, 'safe_job_transcript_backfill', ?1)",
                 params![now_rfc3339()],
             )
             .map_err(storage_error)?;
@@ -1084,6 +1135,92 @@ mod tests {
                 .get(&job.id),
             Some(&transcript.id)
         );
+
+        {
+            let connection = connection(&store).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM job_transcript_links WHERE job_id = ?1",
+                    params![job.id.to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM integration_schema_migrations WHERE version = 3",
+                    [],
+                )
+                .unwrap();
+        }
+        store.run_integration_migrations().unwrap();
+        assert_eq!(
+            store
+                .list_job_transcript_links(Some(project.id))
+                .unwrap()
+                .get(&job.id),
+            Some(&transcript.id)
+        );
+    }
+
+    #[test]
+    fn historical_lineage_backfill_skips_ambiguous_duplicate_inputs() {
+        let temp = TempDir::new().unwrap();
+        let store = new_store(&temp);
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let input = "/tmp/duplicate.mp4";
+        let first_job = Uuid::new_v4();
+        let second_job = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let now = now_rfc3339();
+        let connection = connection(&store).unwrap();
+        for job_id in [first_job, second_job] {
+            connection
+                .execute(
+                    "INSERT INTO jobs(
+                        id, project_id, input_kind, input_value, state, progress, last_error,
+                        created_at, updated_at
+                    ) VALUES(?1, ?2, 'local_file', ?3, 'completed', 1.0, NULL, ?4, ?4)",
+                    params![job_id.to_string(), project.id.to_string(), input, now],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
+                 VALUES(?1, ?2, NULL, 'local_file', ?3, 'duplicate', ?4)",
+                params![source_id.to_string(), project.id.to_string(), input, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
+                 VALUES(?1, ?2, ?3, 1.0, NULL, ?4)",
+                params![media_id.to_string(), source_id.to_string(), input, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO transcripts(
+                    id, media_id, language, text, segments_json, words_json, created_at, updated_at
+                 ) VALUES(?1, ?2, 'en', 'duplicate', NULL, NULL, ?3, ?3)",
+                params![transcript_id.to_string(), media_id.to_string(), now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM integration_schema_migrations WHERE version = 3",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        store.run_integration_migrations().unwrap();
+        assert!(store
+            .list_job_transcript_links(Some(project.id))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

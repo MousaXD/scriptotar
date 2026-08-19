@@ -23,6 +23,7 @@
   let globalSearch = '';
   let selectedTranscriptId = '';
   let jobRefreshInFlight = false;
+  let jobRefreshTimer: number | undefined;
   let operationalRefreshInFlight = false;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
@@ -85,6 +86,14 @@
     } finally {
       jobRefreshInFlight = false;
     }
+  }
+
+  function scheduleJobRefresh() {
+    if (jobRefreshTimer !== undefined) return;
+    jobRefreshTimer = window.setTimeout(() => {
+      jobRefreshTimer = undefined;
+      void refreshJobs();
+    }, 120);
   }
 
   async function refreshOperationalStatus() {
@@ -209,13 +218,27 @@
   }
 
   onMount(() => {
+    let disposed = false;
+    let unsubscribeJobs: (() => void) | undefined;
     void load();
-    const jobPoll = window.setInterval(() => {
+    void api
+      .subscribeJobChanges(() => scheduleJobRefresh())
+      .then((unsubscribe) => {
+        if (disposed) unsubscribe();
+        else unsubscribeJobs = unsubscribe;
+      })
+      .catch(() => {
+        // Periodic reconciliation below remains the safe fallback.
+      });
+    const jobReconcile = window.setInterval(() => {
       if (data?.jobs.some((job) => activeStates.has(job.state))) void refreshJobs();
-    }, 1000);
+    }, 15000);
     const operationalPoll = window.setInterval(() => void refreshOperationalStatus(), 15000);
     return () => {
-      window.clearInterval(jobPoll);
+      disposed = true;
+      unsubscribeJobs?.();
+      if (jobRefreshTimer !== undefined) window.clearTimeout(jobRefreshTimer);
+      window.clearInterval(jobReconcile);
       window.clearInterval(operationalPoll);
     };
   });

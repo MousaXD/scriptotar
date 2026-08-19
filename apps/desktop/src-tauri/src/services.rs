@@ -23,7 +23,7 @@ use scriptotar_core::{
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
-use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
+use scriptotar_orchestrator::{JobChangeNotifier, JobOrchestrator, RuntimeConfig};
 use scriptotar_research::{NetworkPolicy, ResearchService, YtDlpCommand, YtDlpProvider};
 use serde_json::Value;
 use uuid::Uuid;
@@ -72,6 +72,13 @@ pub struct AppServices {
 
 impl AppServices {
     pub fn new(data_dir: impl AsRef<Path>) -> RepositoryResult<Self> {
+        Self::new_with_job_notifier(data_dir, Arc::new(|_| {}))
+    }
+
+    pub fn new_with_job_notifier(
+        data_dir: impl AsRef<Path>,
+        notifier: JobChangeNotifier,
+    ) -> RepositoryResult<Self> {
         let data_dir = data_dir.as_ref();
         std::fs::create_dir_all(data_dir)
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
@@ -102,9 +109,10 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
-        let orchestrator = JobOrchestrator::start(
+        let orchestrator = JobOrchestrator::start_with_notifier(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
+            notifier,
         );
         let research_command = YtDlpCommand::from_environment();
         let watchlist_refresher =

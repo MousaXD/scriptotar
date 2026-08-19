@@ -4,7 +4,10 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
+        Arc,
+    },
     thread,
     time::Duration,
 };
@@ -245,6 +248,12 @@ impl Drop for SidecarHost {
     }
 }
 
+pub type JobChangeNotifier = Arc<dyn Fn(Uuid) + Send + Sync + 'static>;
+
+fn notify_job(notifier: &JobChangeNotifier, job_id: Uuid) {
+    notifier(job_id);
+}
+
 #[derive(Debug, Clone)]
 pub struct JobOrchestrator<R> {
     control: Sender<Control>,
@@ -263,9 +272,17 @@ where
         + 'static,
 {
     pub fn start(repository: R, config: RuntimeConfig) -> Self {
+        Self::start_with_notifier(repository, config, Arc::new(|_| {}))
+    }
+
+    pub fn start_with_notifier(
+        repository: R,
+        config: RuntimeConfig,
+        notifier: JobChangeNotifier,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let worker_repository = repository.clone();
-        thread::spawn(move || worker_loop(worker_repository, config, rx));
+        thread::spawn(move || worker_loop(worker_repository, config, rx, notifier));
         Self {
             control: tx,
             _repository: repository,
@@ -285,8 +302,12 @@ where
     }
 }
 
-fn worker_loop<R>(repository: R, config: RuntimeConfig, controls: Receiver<Control>)
-where
+fn worker_loop<R>(
+    repository: R,
+    config: RuntimeConfig,
+    controls: Receiver<Control>,
+    notifier: JobChangeNotifier,
+) where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
     let mut queue = VecDeque::new();
@@ -301,15 +322,18 @@ where
                 &mut queue,
                 &mut host,
                 job_id,
+                &notifier,
             ) {
-                record_runtime_error(&repository, job_id, &error);
+                record_runtime_error(&repository, job_id, &error, &notifier);
             }
             continue;
         }
 
         match controls.recv() {
             Ok(Control::Enqueue(job_id)) => queue.push_back(job_id),
-            Ok(Control::Cancel(job_id)) => cancel_queued(&repository, &mut queue, job_id),
+            Ok(Control::Cancel(job_id)) => {
+                cancel_queued(&repository, &mut queue, job_id, &notifier)
+            }
             Err(_) => break,
         }
     }
@@ -326,6 +350,7 @@ fn run_job<R>(
     queue: &mut VecDeque<Uuid>,
     host: &mut Option<SidecarHost>,
     job_id: Uuid,
+    notifier: &JobChangeNotifier,
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
@@ -335,6 +360,7 @@ where
         return Ok(());
     }
     let job = repository.transition_job(job_id, JobState::Preparing)?;
+    notify_job(notifier, job_id);
     let settings = repository.load_settings()?;
     let output_root = settings
         .output_directory
@@ -357,18 +383,20 @@ where
     sidecar.send(&transcribe_command(&job, &settings, &output_root))?;
 
     loop {
-        drain_controls(repository, controls, queue, sidecar, job_id)?;
+        drain_controls(repository, controls, queue, sidecar, job_id, notifier)?;
 
         match sidecar.events.recv_timeout(Duration::from_millis(50)) {
-            Ok(ReaderEvent::Protocol(event)) => match handle_event(repository, &job, *event) {
-                Ok(true) => return Ok(()),
-                Ok(false) => {}
-                Err(error @ OrchestratorError::Protocol(_)) => {
-                    sidecar.shutdown();
-                    return Err(error);
+            Ok(ReaderEvent::Protocol(event)) => {
+                match handle_event(repository, &job, *event, notifier) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(error @ OrchestratorError::Protocol(_)) => {
+                        sidecar.shutdown();
+                        return Err(error);
+                    }
+                    Err(error) => return Err(error),
                 }
-                Err(error) => return Err(error),
-            },
+            }
             Ok(ReaderEvent::Violation(error)) => {
                 sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
@@ -383,6 +411,7 @@ where
                     let current = repository.get_job(job_id)?;
                     if current.state.is_active() {
                         repository.transition_job(job_id, JobState::Interrupted)?;
+                        notify_job(notifier, job_id);
                     }
                     return Ok(());
                 }
@@ -410,6 +439,7 @@ fn drain_controls<R>(
     queue: &mut VecDeque<Uuid>,
     sidecar: &mut SidecarHost,
     active_job_id: Uuid,
+    notifier: &JobChangeNotifier,
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
@@ -428,14 +458,18 @@ where
                     job_id: job_id.to_string(),
                 })?;
             }
-            Ok(Control::Cancel(job_id)) => cancel_queued(repository, queue, job_id),
+            Ok(Control::Cancel(job_id)) => cancel_queued(repository, queue, job_id, notifier),
             Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => return Ok(()),
         }
     }
 }
 
-fn cancel_queued<R>(repository: &R, queue: &mut VecDeque<Uuid>, job_id: Uuid)
-where
+fn cancel_queued<R>(
+    repository: &R,
+    queue: &mut VecDeque<Uuid>,
+    job_id: Uuid,
+    notifier: &JobChangeNotifier,
+) where
     R: JobRepository,
 {
     queue.retain(|queued| *queued != job_id);
@@ -443,7 +477,12 @@ where
         .get_job(job_id)
         .is_ok_and(|job| job.state == JobState::Queued)
     {
-        let _ = repository.transition_job(job_id, JobState::Cancelled);
+        if repository
+            .transition_job(job_id, JobState::Cancelled)
+            .is_ok()
+        {
+            notify_job(notifier, job_id);
+        }
     }
 }
 
@@ -451,6 +490,7 @@ fn handle_event<R>(
     repository: &R,
     original_job: &Job,
     event: SidecarEvent,
+    notifier: &JobChangeNotifier,
 ) -> Result<bool, OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + ContentRepository,
@@ -470,11 +510,13 @@ where
                     Some((percent / 100.0).clamp(0.0, 1.0)),
                 )?;
             }
+            notify_job(notifier, original_job.id);
             Ok(false)
         }
         SidecarEvent::Result { result, .. } => {
             ensure_processing(repository, original_job)?;
             persist_result(repository, original_job, result)?;
+            notify_job(notifier, original_job.id);
             Ok(true)
         }
         SidecarEvent::Error { error, .. } => {
@@ -482,6 +524,7 @@ where
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
                 repository.fail_job(original_job.id, &message)?;
+                notify_job(notifier, original_job.id);
             }
             Ok(true)
         }
@@ -489,6 +532,7 @@ where
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
                 repository.transition_job(original_job.id, JobState::Cancelled)?;
+                notify_job(notifier, original_job.id);
             }
             Ok(true)
         }
@@ -689,13 +733,17 @@ fn transcribe_command(
     }
 }
 
-fn record_runtime_error<R>(repository: &R, job_id: Uuid, error: &OrchestratorError)
-where
+fn record_runtime_error<R>(
+    repository: &R,
+    job_id: Uuid,
+    error: &OrchestratorError,
+    notifier: &JobChangeNotifier,
+) where
     R: JobRepository + JobRuntimeRepository,
 {
     if let Ok(job) = repository.get_job(job_id) {
-        if job.state.is_active() {
-            let _ = repository.fail_job(job_id, &error.to_string());
+        if job.state.is_active() && repository.fail_job(job_id, &error.to_string()).is_ok() {
+            notify_job(notifier, job_id);
         }
     }
 }
@@ -768,6 +816,38 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         panic!("job did not become terminal");
+    }
+
+    #[test]
+    fn job_change_notifier_reports_orchestrator_progress() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("next.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let mut settings = store.load_settings().unwrap();
+        settings.output_directory = Some(temp.path().join("output").to_string_lossy().into_owned());
+        store.save_settings(&settings).unwrap();
+        let (sidecar, fake_worker) = paths();
+        let config = RuntimeConfig::new("python3", sidecar, temp.path().join("output"))
+            .with_environment(
+                "SCRIPTOTAR_SIDECAR_ENGINE_WORKER",
+                fake_worker.to_string_lossy().into_owned(),
+            );
+        let (notify_tx, notify_rx) = mpsc::channel();
+        let notifier: JobChangeNotifier = Arc::new(move |job_id| {
+            let _ = notify_tx.send(job_id);
+        });
+        let orchestrator = JobOrchestrator::start_with_notifier(store.clone(), config, notifier);
+        let job = enqueue_file(&store, &orchestrator, &temp.path().join("notify.mp4"));
+        assert_eq!(wait_for_terminal(&store, job.id).state, JobState::Completed);
+
+        let mut notifications = 0;
+        while let Ok(job_id) = notify_rx.try_recv() {
+            assert_eq!(job_id, job.id);
+            notifications += 1;
+        }
+        assert!(notifications >= 2);
     }
 
     #[test]

@@ -70,12 +70,19 @@ describe('desktop workstation', () => {
     expect(screen.getByTestId('job-interrupted')).toBeInTheDocument();
   });
 
-  it('refreshes active jobs without repeatedly bootstrapping the full workspace', async () => {
-    const api = createMockClient();
+  it('refreshes active jobs from backend events without repeatedly bootstrapping the full workspace', async () => {
+    let notify: ((jobId: string) => void) | undefined;
+    const api = createMockClient({
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
     const bootstrap = vi.spyOn(api, 'bootstrap');
     const listJobs = vi.spyOn(api, 'listJobs');
     await ready(api);
-    await waitFor(() => expect(listJobs).toHaveBeenCalled(), { timeout: 1600 });
+    notify?.('j-1');
+    await waitFor(() => expect(listJobs).toHaveBeenCalled());
     expect(bootstrap).toHaveBeenCalledTimes(1);
   });
 
