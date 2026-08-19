@@ -221,6 +221,26 @@ describe('desktop workstation', () => {
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
   });
 
+  it('delegates transcript-body workspace search to the backend index', async () => {
+    const api = createMockClient();
+    const searchTranscripts = vi.spyOn(api, 'searchTranscripts');
+    await ready(api);
+    const search = screen.getByLabelText('Search workspace');
+    await fireEvent.input(search, { target: { value: 'visual payoff' } });
+    await waitFor(() => expect(searchTranscripts).toHaveBeenCalledWith('visual payoff', 8));
+    expect(await screen.findByRole('button', { name: /Caption pacing breakdown.*Transcript/ })).toBeInTheDocument();
+  });
+
+  it('supports Arabic transcript-body workspace search through the backend index', async () => {
+    const api = createMockClient();
+    const searchTranscripts = vi.spyOn(api, 'searchTranscripts');
+    await ready(api);
+    const search = screen.getByLabelText('Search workspace');
+    await fireEvent.input(search, { target: { value: 'النتيجة' } });
+    await waitFor(() => expect(searchTranscripts).toHaveBeenCalledWith('النتيجة', 8));
+    expect(await screen.findByRole('button', { name: /Hook breakdown — Arabic sample.*Transcript/ })).toBeInTheDocument();
+  });
+
   it('selects and persists a Rust-backed output directory', async () => {
     const api = createMockClient();
     const chooseOutputDirectory = vi.spyOn(api, 'chooseOutputDirectory');

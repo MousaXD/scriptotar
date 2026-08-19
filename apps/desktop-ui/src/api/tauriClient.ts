@@ -31,6 +31,8 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
   return {
     bootstrap: () => hydrateBootstrap(invoke, invoke<CoreBootstrapData>('bootstrap_app')),
     listJobs: () => invoke<Job[]>('list_jobs'),
+    searchTranscripts: (query, limit = 10) =>
+      invoke<string[]>('search_transcripts', { query, limit }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

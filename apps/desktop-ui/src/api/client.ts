@@ -32,6 +32,7 @@ export interface AiPromptInput {
 export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
   listJobs(): Promise<Job[]>;
+  searchTranscripts(query: string, limit?: number): Promise<string[]>;
   subscribeJobChanges(listener: (jobId: string) => void): Promise<() => void>;
   getWatchlistStatuses(): Promise<WatchlistStatus[]>;
   getMigrationStatus(): Promise<MigrationStatus>;

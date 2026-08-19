@@ -25,11 +25,16 @@
   let jobRefreshInFlight = false;
   let jobRefreshTimer: number | undefined;
   let operationalRefreshInFlight = false;
+  let transcriptSearchIds: string[] = [];
+  let transcriptSearchTimer: number | undefined;
+  let transcriptSearchGeneration = 0;
+  let transcriptSearchKey = '';
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
-  $: searchResults = data ? buildSearchResults(data, globalSearch) : [];
+  $: searchResults = data ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
+  $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
 
   function prepareData(next: BootstrapData): BootstrapData {
     const appearance = loadAppearance(next.settings.appearance);
@@ -37,7 +42,11 @@
     return { ...next, settings: { ...next.settings, appearance } };
   }
 
-  function buildSearchResults(snapshot: BootstrapData, rawQuery: string): WorkspaceSearchResult[] {
+  function buildSearchResults(
+    snapshot: BootstrapData,
+    rawQuery: string,
+    transcriptMatches: Set<string>
+  ): WorkspaceSearchResult[] {
     const query = rawQuery.trim().toLocaleLowerCase();
     if (!query) return [];
     const match = (...values: Array<string | undefined>) => values.some((value) => value?.toLocaleLowerCase().includes(query));
@@ -47,7 +56,7 @@
       if (match(project.name, project.description)) results.push({ id: `project:${project.id}`, kind: 'Project', title: project.name, subtitle: project.description || `${project.itemCount} items`, view: 'dashboard', projectId: project.id });
     }
     for (const transcript of snapshot.transcripts) {
-      if (match(transcript.title, transcript.text, transcript.language, transcript.platform)) results.push({ id: `transcript:${transcript.id}`, kind: 'Transcript', title: transcript.title, subtitle: `${transcript.language} · ${transcript.platform}`, view: 'transcript', projectId: transcript.projectId, targetId: transcript.id });
+      if (transcriptMatches.has(transcript.id) || match(transcript.title, transcript.language, transcript.platform)) results.push({ id: `transcript:${transcript.id}`, kind: 'Transcript', title: transcript.title, subtitle: `${transcript.language} · ${transcript.platform}`, view: 'transcript', projectId: transcript.projectId, targetId: transcript.id });
     }
     for (const item of snapshot.research) {
       if (match(item.title, item.creator, item.platform)) results.push({ id: `research:${item.id}`, kind: 'Research', title: item.title, subtitle: `${item.creator} · ${item.platform}`, view: 'research', projectId: snapshot.activeProjectId, targetId: item.id });
@@ -59,6 +68,36 @@
       if (match(run.title, run.task, run.provider, run.model)) results.push({ id: `ai:${run.id}`, kind: 'AI run', title: run.title, subtitle: `${run.task} · ${run.provider || 'Local prompt'}`, view: 'ai', projectId: snapshot.activeProjectId, targetId: run.id });
     }
     return results.slice(0, 10);
+  }
+
+  function scheduleTranscriptSearch(rawQuery: string, projectId: string) {
+    const query = rawQuery.trim();
+    const key = projectId && query ? `${projectId}\u0000${query}` : '';
+    if (key === transcriptSearchKey) return;
+    transcriptSearchKey = key;
+    transcriptSearchGeneration += 1;
+    const generation = transcriptSearchGeneration;
+    if (transcriptSearchTimer !== undefined) {
+      window.clearTimeout(transcriptSearchTimer);
+      transcriptSearchTimer = undefined;
+    }
+    if (!key) {
+      transcriptSearchIds = [];
+      return;
+    }
+    transcriptSearchTimer = window.setTimeout(async () => {
+      transcriptSearchTimer = undefined;
+      try {
+        const ids = await api.searchTranscripts(query, 8);
+        if (generation === transcriptSearchGeneration && transcriptSearchKey === key) {
+          transcriptSearchIds = ids;
+        }
+      } catch {
+        if (generation === transcriptSearchGeneration && transcriptSearchKey === key) {
+          transcriptSearchIds = [];
+        }
+      }
+    }, 160);
   }
 
   async function load(showLoading = true) {
@@ -238,6 +277,7 @@
       disposed = true;
       unsubscribeJobs?.();
       if (jobRefreshTimer !== undefined) window.clearTimeout(jobRefreshTimer);
+      if (transcriptSearchTimer !== undefined) window.clearTimeout(transcriptSearchTimer);
       window.clearInterval(jobReconcile);
       window.clearInterval(operationalPoll);
     };

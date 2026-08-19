@@ -256,6 +256,17 @@ fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String>
 }
 
 #[tauri::command]
+fn search_transcripts(
+    query: String,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<String>, String> {
+    state
+        .search_transcripts(&query, limit.unwrap_or(10))
+        .map_err(command_error)
+}
+
+#[tauri::command]
 fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
 ) -> Result<Vec<UiWatchlistStatus>, String> {
@@ -622,6 +633,7 @@ pub fn run() {
             backend_health,
             bootstrap_app,
             list_jobs,
+            search_transcripts,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

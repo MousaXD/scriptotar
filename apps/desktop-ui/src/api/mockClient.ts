@@ -105,6 +105,14 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
+    async searchTranscripts(rawQuery: string, limit = 10) {
+      const query = rawQuery.trim().toLocaleLowerCase();
+      if (!query) return [];
+      return snapshot().transcripts
+        .filter((transcript) => transcript.text.toLocaleLowerCase().includes(query))
+        .slice(0, limit)
+        .map((transcript) => transcript.id);
+    },
     async subscribeJobChanges(_listener: (jobId: string) => void) { return () => {}; },
     async getWatchlistStatuses() { return structuredClone(snapshot().watchlistStatuses); },
     async getMigrationStatus() { return structuredClone(migrationStatus); },

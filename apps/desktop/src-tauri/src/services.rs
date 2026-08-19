@@ -147,6 +147,13 @@ impl AppServices {
             .collect())
     }
 
+    pub fn search_transcripts(&self, query: &str, limit: usize) -> RepositoryResult<Vec<String>> {
+        let active_project = self.active_project_id()?;
+        self.store
+            .search_transcript_ids(active_project, query, limit)
+            .map(|ids| ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
         let mut active_project = self
