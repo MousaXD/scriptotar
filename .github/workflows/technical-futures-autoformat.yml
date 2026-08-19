@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feature/technical-futures
+  pull_request:
+    branches:
+      - feature/arabic-gui
 
 permissions:
   contents: write
@@ -13,9 +16,10 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout branch with history
+      - name: Checkout working branch with history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          ref: feature/technical-futures
           fetch-depth: 0
 
       - name: Install pinned Rust formatter
@@ -32,9 +36,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path('/tmp/services.rs')
-          text = path.read_text()
-
+          text = Path('/tmp/services.rs').read_text()
           replacements = [
               (
                   '''    pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
