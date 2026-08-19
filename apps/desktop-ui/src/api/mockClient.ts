@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { BackendJob, BootstrapData } from '../types';
+import type { BackendJob, BootstrapData, Project } from '../types';
 
 export const mockBootstrap: BootstrapData = {
   activeProjectId: 'p-creator-lab',
@@ -93,8 +93,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let active = mockBootstrap.activeProjectId;
   let settings = structuredClone(mockBootstrap.settings);
   let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
+  let projects = structuredClone(mockBootstrap.projects);
+  let projectCounter = 0;
   const snapshot = (): BootstrapData => ({
     ...structuredClone(mockBootstrap),
+    projects: structuredClone(projects),
     activeProjectId: active,
     settings: structuredClone(settings),
     migrationStatus: structuredClone(migrationStatus)
@@ -106,8 +109,29 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async getMigrationStatus() { return structuredClone(migrationStatus); },
     async retryLegacyMigration() { return structuredClone(migrationStatus); },
     async selectLegacyMigrationCandidate(_candidateId: string) { return structuredClone(migrationStatus); },
-    async selectProject(projectId: string) { active = projectId; return snapshot(); },
-    async createProject(_name: string) { return snapshot(); },
+    async selectProject(projectId: string) {
+      if (!projects.some((project) => project.id === projectId)) throw new Error('Project not found');
+      active = projectId;
+      return snapshot();
+    },
+    async createProject(rawName: string) {
+      const name = rawName.trim();
+      if (!name) throw new Error('Project name cannot be empty');
+      if (name.length > 120) throw new Error('Project name must be 120 characters or fewer');
+      if (projects.some((project) => project.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        throw new Error('A project with that name already exists');
+      }
+      projectCounter += 1;
+      const project: Project = {
+        id: `p-created-${projectCounter}`,
+        name,
+        updatedAt: '2026-08-09T09:30:00+04:00',
+        itemCount: 0
+      };
+      projects = [...projects, project];
+      active = project.id;
+      return snapshot();
+    },
     async chooseLocalMedia() { return '/mock/selected-video.mp4'; },
     async chooseOutputDirectory() { return '/mock/scriptotar-output'; },
     async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
@@ -123,7 +147,6 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
-
   };
   return { ...client, ...overrides };
 }
