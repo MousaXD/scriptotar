@@ -117,6 +117,18 @@
     }
   }
 
+  async function createProject(name: string) {
+    switchError = '';
+    try {
+      data = prepareData(await api.createProject(name));
+      selectedTranscriptId = data.transcripts[0]?.id || '';
+      activeView = 'dashboard';
+    } catch (cause) {
+      switchError = cause instanceof Error ? cause.message : 'Unable to create project.';
+      throw cause;
+    }
+  }
+
   async function enqueueLocal(path: string) {
     if (!data) return;
     await api.enqueueLocalMedia(data.activeProjectId, path);
@@ -139,11 +151,22 @@
     await refresh();
   }
 
-  async function openCompletedJob(job: Job) {
-    const transcript = data?.transcripts.find((item) => item.source === job.source || item.title === job.title);
-    if (!transcript) throw new Error('This job is complete, but no persisted transcript for it is available in the active project yet. Refresh the workspace or open the transcript from Library.');
-    selectedTranscriptId = transcript.id;
+  function openTranscript(id: string) {
+    if (!data?.transcripts.some((item) => item.id === id)) {
+      throw new Error('The selected transcript is not available in the active project.');
+    }
+    selectedTranscriptId = id;
     activeView = 'transcript';
+  }
+
+  async function openCompletedJob(job: Job) {
+    const matches = data?.transcripts.filter((item) => item.source === job.source) || [];
+    if (matches.length !== 1) {
+      throw new Error(matches.length === 0
+        ? 'This job is complete, but no persisted transcript for its exact source is available in the active project yet. Refresh the workspace or open the transcript from Library.'
+        : 'More than one transcript matches this job source. Open the exact transcript from Library while this job is being relinked.');
+    }
+    openTranscript(matches[0].id);
   }
 
   async function openLibraryItem(item: LibraryItem) {
@@ -155,10 +178,8 @@
     }
     if (item.kind === 'Transcript') {
       const embeddedId = item.id.startsWith('transcript:') ? item.id.slice('transcript:'.length) : '';
-      const transcript = data.transcripts.find((candidate) => candidate.id === embeddedId || candidate.title === item.title);
-      if (!transcript) throw new Error('The library entry exists, but its transcript is not available in the active project.');
-      selectedTranscriptId = transcript.id;
-      activeView = 'transcript';
+      if (!embeddedId) throw new Error('The library entry does not contain a transcript identifier.');
+      openTranscript(embeddedId);
       return;
     }
     if (item.kind === 'Research' || item.kind === 'Creator') activeView = 'research';
@@ -222,7 +243,7 @@
       <ErrorState title="Background status unavailable" message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
     {#if activeView === 'dashboard'}
-      <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
+      <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
       <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
     {:else if activeView === 'jobs'}
