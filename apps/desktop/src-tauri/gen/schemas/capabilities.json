@@ -1,1 +1,0 @@
-{"main-capability":{"identifier":"main-capability","description":"Minimum core capability for the Scriptotar desktop shell.","local":true,"windows":["main"],"permissions":["core:default"]}}
