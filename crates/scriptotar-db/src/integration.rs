@@ -761,11 +761,7 @@ impl ContentRepository for SqliteStore {
         tx.execute(
             "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
              VALUES(?1, ?2, ?3)",
-            params![
-                job_id.to_string(),
-                transcript.id.to_string(),
-                now_rfc3339(),
-            ],
+            params![job_id.to_string(), transcript.id.to_string(), now_rfc3339(),],
         )
         .map_err(storage_error)?;
         let changed = tx

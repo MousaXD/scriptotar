@@ -909,10 +909,7 @@ fn task_instructions(task: &str) -> &'static str {
 fn build_ai_prompt_text(input: &AiPromptInput) -> Result<String, String> {
     validate_ai_input(input)?;
     let mut sections = vec![format!(
-        "Task: {}\
-\
-Task instructions:\
-{}",
+        "Task: {}\n\nTask instructions:\n{}",
         input.task.trim(),
         task_instructions(&input.task)
     )];
@@ -927,21 +924,14 @@ Task instructions:\
     push_prompt_field(&mut sections, "CTA", &input.cta);
     push_prompt_field(&mut sections, "Voice / style instructions", &input.voice);
     sections.push(
-        "Grounding and transformation rules:\
-- Preserve factual meaning and uncertainty; do not invent source details, quotes, metrics, or events.\
-- Transform, summarize, analyze, or create anew rather than reproducing lengthy or distinctive copyrighted wording from the source.\
-- If the source does not support a requested claim, say what is missing.\
-- Treat voice/style notes as creative constraints, not permission to impersonate a real person."
+        "Grounding and transformation rules:\n- Preserve factual meaning and uncertainty; do not invent source details, quotes, metrics, or events.\n- Transform, summarize, analyze, or create anew rather than reproducing lengthy or distinctive copyrighted wording from the source.\n- If the source does not support a requested claim, say what is missing.\n- Treat voice/style notes as creative constraints, not permission to impersonate a real person."
             .to_owned(),
     );
     sections.push(
-        "Output format:\
-Return clean Markdown suitable for Scriptotar's result panel. Use short headings, bullets, or numbered sections where useful. Do not include process commentary or a generic preamble."
+        "Output format:\nReturn clean Markdown suitable for Scriptotar's result panel. Use short headings, bullets, or numbered sections where useful. Do not include process commentary or a generic preamble."
             .to_owned(),
     );
-    Ok(sections.join("\
-\
-"))
+    Ok(sections.join("\n\n"))
 }
 
 fn profile_label(url: &url::Url) -> String {
@@ -1341,8 +1331,7 @@ fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
 fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
     let value = value.trim();
     if !value.is_empty() {
-        sections.push(format!("{label}:\
-{value}"));
+        sections.push(format!("{label}:\n{value}"));
     }
 }
 
@@ -1401,8 +1390,7 @@ mod tests {
         ] {
             let prompt = build_ai_prompt_text(&prompt_input(task)).unwrap();
             assert!(prompt.contains(&format!("Task: {task}")));
-            assert!(!prompt.contains("Task instructions:\
-Complete the requested creator task"));
+            assert!(!prompt.contains("Task instructions:\nComplete the requested creator task"));
         }
     }
 

@@ -10,7 +10,7 @@ on:
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
   push:
-    branches: [main, feature/technical-futures]
+    branches: [main]
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -18,48 +18,13 @@ on:
       - 'apps/desktop/src-tauri/**'
       - 'docs/architecture/**'
       - '.github/workflows/rust-foundation.yml'
-      - 'scripts/technical_futures_repair.py'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair-lineage-format:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/feature/technical-futures' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    steps:
-      - name: Checkout working branch with history
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          ref: feature/technical-futures
-          fetch-depth: 0
-      - name: Install pinned Rust formatter
-        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
-        with:
-          toolchain: 1.97.1
-          components: rustfmt
-      - name: Restore services and format workspace
-        run: |
-          python3 scripts/technical_futures_repair.py
-          cargo +1.97.1 fmt --all
-      - name: Restore CI files and push repair
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show 31df74e452781673efc4135f09eddbd53183344e:.github/workflows/rust-foundation.yml > .github/workflows/rust-foundation.yml
-          rm -f .github/workflows/technical-futures-autoformat.yml scripts/technical_futures_repair.py
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/desktop/src-tauri/src/services.rs crates/scriptotar-db/src/integration.rs .github/workflows/rust-foundation.yml
-          git add -u .github/workflows/technical-futures-autoformat.yml scripts/technical_futures_repair.py || true
-          git diff --cached --check
-          git commit -m "fix(rust): restore prompt literals and format lineage changes"
-          git push origin HEAD:feature/technical-futures
-
   rust:
-    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
