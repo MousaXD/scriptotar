@@ -476,13 +476,11 @@ fn cancel_queued<R>(
     if repository
         .get_job(job_id)
         .is_ok_and(|job| job.state == JobState::Queued)
-    {
-        if repository
+        && repository
             .transition_job(job_id, JobState::Cancelled)
             .is_ok()
-        {
-            notify_job(notifier, job_id);
-        }
+    {
+        notify_job(notifier, job_id);
     }
 }
 
