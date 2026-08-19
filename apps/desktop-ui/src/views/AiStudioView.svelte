@@ -1,15 +1,16 @@
 <script lang="ts">
   import { translator } from '../i18n/translate';
-  import type { AiMode, AiProvider } from '../types';
+  import type { AiMode, AiProvider, Transcript } from '../types';
   import type { ScriptotarApi } from '../api/client';
   export let api: ScriptotarApi;
-  export let initialSource = '';
+  export let transcripts: Transcript[] = [];
 
   let mode: AiMode = 'copy';
   let provider: AiProvider = 'OpenAI';
   let model = 'gpt-5.2';
   let task = 'Viral breakdown';
-  let sourceText = initialSource;
+  let selectedTranscriptId = transcripts[0]?.id || 'manual';
+  let sourceText = transcripts[0]?.text || '';
   let topic = '';
   let audience = '';
   let duration = '30–45 seconds';
@@ -22,13 +23,30 @@
   let status = 'Prompt-only mode keeps the generated prompt local.';
   let busy = false;
 
+  $: selectedTranscript = transcripts.find((transcript) => transcript.id === selectedTranscriptId);
   $: words = sourceText.trim() ? sourceText.trim().split(/\s+/).length : 0;
   $: speakingSeconds = Math.round(words / 2.5);
   $: briefFields = [topic, audience, cta, voice].filter((value) => value.trim()).length;
+  $: if (selectedTranscriptId !== 'manual' && !selectedTranscript && transcripts.length > 0) {
+    selectedTranscriptId = transcripts[0].id;
+    sourceText = transcripts[0].text;
+  }
 
   function payload() {
     return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
   }
+
+  function chooseSource(event: Event) {
+    const id = (event.currentTarget as HTMLSelectElement).value;
+    selectedTranscriptId = id;
+    if (id === 'manual') {
+      sourceText = '';
+      return;
+    }
+    const transcript = transcripts.find((candidate) => candidate.id === id);
+    sourceText = transcript?.text || '';
+  }
+
   async function buildPrompt() {
     prompt = await api.buildAiPrompt(payload());
     status = 'Prompt built locally. Nothing has been sent to an AI provider.';
@@ -83,6 +101,21 @@
 <div class="ai-workspace">
   <section class="panel ai-source">
     <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>Source context</h2></div><span class="timer-chip">~{Math.floor(speakingSeconds/60)}:{String(speakingSeconds%60).padStart(2,'0')} spoken</span></div>
+    <label class="source-picker" data-i18n-ignore>
+      <span>{$translator('ai.sourceLabel')}</span>
+      <select value={selectedTranscriptId} on:change={chooseSource} aria-label={$translator('ai.sourceLabel')}>
+        <option value="manual">{$translator('ai.sourceManual')}</option>
+        {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
+      </select>
+    </label>
+    {#if selectedTranscript}
+      <div class="source-lineage" data-testid="ai-source-lineage">
+        <strong>{selectedTranscript.title}</strong>
+        <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
+      </div>
+    {:else if transcripts.length === 0}
+      <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
+    {/if}
     <textarea bind:value={sourceText} placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
@@ -131,8 +164,8 @@
   .setup-heading h2, .setup-heading p { margin: 0; }
   .setup-heading p { max-width: 440px; font-size: 11px; text-align: right; }
   .ai-config-grid { display: grid; grid-template-columns: minmax(180px, 1.3fr) 1fr 1fr; gap: 9px; }
-  .ai-config-grid label, .ai-brief-grid label, .byok-strip label { display: grid; gap: 5px; }
-  .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span { color: var(--muted); font-size: 10px; }
+  .ai-config-grid label, .ai-brief-grid label, .byok-strip label, .source-picker { display: grid; gap: 5px; }
+  .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span, .source-picker span { color: var(--muted); font-size: 10px; }
   .disabled-field { opacity: .55; }
   .byok-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent-strong) 4%, transparent); }
   .byok-strip p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; }
@@ -142,6 +175,10 @@
   .brief-panel { grid-area: brief; }
   .ai-prompt { grid-area: prompt; }
   .ai-source, .brief-panel, .ai-prompt { padding: 15px; }
+  .source-picker { margin-top: 12px; }
+  .source-lineage { display: grid; gap: 3px; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+  .source-lineage strong { font-size: 11px; }
+  .source-lineage span, .muted-lineage { overflow-wrap: anywhere; color: var(--muted); font-size: 9px; }
   .ai-source textarea, .ai-prompt textarea { width: 100%; min-height: 270px; margin-top: 12px; line-height: 1.65; }
   .ai-prompt textarea { min-height: 220px; font-family: var(--font-technical); font-size: 12px; }
   .timer-chip, .ready-chip, .brief-count { padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent-strong) 8%, var(--surface)); color: var(--accent); font-size: 9px; }
