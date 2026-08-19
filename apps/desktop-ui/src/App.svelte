@@ -304,7 +304,7 @@
     {:else if activeView === 'jobs'}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
     {:else if activeView === 'transcript'}
-      <TranscriptView transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
+      <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
     {:else if activeView === 'ai'}
       {#key data.activeProjectId}
         <AiStudioView {api} transcripts={data.transcripts} />

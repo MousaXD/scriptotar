@@ -87,11 +87,14 @@ describe('desktop workstation', () => {
   });
 
   it('opens the persisted transcript from a completed job', async () => {
-    await ready();
+    const api = createMockClient();
+    const getTranscript = vi.spyOn(api, 'getTranscript');
+    await ready(api);
     await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open transcript' }));
     expect(await screen.findByRole('heading', { name: 'Transcript workspace' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
+    await waitFor(() => expect(getTranscript).toHaveBeenCalledWith('t-en'));
   });
 
   it('switches AI Studio between Copy Prompt and BYOK without persisting a key in UI state', async () => {

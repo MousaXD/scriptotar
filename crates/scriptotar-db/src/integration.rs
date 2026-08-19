@@ -210,6 +210,71 @@ impl SqliteStore {
             .map_err(storage_error)
     }
 
+    pub fn get_transcript_bundle(&self, transcript_id: Uuid) -> RepositoryResult<TranscriptBundle> {
+        let connection = connection(self)?;
+        connection
+            .query_row(
+                "SELECT s.project_id, s.id, s.creator_id, s.source_type, s.locator, s.title, s.created_at,
+                        m.id, m.local_path, m.duration_seconds, m.mime_type, m.created_at,
+                        t.id, t.language, t.text, t.segments_json, t.words_json, t.created_at, t.updated_at
+                 FROM transcripts t
+                 JOIN media m ON m.id = t.media_id
+                 JOIN sources s ON s.id = m.source_id
+                 WHERE t.id = ?1",
+                params![transcript_id.to_string()],
+                |row| {
+                    let project_id = parse_uuid(row.get::<_, String>(0)?)?;
+                    let source_id = parse_uuid(row.get::<_, String>(1)?)?;
+                    let creator_id = row
+                        .get::<_, Option<String>>(2)?
+                        .map(parse_uuid)
+                        .transpose()?;
+                    let source_type: String = row.get(3)?;
+                    let source = Source {
+                        id: source_id,
+                        project_id,
+                        creator_id,
+                        source_type: match source_type.as_str() {
+                            "url" => SourceType::Url,
+                            "local_file" => SourceType::LocalFile,
+                            _ => return Err(rusqlite::Error::InvalidQuery),
+                        },
+                        locator: row.get(4)?,
+                        title: row.get(5)?,
+                        created_at: row.get(6)?,
+                    };
+                    let media_id = parse_uuid(row.get::<_, String>(7)?)?;
+                    let media = Media {
+                        id: media_id,
+                        source_id,
+                        local_path: row.get(8)?,
+                        duration_seconds: row.get(9)?,
+                        mime_type: row.get(10)?,
+                        created_at: row.get(11)?,
+                    };
+                    let transcript = Transcript {
+                        id: parse_uuid(row.get::<_, String>(12)?)?,
+                        media_id,
+                        language: row.get(13)?,
+                        text: row.get(14)?,
+                        segments_json: row.get(15)?,
+                        words_json: row.get(16)?,
+                        created_at: row.get(17)?,
+                        updated_at: row.get(18)?,
+                    };
+                    Ok(TranscriptBundle {
+                        project_id,
+                        source,
+                        media,
+                        transcript,
+                    })
+                },
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| RepositoryError::NotFound(format!("transcript {transcript_id}")))
+    }
+
     pub fn import_legacy_database(
         &self,
         legacy_path: impl AsRef<Path>,
@@ -1128,6 +1193,10 @@ mod tests {
             .unwrap();
         assert_eq!(completed.state, JobState::Completed);
         assert_eq!(store.list_transcripts(Some(project.id)).unwrap().len(), 1);
+        let loaded = store.get_transcript_bundle(transcript.id).unwrap();
+        assert_eq!(loaded.project_id, project.id);
+        assert_eq!(loaded.transcript.text, "hello");
+        assert_eq!(loaded.source.locator, "/tmp/a.mp4");
         assert_eq!(
             store
                 .list_job_transcript_links(Some(project.id))

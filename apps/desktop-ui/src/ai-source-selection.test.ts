@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { createMockClient, mockBootstrap } from './api/mockClient';
@@ -26,9 +26,9 @@ describe('AI source selection', () => {
 
     expect(selector).toHaveValue('t-en');
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Caption pacing breakdown');
-    expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue(
+    await waitFor(() => expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue(
       mockBootstrap.transcripts.find((transcript) => transcript.id === 't-en')?.text
-    );
+    ));
   });
 
   it('supports a deliberate manual source instead of silently keeping another transcript', async () => {

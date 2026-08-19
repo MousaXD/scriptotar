@@ -154,6 +154,17 @@ impl AppServices {
             .map(|ids| ids.into_iter().map(|id| id.to_string()).collect())
     }
 
+    pub fn get_transcript(&self, transcript_id: Uuid) -> RepositoryResult<UiTranscript> {
+        let active_project = self.active_project_id()?;
+        let transcript = self.store.get_transcript_bundle(transcript_id)?;
+        if transcript.project_id != active_project {
+            return Err(RepositoryError::NotFound(format!(
+                "transcript {transcript_id} in active project"
+            )));
+        }
+        Ok(transcript_to_ui(&transcript))
+    }
+
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
         let mut active_project = self

@@ -17,7 +17,7 @@ use std::{
 
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiWatchlistStatus,
+    UiTranscript, UiWatchlistStatus,
 };
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
@@ -264,6 +264,16 @@ fn search_transcripts(
     state
         .search_transcripts(&query, limit.unwrap_or(10))
         .map_err(command_error)
+}
+
+#[tauri::command]
+fn get_transcript(
+    transcript_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiTranscript, String> {
+    let transcript_id =
+        Uuid::parse_str(&transcript_id).map_err(|_| "invalid transcript id".to_owned())?;
+    state.get_transcript(transcript_id).map_err(command_error)
 }
 
 #[tauri::command]
@@ -634,6 +644,7 @@ pub fn run() {
             bootstrap_app,
             list_jobs,
             search_transcripts,
+            get_transcript,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

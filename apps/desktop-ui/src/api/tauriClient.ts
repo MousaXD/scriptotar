@@ -5,6 +5,7 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  Transcript,
   WatchlistStatus
 } from '../types';
 
@@ -33,6 +34,7 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     listJobs: () => invoke<Job[]>('list_jobs'),
     searchTranscripts: (query, limit = 10) =>
       invoke<string[]>('search_transcripts', { query, limit }),
+    getTranscript: (id) => invoke<Transcript>('get_transcript', { transcriptId: id }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

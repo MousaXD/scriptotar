@@ -113,6 +113,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         .slice(0, limit)
         .map((transcript) => transcript.id);
     },
+    async getTranscript(id: string) {
+      const transcript = snapshot().transcripts.find((candidate) => candidate.id === id);
+      if (!transcript) throw new Error('Transcript not found');
+      return structuredClone(transcript);
+    },
     async subscribeJobChanges(_listener: (jobId: string) => void) { return () => {}; },
     async getWatchlistStatuses() { return structuredClone(snapshot().watchlistStatuses); },
     async getMigrationStatus() { return structuredClone(migrationStatus); },

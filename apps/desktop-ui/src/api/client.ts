@@ -6,6 +6,7 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  Transcript,
   WatchlistStatus
 } from '../types';
 
@@ -33,6 +34,7 @@ export interface ScriptotarApi {
   bootstrap(): Promise<BootstrapData>;
   listJobs(): Promise<Job[]>;
   searchTranscripts(query: string, limit?: number): Promise<string[]>;
+  getTranscript(id: string): Promise<Transcript>;
   subscribeJobChanges(listener: (jobId: string) => void): Promise<() => void>;
   getWatchlistStatuses(): Promise<WatchlistStatus[]>;
   getMigrationStatus(): Promise<MigrationStatus>;

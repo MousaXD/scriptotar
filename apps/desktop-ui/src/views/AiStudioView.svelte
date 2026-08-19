@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { translator } from '../i18n/translate';
   import type { AiMode, AiProvider, Transcript } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -10,7 +11,10 @@
   let model = 'gpt-5.2';
   let task = 'Viral breakdown';
   let selectedTranscriptId = transcripts[0]?.id || 'manual';
-  let sourceText = transcripts[0]?.text || '';
+  let sourceText = '';
+  let sourceLoadGeneration = 0;
+  let sourceLoading = false;
+  let sourceError = '';
   let topic = '';
   let audience = '';
   let duration = '30–45 seconds';
@@ -32,16 +36,36 @@
     return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
   }
 
-  function chooseSource(event: Event) {
-    const id = (event.currentTarget as HTMLSelectElement).value;
+  async function loadSource(id: string) {
     selectedTranscriptId = id;
+    sourceError = '';
+    const generation = ++sourceLoadGeneration;
     if (id === 'manual') {
+      sourceLoading = false;
       sourceText = '';
       return;
     }
-    const transcript = transcripts.find((candidate) => candidate.id === id);
-    sourceText = transcript?.text || '';
+    sourceLoading = true;
+    sourceText = '';
+    try {
+      const transcript = await api.getTranscript(id);
+      if (generation === sourceLoadGeneration && selectedTranscriptId === id) sourceText = transcript.text;
+    } catch (cause) {
+      if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
+        sourceError = cause instanceof Error ? cause.message : 'Could not load transcript source.';
+      }
+    } finally {
+      if (generation === sourceLoadGeneration) sourceLoading = false;
+    }
   }
+
+  function chooseSource(event: Event) {
+    void loadSource((event.currentTarget as HTMLSelectElement).value);
+  }
+
+  onMount(() => {
+    if (selectedTranscriptId !== 'manual') void loadSource(selectedTranscriptId);
+  });
 
   async function buildPrompt() {
     prompt = await api.buildAiPrompt(payload());
@@ -112,6 +136,8 @@
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
     {/if}
+    {#if sourceLoading}<p class="status-copy" aria-live="polite">Loading transcript source…</p>{/if}
+    {#if sourceError}<p class="status-copy" role="alert">{sourceError}</p>{/if}
     <textarea bind:value={sourceText} placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
