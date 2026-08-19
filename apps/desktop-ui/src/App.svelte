@@ -251,7 +251,7 @@
     {:else if activeView === 'transcript'}
       <TranscriptView transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
     {:else if activeView === 'ai'}
-      <AiStudioView {api} initialSource={data.transcripts[0]?.text || ''} />
+      <AiStudioView {api} transcripts={data.transcripts} />
     {:else if activeView === 'library'}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
     {:else if activeView === 'settings'}
