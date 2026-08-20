@@ -16,6 +16,7 @@ modules:
     buildsystem: simple
     build-commands:
       - install -Dm755 packaging/flatpak-launcher.sh /app/bin/scriptotar
+      - install -Dm755 packaging/appstream-compose-compat.sh /app/bin/appstream-compose
       - install -d /app/lib/scriptotar
       - install -m755 scriptotar.py worker.py /app/lib/scriptotar/
       - install -m644 core.py creator.py scriptotar_common.py ui_mixin.py persistence_mixin.py jobs_mixin.py research_mixin.py ai_mixin.py library_mixin.py requirements-engine.txt /app/lib/scriptotar/
