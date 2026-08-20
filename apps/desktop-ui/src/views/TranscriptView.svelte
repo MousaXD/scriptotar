@@ -2,9 +2,11 @@
   import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
   import type { Transcript, TranscriptSegment } from '../types';
+  import type { ScriptotarApi } from '../api/client';
   import EmptyState from '../components/EmptyState.svelte';
   import Icon from '../components/Icon.svelte';
 
+  export let api: ScriptotarApi;
   export let transcripts: Transcript[];
   export let selectedId = '';
 
@@ -19,12 +21,35 @@
   let detailsOpen = readPanel(DETAILS_KEY, true);
   let searchCursor = 0;
   let previousQuery = '';
+  let selected: Transcript | undefined;
+  let selectedLoadId = '';
+  let selectedLoading = false;
+  let selectedLoadError = '';
+  let selectedGeneration = 0;
 
   $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectedId = transcripts[0].id;
-  $: selected = transcripts.find((item) => item.id === selectedId) || transcripts[0];
+  $: if (selectedId && selectedId !== selectedLoadId) void loadSelected(selectedId);
   $: matchingSegments = selected ? selected.segments.filter((segment) => segment.text.toLowerCase().includes(query.trim().toLowerCase())) : [];
   $: if (query !== previousQuery) { previousQuery = query; searchCursor = 0; }
   $: if (searchCursor >= matchingSegments.length) searchCursor = Math.max(0, matchingSegments.length - 1);
+
+  async function loadSelected(id: string) {
+    selectedLoadId = id;
+    selectedLoading = true;
+    selectedLoadError = '';
+    const generation = ++selectedGeneration;
+    try {
+      const transcript = await api.getTranscript(id);
+      if (generation === selectedGeneration && selectedId === id) selected = transcript;
+    } catch (cause) {
+      if (generation === selectedGeneration && selectedId === id) {
+        selected = undefined;
+        selectedLoadError = cause instanceof Error ? cause.message : 'Could not load the transcript.';
+      }
+    } finally {
+      if (generation === selectedGeneration) selectedLoading = false;
+    }
+  }
 
   function readPanel(key: string, fallback: boolean) {
     if (typeof window === 'undefined') return fallback;
@@ -135,6 +160,7 @@
   }
 
   function selectTranscript(id: string) {
+    if (selectedId !== id) selected = undefined;
     selectedId = id;
     query = '';
     status = '';
@@ -153,8 +179,13 @@
 <svelte:window onkeydown={searchShortcut} />
 
 <section class="view-head"><div><span class="eyebrow">Review + reuse</span><h1>Transcript workspace</h1><p>Search timestamped text, jump between matching segments, copy clean text, and export local formats without inventing artifact paths.</p></div></section>
-{#if !selected}
+{#if transcripts.length === 0}
   <EmptyState title="No transcripts yet" message="Complete a transcription job and it will appear here." />
+{:else if !selected}
+  <section class="panel transcript-loading" aria-busy={selectedLoading}>
+    <strong>{selectedLoading ? 'Loading transcript…' : 'Transcript unavailable'}</strong>
+    {#if selectedLoadError}<p role="alert">{selectedLoadError}</p>{/if}
+  </section>
 {:else}
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">
     {#if listOpen}
@@ -179,10 +210,10 @@
           <details class="export-menu">
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
             <div class="export-popover">
-              <button on:click={() => downloadFile('txt', selected.text)}>TXT</button>
-              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('timestamps.txt', timestampedText(selected.segments))}>Timestamp TXT</button>
-              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('srt', srt(selected.segments))}>SRT</button>
-              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('vtt', vtt(selected.segments), 'text/vtt;charset=utf-8')}>VTT</button>
+              <button on:click={() => downloadFile('txt', selected?.text || '')}>TXT</button>
+              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('timestamps.txt', timestampedText(selected?.segments || []))}>Timestamp TXT</button>
+              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('srt', srt(selected?.segments || []))}>SRT</button>
+              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('vtt', vtt(selected?.segments || []), 'text/vtt;charset=utf-8')}>VTT</button>
               <button on:click={() => downloadFile('json', JSON.stringify(selected, null, 2), 'application/json;charset=utf-8')}>JSON</button>
             </div>
           </details>

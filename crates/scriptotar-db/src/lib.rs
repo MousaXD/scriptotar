@@ -12,7 +12,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 2;
+pub const LATEST_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -41,6 +41,72 @@ impl SqliteStore {
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
             .map_err(storage_error)
+    }
+
+    pub fn search_transcript_ids(
+        &self,
+        project_id: Uuid,
+        raw_query: &str,
+        limit: usize,
+    ) -> RepositoryResult<Vec<Uuid>> {
+        let Some(fts_query) = fts5_search_query(raw_query) else {
+            return Ok(Vec::new());
+        };
+        let connection = self.connection()?;
+        let fts5_enabled: i64 = connection
+            .query_row(
+                "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(storage_error)?;
+        let limit = limit.clamp(1, 50) as i64;
+
+        if fts5_enabled == 1 {
+            let mut statement = connection
+                .prepare(
+                    "SELECT t.id
+                     FROM transcript_fts
+                     JOIN transcripts t ON t.id = transcript_fts.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE s.project_id = ?1
+                       AND transcript_fts MATCH ?2
+                     ORDER BY bm25(transcript_fts), t.updated_at DESC
+                     LIMIT ?3",
+                )
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map(params![project_id.to_string(), fts_query, limit], |row| {
+                    parse_uuid(row.get::<_, String>(0)?)
+                })
+                .map_err(storage_error)?;
+            let ids = rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)?;
+            if !ids.is_empty() {
+                return Ok(ids);
+            }
+        }
+
+        let like_query = format!("%{}%", escape_like(raw_query.trim()));
+        let mut statement = connection
+            .prepare(
+                "SELECT t.id
+                 FROM transcript_fts
+                 JOIN transcripts t ON t.id = transcript_fts.transcript_id
+                 JOIN media m ON m.id = t.media_id
+                 JOIN sources s ON s.id = m.source_id
+                 WHERE s.project_id = ?1
+                   AND transcript_fts.content LIKE ?2 ESCAPE '\\'
+                 ORDER BY t.updated_at DESC
+                 LIMIT ?3",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![project_id.to_string(), like_query, limit], |row| {
+                parse_uuid(row.get::<_, String>(0)?)
+            })
+            .map_err(storage_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 
     fn connection(&self) -> RepositoryResult<Connection> {
@@ -124,6 +190,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 2,
         name: "transcript_search",
         apply: migration_2,
+    },
+    Migration {
+        version: 3,
+        name: "transcript_search_backfill",
+        apply: migration_3,
     },
 ];
 
@@ -273,6 +344,37 @@ fn migration_2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
             DELETE FROM transcript_fts WHERE transcript_id = OLD.id;
         END;",
     )
+}
+
+fn migration_3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO transcript_fts(transcript_id, content)
+         SELECT t.id, t.text
+         FROM transcripts t
+         WHERE NOT EXISTS (
+             SELECT 1 FROM transcript_fts existing
+             WHERE existing.transcript_id = t.id
+         )",
+        [],
+    )?;
+    Ok(())
+}
+
+fn fts5_search_query(raw_query: &str) -> Option<String> {
+    let terms = raw_query
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| !term.is_empty())
+        .take(8)
+        .map(|term| format!("\"{term}\"*"))
+        .collect::<Vec<_>>();
+    (!terms.is_empty()).then(|| terms.join(" AND "))
+}
+
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
@@ -625,16 +727,157 @@ mod tests {
             tx.commit().unwrap();
         }
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 2);
+        assert_eq!(db.schema_version().unwrap(), 3);
         let connection = db.connection().unwrap();
         let count: u32 = connection
             .query_row(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version = 2",
+                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (2, 3)",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn schema_v3_backfills_existing_transcript_search_index() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("search-upgrade.sqlite3");
+        let project_id = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let now = now_rfc3339();
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            configure_connection(&connection).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL
+                    );",
+                )
+                .unwrap();
+            let tx = connection.transaction().unwrap();
+            migration_1(&tx).unwrap();
+            tx.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at)
+                 VALUES(1, 'initial_domain_schema', ?1)",
+                params![now],
+            )
+            .unwrap();
+            tx.pragma_update(None, "user_version", 1).unwrap();
+            tx.commit().unwrap();
+
+            connection
+                .execute(
+                    "INSERT INTO projects(id, name, created_at) VALUES(?1, 'Search Upgrade', ?2)",
+                    params![project_id.to_string(), now],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
+                     VALUES(?1, ?2, NULL, 'local_file', '/tmp/search-upgrade.mp4', 'Search Upgrade', ?3)",
+                    params![source_id.to_string(), project_id.to_string(), now],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
+                     VALUES(?1, ?2, '/tmp/search-upgrade.mp4', 12.0, NULL, ?3)",
+                    params![media_id.to_string(), source_id.to_string(), now],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO transcripts(
+                        id, media_id, language, text, segments_json, words_json, created_at, updated_at
+                     ) VALUES(?1, ?2, 'ar', 'ابدأ بالنتيجة ثم اشرح السبب', NULL, NULL, ?3, ?3)",
+                    params![transcript_id.to_string(), media_id.to_string(), now],
+                )
+                .unwrap();
+
+            let tx = connection.transaction().unwrap();
+            migration_2(&tx).unwrap();
+            tx.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at)
+                 VALUES(2, 'transcript_search', ?1)",
+                params![now],
+            )
+            .unwrap();
+            tx.pragma_update(None, "user_version", 2).unwrap();
+            tx.commit().unwrap();
+        }
+
+        let db = SqliteStore::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(
+            db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(),
+            vec![transcript_id]
+        );
+    }
+
+    #[test]
+    fn transcript_search_is_project_scoped_and_safe_for_punctuation() {
+        let (_temp, db) = store();
+        let first = project(&db, "First");
+        let second = project(&db, "Second");
+        let first_transcript = Uuid::new_v4();
+        let second_transcript = Uuid::new_v4();
+        let now = now_rfc3339();
+
+        for (project_id, transcript_id, suffix) in [
+            (first.id, first_transcript, "first"),
+            (second.id, second_transcript, "second"),
+        ] {
+            let source_id = Uuid::new_v4();
+            let media_id = Uuid::new_v4();
+            let connection = db.connection().unwrap();
+            connection
+                .execute(
+                    "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
+                     VALUES(?1, ?2, NULL, 'local_file', ?3, NULL, ?4)",
+                    params![
+                        source_id.to_string(),
+                        project_id.to_string(),
+                        format!("/tmp/{suffix}.mp4"),
+                        now,
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
+                     VALUES(?1, ?2, ?3, 4.0, NULL, ?4)",
+                    params![
+                        media_id.to_string(),
+                        source_id.to_string(),
+                        format!("/tmp/{suffix}.mp4"),
+                        now,
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO transcripts(
+                        id, media_id, language, text, segments_json, words_json, created_at, updated_at
+                     ) VALUES(?1, ?2, 'en', 'visual payoff retention signal', NULL, NULL, ?3, ?3)",
+                    params![transcript_id.to_string(), media_id.to_string(), now],
+                )
+                .unwrap();
+        }
+
+        assert_eq!(
+            db.search_transcript_ids(first.id, "payoff!!!", 10).unwrap(),
+            vec![first_transcript]
+        );
+        assert!(db
+            .search_transcript_ids(first.id, "%%%", 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

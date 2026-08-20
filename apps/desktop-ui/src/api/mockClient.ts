@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { BackendJob, BootstrapData } from '../types';
+import type { BackendJob, BootstrapData, Project } from '../types';
 
 export const mockBootstrap: BootstrapData = {
   activeProjectId: 'p-creator-lab',
@@ -41,7 +41,7 @@ export const mockBootstrap: BootstrapData = {
     { id: 'j-2', title: 'Local interview take 04.mp4', source: 'Local file', state: 'downloading', stageLabel: 'Preparing media', updatedAt: '1 min ago', detail: 'Local media normalization' },
     { id: 'j-3', title: 'Why this 17-second reveal keeps retention', source: 'YouTube', state: 'queued', stageLabel: 'Queued', updatedAt: '2 min ago' },
     { id: 'j-4', title: 'A/B testing the first sentence', source: 'Instagram', state: 'failed', stageLabel: 'Failed', updatedAt: '12 min ago', detail: 'Extractor returned an authentication error' },
-    { id: 'j-5', title: 'Caption pacing breakdown', source: 'https://example.com/r/4', state: 'completed', stageLabel: 'Completed', progress: 100, updatedAt: '38 min ago' },
+    { id: 'j-5', title: 'Caption pacing breakdown', source: 'https://example.com/r/4', state: 'completed', stageLabel: 'Completed', progress: 100, updatedAt: '38 min ago', completedTranscriptId: 't-en' },
     { id: 'j-6', title: 'Interrupted session recovery', source: 'Local file', state: 'interrupted', stageLabel: 'Interrupted', updatedAt: 'Yesterday', detail: 'Application stopped during transcription' }
   ],
   transcripts: [
@@ -93,8 +93,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let active = mockBootstrap.activeProjectId;
   let settings = structuredClone(mockBootstrap.settings);
   let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
+  let projects = structuredClone(mockBootstrap.projects);
+  let projectCounter = 0;
   const snapshot = (): BootstrapData => ({
     ...structuredClone(mockBootstrap),
+    projects: structuredClone(projects),
     activeProjectId: active,
     settings: structuredClone(settings),
     migrationStatus: structuredClone(migrationStatus)
@@ -102,12 +105,47 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const client: ScriptotarApi = {
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
+    async searchTranscripts(rawQuery: string, limit = 10) {
+      const query = rawQuery.trim().toLocaleLowerCase();
+      if (!query) return [];
+      return snapshot().transcripts
+        .filter((transcript) => transcript.text.toLocaleLowerCase().includes(query))
+        .slice(0, limit)
+        .map((transcript) => transcript.id);
+    },
+    async getTranscript(id: string) {
+      const transcript = snapshot().transcripts.find((candidate) => candidate.id === id);
+      if (!transcript) throw new Error('Transcript not found');
+      return structuredClone(transcript);
+    },
+    async subscribeJobChanges(_listener: (jobId: string) => void) { return () => {}; },
     async getWatchlistStatuses() { return structuredClone(snapshot().watchlistStatuses); },
     async getMigrationStatus() { return structuredClone(migrationStatus); },
     async retryLegacyMigration() { return structuredClone(migrationStatus); },
     async selectLegacyMigrationCandidate(_candidateId: string) { return structuredClone(migrationStatus); },
-    async selectProject(projectId: string) { active = projectId; return snapshot(); },
-    async createProject(_name: string) { return snapshot(); },
+    async selectProject(projectId: string) {
+      if (!projects.some((project) => project.id === projectId)) throw new Error('Project not found');
+      active = projectId;
+      return snapshot();
+    },
+    async createProject(rawName: string) {
+      const name = rawName.trim();
+      if (!name) throw new Error('Project name cannot be empty');
+      if (name.length > 120) throw new Error('Project name must be 120 characters or fewer');
+      if (projects.some((project) => project.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        throw new Error('A project with that name already exists');
+      }
+      projectCounter += 1;
+      const project: Project = {
+        id: `p-created-${projectCounter}`,
+        name,
+        updatedAt: '2026-08-09T09:30:00+04:00',
+        itemCount: 0
+      };
+      projects = [...projects, project];
+      active = project.id;
+      return snapshot();
+    },
     async chooseLocalMedia() { return '/mock/selected-video.mp4'; },
     async chooseOutputDirectory() { return '/mock/scriptotar-output'; },
     async enqueueLocalMedia(projectId: string, path: string) { return backendJob(projectId, 'local_file', path); },
@@ -123,7 +161,6 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
-
   };
   return { ...client, ...overrides };
 }

@@ -5,10 +5,15 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  Transcript,
   WatchlistStatus
 } from '../types';
 
 export type TauriInvoke = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+export type TauriListen = <T>(
+  event: string,
+  handler: (event: { payload: T }) => void
+) => Promise<() => void>;
 type CoreBootstrapData = Omit<BootstrapData, 'watchlistStatuses' | 'migrationStatus'>;
 
 async function hydrateBootstrap(
@@ -23,10 +28,17 @@ async function hydrateBootstrap(
   return { ...snapshot, watchlistStatuses, migrationStatus };
 }
 
-export function createTauriClient(invoke: TauriInvoke): ScriptotarApi {
+export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): ScriptotarApi {
   return {
     bootstrap: () => hydrateBootstrap(invoke, invoke<CoreBootstrapData>('bootstrap_app')),
     listJobs: () => invoke<Job[]>('list_jobs'),
+    searchTranscripts: (query, limit = 10) =>
+      invoke<string[]>('search_transcripts', { query, limit }),
+    getTranscript: (id) => invoke<Transcript>('get_transcript', { transcriptId: id }),
+    subscribeJobChanges: (listener) =>
+      listen
+        ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))
+        : Promise.resolve(() => {}),
     getWatchlistStatuses: () => invoke<WatchlistStatus[]>('get_watchlist_statuses'),
     getMigrationStatus: () => invoke<MigrationStatus>('get_migration_status'),
     retryLegacyMigration: () => invoke<MigrationStatus>('retry_legacy_migration'),

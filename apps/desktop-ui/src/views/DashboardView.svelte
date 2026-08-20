@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { AiRun, Creator, Job, Project, Transcript } from '../types';
+  import { translator } from '../i18n/translate';
   import JobRow from '../components/JobRow.svelte';
 
   export let project: Project;
@@ -8,11 +9,49 @@
   export let transcripts: Transcript[];
   export let aiRuns: AiRun[];
   export let onNavigate: (view: 'research' | 'jobs' | 'transcript' | 'ai') => void;
+  export let onCreateProject: (name: string) => Promise<void>;
+  export let onOpenTranscript: (id: string) => void;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
+  let projectFormOpen = false;
+  let projectName = '';
+  let projectCreating = false;
+  let projectError = '';
+
   $: active = jobs.filter((job) => activeStates.has(job.state));
   $: attention = jobs.filter((job) => ['failed', 'interrupted'].includes(job.state));
   $: currentJobs = [...attention, ...active.filter((job) => !attention.some((item) => item.id === job.id))].slice(0, 5);
+
+  function openProjectForm() {
+    projectError = '';
+    projectFormOpen = true;
+  }
+
+  function closeProjectForm() {
+    if (projectCreating) return;
+    projectFormOpen = false;
+    projectName = '';
+    projectError = '';
+  }
+
+  async function createProject() {
+    const name = projectName.trim();
+    if (!name) {
+      projectError = $translator('project.required');
+      return;
+    }
+    projectCreating = true;
+    projectError = '';
+    try {
+      await onCreateProject(name);
+      projectFormOpen = false;
+      projectName = '';
+    } catch (cause) {
+      projectError = cause instanceof Error ? cause.message : $translator('project.createFailed');
+    } finally {
+      projectCreating = false;
+    }
+  }
 </script>
 
 <section class="view-head home-head">
@@ -22,10 +61,37 @@
     <p>{project.description || 'Creator research, transcripts, and AI work in one local workspace.'}</p>
   </div>
   <div class="home-actions">
+    <button class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
     <button class="button secondary" on:click={() => onNavigate('jobs')}>Jobs</button>
     <button class="button primary" on:click={() => onNavigate('research')}>New research scan</button>
   </div>
 </section>
+
+{#if projectFormOpen}
+  <section class="panel project-create-panel" aria-label={$translator('project.createTitle')}>
+    <div class="panel-head">
+      <div><span class="eyebrow">{$translator('project.label')}</span><h2>{$translator('project.createTitle')}</h2></div>
+    </div>
+    <form class="project-create-form" on:submit|preventDefault={createProject}>
+      <label>
+        <span>{$translator('project.name')}</span>
+        <input
+          bind:value={projectName}
+          maxlength="120"
+          autocomplete="off"
+          disabled={projectCreating}
+          placeholder={$translator('project.namePlaceholder')}
+          aria-label={$translator('project.name')}
+        />
+      </label>
+      {#if projectError}<p class="project-error" role="alert">{projectError}</p>{/if}
+      <div class="project-form-actions">
+        <button class="button secondary" type="button" disabled={projectCreating} on:click={closeProjectForm}>{$translator('project.cancel')}</button>
+        <button class="button primary" type="submit" disabled={projectCreating}>{projectCreating ? $translator('project.creating') : $translator('project.create')}</button>
+      </div>
+    </form>
+  </section>
+{/if}
 
 <div class="home-grid">
   <section class="panel work-panel">
@@ -52,7 +118,7 @@
     </div>
     <div class="recent-stack">
       {#each transcripts.slice(0, 4) as transcript}
-        <button on:click={() => onNavigate('transcript')}>
+        <button on:click={() => onOpenTranscript(transcript.id)}>
           <span><strong>{transcript.title}</strong><small>{transcript.language} · {Math.round(transcript.durationSeconds)} sec</small></span>
           <span aria-hidden="true">›</span>
         </button>
@@ -96,6 +162,12 @@
 <style>
   .home-head { align-items: center; }
   .home-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .project-create-panel { margin-bottom: 12px; }
+  .project-create-form { display: grid; gap: 12px; max-width: 620px; }
+  .project-create-form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
+  .project-create-form input { width: 100%; }
+  .project-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .project-error { margin: 0; color: var(--danger, #f87171); font-size: 12px; }
   .home-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .85fr); gap: 12px; }
   .home-grid .panel { padding: 17px; }
   .work-panel { grid-row: span 2; }
@@ -119,5 +191,7 @@
   @media (max-width: 700px) {
     .home-actions { width: 100%; }
     .home-actions .button { flex: 1; }
+    .project-form-actions { flex-direction: column-reverse; }
+    .project-form-actions .button { width: 100%; }
   }
 </style>

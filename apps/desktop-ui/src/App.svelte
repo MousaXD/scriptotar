@@ -23,12 +23,18 @@
   let globalSearch = '';
   let selectedTranscriptId = '';
   let jobRefreshInFlight = false;
+  let jobRefreshTimer: number | undefined;
   let operationalRefreshInFlight = false;
+  let transcriptSearchIds: string[] = [];
+  let transcriptSearchTimer: number | undefined;
+  let transcriptSearchGeneration = 0;
+  let transcriptSearchKey = '';
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
-  $: searchResults = data ? buildSearchResults(data, globalSearch) : [];
+  $: searchResults = data ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
+  $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
 
   function prepareData(next: BootstrapData): BootstrapData {
     const appearance = loadAppearance(next.settings.appearance);
@@ -36,7 +42,11 @@
     return { ...next, settings: { ...next.settings, appearance } };
   }
 
-  function buildSearchResults(snapshot: BootstrapData, rawQuery: string): WorkspaceSearchResult[] {
+  function buildSearchResults(
+    snapshot: BootstrapData,
+    rawQuery: string,
+    transcriptMatches: Set<string>
+  ): WorkspaceSearchResult[] {
     const query = rawQuery.trim().toLocaleLowerCase();
     if (!query) return [];
     const match = (...values: Array<string | undefined>) => values.some((value) => value?.toLocaleLowerCase().includes(query));
@@ -46,7 +56,7 @@
       if (match(project.name, project.description)) results.push({ id: `project:${project.id}`, kind: 'Project', title: project.name, subtitle: project.description || `${project.itemCount} items`, view: 'dashboard', projectId: project.id });
     }
     for (const transcript of snapshot.transcripts) {
-      if (match(transcript.title, transcript.text, transcript.language, transcript.platform)) results.push({ id: `transcript:${transcript.id}`, kind: 'Transcript', title: transcript.title, subtitle: `${transcript.language} · ${transcript.platform}`, view: 'transcript', projectId: transcript.projectId, targetId: transcript.id });
+      if (transcriptMatches.has(transcript.id) || match(transcript.title, transcript.language, transcript.platform)) results.push({ id: `transcript:${transcript.id}`, kind: 'Transcript', title: transcript.title, subtitle: `${transcript.language} · ${transcript.platform}`, view: 'transcript', projectId: transcript.projectId, targetId: transcript.id });
     }
     for (const item of snapshot.research) {
       if (match(item.title, item.creator, item.platform)) results.push({ id: `research:${item.id}`, kind: 'Research', title: item.title, subtitle: `${item.creator} · ${item.platform}`, view: 'research', projectId: snapshot.activeProjectId, targetId: item.id });
@@ -58,6 +68,36 @@
       if (match(run.title, run.task, run.provider, run.model)) results.push({ id: `ai:${run.id}`, kind: 'AI run', title: run.title, subtitle: `${run.task} · ${run.provider || 'Local prompt'}`, view: 'ai', projectId: snapshot.activeProjectId, targetId: run.id });
     }
     return results.slice(0, 10);
+  }
+
+  function scheduleTranscriptSearch(rawQuery: string, projectId: string) {
+    const query = rawQuery.trim();
+    const key = projectId && query ? `${projectId}\u0000${query}` : '';
+    if (key === transcriptSearchKey) return;
+    transcriptSearchKey = key;
+    transcriptSearchGeneration += 1;
+    const generation = transcriptSearchGeneration;
+    if (transcriptSearchTimer !== undefined) {
+      window.clearTimeout(transcriptSearchTimer);
+      transcriptSearchTimer = undefined;
+    }
+    if (!key) {
+      transcriptSearchIds = [];
+      return;
+    }
+    transcriptSearchTimer = window.setTimeout(async () => {
+      transcriptSearchTimer = undefined;
+      try {
+        const ids = await api.searchTranscripts(query, 8);
+        if (generation === transcriptSearchGeneration && transcriptSearchKey === key) {
+          transcriptSearchIds = ids;
+        }
+      } catch {
+        if (generation === transcriptSearchGeneration && transcriptSearchKey === key) {
+          transcriptSearchIds = [];
+        }
+      }
+    }, 160);
   }
 
   async function load(showLoading = true) {
@@ -85,6 +125,14 @@
     } finally {
       jobRefreshInFlight = false;
     }
+  }
+
+  function scheduleJobRefresh() {
+    if (jobRefreshTimer !== undefined) return;
+    jobRefreshTimer = window.setTimeout(() => {
+      jobRefreshTimer = undefined;
+      void refreshJobs();
+    }, 120);
   }
 
   async function refreshOperationalStatus() {
@@ -117,6 +165,13 @@
     }
   }
 
+  async function createProject(name: string) {
+    switchError = '';
+    data = prepareData(await api.createProject(name));
+    selectedTranscriptId = data.transcripts[0]?.id || '';
+    activeView = 'dashboard';
+  }
+
   async function enqueueLocal(path: string) {
     if (!data) return;
     await api.enqueueLocalMedia(data.activeProjectId, path);
@@ -139,11 +194,19 @@
     await refresh();
   }
 
-  async function openCompletedJob(job: Job) {
-    const transcript = data?.transcripts.find((item) => item.source === job.source || item.title === job.title);
-    if (!transcript) throw new Error('This job is complete, but no persisted transcript for it is available in the active project yet. Refresh the workspace or open the transcript from Library.');
-    selectedTranscriptId = transcript.id;
+  function openTranscript(id: string) {
+    if (!data?.transcripts.some((item) => item.id === id)) {
+      throw new Error('The selected transcript is not available in the active project.');
+    }
+    selectedTranscriptId = id;
     activeView = 'transcript';
+  }
+
+  async function openCompletedJob(job: Job) {
+    if (!job.completedTranscriptId) {
+      throw new Error('This completed job has no safe persisted transcript link. Open the transcript from Library; Scriptotar will not guess by title or source.');
+    }
+    openTranscript(job.completedTranscriptId);
   }
 
   async function openLibraryItem(item: LibraryItem) {
@@ -155,10 +218,8 @@
     }
     if (item.kind === 'Transcript') {
       const embeddedId = item.id.startsWith('transcript:') ? item.id.slice('transcript:'.length) : '';
-      const transcript = data.transcripts.find((candidate) => candidate.id === embeddedId || candidate.title === item.title);
-      if (!transcript) throw new Error('The library entry exists, but its transcript is not available in the active project.');
-      selectedTranscriptId = transcript.id;
-      activeView = 'transcript';
+      if (!embeddedId) throw new Error('The library entry does not contain a transcript identifier.');
+      openTranscript(embeddedId);
       return;
     }
     if (item.kind === 'Research' || item.kind === 'Creator') activeView = 'research';
@@ -196,13 +257,28 @@
   }
 
   onMount(() => {
+    let disposed = false;
+    let unsubscribeJobs: (() => void) | undefined;
     void load();
-    const jobPoll = window.setInterval(() => {
+    void api
+      .subscribeJobChanges(() => scheduleJobRefresh())
+      .then((unsubscribe) => {
+        if (disposed) unsubscribe();
+        else unsubscribeJobs = unsubscribe;
+      })
+      .catch(() => {
+        // Periodic reconciliation below remains the safe fallback.
+      });
+    const jobReconcile = window.setInterval(() => {
       if (data?.jobs.some((job) => activeStates.has(job.state))) void refreshJobs();
-    }, 1000);
+    }, 15000);
     const operationalPoll = window.setInterval(() => void refreshOperationalStatus(), 15000);
     return () => {
-      window.clearInterval(jobPoll);
+      disposed = true;
+      unsubscribeJobs?.();
+      if (jobRefreshTimer !== undefined) window.clearTimeout(jobRefreshTimer);
+      if (transcriptSearchTimer !== undefined) window.clearTimeout(transcriptSearchTimer);
+      window.clearInterval(jobReconcile);
       window.clearInterval(operationalPoll);
     };
   });
@@ -222,15 +298,17 @@
       <ErrorState title="Background status unavailable" message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
     {#if activeView === 'dashboard'}
-      <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} />
+      <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
       <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
     {:else if activeView === 'jobs'}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
     {:else if activeView === 'transcript'}
-      <TranscriptView transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
+      <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
     {:else if activeView === 'ai'}
-      <AiStudioView {api} initialSource={data.transcripts[0]?.text || ''} />
+      {#key data.activeProjectId}
+        <AiStudioView {api} transcripts={data.transcripts} />
+      {/key}
     {:else if activeView === 'library'}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
     {:else if activeView === 'settings'}
