@@ -3,6 +3,7 @@
   import { translator } from '../i18n/translate';
   import type { AiMode, AiProvider, Transcript } from '../types';
   import type { ScriptotarApi } from '../api/client';
+  import { countWords, formatSpeakingDuration } from '../utils/textUtils';
   export let api: ScriptotarApi;
   export let transcripts: Transcript[] = [];
 
@@ -10,6 +11,7 @@
   let provider: AiProvider = 'OpenAI';
   let model = 'gpt-5.2';
   let task = 'Viral breakdown';
+  let pace: 'slow' | 'normal' | 'fast' = 'normal';
   let selectedTranscriptId = transcripts[0]?.id || 'manual';
   let sourceText = '';
   let sourceLoadGeneration = 0;
@@ -27,9 +29,19 @@
   let status = 'Prompt-only mode keeps the generated prompt local.';
   let busy = false;
 
+  const paceWordsPerSec = {
+    slow: 2.1,
+    normal: 2.5,
+    fast: 2.9,
+  };
+
   $: selectedTranscript = transcripts.find((transcript) => transcript.id === selectedTranscriptId);
-  $: words = sourceText.trim() ? sourceText.trim().split(/\s+/).length : 0;
-  $: speakingSeconds = Math.round(words / 2.5);
+  $: sourceWords = countWords(sourceText);
+  $: sourceChars = sourceText.length;
+  $: sourceSpeakingSeconds = Math.ceil(sourceWords / paceWordsPerSec[pace]);
+  $: resultWords = countWords(result);
+  $: resultChars = result.length;
+  $: resultSpeakingSeconds = Math.ceil(resultWords / paceWordsPerSec[pace]);
   $: briefFields = [topic, audience, cta, voice].filter((value) => value.trim()).length;
 
   function payload() {
@@ -106,6 +118,7 @@
   <div class="setup-heading"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.configure')}</span><h2>Prompt setup</h2></div><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
   <div class="ai-config-grid">
     <label><span>Task</span><select bind:value={task}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
+    <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
     <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" bind:value={provider} disabled={mode === 'copy'}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
     <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} /></label>
   </div>
@@ -120,7 +133,13 @@
 
 <div class="ai-workspace">
   <section class="panel ai-source">
-    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>Source context</h2></div><span class="timer-chip">~{Math.floor(speakingSeconds/60)}:{String(speakingSeconds%60).padStart(2,'0')} spoken</span></div>
+    <div class="panel-head">
+      <div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>Source context</h2></div>
+      <div class="timer-badge-group">
+        <span class="brief-count" data-i18n-ignore>{$translator('ai.wordCount', { words: sourceWords, chars: sourceChars })}</span>
+        <span class="timer-chip" data-i18n-ignore>{$translator('ai.estimatedDuration', { duration: formatSpeakingDuration(sourceSpeakingSeconds) })}</span>
+      </div>
+    </div>
     <label class="source-picker" data-i18n-ignore>
       <span>{$translator('ai.sourceLabel')}</span>
       <select value={selectedTranscriptId} on:change={chooseSource} aria-label={$translator('ai.sourceLabel')}>
@@ -168,7 +187,17 @@
 </div>
 
 {#if result}
-  <section class="panel result-card"><div class="panel-head"><div><span class="eyebrow">Result</span><h2>AI result</h2></div><button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button></div><div class="result-copy">{result}</div></section>
+  <section class="panel result-card">
+    <div class="panel-head">
+      <div><span class="eyebrow">Result</span><h2>AI result</h2></div>
+      <div class="result-head-actions">
+        <span class="brief-count" data-i18n-ignore>{$translator('ai.wordCount', { words: resultWords, chars: resultChars })}</span>
+        <span class="timer-chip" data-i18n-ignore>{$translator('ai.scriptDuration', { duration: formatSpeakingDuration(resultSpeakingSeconds) })}</span>
+        <button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button>
+      </div>
+    </div>
+    <div class="result-copy">{result}</div>
+  </section>
 {/if}
 
 <style>
@@ -185,12 +214,13 @@
   .setup-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
   .setup-heading h2, .setup-heading p { margin: 0; }
   .setup-heading p { max-width: 440px; font-size: 11px; text-align: right; }
-  .ai-config-grid { display: grid; grid-template-columns: minmax(180px, 1.3fr) 1fr 1fr; gap: 9px; }
+  .ai-config-grid { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 1fr) 1fr 1fr; gap: 9px; }
   .ai-config-grid label, .ai-brief-grid label, .byok-strip label, .source-picker { display: grid; gap: 5px; }
   .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span, .source-picker span { color: var(--muted); font-size: 10px; }
   .disabled-field { opacity: .55; }
   .byok-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent-strong) 4%, transparent); }
   .byok-strip p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; }
+  .timer-badge-group, .result-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
   .ai-workspace { display: grid; grid-template-columns: 1.15fr .85fr; grid-template-areas: 'source brief' 'prompt prompt'; gap: 12px; }
   .ai-source { grid-area: source; }

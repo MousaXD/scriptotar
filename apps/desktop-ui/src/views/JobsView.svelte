@@ -3,6 +3,7 @@
   import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
+  import { extractUrlsFromText } from '../utils/textUtils';
   import JobRow from '../components/JobRow.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -67,6 +68,72 @@
       : $translator('queue.dropSelected', { name: displayName(selected) });
   }
 
+  async function enqueueFromClipboard() {
+    await run(async () => {
+      if (!navigator.clipboard?.readText) {
+        actionError = $translator('queue.clipboardDenied');
+        return;
+      }
+      let clipText = '';
+      try {
+        clipText = await navigator.clipboard.readText();
+      } catch {
+        actionError = $translator('queue.clipboardDenied');
+        return;
+      }
+      const urls = extractUrlsFromText(clipText);
+      if (urls.length === 0) {
+        actionError = $translator('queue.clipboardEmpty');
+        return;
+      }
+      if (urls.length === 1) {
+        await onEnqueueUrl(urls[0]);
+        actionStatus = $translator('queue.clipboardQueuedSingle');
+      } else {
+        for (const url of urls) {
+          await onEnqueueUrl(url);
+        }
+        actionStatus = $translator('queue.clipboardQueuedMultiple', { count: urls.length });
+      }
+    });
+  }
+
+  function handleDragOver(e: DragEvent) {
+    e.preventDefault();
+    dragActive = true;
+  }
+
+  function handleDragLeave(e: DragEvent) {
+    if (e.currentTarget === e.target) {
+      dragActive = false;
+    }
+  }
+
+  function handleDrop(e: DragEvent) {
+    e.preventDefault();
+    dragActive = false;
+    if (!e.dataTransfer) return;
+
+    const textData = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
+    if (textData) {
+      const urls = extractUrlsFromText(textData);
+      if (urls.length > 0) {
+        sourceUrl = urls[0];
+        actionStatus = $translator('queue.dropLink', { url: urls[0] });
+        actionError = '';
+        return;
+      }
+    }
+
+    if (e.dataTransfer.files?.length) {
+      const fileList = Array.from(e.dataTransfer.files);
+      const paths = fileList.map((f) => (f as { path?: string }).path || f.name).filter(Boolean);
+      if (paths.length > 0) {
+        acceptDroppedPaths(paths);
+      }
+    }
+  }
+
   onMount(() => {
     nativeDropAvailable = hasNativeFileDrop();
     if (!nativeDropAvailable) return;
@@ -108,15 +175,24 @@
   </div>
 </section>
 
-<section class:drag-active={dragActive} class="panel jobs-capture" aria-label="Add transcription job" aria-busy={busy}>
+<section
+  class:drag-active={dragActive}
+  class="panel jobs-capture"
+  aria-label="Add transcription job"
+  aria-busy={busy}
+  on:dragover={handleDragOver}
+  on:dragenter={handleDragOver}
+  on:dragleave={handleDragLeave}
+  on:drop={handleDrop}
+>
   {#if dragActive}
     <div class="drop-overlay" aria-live="polite" data-i18n-ignore><div><strong>{$translator('queue.dropTitle')}</strong><span>{$translator('queue.dropSafety')}</span></div></div>
   {/if}
 
   <div class="capture-heading">
     <span class="eyebrow">Add transcription job</span>
-    <h2>Local media</h2>
-    {#if nativeDropAvailable}<p data-i18n-ignore>{$translator('queue.dropHint')}</p>{:else}<p>Use the native desktop picker for normal operation.</p>{/if}
+    <h2>Local media & URLs</h2>
+    <p data-i18n-ignore>{$translator('queue.dropHint')}</p>
   </div>
 
   <div class="source-grid">
@@ -131,7 +207,12 @@
 
     <section class:ready={Boolean(sourceUrl.trim())} class="source-card url-source">
       <label class="url-capture"><span>Supported media URL</span><input aria-label="Media URL" bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
-      <div class="capture-actions single-action"><button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = 'URL queued.'; })}>Queue URL</button></div>
+      <div class="capture-actions">
+        <button class="button secondary" type="button" disabled={busy} on:click={enqueueFromClipboard} data-i18n-ignore title={$translator('queue.clipboardUrls')}>
+          <span aria-hidden="true">📋</span> {$translator('queue.clipboardUrls')}
+        </button>
+        <button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = 'URL queued.'; })}>Queue URL</button>
+      </div>
     </section>
   </div>
 
@@ -195,7 +276,6 @@
   .source-icon { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--surface); font-size: 18px; }
   .selected-path { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 9px; border-radius: 7px; color: var(--muted); font-size: 10px; }
   .capture-actions, .job-actions { display: flex; flex-wrap: wrap; gap: 7px; align-self: end; }
-  .single-action { justify-content: flex-end; }
   .url-capture { display: grid; gap: 7px; }
   .url-capture span { color: var(--muted); font-size: 11px; }
   .url-capture input { width: 100%; }
