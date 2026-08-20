@@ -21,9 +21,12 @@ FFMPEG_GPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYIN
 FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
 FFMPEG_LGPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.LGPLv3"
 FFMPEG_LGPL3_SHA256 = "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
-CPYTHON_LICENSE_VERSION = "3.12.13"
-CPYTHON_LICENSE_URL = "https://raw.githubusercontent.com/python/cpython/v3.12.13/LICENSE"
-CPYTHON_LICENSE_SHA256 = "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+CPYTHON_3_12_LICENSE_SHA256 = "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+CPYTHON_REVIEWED_3_12_VERSIONS = {f"3.12.{patch}" for patch in range(0, 16)}
+CPYTHON_LICENSE_VERSION = "3.12.14"
+CPYTHON_LICENSE_URL = "https://raw.githubusercontent.com/python/cpython/v3.12.14/LICENSE"
+CPYTHON_LICENSE_SHA256 = CPYTHON_3_12_LICENSE_SHA256
+
 
 LICENSE_METADATA_FALLBACKS: dict[str, dict[str, str]] = {
     "tokenizers": {
@@ -193,18 +196,19 @@ def _copy_python_runtime_license(legal_root: Path, output_root: Path) -> str:
                 return destination.relative_to(output_root).as_posix()
 
     version = sys.version.split()[0]
-    if sys.implementation.name != "cpython" or version != CPYTHON_LICENSE_VERSION:
+    if sys.implementation.name != "cpython" or version not in CPYTHON_REVIEWED_3_12_VERSIONS:
         raise RuntimeError(
             "could not locate the embedded Python runtime license and the reviewed CPython "
-            f"fallback applies only to {CPYTHON_LICENSE_VERSION}; resolved {sys.implementation.name} {version}"
+            f"fallback applies only to Python 3.12.x ({sorted(CPYTHON_REVIEWED_3_12_VERSIONS)}); resolved {sys.implementation.name} {version}"
         )
     return _write_verified_remote_file(
-        CPYTHON_LICENSE_URL,
-        CPYTHON_LICENSE_SHA256,
+        f"https://raw.githubusercontent.com/python/cpython/v{version}/LICENSE",
+        CPYTHON_3_12_LICENSE_SHA256,
         legal_root / "python-runtime" / "LICENSE.txt",
         output_root,
-        f"CPython {CPYTHON_LICENSE_VERSION} license text",
+        f"CPython {version} license text",
     )
+
 
 
 def _apply_license_metadata_fallback(
