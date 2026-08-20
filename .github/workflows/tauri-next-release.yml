@@ -31,7 +31,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4 branch, immutable security-backport head
       - name: Test exact-SHA release gate logic
         run: python3 -m unittest discover -s scripts/tests -p 'test_release_ci_gate.py' -v
       - name: Verify package workflow contracts
@@ -58,7 +58,7 @@ jobs:
       STAGING_TAG: tauri-next-staging-${{ github.event.workflow_run.head_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out the packaged commit
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4 branch, immutable security-backport head
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0

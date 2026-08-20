@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4 branch, immutable security-backport head
       - name: Verify GitHub Actions use immutable pins
         run: |
           python3 scripts/check_github_action_pins.py --self-test
