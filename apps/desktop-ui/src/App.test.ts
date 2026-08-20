@@ -70,21 +70,31 @@ describe('desktop workstation', () => {
     expect(screen.getByTestId('job-interrupted')).toBeInTheDocument();
   });
 
-  it('refreshes active jobs without repeatedly bootstrapping the full workspace', async () => {
-    const api = createMockClient();
+  it('refreshes active jobs from backend events without repeatedly bootstrapping the full workspace', async () => {
+    let notify: ((jobId: string) => void) | undefined;
+    const api = createMockClient({
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
     const bootstrap = vi.spyOn(api, 'bootstrap');
     const listJobs = vi.spyOn(api, 'listJobs');
     await ready(api);
-    await waitFor(() => expect(listJobs).toHaveBeenCalled(), { timeout: 1600 });
+    notify?.('j-1');
+    await waitFor(() => expect(listJobs).toHaveBeenCalled());
     expect(bootstrap).toHaveBeenCalledTimes(1);
   });
 
   it('opens the persisted transcript from a completed job', async () => {
-    await ready();
+    const api = createMockClient();
+    const getTranscript = vi.spyOn(api, 'getTranscript');
+    await ready(api);
     await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open transcript' }));
     expect(await screen.findByRole('heading', { name: 'Transcript workspace' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
+    await waitFor(() => expect(getTranscript).toHaveBeenCalledWith('t-en'));
   });
 
   it('switches AI Studio between Copy Prompt and BYOK without persisting a key in UI state', async () => {
@@ -212,6 +222,26 @@ describe('desktop workstation', () => {
     await fireEvent.click(result);
     expect(await screen.findByRole('heading', { name: 'Transcript workspace' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
+  });
+
+  it('delegates transcript-body workspace search to the backend index', async () => {
+    const api = createMockClient();
+    const searchTranscripts = vi.spyOn(api, 'searchTranscripts');
+    await ready(api);
+    const search = screen.getByLabelText('Search workspace');
+    await fireEvent.input(search, { target: { value: 'visual payoff' } });
+    await waitFor(() => expect(searchTranscripts).toHaveBeenCalledWith('visual payoff', 8));
+    expect(await screen.findByRole('button', { name: /Caption pacing breakdown.*Transcript/ })).toBeInTheDocument();
+  });
+
+  it('supports Arabic transcript-body workspace search through the backend index', async () => {
+    const api = createMockClient();
+    const searchTranscripts = vi.spyOn(api, 'searchTranscripts');
+    await ready(api);
+    const search = screen.getByLabelText('Search workspace');
+    await fireEvent.input(search, { target: { value: 'النتيجة' } });
+    await waitFor(() => expect(searchTranscripts).toHaveBeenCalledWith('النتيجة', 8));
+    expect(await screen.findByRole('button', { name: /Hook breakdown — Arabic sample.*Transcript/ })).toBeInTheDocument();
   });
 
   it('selects and persists a Rust-backed output directory', async () => {

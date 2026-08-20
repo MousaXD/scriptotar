@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 1;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 3;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -101,7 +101,178 @@ impl SqliteStore {
             .map_err(storage_error)?;
             tx.commit().map_err(storage_error)?;
         }
+        if current < 2 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TABLE job_transcript_links (
+                    job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
+                    transcript_id TEXT NOT NULL UNIQUE REFERENCES transcripts(id) ON DELETE CASCADE,
+                    linked_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_job_transcript_links_transcript
+                    ON job_transcript_links(transcript_id);",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(2, 'job_transcript_lineage', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
+        if current < 3 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            let linked_at = now_rfc3339();
+            tx.execute(
+                "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+                 SELECT j.id, t.id, ?1
+                 FROM jobs j
+                 JOIN sources s
+                   ON s.project_id = j.project_id
+                  AND s.source_type = j.input_kind
+                  AND s.locator = j.input_value
+                 JOIN media m ON m.source_id = s.id
+                 JOIN transcripts t ON t.media_id = m.id
+                 WHERE j.state = 'completed'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM job_transcript_links existing
+                       WHERE existing.job_id = j.id
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1 FROM job_transcript_links existing
+                       WHERE existing.transcript_id = t.id
+                   )
+                   AND (
+                       SELECT COUNT(*) FROM jobs sibling
+                       WHERE sibling.project_id = j.project_id
+                         AND sibling.input_kind = j.input_kind
+                         AND sibling.input_value = j.input_value
+                         AND sibling.state = 'completed'
+                   ) = 1
+                   AND (
+                       SELECT COUNT(*)
+                       FROM transcripts candidate
+                       JOIN media candidate_media ON candidate_media.id = candidate.media_id
+                       JOIN sources candidate_source ON candidate_source.id = candidate_media.source_id
+                       WHERE candidate_source.project_id = j.project_id
+                         AND candidate_source.source_type = j.input_kind
+                         AND candidate_source.locator = j.input_value
+                   ) = 1",
+                params![linked_at],
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(3, 'safe_job_transcript_backfill', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
         Ok(())
+    }
+
+    pub fn list_job_transcript_links(
+        &self,
+        project_id: Option<Uuid>,
+    ) -> RepositoryResult<HashMap<Uuid, Uuid>> {
+        self.run_integration_migrations()?;
+        let connection = connection(self)?;
+        let sql = if project_id.is_some() {
+            "SELECT l.job_id, l.transcript_id
+             FROM job_transcript_links l
+             JOIN jobs j ON j.id = l.job_id
+             WHERE j.project_id = ?1"
+        } else {
+            "SELECT l.job_id, l.transcript_id
+             FROM job_transcript_links l"
+        };
+        let mut statement = connection.prepare(sql).map_err(storage_error)?;
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<(Uuid, Uuid)> {
+            Ok((
+                parse_uuid(row.get::<_, String>(0)?)?,
+                parse_uuid(row.get::<_, String>(1)?)?,
+            ))
+        };
+        let rows = if let Some(project_id) = project_id {
+            statement
+                .query_map(params![project_id.to_string()], map_row)
+                .map_err(storage_error)?
+        } else {
+            statement.query_map([], map_row).map_err(storage_error)?
+        };
+        rows.collect::<Result<HashMap<_, _>, _>>()
+            .map_err(storage_error)
+    }
+
+    pub fn get_transcript_bundle(&self, transcript_id: Uuid) -> RepositoryResult<TranscriptBundle> {
+        let connection = connection(self)?;
+        connection
+            .query_row(
+                "SELECT s.project_id, s.id, s.creator_id, s.source_type, s.locator, s.title, s.created_at,
+                        m.id, m.local_path, m.duration_seconds, m.mime_type, m.created_at,
+                        t.id, t.language, t.text, t.segments_json, t.words_json, t.created_at, t.updated_at
+                 FROM transcripts t
+                 JOIN media m ON m.id = t.media_id
+                 JOIN sources s ON s.id = m.source_id
+                 WHERE t.id = ?1",
+                params![transcript_id.to_string()],
+                |row| {
+                    let project_id = parse_uuid(row.get::<_, String>(0)?)?;
+                    let source_id = parse_uuid(row.get::<_, String>(1)?)?;
+                    let creator_id = row
+                        .get::<_, Option<String>>(2)?
+                        .map(parse_uuid)
+                        .transpose()?;
+                    let source_type: String = row.get(3)?;
+                    let source = Source {
+                        id: source_id,
+                        project_id,
+                        creator_id,
+                        source_type: match source_type.as_str() {
+                            "url" => SourceType::Url,
+                            "local_file" => SourceType::LocalFile,
+                            _ => return Err(rusqlite::Error::InvalidQuery),
+                        },
+                        locator: row.get(4)?,
+                        title: row.get(5)?,
+                        created_at: row.get(6)?,
+                    };
+                    let media_id = parse_uuid(row.get::<_, String>(7)?)?;
+                    let media = Media {
+                        id: media_id,
+                        source_id,
+                        local_path: row.get(8)?,
+                        duration_seconds: row.get(9)?,
+                        mime_type: row.get(10)?,
+                        created_at: row.get(11)?,
+                    };
+                    let transcript = Transcript {
+                        id: parse_uuid(row.get::<_, String>(12)?)?,
+                        media_id,
+                        language: row.get(13)?,
+                        text: row.get(14)?,
+                        segments_json: row.get(15)?,
+                        words_json: row.get(16)?,
+                        created_at: row.get(17)?,
+                        updated_at: row.get(18)?,
+                    };
+                    Ok(TranscriptBundle {
+                        project_id,
+                        source,
+                        media,
+                        transcript,
+                    })
+                },
+            )
+            .optional()
+            .map_err(storage_error)?
+            .ok_or_else(|| RepositoryError::NotFound(format!("transcript {transcript_id}")))
     }
 
     pub fn import_legacy_database(
@@ -311,6 +482,19 @@ impl SqliteStore {
                             media_id.to_string(),
                             row.language,
                             text,
+                            row.created_at,
+                        ],
+                    )
+                    .map_err(storage_error)?;
+                    tx.execute(
+                        "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+                         VALUES(?1, ?2, ?3)
+                         ON CONFLICT(job_id) DO UPDATE SET
+                            transcript_id = excluded.transcript_id,
+                            linked_at = excluded.linked_at",
+                        params![
+                            job_id.to_string(),
+                            transcript_id.to_string(),
                             row.created_at,
                         ],
                     )
@@ -690,6 +874,12 @@ impl ContentRepository for SqliteStore {
             ],
         )
         .map_err(storage_error)?;
+        tx.execute(
+            "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+             VALUES(?1, ?2, ?3)",
+            params![job_id.to_string(), transcript.id.to_string(), now_rfc3339(),],
+        )
+        .map_err(storage_error)?;
         let changed = tx
             .execute(
                 "UPDATE jobs SET state = 'completed', progress = 1.0, last_error = NULL, updated_at = ?1
@@ -1003,6 +1193,103 @@ mod tests {
             .unwrap();
         assert_eq!(completed.state, JobState::Completed);
         assert_eq!(store.list_transcripts(Some(project.id)).unwrap().len(), 1);
+        let loaded = store.get_transcript_bundle(transcript.id).unwrap();
+        assert_eq!(loaded.project_id, project.id);
+        assert_eq!(loaded.transcript.text, "hello");
+        assert_eq!(loaded.source.locator, "/tmp/a.mp4");
+        assert_eq!(
+            store
+                .list_job_transcript_links(Some(project.id))
+                .unwrap()
+                .get(&job.id),
+            Some(&transcript.id)
+        );
+
+        {
+            let connection = connection(&store).unwrap();
+            connection
+                .execute(
+                    "DELETE FROM job_transcript_links WHERE job_id = ?1",
+                    params![job.id.to_string()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "DELETE FROM integration_schema_migrations WHERE version = 3",
+                    [],
+                )
+                .unwrap();
+        }
+        store.run_integration_migrations().unwrap();
+        assert_eq!(
+            store
+                .list_job_transcript_links(Some(project.id))
+                .unwrap()
+                .get(&job.id),
+            Some(&transcript.id)
+        );
+    }
+
+    #[test]
+    fn historical_lineage_backfill_skips_ambiguous_duplicate_inputs() {
+        let temp = TempDir::new().unwrap();
+        let store = new_store(&temp);
+        let project = Project::new("Inbox");
+        store.create_project(&project).unwrap();
+        let input = "/tmp/duplicate.mp4";
+        let first_job = Uuid::new_v4();
+        let second_job = Uuid::new_v4();
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let now = now_rfc3339();
+        let connection = connection(&store).unwrap();
+        for job_id in [first_job, second_job] {
+            connection
+                .execute(
+                    "INSERT INTO jobs(
+                        id, project_id, input_kind, input_value, state, progress, last_error,
+                        created_at, updated_at
+                    ) VALUES(?1, ?2, 'local_file', ?3, 'completed', 1.0, NULL, ?4, ?4)",
+                    params![job_id.to_string(), project.id.to_string(), input, now],
+                )
+                .unwrap();
+        }
+        connection
+            .execute(
+                "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
+                 VALUES(?1, ?2, NULL, 'local_file', ?3, 'duplicate', ?4)",
+                params![source_id.to_string(), project.id.to_string(), input, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
+                 VALUES(?1, ?2, ?3, 1.0, NULL, ?4)",
+                params![media_id.to_string(), source_id.to_string(), input, now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO transcripts(
+                    id, media_id, language, text, segments_json, words_json, created_at, updated_at
+                 ) VALUES(?1, ?2, 'en', 'duplicate', NULL, NULL, ?3, ?3)",
+                params![transcript_id.to_string(), media_id.to_string(), now],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM integration_schema_migrations WHERE version = 3",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        store.run_integration_migrations().unwrap();
+        assert!(store
+            .list_job_transcript_links(Some(project.id))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -1048,6 +1335,15 @@ mod tests {
         assert_eq!(first.watchlists, 1);
         assert_eq!(first.ai_runs, 1);
         assert!(PathBuf::from(first.backup_path.unwrap()).is_file());
+        let legacy_job_id = legacy_uuid("job", "abc123");
+        let legacy_transcript_id = legacy_uuid("transcript", "abc123");
+        assert_eq!(
+            store
+                .list_job_transcript_links(None)
+                .unwrap()
+                .get(&legacy_job_id),
+            Some(&legacy_transcript_id)
+        );
         let second = store.import_legacy_database(&legacy_path).unwrap();
         assert!(second.skipped);
         assert_eq!(store.list_transcripts(None).unwrap().len(), 1);

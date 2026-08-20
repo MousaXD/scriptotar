@@ -23,7 +23,7 @@ use scriptotar_core::{
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
-use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
+use scriptotar_orchestrator::{JobChangeNotifier, JobOrchestrator, RuntimeConfig};
 use scriptotar_research::{NetworkPolicy, ResearchService, YtDlpCommand, YtDlpProvider};
 use serde_json::Value;
 use uuid::Uuid;
@@ -72,6 +72,13 @@ pub struct AppServices {
 
 impl AppServices {
     pub fn new(data_dir: impl AsRef<Path>) -> RepositoryResult<Self> {
+        Self::new_with_job_notifier(data_dir, Arc::new(|_| {}))
+    }
+
+    pub fn new_with_job_notifier(
+        data_dir: impl AsRef<Path>,
+        notifier: JobChangeNotifier,
+    ) -> RepositoryResult<Self> {
         let data_dir = data_dir.as_ref();
         std::fs::create_dir_all(data_dir)
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
@@ -102,9 +109,10 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
-        let orchestrator = JobOrchestrator::start(
+        let orchestrator = JobOrchestrator::start_with_notifier(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
+            notifier,
         );
         let research_command = YtDlpCommand::from_environment();
         let watchlist_refresher =
@@ -131,9 +139,30 @@ impl AppServices {
 
     pub fn list_jobs(&self) -> RepositoryResult<Vec<UiJob>> {
         let active_project = self.active_project_id()?;
+        let jobs = self.store.list_jobs(Some(active_project))?;
+        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
+        Ok(jobs
+            .iter()
+            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
+            .collect())
+    }
+
+    pub fn search_transcripts(&self, query: &str, limit: usize) -> RepositoryResult<Vec<String>> {
+        let active_project = self.active_project_id()?;
         self.store
-            .list_jobs(Some(active_project))
-            .map(|jobs| jobs.iter().map(job_to_ui).collect())
+            .search_transcript_ids(active_project, query, limit)
+            .map(|ids| ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
+    pub fn get_transcript(&self, transcript_id: Uuid) -> RepositoryResult<UiTranscript> {
+        let active_project = self.active_project_id()?;
+        let transcript = self.store.get_transcript_bundle(transcript_id)?;
+        if transcript.project_id != active_project {
+            return Err(RepositoryError::NotFound(format!(
+                "transcript {transcript_id} in active project"
+            )));
+        }
+        Ok(transcript_to_ui(&transcript))
     }
 
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
@@ -460,6 +489,7 @@ impl AppServices {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
         let transcripts = self.store.list_transcripts(Some(active_project))?;
+        let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
         let ai_runs = self.store.list_ai_runs(Some(active_project))?;
         let stored_creators = self.store.list_creators(Some(active_project))?;
@@ -511,7 +541,7 @@ impl AppServices {
         let jobs = all_jobs
             .iter()
             .filter(|job| job.project_id == active_project)
-            .map(job_to_ui)
+            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
             .collect::<Vec<_>>();
         let queued_sources = all_jobs
             .iter()
@@ -1024,7 +1054,7 @@ fn runtime_config(fallback_output_root: PathBuf) -> RuntimeConfig {
     RuntimeConfig::new(python, sidecar_script, fallback_output_root)
 }
 
-fn job_to_ui(job: &Job) -> UiJob {
+fn job_to_ui(job: &Job, completed_transcript_id: Option<Uuid>) -> UiJob {
     let (_, source) = job.input.parts();
     let title = Path::new(source)
         .file_name()
@@ -1043,6 +1073,7 @@ fn job_to_ui(job: &Job) -> UiJob {
             .map(|value| (value.clamp(0.0, 1.0) * 100.0).round() as u8),
         updated_at: job.updated_at.clone(),
         detail: job.last_error.clone(),
+        completed_transcript_id: completed_transcript_id.map(|id| id.to_string()),
     }
 }
 

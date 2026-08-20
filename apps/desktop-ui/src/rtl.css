@@ -1,0 +1,65 @@
+html[dir='rtl'] body {
+  direction: rtl;
+}
+
+html[dir='rtl'] .sidebar {
+  border-right: 0;
+  border-left: 1px solid var(--border);
+}
+
+html[dir='rtl'] .sidebar nav button,
+html[dir='rtl'] .creator-row,
+html[dir='rtl'] .simple-list button,
+html[dir='rtl'] .transcript-list button,
+html[dir='rtl'] .search-results button {
+  text-align: right;
+}
+
+html[dir='rtl'] .sidebar nav button.active::before {
+  left: auto;
+  right: -13px;
+}
+
+html[dir='rtl'] .activity-count {
+  right: auto;
+  left: 42px;
+}
+
+html[dir='rtl'] .shell-v2 .activity-count {
+  right: auto;
+  left: auto;
+}
+
+html[dir='rtl'] .pulse-dot {
+  margin-right: 0;
+  margin-left: 7px;
+}
+
+html[dir='rtl'] .watch-error,
+html[dir='rtl'] .watch-note,
+html[dir='rtl'] .status-copy,
+html[dir='rtl'] .state-panel,
+html[dir='rtl'] .view-head,
+html[dir='rtl'] .settings-section {
+  text-align: right;
+}
+
+html[dir='rtl'] code,
+html[dir='rtl'] kbd,
+html[dir='rtl'] .timestamp,
+html[dir='rtl'] input[placeholder^='http'],
+html[dir='rtl'] input[placeholder^='/'],
+html[dir='rtl'] input[type='password'] {
+  direction: ltr;
+  text-align: left;
+}
+
+html[dir='rtl'] .transcript-content[dir='ltr'] {
+  direction: ltr;
+  text-align: left;
+}
+
+html[dir='rtl'] .transcript-content[dir='rtl'] {
+  direction: rtl;
+  text-align: right;
+}

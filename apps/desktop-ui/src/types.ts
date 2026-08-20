@@ -66,6 +66,7 @@ export interface Job {
   progress?: number;
   updatedAt: string;
   detail?: string;
+  completedTranscriptId?: string;
 }
 
 export interface BackendJob {

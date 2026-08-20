@@ -12,17 +12,17 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
-    sync::{Mutex, MutexGuard, OnceLock, TryLockError},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiWatchlistStatus,
+    UiTranscript, UiWatchlistStatus,
 };
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use services::AppServices;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
@@ -253,6 +253,27 @@ fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, 
 #[tauri::command]
 fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
     state.list_jobs().map_err(command_error)
+}
+
+#[tauri::command]
+fn search_transcripts(
+    query: String,
+    limit: Option<usize>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<String>, String> {
+    state
+        .search_transcripts(&query, limit.unwrap_or(10))
+        .map_err(command_error)
+}
+
+#[tauri::command]
+fn get_transcript(
+    transcript_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiTranscript, String> {
+    let transcript_id =
+        Uuid::parse_str(&transcript_id).map_err(|_| "invalid transcript id".to_owned())?;
+    state.get_transcript(transcript_id).map_err(command_error)
 }
 
 #[tauri::command]
@@ -602,7 +623,11 @@ pub fn run() {
             operational_store.run_integration_migrations()?;
             operational_store.recover_interrupted_watchlist_refreshes()?;
 
-            let services = AppServices::new(&data_dir)?;
+            let app_handle = app.handle().clone();
+            let job_notifier = Arc::new(move |job_id: Uuid| {
+                let _ = app_handle.emit("scriptotar://job-changed", job_id.to_string());
+            });
+            let services = AppServices::new_with_job_notifier(&data_dir, job_notifier)?;
             if matches!(preparation, Some(migration::Preparation::Ready)) {
                 complete_prepared_migration(&services, &data_dir);
             }
@@ -618,6 +643,8 @@ pub fn run() {
             backend_health,
             bootstrap_app,
             list_jobs,
+            search_transcripts,
+            get_transcript,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

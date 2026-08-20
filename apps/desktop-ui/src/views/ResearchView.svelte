@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { locale } from '../i18n';
   import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
   import EmptyState from '../components/EmptyState.svelte';
   export let items: ResearchItem[];
@@ -25,6 +26,8 @@
     failed: 'Failed'
   };
 
+  $: numberLocale = $locale === 'ar' ? 'ar' : 'en';
+  $: compactNumber = new Intl.NumberFormat(numberLocale, { notation: 'compact' });
   $: filtered = items
     .filter((item) => platform === 'All' || item.platform === platform)
     .filter((item) => `${item.creator} ${item.title}`.toLowerCase().includes(query.toLowerCase()))
@@ -36,7 +39,11 @@
   function displayTime(value?: string) {
     if (!value) return '—';
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString(numberLocale);
+  }
+
+  function metric(value?: number) {
+    return value ? compactNumber.format(value) : '—';
   }
 
   function toggle(id: string) {
@@ -65,6 +72,7 @@
     catch (error) { status = `Queue unavailable: ${error instanceof Error ? error.message : String(error)}`; }
   }
 </script>
+
 <section class="view-head"><div><span class="eyebrow">Creator intelligence</span><h1>Research</h1><p>Scan public creator profiles, compare performance signals, then queue only the media worth transcribing.</p></div></section>
 <section class="research-capture panel">
   <label><span>Creator / profile URL</span><input bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" /></label>
@@ -112,7 +120,7 @@
     <label class="search-field"><span>⌕</span><input aria-label="Filter research" bind:value={query} placeholder="Filter title or creator…" /></label>
     <select aria-label="Platform filter" bind:value={platform}><option>All</option><option>TikTok</option><option>YouTube</option><option>Instagram</option></select>
     <label class="sort-control">Sort <select aria-label="Research sort" bind:value={sort}><option value="views">Views</option><option value="likes">Likes</option><option value="comments">Comments</option><option value="date">Newest</option></select></label>
-    <button class="button secondary" disabled={selected.size === 0} on:click={queueSelected}>Queue selected ({selected.size})</button>
+    <button class:has-selection={selected.size > 0} class="button secondary selection-action" disabled={selected.size === 0} on:click={queueSelected}>Queue selected ({selected.size})</button>
   </div>
   {#if filtered.length === 0}
     <EmptyState title="No matching research" message="Change the filters or scan another creator profile." />
@@ -122,11 +130,15 @@
       {#each filtered as item}
         <div class="research-row" role="row" data-testid={`research-${item.id}`}>
           <label class="check-only"><input type="checkbox" checked={selected.has(item.id)} on:change={() => toggle(item.id)} aria-label={`Select ${item.title}`} /></label>
-          <div class="media-cell"><div class="thumbnail-placeholder">{item.platform.slice(0,1)}</div><div><strong>{item.title}</strong><small>{item.creator} · {item.platform}</small></div></div>
-          <strong>{item.views ? Intl.NumberFormat('en',{notation:'compact'}).format(item.views) : '—'}</strong>
-          <span>{item.likes ? Intl.NumberFormat('en',{notation:'compact'}).format(item.likes) : '—'}</span>
-          <span>{item.comments ? Intl.NumberFormat('en',{notation:'compact'}).format(item.comments) : '—'}</span>
-          <span>{item.publishedAt || '—'}</span><span>{item.durationSeconds ? `${item.durationSeconds}s` : '—'}</span>
+          <div class="media-cell">
+            {#if item.thumbnail}<img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" />{:else}<div class="thumbnail-placeholder">{item.platform.slice(0,1)}</div>{/if}
+            <div><strong>{item.title}</strong><small>{item.creator} · {item.platform}</small></div>
+          </div>
+          <strong class="metric metric-views"><span class="mobile-metric-label">Views</span>{metric(item.views)}</strong>
+          <span class="metric metric-likes"><span class="mobile-metric-label">Likes</span>{metric(item.likes)}</span>
+          <span class="metric metric-comments"><span class="mobile-metric-label">Comments</span>{metric(item.comments)}</span>
+          <span class="metric metric-date"><span class="mobile-metric-label">Date</span>{item.publishedAt || '—'}</span>
+          <span class="metric metric-duration"><span class="mobile-metric-label">Duration</span>{item.durationSeconds ? `${item.durationSeconds}s` : '—'}</span>
         </div>
       {/each}
     </div>
@@ -149,7 +161,29 @@
   dl div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
   dt { color: var(--muted); }
   dd { margin: 0; text-align: right; }
-  .watch-error { margin: 0; padding: 9px 10px; border-radius: 8px; background: rgba(255, 92, 92, .08); font-size: 12px; line-height: 1.45; }
+  .watch-error { margin: 0; padding: 9px 10px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 8%, transparent); font-size: 12px; line-height: 1.45; }
   .watch-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
-  @media (max-width: 720px) { .watch-health-head { align-items: start; flex-direction: column; } }
+  .research-thumbnail { flex: 0 0 auto; width: 54px; height: 38px; border-radius: 7px; object-fit: cover; background: var(--surface-2); }
+  .selection-action.has-selection { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border)); color: var(--text); }
+  .mobile-metric-label { display: none; }
+
+  @media (max-width: 920px) {
+    .filter-bar { position: sticky; top: 66px; z-index: 4; flex-wrap: wrap; background: var(--surface); }
+    .filter-bar .search-field { flex-basis: 100%; }
+  }
+  @media (max-width: 760px) {
+    .watch-health-head { align-items: start; flex-direction: column; }
+    .research-table { overflow: visible; padding: 8px; }
+    .research-row.table-head { display: none; }
+    .research-row:not(.table-head) { grid-template-columns: 30px minmax(0, 1fr) auto auto; grid-template-areas: 'check media media media' '. views likes comments' '. date date duration'; min-width: 0; gap: 8px 12px; padding: 12px 7px; border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; background: color-mix(in srgb, var(--surface-2) 40%, transparent); }
+    .check-only { grid-area: check; }
+    .media-cell { grid-area: media; }
+    .metric { display: grid; gap: 2px; color: var(--text); }
+    .metric-views { grid-area: views; }
+    .metric-likes { grid-area: likes; }
+    .metric-comments { grid-area: comments; }
+    .metric-date { grid-area: date; }
+    .metric-duration { grid-area: duration; text-align: right; }
+    .mobile-metric-label { display: block; color: var(--faint); font-size: 9px; font-weight: 500; text-transform: uppercase; }
+  }
 </style>
