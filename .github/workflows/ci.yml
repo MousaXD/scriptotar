@@ -170,7 +170,7 @@ jobs:
             fi
             echo
             echo "This rolling release is replaced after every successful push or merge to main."
-            echo "For permanent releases, use version tags such as v1.2.0."
+            echo "For permanent releases, use version tags such as v1.3.0."
           } > latest/RELEASE-NOTES.txt
       - name: Move rolling tag to this commit
         run: |
