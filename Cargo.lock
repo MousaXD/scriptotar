@@ -2913,7 +2913,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scriptotar-ai"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -2924,7 +2924,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "serde",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-db"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "rusqlite",
  "scriptotar-core",
@@ -2946,7 +2946,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-desktop"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "chrono",
  "rusqlite",
@@ -2968,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-jobs"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "scriptotar-core",
  "scriptotar-db",
@@ -2978,7 +2978,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-media"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-orchestrator"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "scriptotar-core",
  "scriptotar-db",
@@ -3001,7 +3001,7 @@ dependencies = [
 
 [[package]]
 name = "scriptotar-research"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "scriptotar-core",
  "serde",

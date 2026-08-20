@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Scriptotar Next",
-  "version": "0.1.0",
-  "identifier": "io.github.mousaxd.scriptotar.next",
+  "productName": "Scriptotar",
+  "version": "1.0.0",
+  "identifier": "io.github.mousaxd.scriptotar",
   "build": {
     "beforeBuildCommand": "cd ../desktop-ui && npm ci && npm run build",
     "beforeDevCommand": "cd ../desktop-ui && npm run dev",
@@ -19,7 +19,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Scriptotar Next",
+        "title": "Scriptotar",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

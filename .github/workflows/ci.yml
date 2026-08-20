@@ -1,9 +1,8 @@
-name: CI and Linux Releases
+name: CI
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -11,223 +10,48 @@ permissions:
   contents: read
 
 jobs:
-  test-and-deb:
+  test:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-venv python3-tk ffmpeg libsecret-tools xvfb dpkg-dev
-      - name: Compile Python sources
-        run: python3 -m py_compile scriptotar.py worker.py core.py creator.py scriptotar_common.py *_mixin.py
-      - name: Unit tests
-        run: PYTHONPATH=. python3 -m unittest discover -s tests -v
-      - name: Headless GUI smoke test
-        run: |
-          tmp_home="$(mktemp -d)"
-          HOME="$tmp_home" PYTHONPATH=. xvfb-run -a python3 - <<'PY'
-          import scriptotar
-          app = scriptotar.App()
-          app.update_idletasks()
-          assert len(app.notebook.tabs()) == 7
-          assert app.project_var.get() == "Inbox"
-          app.destroy()
-          PY
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION="$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' scriptotar_common.py | head -n1)"
-          test -n "$VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Build Debian package
-        run: |
-          mkdir -p dist
-          ./build-deb.sh "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb"
-          printf '%s\n' '${{ steps.version.outputs.version }}' > dist/VERSION
-      - name: Inspect Debian package
-        run: |
-          dpkg-deb --info "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb"
-          dpkg-deb --contents "dist/scriptotar_${{ steps.version.outputs.version }}_all.deb" | grep -E 'creator.py|scriptotar.py|LICENSE|NOTICE'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: scriptotar-deb
-          path: |
-            dist/scriptotar_${{ steps.version.outputs.version }}_all.deb
-            dist/VERSION
-          if-no-files-found: error
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
 
-  portable-packages:
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-22.04
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install AppImage and Flatpak build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            python3 python3-venv python3-tk ffmpeg libsecret-tools curl desktop-file-utils \
-            flatpak flatpak-builder libfuse2 appstream appstream-compose appstream-util
-      - name: Resolve version
-        id: version
-        run: |
-          VERSION="$(sed -n 's/^VERSION = "\([^"]*\)"/\1/p' scriptotar_common.py | head -n1)"
-          test -n "$VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-      - name: Build AppImage
-        run: |
-          mkdir -p dist
-          ./packaging/build-appimage.sh "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage"
-          test -x "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage"
-      - name: Configure Flathub runtime source
-        run: |
-          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
-      - name: Build Flatpak
-        run: |
-          flatpak-builder --user --force-clean \
-            --repo="$RUNNER_TEMP/scriptotar-flatpak-repo" \
-            "$RUNNER_TEMP/scriptotar-flatpak-build" \
-            io.github.mousaxd.scriptotar.yml
-      - name: Smoke-test Flatpak runtime
-        run: |
-          flatpak-builder --run "$RUNNER_TEMP/scriptotar-flatpak-build" io.github.mousaxd.scriptotar.yml \
-            python3 -c 'import sqlite3, ssl, tkinter; print("Flatpak Python/Tk runtime OK")'
-          flatpak-builder --run "$RUNNER_TEMP/scriptotar-flatpak-build" io.github.mousaxd.scriptotar.yml \
-            sh -lc 'command -v ffmpeg >/dev/null && test -f /app/lib/scriptotar/worker.py'
-      - name: Build Flatpak bundle
-        run: |
-          flatpak build-bundle \
-            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-            "$RUNNER_TEMP/scriptotar-flatpak-repo" \
-            "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak" \
-            io.github.mousaxd.scriptotar stable
-          test -s "dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak"
-          printf '%s\n' '${{ steps.version.outputs.version }}' > dist/VERSION
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          name: scriptotar-portable
-          path: |
-            dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.AppImage
-            dist/Scriptotar-${{ steps.version.outputs.version }}-x86_64.flatpak
-            dist/VERSION
-          if-no-files-found: error
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
 
-  rolling-release:
-    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.test-and-deb.result == 'success' }}
-    needs: [test-and-deb, portable-packages]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: scriptotar-*
-          path: dist
-          merge-multiple: true
-      - name: Prepare rolling release assets
-        run: |
-          VERSION="$(cat dist/VERSION)"
-          mkdir -p latest
-          cp "dist/scriptotar_${VERSION}_all.deb" latest/scriptotar-latest_all.deb
+          python-version: '3.12'
 
-          if [ -f "dist/Scriptotar-${VERSION}-x86_64.AppImage" ]; then
-            cp "dist/Scriptotar-${VERSION}-x86_64.AppImage" latest/Scriptotar-latest-x86_64.AppImage
-          fi
-          if [ -f "dist/Scriptotar-${VERSION}-x86_64.flatpak" ]; then
-            cp "dist/Scriptotar-${VERSION}-x86_64.flatpak" latest/Scriptotar-latest-x86_64.flatpak
-          fi
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
 
-          (
-            cd latest
-            find . -maxdepth 1 -type f \( -name '*.deb' -o -name '*.AppImage' -o -name '*.flatpak' \) \
-              -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
-          )
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-          {
-            echo "Scriptotar Latest"
-            echo
-            echo "Built automatically from main."
-            echo "App version: ${VERSION}"
-            echo "Commit: ${GITHUB_SHA}"
-            echo
-            echo "Assets:"
-            echo "- scriptotar-latest_all.deb"
-            if [ -f latest/Scriptotar-latest-x86_64.AppImage ]; then
-              echo "- Scriptotar-latest-x86_64.AppImage"
-            fi
-            if [ -f latest/Scriptotar-latest-x86_64.flatpak ]; then
-              echo "- Scriptotar-latest-x86_64.flatpak"
-            fi
-            if [ "${{ needs.portable-packages.result }}" != "success" ]; then
-              echo
-              echo "Portable packaging did not succeed in this run. The Debian package is still published independently."
-            fi
-            echo
-            echo "This rolling release is replaced after every successful push or merge to main."
-            echo "For permanent releases, use version tags such as v1.3.0."
-          } > latest/RELEASE-NOTES.txt
-      - name: Move rolling tag to this commit
+      - name: Repository hygiene and action pinning
         run: |
-          git tag -f continuous "$GITHUB_SHA"
-          git push origin refs/tags/continuous --force
-      - name: Create or update Scriptotar Latest release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view continuous >/dev/null 2>&1; then
-            gh release upload continuous latest/* --clobber
-            gh release edit continuous \
-              --title "Scriptotar Latest" \
-              --notes-file latest/RELEASE-NOTES.txt \
-              --target "$GITHUB_SHA" \
-              --latest
-          else
-            gh release create continuous latest/* \
-              --verify-tag \
-              --title "Scriptotar Latest" \
-              --notes-file latest/RELEASE-NOTES.txt \
-              --latest
-          fi
+          python3 scripts/check_repo_hygiene.py
+          python3 scripts/check_github_action_pins.py
 
-  tagged-release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [test-and-deb, portable-packages]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: scriptotar-*
-          path: dist
-          merge-multiple: true
-      - name: Verify tag matches app version
+      - name: Version identity tests
+        run: python3 tests/test_version_identity.py -v
+
+      - name: Svelte frontend tests
+        working-directory: apps/desktop-ui
         run: |
-          VERSION="$(cat dist/VERSION)"
-          test "${GITHUB_REF_NAME}" = "v${VERSION}" || {
-            echo "Tag ${GITHUB_REF_NAME} does not match app version v${VERSION}" >&2
-            exit 1
-          }
-          (cd dist && sha256sum "scriptotar_${VERSION}_all.deb" "Scriptotar-${VERSION}-x86_64.AppImage" "Scriptotar-${VERSION}-x86_64.flatpak" > SHA256SUMS.txt)
-      - name: Create permanent version release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" \
-              dist/*.deb dist/*.AppImage dist/*.flatpak dist/SHA256SUMS.txt --clobber
-            gh release edit "$GITHUB_REF_NAME" --latest=false
-          else
-            gh release create "$GITHUB_REF_NAME" \
-              dist/*.deb dist/*.AppImage dist/*.flatpak dist/SHA256SUMS.txt \
-              --verify-tag --generate-notes --latest=false
-          fi
+          npm ci
+          npm run check
+          npm test -- --run
+          npm run build
+
+      - name: Python sidecar tests
+        run: PYTHONPATH=sidecars/transcription python3 -m unittest discover -s sidecars/transcription/tests -v
+
+      - name: Rust workspace tests
+        run: cargo test --workspace
