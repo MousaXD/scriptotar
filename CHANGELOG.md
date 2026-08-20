@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0 - 2026-08-21
+
+### Added
+
+- Arabic GUI localization and RTL layout support with instant Arabic/English language switcher.
+- Creator Control Room desktop UI overhaul with refined navigation and workspace layouts.
+- SQLite-backed full-text search (FTS5) for workspace transcripts with Arabic morphology substring fallback.
+- On-demand lazy transcript detail loading and state isolation for improved performance.
+- Exact completed transcript lineage linking and navigation from jobs and history.
+- Explicit transcript source selector and lineage in AI Studio.
+- New project creation flow in dashboard and settings.
+
+### Fixed / Hardened
+
+- Pinned reviewed PyAV 18.0.0 dependency in transcription engine runtime.
+- Added CPython 3.12 patchline compatibility in runtime license generator.
+- Resolved race conditions in job event notifications and queue cancellation.
+
 ## 1.2.0 - 2026-08-09
 
 ### Added

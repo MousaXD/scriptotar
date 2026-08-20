@@ -40,7 +40,7 @@ The frontend must not open the application SQLite database or spawn Python direc
 Two application lines intentionally coexist:
 
 - **Scriptotar Next 0.1.0**: current preview, Windows NSIS and Linux Debian packages.
-- **Scriptotar Classic 1.2.0**: supported Python/Tkinter line with Debian, AppImage, and Flatpak packages.
+- **Scriptotar Classic 1.3.0**: supported Python/Tkinter line with Debian, AppImage, and Flatpak packages.
 
 The version numbers are independent. See `docs/VERSIONING.md` for the release/tag policy.
 

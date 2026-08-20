@@ -26,7 +26,7 @@ from creator import (
 )
 
 APP = "Scriptotar"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 INSTALL = Path(os.environ.get("SCRIPTOTAR_INSTALL", "/opt/scriptotar"))
 DATA_ROOT = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
 DATA = DATA_ROOT / "scriptotar"

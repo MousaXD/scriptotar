@@ -1,6 +1,6 @@
 # Scriptotar Next distribution
 
-Scriptotar Next `0.1.0` is the current Rust/Tauri/Svelte preview line. Windows and Linux packages include a self-contained transcription runtime, while Scriptotar Classic `1.2.0` keeps its separate Linux release channel and package formats.
+Scriptotar Next `0.1.0` is the current Rust/Tauri/Svelte preview line. Windows and Linux packages include a self-contained transcription runtime, while Scriptotar Classic `1.3.0` keeps its separate Linux release channel and package formats.
 
 ## Release identity
 

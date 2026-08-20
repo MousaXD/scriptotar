@@ -7,7 +7,7 @@ This repository currently contains **two supported desktop lines** while the pro
 | Line | Current version | Status | Platforms / packages | Choose it when |
 | --- | --- | --- | --- | --- |
 | **Scriptotar Next** | **0.1.0** | **Preview** | Windows NSIS `.exe`, Linux Debian `.deb` | You want the current product direction and are comfortable running preview software. |
-| **Scriptotar Classic** | **1.2.0** | **Supported legacy/stable line** | Linux Debian `.deb`, AppImage, Flatpak | You want the established Python/Tkinter application or need the Classic portable Linux packages. |
+| **Scriptotar Classic** | **1.3.0** | **Supported legacy/stable line** | Linux Debian `.deb`, AppImage, Flatpak | You want the established Python/Tkinter application or need the Classic portable Linux packages. |
 
 For new Windows users, **Scriptotar Next is the only packaged Windows application**. For Linux users, choose Next for the new Rust/Tauri experience or Classic when you specifically need the established Classic line, AppImage, or Flatpak packaging.
 
@@ -119,7 +119,7 @@ Scriptotar-latest-x86_64.AppImage
 Scriptotar-latest-x86_64.flatpak
 ```
 
-The Debian package is the required Classic rolling artifact; AppImage and Flatpak are included when their portable packaging lane succeeds. Permanent Classic releases use version tags such as `v1.2.0` and publish versioned Debian/AppImage/Flatpak artifacts.
+The Debian package is the required Classic rolling artifact; AppImage and Flatpak are included when their portable packaging lane succeeds. Permanent Classic releases use version tags such as `v1.3.0` and publish versioned Debian/AppImage/Flatpak artifacts.
 
 Debian/Ubuntu/Pop!_OS:
 
@@ -174,8 +174,8 @@ The Classic Debian package depends on system Python 3, Tk, FFmpeg, and Secret Se
 | Channel | Product line | Stability | Meaning |
 | --- | --- | --- | --- |
 | `tauri-next-latest` | Scriptotar Next 0.1.x | **Preview prerelease** | Rolling Windows + Linux Next preview. |
-| `continuous` / **Scriptotar Latest** | Scriptotar Classic 1.2.x | **Supported Classic rolling release** | Rolling Classic Linux release. |
-| `v1.2.0`-style tags | Scriptotar Classic | **Permanent versioned release** | Immutable Classic release snapshot whose tag must match the Classic app version. |
+| `continuous` / **Scriptotar Latest** | Scriptotar Classic 1.3.x | **Supported Classic rolling release** | Rolling Classic Linux release. |
+| `v1.3.0`-style tags | Scriptotar Classic | **Permanent versioned release** | Immutable Classic release snapshot whose tag must match the Classic app version. |
 
 There is **no stable Scriptotar Next release channel yet**. The Classic and Next version numbers are intentionally independent; see [`docs/VERSIONING.md`](docs/VERSIONING.md).
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$(mktemp -d "${TMPDIR:-/tmp}/scriptotar-build.XXXXXX")"
 trap 'rm -rf "$BUILD"' EXIT
@@ -41,7 +41,7 @@ chmod 0755 "$PKG/usr/bin/scriptotar"
 
 cat > "$PKG/DEBIAN/control" <<'EOF'
 Package: scriptotar
-Version: 1.2.0
+Version: 1.3.0
 Section: utils
 Priority: optional
 Architecture: all

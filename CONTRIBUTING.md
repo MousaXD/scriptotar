@@ -152,7 +152,7 @@ Portable Classic packages are built by `packaging/build-appimage.sh` and `io.git
 
 Do not infer that the Classic and Next numbers should match.
 
-- Classic currently uses `1.2.0`.
+- Classic currently uses `1.3.0`.
 - Next currently uses `0.1.0` across the Rust workspace, Tauri package identity, Svelte package, and transcription sidecar.
 - Sidecar protocol version `1` is a wire-protocol compatibility number, not an application version.
 

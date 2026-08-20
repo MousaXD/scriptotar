@@ -68,7 +68,7 @@ class VersionIdentityTests(unittest.TestCase):
 
         self.assertIsNotNone(shell_version)
         self.assertIsNotNone(deb_version)
-        self.assertEqual(classic_version, "1.2.0")
+        self.assertEqual(classic_version, "1.3.0")
         self.assertEqual(shell_version.group(1), classic_version)
         self.assertEqual(deb_version.group(1), classic_version)
 
