@@ -240,7 +240,7 @@
       <div>
         <span class="eyebrow">Agent integration</span>
         <h2>MCP permissions</h2>
-        <p>Control what ChatGPT and other MCP clients can do on this computer. The app enforces these permissions for every tool call. Everything starts disabled.</p>
+        <p>Control what ChatGPT and other MCP clients can do on this computer. The app enforces these permissions for every tool call. Everything starts disabled. For ChatGPT, use Secure MCP Tunnel with the installed Scriptotar --mcp-stdio command.</p>
       </div>
       <div class="mcp-settings">
         {#if mcp}
@@ -263,7 +263,7 @@
           {/if}
           <button class="button primary" disabled={mcpBusy || (mcp.enabled && (mcp.writeFiles || mcp.overwriteFiles || mcp.executeCommands) && !mcpAcknowledge)} on:click={saveMcp}>Apply MCP permissions</button>
           <div class="mcp-gateway-control">
-            <strong>Local MCP gateway</strong>
+            <strong>Optional local HTTP gateway</strong>
             <p>{mcpGateway?.endpoint || 'http://127.0.0.1:39761/mcp'}</p>
             <p>{mcpGateway?.running ? 'Running (localhost only)' : 'Stopped'}</p>
             <button class="button secondary" disabled={mcpBusy || !mcpGateway || (!mcpGateway.running && !mcp.enabled)} on:click={toggleMcpGateway}>{mcpGateway?.running ? 'Stop local MCP gateway' : 'Start local MCP gateway'}</button>
@@ -273,7 +273,7 @@
               <strong>Gateway bearer token — keep private</strong>
               <button class="button secondary" on:click={() => { mcpShowToken = !mcpShowToken; }}>{mcpShowToken ? 'Hide token' : 'Reveal token'}</button>
               {#if mcpShowToken}<code>{mcp.httpToken}</code>{/if}
-              <p>The token authenticates connections; Scriptotar's permissions still authorize each action. Use a secure MCP tunnel for ChatGPT.</p>
+              <p>This bearer token authenticates local HTTP clients. For ChatGPT, use Secure MCP Tunnel with Scriptotar --mcp-stdio; a static HTTP token is not needed.</p>
             </div>
           {/if}
         {:else}

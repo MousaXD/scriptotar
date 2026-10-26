@@ -17,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 scriptotar-jobs = { path = "../scriptotar-jobs" }
+scriptotar-media = { path = "../scriptotar-media" }
 scriptotar-orchestrator = { path = "../scriptotar-orchestrator" }
 scriptotar-research = { path = "../scriptotar-research" }
 uuid.workspace = true

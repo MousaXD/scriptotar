@@ -187,6 +187,37 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
     }
 }
 
+/// Discover the same bundled runtime that the GUI registers during Tauri setup.
+/// The CLI MCP path does not enter Tauri's `.setup` hook, so it must configure
+/// the runtime independently before it opens the sidecar/job orchestrator.
+fn packaged_resource_dir_for_executable(executable: &Path) -> Option<PathBuf> {
+    let bin_dir = executable.parent()?;
+    let candidates = [
+        bin_dir.to_path_buf(),
+        bin_dir.join("resources"),
+        bin_dir.join("../Resources"),
+        bin_dir.join("../lib/Scriptotar"),
+        bin_dir.join("../share/Scriptotar"),
+    ];
+    candidates.into_iter().find(|root| {
+        let runtime = root.join("transcription-runtime");
+        runtime.join("sidecar.py").is_file()
+            && runtime.join(packaged_executable("scriptotar-transcription")).is_file()
+            && runtime.join(packaged_executable("scriptotar-ytdlp")).is_file()
+    })
+}
+
+/// Called by the packaged binary's `--mcp-stdio` / `--mcp-http` entrypoints.
+/// Never requires a bundled runtime for local source builds with explicit
+/// developer sidecar settings; absent packaging does not unlock capabilities.
+pub fn configure_mcp_cli_runtime(data_dir: &Path) {
+    if let Ok(executable) = env::current_exe() {
+        if let Some(resource_dir) = packaged_resource_dir_for_executable(&executable) {
+            configure_packaged_runtime(&resource_dir, data_dir);
+        }
+    }
+}
+
 fn try_migration_operation() -> Result<MutexGuard<'static, ()>, MigrationLockError> {
     match MIGRATION_OPERATION
         .get_or_init(|| Mutex::new(()))
@@ -787,6 +818,24 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn discovers_linux_packaged_runtime_for_headless_mcp() {
+        let temp = TempDir::new().unwrap();
+        let bin = temp.path().join("bin");
+        let runtime = temp.path().join("lib/Scriptotar/transcription-runtime");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("sidecar.py"), "fixture").unwrap();
+        fs::write(runtime.join(packaged_executable("scriptotar-transcription")), "fixture").unwrap();
+        fs::write(runtime.join(packaged_executable("scriptotar-ytdlp")), "fixture").unwrap();
+        let exe = bin.join(packaged_executable("scriptotar-desktop"));
+        fs::write(&exe, "fixture").unwrap();
+        assert_eq!(
+            packaged_resource_dir_for_executable(&exe).unwrap().canonicalize().unwrap(),
+            runtime.parent().unwrap().canonicalize().unwrap()
+        );
+    }
 
     #[test]
     fn migration_completion_marker_survives_restart_and_is_private() {

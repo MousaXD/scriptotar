@@ -164,6 +164,8 @@ jobs:
           test -x "$APP_BIN"
           printf 'SCRIPTOTAR_E2E_RUNTIME_DIR=%s\n' "$RUNTIME_DIR" >> "$GITHUB_ENV"
           printf 'SCRIPTOTAR_INSTALLED_BIN=%s\n' "$APP_BIN" >> "$GITHUB_ENV"
+      - name: Verify installed MCP CLI default deny and tool discovery
+        run: python3 tests/mcp_installed_smoke.py --binary "$SCRIPTOTAR_INSTALLED_BIN"
       - name: Launch installed Scriptotar Next shell
         run: |
           set +e

@@ -2995,6 +2995,7 @@ dependencies = [
  "scriptotar-core",
  "scriptotar-db",
  "scriptotar-jobs",
+ "scriptotar-media",
  "scriptotar-orchestrator",
  "scriptotar-research",
  "serde",

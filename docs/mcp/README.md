@@ -1,12 +1,19 @@
 # Scriptotar MCP: local authority, remote ChatGPT transport
 
-Scriptotar's **Rust MCP server** works over stdio and, when explicitly started, over a
-**localhost-only Streamable HTTP** endpoint (`http://127.0.0.1:39761/mcp`).
+Scriptotar's **Rust MCP server** supports local stdio and an explicitly started,
+**localhost-only** JSON/HTTP endpoint (`http://127.0.0.1:39761/mcp`).
 The installed Tauri executable also supports `--mcp-stdio` and `--mcp-http`;
-the standalone workspace binary `scriptotar-mcp` offers the same transports.
-ChatGPT cannot connect to stdio directly; use the HTTP endpoint with an official
-Secure MCP Tunnel, or an independently configured HTTPS reverse proxy with TLS
-and authentication. **Do not publicly expose the HTTP listener or disable authentication.**
+the standalone workspace binary `scriptotar-mcp` offers both transports.
+
+**For ChatGPT, use OpenAI's Secure MCP Tunnel with the installed binary's
+stdio command.** The tunnel starts Scriptotar's MCP process locally, so there
+is no public listener and no need to send the HTTP-only static bearer token
+through ChatGPT. ChatGPT cannot connect to your local stdio process directly.
+The tunnel is an outbound-only transport and still requires your ChatGPT
+workspace and OpenAI Platform organization to authorize it. Scriptotar itself
+controls all tool permissions, independently of ChatGPT.
+
+Official guide: https://developers.openai.com/api/docs/guides/secure-mcp-tunnels
 
 ## Local setup
 
@@ -17,13 +24,61 @@ and authentication. **Do not publicly expose the HTTP listener or disable authen
 3. For file permissions, enter existing absolute **approved directory** paths;
    for command execution, enter exact absolute **approved executable** paths.
 4. Acknowledge powerful access **in the desktop app**, then apply permissions.
-5. Click **Start local MCP gateway**. Its address is `http://127.0.0.1:39761/mcp`.
-6. Reveal and securely copy the **bearer token** from Scriptotar Settings; it is
-   generated locally and stored in the application's private permissions file.
-7. Connect your chosen **Secure MCP Tunnel** to `http://127.0.0.1:39761/mcp`.
-   Configure your connected MCP client with `Authorization: Bearer <the-token>`.
-   You must make both the tunneled endpoint and bearer authentication available
-   to the connector; the exact configuration depends on the connector UI.
+5. For ChatGPT, leave the optional HTTP gateway stopped and follow the
+   **recommended stdio Secure MCP Tunnel** procedure below.
+6. Start the tunnel client and test a safe read-only tool. Only enable write,
+   execute or download capabilities after validating the connection.
+
+### Recommended: Secure MCP Tunnel from ChatGPT via stdio
+
+1. Install a Scriptotar build that includes this feature. The old Scriptotar
+   1.0.0 package does not include these MCP changes until an updated package
+   is built and installed.
+2. From [OpenAI Platform's tunnel settings](https://platform.openai.com/),
+   create a tunnel associated with the correct ChatGPT workspace and Platform
+   organization, and obtain its `tunnel_id`. Check that your account has the
+   required tunnel permissions and can create custom MCP plugins.
+3. Install the **official** `tunnel-client` according to the [Secure MCP Tunnel
+   guide](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
+   Keep runtime API keys and secrets in local secure environment variables,
+   never in GitHub Actions, this repo, or a chat message.
+4. For a Linux Debian installation, the app binary is typically
+   `/usr/bin/scriptotar-desktop`. Select it as the stdio MCP command:
+
+   ```bash
+   # Export CONTROL_PLANE_API_KEY securely in your local terminal first.
+   # Replace the example tunnel ID with the one assigned to your workspace.
+   tunnel-client init \
+     --sample sample_mcp_stdio_local \
+     --profile scriptotar-stdio \
+     --tunnel-id 'tunnel_YOUR_ASSIGNED_ID' \
+     --mcp-command '/usr/bin/scriptotar-desktop --mcp-stdio'
+   tunnel-client doctor --profile scriptotar-stdio --explain
+   tunnel-client run --profile scriptotar-stdio
+   ```
+
+   On Windows, use the installed `scriptotar-desktop.exe` absolute path and
+   quote it according to `tunnel-client help quickstart`.
+5. In ChatGPT **Plugins > Add custom MCP server**, choose **Connection:
+   Tunnel**, select that same tunnel ID, and review the discovered tools.
+   The ChatGPT workspace or administrator must allow custom MCP servers.
+6. Install/connect the resulting plugin and invoke `list_projects` with
+   Scriptotar's **read-data** permission enabled. Then test denied write
+   requests with write-data disabled. Do not claim full ChatGPT E2E until
+   that actual connected tool call succeeds.
+
+The `tunnel-client` must be running while ChatGPT discovers or invokes MCP
+calls. The app's Settings file is reloaded for each call. No Scriptotar
+password or HTTP bearer token is required inside ChatGPT for this **stdio**
+connection. The tunnel client authenticates to OpenAI using its own identity.
+
+### Optional local HTTP MCP gateway (not recommended for ChatGPT)
+
+Click **Start local MCP gateway** in Scriptotar Settings to use
+`http://127.0.0.1:39761/mcp` with a local tool that supports a static HTTP
+bearer header. Reveal the private token only for that client. **ChatGPT's
+custom MCP connection UI does not support arbitrarily supplying this static
+header; use the stdio tunnel above instead.**
 
 The HTTP server binds only to `127.0.0.1`. It validates `Origin` if supplied,
 requires a bearer token on every request, caps request bodies, and reloads the
@@ -56,8 +111,9 @@ bearer token. Never copy the bearer token into source code, CI logs, or the repo
 The standalone binary's download/transcription engine uses the same Rust job
 orchestrator and its configured sidecar; developers should set
 `SCRIPTOTAR_SIDECAR_PYTHON`, `SCRIPTOTAR_SIDECAR_SCRIPT`, and bundled yt-dlp
-executable paths as needed. The packaged desktop process supplies its bundled
-runtime to the gateway child when launched from the Settings UI.
+executable paths as needed. The packaged desktop executable now discovers its bundled runtime for
+`--mcp-stdio` or `--mcp-http`, without needing to launch the GUI. The GUI
+also passes the bundled runtime environment to the local HTTP gateway child.
 
 ## Tool capabilities
 
@@ -109,6 +165,12 @@ invalid UUIDs and oversized text inputs are rejected.
 - Real local HTTP listener: authentication, invalid Origin, wrong content type,
   live policy/token changes and revocation.
 - Svelte/TypeScript settings checks, unit tests and frontend build.
+- Compiled Tauri desktop executable with real `--mcp-stdio`, an isolated
+  SQLite fixture, fake local yt-dlp research, deterministic queued URL/local
+  media transcription, persisted transcript reads and restart.
+- Linux `.deb` and Windows NSIS install workflows also execute a default-deny
+  MCP startup smoke on the **installed** application, when their full packaging
+  workflows run. These package tests are separate from the focused MCP gate.
 
 **Not certified by these tests:** a real ChatGPT connected-plugin session through
 Secure MCP Tunnel, external social-platform content availability, platform

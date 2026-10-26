@@ -213,6 +213,8 @@ jobs:
           python sidecars/transcription/validate_runtime.py $runtime.FullName
           python sidecars/transcription/compliance_finalize.py --validate $runtime.FullName
 
+          python tests/mcp_installed_smoke.py --binary $app.FullName
+
           $uninstaller = Get-ChildItem -Path $installDir -Recurse -Filter 'uninstall.exe' | Select-Object -First 1
           if (-not $uninstaller) {
             throw 'NSIS uninstaller was not found after installation.'

@@ -232,8 +232,13 @@ fn authorize_path(policy: &McpPermissions, path: &Path) -> Result<(), String> {
 }
 
 fn block_policy_file(data_dir: &Path, path: &Path) -> Result<(), String> {
-    if path == permissions_path(data_dir) {
-        Err("MCP may not read or change its own permissions file".into())
+    // Distinct database permissions must not be bypassed through file tools.
+    // SQLite WAL/SHM files can contain database contents and transactional state.
+    let protected = ["mcp-permissions.json", "scriptotar.sqlite3", "scriptotar.sqlite3-wal", "scriptotar.sqlite3-shm"];
+    if path.parent() == Some(data_dir)
+        && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| protected.contains(&name))
+    {
+        Err("MCP cannot access its permissions or Scriptotar SQLite database through file tools".into())
     } else {
         Ok(())
     }

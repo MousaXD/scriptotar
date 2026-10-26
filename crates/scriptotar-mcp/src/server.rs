@@ -1,7 +1,7 @@
 //! Scriptotar MCP stdio process: all privileges are enforced by desktop-owned policy.
 use std::{
     fs,
-    io::{self, BufRead, Read, Seek, SeekFrom, Write},
+    io::{self, BufRead, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -17,6 +17,7 @@ use scriptotar_core::{
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
+use scriptotar_media::MediaPolicy;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
 use scriptotar_research::{NetworkPolicy, ResearchService, YtDlpCommand, YtDlpProvider};
 use serde_json::{json, Map, Value};
@@ -37,8 +38,12 @@ pub(crate) struct Server {
 
 impl Server {
     pub(crate) fn new(db_path: &Path) -> Result<Self, String> {
-        let data_dir = db_path.parent().ok_or("database parent directory required")?.to_path_buf();
+        if !db_path.is_absolute() {
+            return Err("SCRIPTOTAR_DB_PATH must be absolute".into());
+        }
         let store = SqliteStore::open(db_path).map_err(|e| e.to_string())?;
+        let data_dir = fs::canonicalize(db_path.parent().ok_or("database parent directory required")?)
+            .map_err(|_| "could not canonicalize Scriptotar application data directory")?;
         store.run_integration_migrations().map_err(|e| e.to_string())?;
         let python = std::env::var_os("SCRIPTOTAR_SIDECAR_PYTHON")
             .map(PathBuf::from)
@@ -186,10 +191,14 @@ impl Server {
             "read_file" => {
                 keys(args, &["path"], &[])?;
                 let path = authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
-                if fs::metadata(&path).map_err(|_| "cannot read file metadata")?.len() > MAX_FILE {
+                // Enforce the byte cap while reading, not just with a pre-read
+                // metadata check: a file can grow after metadata is checked.
+                let file = fs::File::open(&path).map_err(|_| "cannot open file")?;
+                let mut data = Vec::new();
+                file.take(MAX_FILE + 1).read_to_end(&mut data).map_err(|_| "cannot read file")?;
+                if data.len() as u64 > MAX_FILE {
                     return Err("file exceeds 128 KiB text limit".into());
                 }
-                let data = fs::read(&path).map_err(|_| "cannot read file")?;
                 let text = String::from_utf8(data).map_err(|_| "file must contain UTF-8 text")?;
                 Ok(json!({"path":path,"text":text}))
             }
@@ -283,6 +292,7 @@ impl Server {
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
                 let path = authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
+                MediaPolicy.validate_local_input(&path).map_err(|e| e.to_string())?;
                 let job = JobService::new(self.store.clone())
                     .enqueue(project, JobInput::LocalFile(path.to_string_lossy().into_owned()))
                     .map_err(|e| e.to_string())?;
@@ -380,17 +390,45 @@ fn tool_catalog() -> Value {
     json!({"tools":tools})
 }
 
+// Drain all output without ever accumulating more than MAX_COMMAND_OUTPUT
+// bytes in memory. This avoids the previous unbounded temporary-disk files.
+fn bounded_process_output<R: Read + Send + 'static>(
+    mut stream: R,
+) -> std::sync::mpsc::Receiver<io::Result<(Vec<u8>, bool)>> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    thread::spawn(move || {
+        let mut output = Vec::with_capacity(MAX_COMMAND_OUTPUT as usize);
+        let mut buffer = [0u8; 8192];
+        let mut truncated = false;
+        let result = loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break Ok((output, truncated)),
+                Ok(read) => {
+                    let remaining = (MAX_COMMAND_OUTPUT as usize).saturating_sub(output.len());
+                    output.extend_from_slice(&buffer[..read.min(remaining)]);
+                    if read > remaining {
+                        truncated = true;
+                    }
+                }
+                Err(error) => break Err(error),
+            }
+        };
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 fn run_command(program: &Path, args: &[String], cwd: &Path) -> Result<Value, String> {
-    let mut stdout = tempfile::tempfile().map_err(|_| "could not prepare command output capture")?;
-    let mut stderr = tempfile::tempfile().map_err(|_| "could not prepare command error capture")?;
     let mut child = Command::new(program)
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout.try_clone().map_err(|_| "could not capture stdout")?))
-        .stderr(Stdio::from(stderr.try_clone().map_err(|_| "could not capture stderr")?))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|_| "approved command could not start")?;
+    let out_rx = bounded_process_output(child.stdout.take().ok_or("could not capture stdout")?);
+    let err_rx = bounded_process_output(child.stderr.take().ok_or("could not capture stderr")?);
     let deadline = Instant::now() + COMMAND_TIMEOUT;
     let status = loop {
         match child.try_wait().map_err(|_| "command wait failed")? {
@@ -403,16 +441,18 @@ fn run_command(program: &Path, args: &[String], cwd: &Path) -> Result<Value, Str
             None => thread::sleep(Duration::from_millis(50)),
         }
     };
-    stdout.seek(SeekFrom::Start(0)).map_err(|_| "stdout seek failed")?;
-    stderr.seek(SeekFrom::Start(0)).map_err(|_| "stderr seek failed")?;
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let output_truncated = stdout.metadata().map(|m| m.len() > MAX_COMMAND_OUTPUT).unwrap_or(true)
-        || stderr.metadata().map(|m| m.len() > MAX_COMMAND_OUTPUT).unwrap_or(true);
-    stdout.take(MAX_COMMAND_OUTPUT).read_to_end(&mut out).map_err(|_| "stdout capture failed")?;
-    stderr.take(MAX_COMMAND_OUTPUT).read_to_end(&mut err).map_err(|_| "stderr capture failed")?;
+    // A child may launch descendants that inherit stdout handles. Do not hang
+    // the MCP process waiting for them to close those handles indefinitely.
+    let (out, stdout_truncated) = out_rx
+        .recv_timeout(Duration::from_secs(1))
+        .map_err(|_| "command stdout remained open after process exit")?
+        .map_err(|_| "could not read command stdout")?;
+    let (err, stderr_truncated) = err_rx
+        .recv_timeout(Duration::from_secs(1))
+        .map_err(|_| "command stderr remained open after process exit")?
+        .map_err(|_| "could not read command stderr")?;
     Ok(
-        json!({"exit_code":status.code(),"stdout":String::from_utf8_lossy(&out),"stderr":String::from_utf8_lossy(&err),"output_truncated":output_truncated}),
+        json!({"exit_code":status.code(),"stdout":String::from_utf8_lossy(&out),"stderr":String::from_utf8_lossy(&err),"output_truncated":stdout_truncated || stderr_truncated}),
     )
 }
 

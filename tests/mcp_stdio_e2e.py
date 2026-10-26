@@ -4,6 +4,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 
@@ -121,6 +122,8 @@ with tempfile.TemporaryDirectory() as directory:
               allowedPaths=[str(data)])
         denied(call('write_file', path=str(policy_file), content='{}', overwrite=True))
         denied(call('read_file', path=str(policy_file)))
+        denied(call('read_file', path=str(data / 'scriptotar.sqlite3')))
+        denied(call('write_file', path=str(data / 'scriptotar.sqlite3'), content='replace database', overwrite=True))
         grant(enabled=True, readFiles=True, writeFiles=True, overwriteFiles=True,
               allowedPaths=[str(allowed)])
         assert content(call('write_file', path=str(created), content='updated', overwrite=True))['bytes'] == 7
@@ -134,6 +137,13 @@ with tempfile.TemporaryDirectory() as directory:
         denied(call('execute_command', program='/bin/sh', args=['-c', 'echo unauthorized']))
         denied(call('execute_command', program=str(executable), cwd=str(data), args=['no']))
         denied(call('execute_command', program=str(executable), args=['\x00']))
+        # Large child output must be drained without exhausting disk or RAM.
+        grant(enabled=True, executeCommands=True, allowedPaths=[str(allowed)],
+              allowedPrograms=[str(pathlib.Path(sys.executable).resolve())])
+        oversized = content(call('execute_command', program=str(pathlib.Path(sys.executable).resolve()),
+                                 args=['-c', 'print("x" * 1000000)'], cwd=str(allowed)))
+        assert oversized['exit_code'] == 0 and oversized['output_truncated']
+        assert len(oversized['stdout']) <= 65536, oversized.keys()
 
         # Network-capable tools reject disallowed URL hosts before accessing the network.
         grant(enabled=True, searchCreators=True, downloadVideos=True)
