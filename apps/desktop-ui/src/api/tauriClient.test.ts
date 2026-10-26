@@ -19,6 +19,7 @@ describe('Tauri client command contract', () => {
     const invokeMock = vi.fn(async () => undefined);
     const api = createTauriClient(invokeMock as unknown as TauriInvoke);
 
+    await api.backendHealth();
     await api.bootstrap();
     await api.getWatchlistStatuses();
     await api.getMigrationStatus();
@@ -59,8 +60,23 @@ describe('Tauri client command contract', () => {
     await api.mcpConnectOpenai('tunnel_0123456789abcdef0123456789abcdef', 'sk-test', false);
     await api.mcpConnectManual('https://mcp.example.com');
     await api.mcpDisconnect();
+    await api.searchTranscripts('scriptotar', 6);
+    await api.getTranscript('transcript-id');
+    await api.getMcpPermissions();
+    await api.saveMcpPermissions({
+      enabled: false, httpToken: '', urlToken: '', readData: false, writeData: false,
+      readFiles: false, writeFiles: false, overwriteFiles: false,
+      executeCommands: false, searchCreators: false, downloadVideos: false,
+      allowedPaths: [], allowedPrograms: []
+    }, false);
+    await api.mcpGatewayStatus();
+    await api.startMcpGateway();
+    await api.stopMcpGateway();
+    const unsubscribe = await api.subscribeJobChanges(() => {});
+    unsubscribe();
     await api.listJobs();
 
+    expect(invokeMock).toHaveBeenCalledWith('backend_health');
     expect(invokeMock).toHaveBeenCalledWith('bootstrap_app');
     expect(invokeMock).toHaveBeenCalledWith('get_watchlist_statuses');
     expect(invokeMock).toHaveBeenCalledWith('get_migration_status');
@@ -100,6 +116,16 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('mcp_connect_openai', { tunnelId: 'tunnel_0123456789abcdef0123456789abcdef', apiKey: 'sk-test', rememberKey: false });
     expect(invokeMock).toHaveBeenCalledWith('mcp_connect_manual', { hostname: 'https://mcp.example.com' });
     expect(invokeMock).toHaveBeenCalledWith('mcp_disconnect');
+    expect(invokeMock).toHaveBeenCalledWith('search_transcripts', { query: 'scriptotar', limit: 6 });
+    expect(invokeMock).toHaveBeenCalledWith('get_transcript', { transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_mcp_permissions');
+    expect(invokeMock).toHaveBeenCalledWith('save_mcp_permissions', {
+      permissions: expect.objectContaining({ readData: false, enabled: false }),
+      acknowledgeSensitiveAccess: false
+    });
+    expect(invokeMock).toHaveBeenCalledWith('mcp_gateway_status');
+    expect(invokeMock).toHaveBeenCalledWith('start_mcp_gateway');
+    expect(invokeMock).toHaveBeenCalledWith('stop_mcp_gateway');
     expect(invokeMock).toHaveBeenCalledWith('list_jobs');
     expect(invokeMock).not.toHaveBeenCalledWith('import_legacy_data');
   });

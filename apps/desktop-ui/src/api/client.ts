@@ -34,6 +34,7 @@ export interface AiPromptInput {
 }
 
 export interface ScriptotarApi {
+  backendHealth(): Promise<{schema_version: number}>;
   bootstrap(): Promise<BootstrapData>;
   listJobs(): Promise<Job[]>;
   searchTranscripts(query: string, limit?: number): Promise<string[]>;

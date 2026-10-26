@@ -33,6 +33,7 @@ async function hydrateBootstrap(
 
 export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): ScriptotarApi {
   return {
+    backendHealth: () => invoke<{schema_version: number}>('backend_health'),
     bootstrap: () => hydrateBootstrap(invoke, invoke<CoreBootstrapData>('bootstrap_app')),
     listJobs: () => invoke<Job[]>('list_jobs'),
     searchTranscripts: (query, limit = 10) =>

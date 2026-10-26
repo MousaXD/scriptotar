@@ -101,7 +101,8 @@ with tempfile.TemporaryDirectory(prefix='scriptotar-mcp-desktop-e2e-') as raw:
         def denied(reply):
             assert reply['result'].get('isError') is True, reply
 
-        assert rpc('initialize', {'protocolVersion':'2025-11-25'})['result']['serverInfo']['name'] == 'scriptotar'
+        identity = rpc('initialize', {'protocolVersion':'2025-11-25'})['result']['serverInfo']
+        assert identity['name'] == 'scriptotar' and identity['version'] == '1.1.0', identity
         denied(call('list_projects'))
         denied(call('download_video', project_id=str(uuid.uuid4()), url='https://youtube.com/watch?v=123'))
 
@@ -133,6 +134,7 @@ with tempfile.TemporaryDirectory(prefix='scriptotar-mcp-desktop-e2e-') as raw:
 
         transcripts = content(call('list_transcripts', project_id=pid))
         assert len(transcripts) == 2, transcripts
+        assert content(call('search_transcripts', project_id=pid, query='installed', limit=10)), 'Completed transcripts must be searchable'
         for item in transcripts:
             saved = content(call('get_transcript', project_id=pid, transcript_id=item['id']))
             assert saved['text'] == EXPECTED_TEXT, saved

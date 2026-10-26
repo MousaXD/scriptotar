@@ -114,6 +114,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     migrationStatus: structuredClone(migrationStatus)
   });
   const client: ScriptotarApi = {
+    async backendHealth() { return {schema_version: 1}; },
     async bootstrap() { return snapshot(); },
     async listJobs() { return structuredClone(snapshot().jobs); },
     async searchTranscripts(rawQuery: string, limit = 10) {
