@@ -626,7 +626,7 @@ fn get_mcp_permissions(state: tauri::State<'_, OperationalState>) -> Result<McpP
 
 #[tauri::command]
 fn save_mcp_permissions(
-    permissions: McpPermissions,
+    mut permissions: McpPermissions,
     acknowledge_sensitive_access: bool,
     state: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
@@ -638,6 +638,8 @@ fn save_mcp_permissions(
     {
         return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
     }
+    let current = load_permissions(&state.data_dir)?;
+    mcp_connect::preserve_authentication_secrets(&mut permissions, &current);
     let policy = save_permissions(&state.data_dir, permissions)?;
     if !policy.enabled { manager.stop(&state.data_dir, &gateway)?; }
     Ok(policy)

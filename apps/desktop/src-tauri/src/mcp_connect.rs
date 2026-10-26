@@ -16,12 +16,20 @@ use tauri::Manager;
 use url::Url;
 
 use super::{start_gateway_for_data, stop_gateway, McpGatewayState, MCP_HTTP_PORT};
-use scriptotar_mcp::{load_permissions, new_token, save_permissions};
+use scriptotar_mcp::{load_permissions, new_token, save_permissions, McpPermissions};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCAL_ROOT: &str = "http://127.0.0.1:39761";
 const TUNNEL_PROFILE: &str = "scriptotar";
 const KEYRING_SERVICE: &str = "io.github.mousaxd.scriptotar.mcp";
+
+/// Authentication secrets are backend-owned, even though the settings form
+/// sends back a full permissions object. A stale tab must never be able to
+/// restore a revoked public URL or replace the local bearer token.
+pub(crate) fn preserve_authentication_secrets(next: &mut McpPermissions, current: &McpPermissions) {
+    next.http_token.clone_from(&current.http_token);
+    next.url_token.clone_from(&current.url_token);
+}
 
 #[derive(Default)]
 pub(crate) struct McpConnectionState {
@@ -180,6 +188,27 @@ fn safe_child_environment(command: &mut Command) {
     }
 }
 
+/// stdout and stderr are different Rust types, so consume each through the
+/// same generic reader rather than attempting to put them in a homogeneous
+/// array. Both pipes must be drained to prevent cloudflared from blocking.
+fn read_cloudflared_output<R: Read + Send + 'static>(
+    stream: R,
+    report: Arc<Mutex<ConnectionReport>>,
+    secret_path: String,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        for line in BufReader::new(stream).lines() {
+            let Ok(line) = line else { break };
+            if let Some(host) = quick_tunnel_host(&line) {
+                if let Ok(mut state) = report.lock() {
+                    state.public_url = Some(format!("{host}{secret_path}"));
+                    state.detail = "Cloudflare URL ready. Add it to ChatGPT, then verify a tool call.".into();
+                }
+            }
+        }
+    })
+}
+
 fn launch_cloudflared(binary: &Path, report: Arc<Mutex<ConnectionReport>>, local_url: &str) -> Result<Child, String> {
     let mut command = Command::new(binary);
     command.args(["tunnel", "--no-autoupdate", "--url", LOCAL_ROOT, "--http-host-header", "127.0.0.1:39761"]);
@@ -191,20 +220,11 @@ fn launch_cloudflared(binary: &Path, report: Arc<Mutex<ConnectionReport>>, local
         .spawn()
         .map_err(|_| "Cloudflare could not start. Verify the packaged cloudflared executable.".to_owned())?;
     let path = local_url.strip_prefix(LOCAL_ROOT).ok_or("invalid local URL")?.to_owned();
-    for stream in [child.stdout.take(), child.stderr.take()].into_iter().flatten() {
-        let report = Arc::clone(&report);
-        let path = path.clone();
-        thread::spawn(move || {
-            for line in BufReader::new(stream).lines() {
-                let Ok(line) = line else { break };
-                if let Some(host) = quick_tunnel_host(&line) {
-                    if let Ok(mut state) = report.lock() {
-                        state.public_url = Some(format!("{host}{path}"));
-                        state.detail = "Cloudflare URL ready. Add it to ChatGPT, then verify a tool call.".into();
-                    }
-                }
-            }
-        });
+    if let Some(stdout) = child.stdout.take() {
+        let _ = read_cloudflared_output(stdout, Arc::clone(&report), path.clone());
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let _ = read_cloudflared_output(stderr, report, path);
     }
     Ok(child)
 }
@@ -496,6 +516,40 @@ impl McpConnectionState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_settings_cannot_resurrect_rotated_url_secrets() {
+        let current = McpPermissions {
+            enabled: true,
+            http_token: "a".repeat(64),
+            url_token: "b".repeat(64),
+            ..Default::default()
+        };
+        let mut edited = McpPermissions {
+            read_data: true,
+            http_token: "c".repeat(64),
+            url_token: "d".repeat(64),
+            ..Default::default()
+        };
+        preserve_authentication_secrets(&mut edited, &current);
+        assert_eq!(edited.http_token, current.http_token);
+        assert_eq!(edited.url_token, current.url_token);
+        assert!(edited.read_data, "Ordinary permission edits must still be honored");
+    }
+    #[test]
+    fn reader_handles_stdout_and_stderr_without_losing_secret_path() {
+        let report = Arc::new(Mutex::new(ConnectionReport::default()));
+        let stdout = std::io::Cursor::new(b"INF some unrelated startup message\n".to_vec());
+        let stderr = std::io::Cursor::new(b"INF Quick Tunnel https://valid-name.trycloudflare.com\n".to_vec());
+        let secret_path = "/mcp/p/".to_owned() + &"f".repeat(64);
+        let stdout_reader = read_cloudflared_output(stdout, Arc::clone(&report), secret_path.clone());
+        let stderr_reader = read_cloudflared_output(stderr, Arc::clone(&report), secret_path.clone());
+        stdout_reader.join().expect("stdout reader must finish");
+        stderr_reader.join().expect("stderr reader must finish");
+        assert_eq!(
+            report.lock().unwrap().public_url.as_deref(),
+            Some(format!("https://valid-name.trycloudflare.com{secret_path}").as_str())
+        );
+    }
     #[test]
     fn only_valid_cloudflare_hostname_is_accepted() {
         assert_eq!(

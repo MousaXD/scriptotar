@@ -167,6 +167,8 @@ jobs:
           RUNTIME_DIR="$(dirname "$RUNTIME_MARKER")"
           python sidecars/transcription/validate_runtime.py "$RUNTIME_DIR"
           python scripts/prepare_mcp_tools.py --output "$(dirname "$RUNTIME_DIR")/mcp-tools" --validate
+          "$(dirname "$RUNTIME_DIR")/mcp-tools/cloudflared" --version
+          "$(dirname "$RUNTIME_DIR")/mcp-tools/tunnel-client" --help >/dev/null
           python sidecars/transcription/compliance_finalize.py --validate "$RUNTIME_DIR"
           APP_BIN="$(dpkg -L "$PACKAGE_NAME" | grep '^/usr/bin/' | head -n 1 || true)"
           test -n "$APP_BIN"
@@ -175,6 +177,8 @@ jobs:
           printf 'SCRIPTOTAR_INSTALLED_BIN=%s\n' "$APP_BIN" >> "$GITHUB_ENV"
       - name: Verify installed MCP CLI default deny and tool discovery
         run: python3 tests/mcp_installed_smoke.py --binary "$SCRIPTOTAR_INSTALLED_BIN"
+      - name: Verify installed HTTP MCP URL authentication and revocation
+        run: SCRIPTOTAR_MCP_BIN="$SCRIPTOTAR_INSTALLED_BIN" python3 tests/mcp_http_e2e.py
       - name: Launch installed Scriptotar Next shell
         run: |
           set +e

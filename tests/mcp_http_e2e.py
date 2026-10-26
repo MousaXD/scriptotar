@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 
-BIN = pathlib.Path('target/debug/scriptotar-mcp')
+BIN = pathlib.Path(os.environ.get('SCRIPTOTAR_MCP_BIN', 'target/debug/scriptotar-mcp'))
 assert BIN.is_file(), BIN
 with tempfile.TemporaryDirectory() as work:
     root = pathlib.Path(work)
@@ -83,6 +83,11 @@ with tempfile.TemporaryDirectory() as work:
         policy(read_data=True)
         status, result = request(port, body=json.dumps({'jsonrpc':'2.0','id':3,'method':'tools/call',
                                                          'params':{'name':'list_projects','arguments':{}}}))
+        assert status == 200 and not result['result'].get('isError', False), result
+        assert json.loads(result['result']['content'][0]['text']) == []
+        status, result = request(port, path='/mcp/p/' + 'c' * 64, auth=None,
+                                 body=json.dumps({'jsonrpc':'2.0','id':4,'method':'tools/call',
+                                                  'params':{'name':'list_projects','arguments':{}}}))
         assert status == 200 and not result['result'].get('isError', False), result
         assert json.loads(result['result']['content'][0]['text']) == []
         policy(read_data=True, bearer=other_token, path_token='d' * 64)
