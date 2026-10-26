@@ -53,8 +53,8 @@ with tempfile.TemporaryDirectory() as directory:
             assert reply['id'] == request_id, reply
             return reply
 
-        def call(name, **arguments):
-            return rpc('tools/call', {'name': name, 'arguments': arguments})
+        def call(tool_name, **arguments):
+            return rpc('tools/call', {'name': tool_name, 'arguments': arguments})
 
         def content(reply):
             assert not reply['result'].get('isError', False), reply
