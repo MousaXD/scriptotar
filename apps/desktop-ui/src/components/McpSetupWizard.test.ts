@@ -23,7 +23,7 @@ describe('local MCP connection setup wizard', () => {
   it('defaults to deny, reviews permissions then connects via Cloudflare and revokes URL', async () => {
     const api = await enableReadOnly();
     const connect = vi.spyOn(api, 'mcpConnectCloudflare');
-    expect(screen.getByLabelText('Cloudflare Quick Tunnel')).toBeChecked();
+    expect(screen.getByRole('radio', { name: /Cloudflare Quick Tunnel/ })).toBeChecked();
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await screen.findByTestId('mcp-step-finish');
     await waitFor(() => expect(connect).toHaveBeenCalledTimes(1));
@@ -50,7 +50,7 @@ describe('local MCP connection setup wizard', () => {
   it('validates OpenAI tunnel ID and supports an existing HTTPS hostname', async () => {
     const api = await enableReadOnly();
     const openai = vi.spyOn(api, 'mcpConnectOpenai');
-    await fireEvent.click(screen.getByLabelText('OpenAI Secure Tunnel'));
+    await fireEvent.click(screen.getByRole('radio', { name: /OpenAI Secure Tunnel/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid tunnel ID');
     await fireEvent.input(screen.getByPlaceholderText('tunnel_0123456789abcdef0123456789abcdef'), { target: { value: 'tunnel_' + 'a'.repeat(32) } });
@@ -59,7 +59,7 @@ describe('local MCP connection setup wizard', () => {
     await screen.findByTestId('mcp-step-finish');
     expect(openai).toHaveBeenCalledWith('tunnel_' + 'a'.repeat(32), 'sk-test-secret', true);
     await fireEvent.click(screen.getByRole('button', { name: 'Disconnect & revoke URL' }));
-    await fireEvent.click(screen.getByLabelText('My own HTTPS hostname'));
+    await fireEvent.click(screen.getByRole('radio', { name: /My own HTTPS hostname/ }));
     await fireEvent.input(screen.getByPlaceholderText('https://mcp.example.com'), { target: { value: 'https://mcp.example.com' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(await screen.findByTestId('mcp-public-url')).toHaveTextContent('https://mcp.example.com/mcp/p/');
