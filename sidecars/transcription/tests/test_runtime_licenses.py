@@ -7,6 +7,13 @@ from runtime_licenses import LICENSE_METADATA_FALLBACKS, classify_ffmpeg_license
 
 
 class RuntimeLicenseTests(unittest.TestCase):
+    def test_ytdlp_bundle_label_matches_locked_runtime_requirement(self) -> None:
+        requirement = Path(__file__).resolve().parents[1] / "requirements-engine.txt"
+        source = Path(__file__).resolve().parents[1] / "build_runtime.py"
+        pinned = [line.strip() for line in requirement.read_text().splitlines() if line.startswith("yt-dlp[")]
+        self.assertEqual(pinned, ["yt-dlp[default,curl-cffi]==2026.10.21"])
+        self.assertIn("yt-dlp=2026.10.21 (dedicated scriptotar-ytdlp executable)", source.read_text())
+
     def test_tokenizers_requirement_matches_reviewed_license_fallback(self) -> None:
         reviewed = LICENSE_METADATA_FALLBACKS["tokenizers"]["version"]
         requirements = Path(__file__).resolve().parents[1] / "requirements-engine.txt"
