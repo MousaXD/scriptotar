@@ -113,6 +113,17 @@ Accepted values are intentionally bounded:
 
 The sidecar rejects embedded URL credentials, non-standard ports, unsupported domains, arbitrary model names, unknown options, and browser-cookie use over plaintext HTTP.
 
+`device: auto` probes for the CUDA 12 cuBLAS/cuDNN runtime as well as a working
+NVIDIA driver. If the driver exists but CUDA libraries are unavailable, it
+selects CPU (`int8`). If CUDA fails later during model initialization or the
+lazy transcription iterator, it restarts that *same media* from the beginning
+on CPU, discarding any incomplete GPU transcript and preventing duplicates.
+The failed GPU path stays disabled for subsequent automatic jobs in the same
+engine process. A deliberate `device: cuda` selection is **not** silently
+overridden: an unavailable CUDA runtime produces `CUDA_RUNTIME_UNAVAILABLE`
+with instructions to switch the app setting to CPU or Auto. Other runtime
+errors are still surfaced rather than disguised as CUDA failures.
+
 After validation and handoff to the engine:
 
 ```json
