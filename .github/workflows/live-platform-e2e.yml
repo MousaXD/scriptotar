@@ -26,7 +26,7 @@ concurrency:
 jobs:
   real-provider-download-and-transcription:
     name: Actual downloads and 15s real Whisper excerpts
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       PYTHONPATH: sidecars/transcription
@@ -48,8 +48,17 @@ jobs:
         run: |
           set -euo pipefail
           if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends ffmpeg
+            # Pre-seeded GitHub runner package indices often make install fast.
+            # Limit apt operations so a mirror outage does not burn the entire job.
+            if ! sudo timeout 180 env DEBIAN_FRONTEND=noninteractive \
+              apt-get install -y --no-install-recommends ffmpeg; then
+              sudo timeout 180 apt-get update \
+                -o Acquire::Retries=1 \
+                -o Acquire::http::Timeout=20 \
+                -o Acquire::https::Timeout=20
+              sudo timeout 180 env DEBIAN_FRONTEND=noninteractive \
+                apt-get install -y --no-install-recommends ffmpeg
+            fi
           fi
           command -v ffmpeg
           command -v ffprobe

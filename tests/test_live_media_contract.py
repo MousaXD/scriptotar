@@ -43,7 +43,8 @@ class LiveMediaContractTests(unittest.TestCase):
 
     def test_ci_installs_native_media_tools_before_live_download(self):
         workflow = (ROOT / '.github/workflows/live-platform-e2e.yml').read_text()
-        self.assertIn('sudo apt-get install -y --no-install-recommends ffmpeg', workflow)
+        self.assertIn('apt-get install -y --no-install-recommends ffmpeg', workflow)
+        self.assertIn('timeout 180', workflow)
         self.assertIn('command -v ffprobe', workflow)
         self.assertIn('python3 scripts/live_media_e2e.py', workflow)
         self.assertNotIn('continue-on-error:', workflow)
