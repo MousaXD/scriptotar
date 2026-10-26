@@ -8,6 +8,7 @@ members = [
     "crates/scriptotar-research",
     "crates/scriptotar-media",
     "crates/scriptotar-orchestrator",
+    "crates/scriptotar-mcp",
     "apps/desktop/src-tauri",
 ]
 

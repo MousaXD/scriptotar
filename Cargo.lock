@@ -2977,6 +2977,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "scriptotar-mcp"
+version = "1.0.0"
+dependencies = [
+ "scriptotar-core",
+ "scriptotar-db",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "scriptotar-media"
 version = "1.0.0"
 dependencies = [

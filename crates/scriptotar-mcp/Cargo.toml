@@ -1,0 +1,12 @@
+[package]
+name = "scriptotar-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scriptotar-core = { path = "../scriptotar-core" }
+scriptotar-db = { path = "../scriptotar-db" }
+serde_json.workspace = true
+uuid.workspace = true
