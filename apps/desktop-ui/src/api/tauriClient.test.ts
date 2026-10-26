@@ -54,6 +54,11 @@ describe('Tauri client command contract', () => {
       watchInterval: '60 min',
       appearance: 'dark'
     });
+    await api.mcpConnectionStatus();
+    await api.mcpConnectCloudflare();
+    await api.mcpConnectOpenai('tunnel_0123456789abcdef0123456789abcdef', 'sk-test', false);
+    await api.mcpConnectManual('https://mcp.example.com');
+    await api.mcpDisconnect();
     await api.listJobs();
 
     expect(invokeMock).toHaveBeenCalledWith('bootstrap_app');
@@ -90,6 +95,11 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('save_settings', {
       settings: expect.objectContaining({ whisperModel: 'medium', outputDirectory: null })
     });
+    expect(invokeMock).toHaveBeenCalledWith('mcp_connection_status');
+    expect(invokeMock).toHaveBeenCalledWith('mcp_connect_cloudflare');
+    expect(invokeMock).toHaveBeenCalledWith('mcp_connect_openai', { tunnelId: 'tunnel_0123456789abcdef0123456789abcdef', apiKey: 'sk-test', rememberKey: false });
+    expect(invokeMock).toHaveBeenCalledWith('mcp_connect_manual', { hostname: 'https://mcp.example.com' });
+    expect(invokeMock).toHaveBeenCalledWith('mcp_disconnect');
     expect(invokeMock).toHaveBeenCalledWith('list_jobs');
     expect(invokeMock).not.toHaveBeenCalledWith('import_legacy_data');
   });

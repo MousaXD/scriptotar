@@ -48,12 +48,19 @@ async fn handle(
     port: u16,
     limit: Arc<tokio::sync::Semaphore>,
 ) -> Result<HttpResponse, Infallible> {
-    if request.uri().path() != "/mcp" {
+    let path = request.uri().path();
+    let is_bearer_path = path == "/mcp";
+    let public_secret = path.strip_prefix("/mcp/p/");
+    if !is_bearer_path && public_secret.is_none() {
         return Ok(reply(StatusCode::NOT_FOUND, "not found"));
     }
     if let Some(origin) = request.headers().get(ORIGIN) {
         let origin = origin.to_str().unwrap_or_default();
-        if origin != format!("http://127.0.0.1:{port}") && origin != format!("http://localhost:{port}") {
+        if origin != format!("http://127.0.0.1:{port}")
+            && origin != format!("http://localhost:{port}")
+            && origin != "https://chatgpt.com"
+            && origin != "https://chat.openai.com"
+        {
             return Ok(reply(StatusCode::FORBIDDEN, "invalid Origin"));
         }
     }
@@ -61,10 +68,20 @@ async fn handle(
         Ok(value) if value.enabled && !value.http_token.is_empty() => value,
         _ => return Ok(reply(StatusCode::FORBIDDEN, "MCP disabled")),
     };
-    let auth = request.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
-    if !auth.starts_with("Bearer ")
-        || !constant_time_eq(auth.trim_start_matches("Bearer ").as_bytes(), policy.http_token.as_bytes())
-    {
+    // A secret in the path is the authentication method for a remote ChatGPT
+    // URL connection, which cannot set custom bearer headers. /mcp requires the
+    // original bearer header and never accepts a path secret as a fallback.
+    let authorized = if let Some(secret) = public_secret {
+        policy.url_token.len() == 64 && constant_time_eq(secret.as_bytes(), policy.url_token.as_bytes())
+    } else {
+        let auth = request.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
+        auth.starts_with("Bearer ")
+            && constant_time_eq(
+                auth.strip_prefix("Bearer ").unwrap_or_default().as_bytes(),
+                policy.http_token.as_bytes(),
+            )
+    };
+    if !authorized {
         return Ok(reply(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     if request.method() == Method::GET {

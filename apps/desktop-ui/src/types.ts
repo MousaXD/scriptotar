@@ -1,3 +1,14 @@
+export interface McpConnectionStatus {
+  mode: 'none' | 'cloudflare' | 'openai' | 'manual';
+  state: 'disconnected' | 'connecting' | 'ready' | 'error';
+  detail: string;
+  publicUrl: string | null;
+  localUrl: string | null;
+  tunnelId: string | null;
+  cloudflareAvailable: boolean;
+  openaiAvailable: boolean;
+}
+
 export interface McpGatewayStatus {
   running: boolean;
   endpoint: string;
@@ -6,6 +17,7 @@ export interface McpGatewayStatus {
 export interface McpPermissions {
   enabled: boolean;
   httpToken: string;
+  urlToken: string;
   readData: boolean;
   writeData: boolean;
   readFiles: boolean;

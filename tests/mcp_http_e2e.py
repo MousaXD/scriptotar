@@ -16,8 +16,8 @@ with tempfile.TemporaryDirectory() as work:
     token = 'a' * 64
     other_token = 'b' * 64
 
-    def policy(enabled=True, read_data=False, bearer=token):
-        payload = {'enabled': enabled, 'readData': read_data, 'httpToken': bearer}
+    def policy(enabled=True, read_data=False, bearer=token, path_token='c' * 64):
+        payload = {'enabled': enabled, 'readData': read_data, 'httpToken': bearer, 'urlToken': path_token}
         temp = root / 'policy-tmp'
         fd = os.open(temp, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
         with os.fdopen(fd, 'w') as f:
@@ -64,6 +64,10 @@ with tempfile.TemporaryDirectory() as work:
             raise AssertionError('MCP HTTP gateway did not start')
 
         assert request(port, auth=None)[0] == 401
+        assert request(port, path='/mcp/p/' + 'wrong' * 13, auth=None)[0] == 401
+        assert request(port, path='/mcp/p/' + 'c' * 64, auth=None)[0] == 200
+        assert request(port, path='/mcp/p/' + 'c' * 64, auth=None, origin='https://chatgpt.com')[0] == 200
+        assert request(port, path='/mcp/p/' + 'c' * 64, auth=None, origin='https://evil.example')[0] == 403
         assert request(port, auth='wrong')[0] == 401
         assert request(port, origin='https://evil.example')[0] == 403
         assert request(port, path='/not-mcp')[0] == 404
@@ -81,11 +85,14 @@ with tempfile.TemporaryDirectory() as work:
                                                          'params':{'name':'list_projects','arguments':{}}}))
         assert status == 200 and not result['result'].get('isError', False), result
         assert json.loads(result['result']['content'][0]['text']) == []
-        policy(read_data=True, bearer=other_token)
+        policy(read_data=True, bearer=other_token, path_token='d' * 64)
+        assert request(port, path='/mcp/p/' + 'c' * 64, auth=None)[0] == 401
+        assert request(port, path='/mcp/p/' + 'd' * 64, auth=None)[0] == 200
         assert request(port, auth=token)[0] == 401
         assert request(port, auth=other_token)[0] == 200
         policy(enabled=False, read_data=True, bearer=other_token)
         assert request(port, auth=other_token)[0] == 403
+        assert request(port, path='/mcp/p/' + 'd' * 64, auth=None)[0] == 403
         assert proc.poll() is None
         proc.terminate()
         proc.wait(timeout=5)

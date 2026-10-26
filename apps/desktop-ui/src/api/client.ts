@@ -8,6 +8,7 @@ import type {
   MigrationStatus,
   McpPermissions,
   McpGatewayStatus,
+  McpConnectionStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -58,6 +59,11 @@ export interface ScriptotarApi {
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
   getMcpPermissions(): Promise<McpPermissions>;
+  mcpConnectionStatus(): Promise<McpConnectionStatus>;
+  mcpConnectCloudflare(): Promise<McpConnectionStatus>;
+  mcpConnectOpenai(tunnelId: string, apiKey: string, rememberKey: boolean): Promise<McpConnectionStatus>;
+  mcpConnectManual(hostname: string): Promise<McpConnectionStatus>;
+  mcpDisconnect(): Promise<McpConnectionStatus>;
   mcpGatewayStatus(): Promise<McpGatewayStatus>;
   startMcpGateway(): Promise<McpGatewayStatus>;
   stopMcpGateway(): Promise<McpGatewayStatus>;

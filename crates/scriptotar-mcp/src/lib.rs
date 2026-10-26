@@ -19,6 +19,7 @@ const MAX_POLICY_BYTES: u64 = 64 * 1024;
 pub struct McpPermissions {
     pub enabled: bool,
     pub http_token: String,
+    pub url_token: String,
     pub read_data: bool,
     pub write_data: bool,
     pub read_files: bool,
@@ -44,6 +45,11 @@ impl McpPermissions {
 
     /// Only the desktop app calls save_permissions. The MCP protocol never exposes it.
     pub fn validate(&mut self) -> Result<(), String> {
+        if !self.url_token.is_empty()
+            && (self.url_token.len() != 64 || !self.url_token.bytes().all(|c| c.is_ascii_hexdigit()))
+        {
+            return Err("invalid MCP URL secret".into());
+        }
         if !self.http_token.is_empty()
             && (self.http_token.len() != 64 || !self.http_token.bytes().all(|c| c.is_ascii_hexdigit()))
         {
@@ -130,10 +136,19 @@ pub fn load_permissions(data_dir: &Path) -> Result<McpPermissions, String> {
     Ok(policy)
 }
 
+/// Two independent OS-random UUIDv4 values (244 unpredictable bits).
+/// Public URL tokens must never be logged, passed via argv or returned to MCP.
+pub fn new_token() -> String {
+    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
 pub fn save_permissions(data_dir: &Path, mut policy: McpPermissions) -> Result<McpPermissions, String> {
     policy.validate()?;
     if policy.http_token.is_empty() {
-        policy.http_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        policy.http_token = new_token();
+    }
+    if policy.url_token.is_empty() {
+        policy.url_token = new_token();
     }
     fs::create_dir_all(data_dir).map_err(|_| "could not prepare Scriptotar data directory".to_owned())?;
     let dest = permissions_path(data_dir);

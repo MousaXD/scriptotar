@@ -61,6 +61,8 @@ jobs:
             librsvg2-dev \
             libgtk-3-dev \
             libssl-dev \
+            libdbus-1-dev \
+            pkg-config \
             patchelf \
             xauth \
             xvfb
@@ -78,6 +80,8 @@ jobs:
         run: >-
           python sidecars/transcription/validate_runtime.py
           apps/desktop/src-tauri/resources/transcription-runtime
+      - name: Bundle pinned, checksum-verified MCP tunnel clients
+        run: python3 scripts/prepare_mcp_tools.py --platform linux --output apps/desktop/src-tauri/resources/mcp-tools
       - name: Generate Linux icons and platform bundle config
         working-directory: apps/desktop
         run: |
@@ -88,7 +92,8 @@ jobs:
               "active": true,
               "targets": ["deb"],
               "resources": {
-                "resources/transcription-runtime/": "transcription-runtime/"
+                "resources/transcription-runtime/": "transcription-runtime/",
+                "resources/mcp-tools/": "mcp-tools/"
               },
               "icon": [
                 "icons/32x32.png",
@@ -133,6 +138,9 @@ jobs:
           cp apps/desktop/src-tauri/resources/transcription-runtime/RUNTIME-VERSIONS.txt dist/RUNTIME-VERSIONS.txt
           dpkg-deb --contents "dist/Scriptotar-Next-${VERSION}-amd64.deb" > dist/DEB-CONTENTS.txt
           grep -q 'transcription-runtime' dist/DEB-CONTENTS.txt
+          grep -q 'mcp-tools/cloudflared' dist/DEB-CONTENTS.txt
+          grep -q 'mcp-tools/tunnel-client' dist/DEB-CONTENTS.txt
+          grep -q 'mcp-tools/MCP-TOOLS-PROVENANCE.json' dist/DEB-CONTENTS.txt
           grep -q 'scriptotar-transcription' dist/DEB-CONTENTS.txt
           grep -q 'scriptotar-engine' dist/DEB-CONTENTS.txt
           grep -q 'ffmpeg' dist/DEB-CONTENTS.txt
@@ -158,6 +166,7 @@ jobs:
           test -n "$RUNTIME_MARKER"
           RUNTIME_DIR="$(dirname "$RUNTIME_MARKER")"
           python sidecars/transcription/validate_runtime.py "$RUNTIME_DIR"
+          python scripts/prepare_mcp_tools.py --output "$(dirname "$RUNTIME_DIR")/mcp-tools" --validate
           python sidecars/transcription/compliance_finalize.py --validate "$RUNTIME_DIR"
           APP_BIN="$(dpkg -L "$PACKAGE_NAME" | grep '^/usr/bin/' | head -n 1 || true)"
           test -n "$APP_BIN"

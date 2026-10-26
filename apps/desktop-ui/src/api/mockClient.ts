@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus } from '../types';
+import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
 export const mockBootstrap: BootstrapData = {
   activeProjectId: 'p-creator-lab',
@@ -92,9 +92,14 @@ function backendJob(projectId: string, kind: 'url' | 'local_file', value: string
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
   let settings = structuredClone(mockBootstrap.settings);
+  let connection: McpConnectionStatus = {
+    mode: 'none', state: 'disconnected', detail: 'Choose a connection method.',
+    publicUrl: null, localUrl: null, tunnelId: null,
+    cloudflareAvailable: true, openaiAvailable: true
+  };
   let mcpGateway: McpGatewayStatus = { running: false, endpoint: 'http://127.0.0.1:39761/mcp' };
   let mcp: McpPermissions = {
-    enabled: false, httpToken: '',  readData: false, writeData: false, readFiles: false, writeFiles: false,
+    enabled: false, httpToken: '', urlToken: '',  readData: false, writeData: false, readFiles: false, writeFiles: false,
     overwriteFiles: false, executeCommands: false, searchCreators: false, downloadVideos: false,
     allowedPaths: [], allowedPrograms: []
   };
@@ -168,6 +173,37 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
     async getMcpPermissions() { return structuredClone(mcp); },
+    async mcpConnectionStatus() { return structuredClone(connection); },
+    async mcpConnectCloudflare() {
+      if (!mcp.enabled) throw new Error('Enable MCP permissions in Scriptotar first.');
+      connection = { ...connection, mode: 'cloudflare', state: 'ready',
+        detail: 'Cloudflare URL ready.',
+        publicUrl: `https://sample-cloudflare.trycloudflare.com/mcp/p/${mcp.urlToken}`,
+        localUrl: `http://127.0.0.1:39761/mcp/p/${mcp.urlToken}`, tunnelId: null };
+      return structuredClone(connection);
+    },
+    async mcpConnectOpenai(tunnelId: string, _apiKey: string, _rememberKey: boolean) {
+      if (!mcp.enabled) throw new Error('Enable MCP permissions in Scriptotar first.');
+      if (!/^tunnel_[0-9a-f]{32}$/.test(tunnelId)) throw new Error('Invalid tunnel ID');
+      connection = { ...connection, mode: 'openai', state: 'ready',
+        detail: 'OpenAI tunnel ready.', publicUrl: null, localUrl: null, tunnelId };
+      return structuredClone(connection);
+    },
+    async mcpConnectManual(hostname: string) {
+      if (!mcp.enabled) throw new Error('Enable MCP permissions in Scriptotar first.');
+      const origin = new URL(hostname);
+      if (origin.protocol !== 'https:' || origin.pathname !== '/') throw new Error('HTTPS origin required');
+      connection = { ...connection, mode: 'manual', state: 'ready',
+        detail: 'Local gateway ready.', publicUrl: `${origin.origin}/mcp/p/${mcp.urlToken}`,
+        localUrl: `http://127.0.0.1:39761/mcp/p/${mcp.urlToken}`, tunnelId: null };
+      return structuredClone(connection);
+    },
+    async mcpDisconnect() {
+      connection = { ...connection, mode: 'none', state: 'disconnected', publicUrl: null,
+        localUrl: null, tunnelId: null, detail: 'Disconnected' };
+      mcp.urlToken = 'f'.repeat(64);
+      return structuredClone(connection);
+    },
     async mcpGatewayStatus() { return structuredClone(mcpGateway); },
     async startMcpGateway() {
       if (!mcp.enabled) throw new Error('Enable MCP first');
@@ -182,7 +218,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       if (next.enabled && (next.writeFiles || next.overwriteFiles || next.executeCommands) && !acknowledgeSensitiveAccess) {
         throw new Error('Powerful MCP permissions require acknowledgement in Scriptotar Settings.');
       }
-      mcp = structuredClone({ ...next, httpToken: next.httpToken || 'a'.repeat(64) });
+      mcp = structuredClone({ ...next, httpToken: next.httpToken || 'a'.repeat(64), urlToken: next.urlToken || 'b'.repeat(64) });
       if (!mcp.enabled) mcpGateway.running = false;
       return structuredClone(mcp);
     },

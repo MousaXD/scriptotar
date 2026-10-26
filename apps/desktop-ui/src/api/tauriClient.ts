@@ -7,6 +7,7 @@ import type {
   MigrationStatus,
   McpPermissions,
   McpGatewayStatus,
+  McpConnectionStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -65,6 +66,12 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     getSettings: () => invoke<AppSettings>('get_settings'),
     saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { settings }),
     getMcpPermissions: () => invoke<McpPermissions>('get_mcp_permissions'),
+    mcpConnectionStatus: () => invoke<McpConnectionStatus>('mcp_connection_status'),
+    mcpConnectCloudflare: () => invoke<McpConnectionStatus>('mcp_connect_cloudflare'),
+    mcpConnectOpenai: (tunnelId, apiKey, rememberKey) =>
+      invoke<McpConnectionStatus>('mcp_connect_openai', { tunnelId, apiKey, rememberKey }),
+    mcpConnectManual: (hostname) => invoke<McpConnectionStatus>('mcp_connect_manual', { hostname }),
+    mcpDisconnect: () => invoke<McpConnectionStatus>('mcp_disconnect'),
     mcpGatewayStatus: () => invoke<McpGatewayStatus>('mcp_gateway_status'),
     startMcpGateway: () => invoke<McpGatewayStatus>('start_mcp_gateway'),
     stopMcpGateway: () => invoke<McpGatewayStatus>('stop_mcp_gateway'),
