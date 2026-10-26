@@ -103,13 +103,25 @@ pub(crate) fn validated_origin(raw: &str) -> Result<String, String> {
 }
 
 fn quick_tunnel_host(line: &str) -> Option<String> {
-    // cloudflared reports a temporary hostname in either stderr or stdout.
-    // Only accept an exact DNS hostname under the official trycloudflare.com suffix.
-    for piece in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':' || c == '/')) {
-        let candidate = piece.trim_end_matches('/');
-        let Some(host) = candidate.strip_prefix("https://") else { continue };
+    // Cloudflared reports a temporary hostname on stderr or stdout. Parse each
+    // candidate URL instead of matching substrings: an attacker-controlled
+    // hostname such as foo.trycloudflare.com@evil.com must never be accepted.
+    for word in line.split_whitespace() {
+        let Some(pos) = word.find("https://") else { continue };
+        let candidate = word[pos..].trim_end_matches(['\"', '\'', ',', ')', ']', ';']);
+        let Ok(url) = Url::parse(candidate) else { continue };
+        let Some(host) = url.host_str() else { continue };
         let Some(label) = host.strip_suffix(".trycloudflare.com") else { continue };
-        if !label.is_empty() && label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+        if url.scheme() == "https"
+            && !label.is_empty()
+            && label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none()
+        {
             return Some(format!("https://{host}"));
         }
     }

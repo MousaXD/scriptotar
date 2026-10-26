@@ -199,10 +199,10 @@
       <p class="connection-state" data-state={connection.state}>{connection.state === 'ready' ? 'Gateway ready' : connection.state === 'connecting' ? 'Establishing connection…' : 'Connection needs attention'} · {connection.detail}</p>
       {#if connection.mode === 'openai'}
         <p>In ChatGPT, add a <strong>custom MCP server</strong>, choose <strong>Tunnel</strong>, and select this tunnel ID:</p>
-        <div class="url-copy"><code>{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection.tunnelId!)}>Copy ID</button>{/if}</div>
+        <div class="url-copy"><code>{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>Copy ID</button>{/if}</div>
       {:else if connection.publicUrl}
         <p>In ChatGPT, add a <strong>custom MCP server</strong> and choose <strong>Server URL</strong>. Paste this exact URL:</p>
-        <div class="url-copy"><code data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection.publicUrl!)}>Copy URL</button></div>
+        <div class="url-copy"><code data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>Copy URL</button></div>
         <p class="warning">Treat this URL like a password. Do not share it, publish it, or paste it into support chats. Stop disconnects the tunnel and revokes the secret.</p>
       {/if}
       {#if connection.mode === 'manual'}<p class="hint">A local gateway is running, but Scriptotar cannot verify your separately managed HTTPS tunnel. Check it before sharing the URL.</p>{/if}
