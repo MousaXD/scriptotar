@@ -3,3 +3,5 @@ faster-whisper==1.2.1
 tokenizers==0.23.1
 av==18.0.0
 yt-dlp[default,curl-cffi]==2026.10.21
+# Keep curl-cffi's bundled native dependencies on the reviewed, inventoried lineage.
+curl-cffi==0.15.0

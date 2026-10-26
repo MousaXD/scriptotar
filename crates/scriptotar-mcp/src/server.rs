@@ -14,7 +14,7 @@ use crate::{
 };
 use scriptotar_core::{
     now_rfc3339, ContentRepository, Creator, JobInput, JobRepository, Project, ProjectRepository,
-    ResearchRepository, SettingsRepository,
+    ResearchRepository,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
@@ -603,22 +603,6 @@ pub fn run_stdio_from_env() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn jsonrpc_errors_have_correct_codes() {
-        let e = rpc_error(&json!(4), -32601, "missing");
-        assert_eq!(e["error"]["code"], -32601);
-        assert_eq!(e["id"], 4);
-    }
-    #[test]
-    fn tool_catalog_advertises_all_gated_capabilities() {
-        let tools = tool_catalog()["tools"].as_array().unwrap().clone();
-        assert_eq!(tools.len(), 14);
-    }
-}
-
 /// The remote tunnel terminates at an authenticated, localhost-only Streamable HTTP endpoint.
 pub fn run_http_from_env() -> Result<(), Box<dyn std::error::Error>> {
     let path = std::env::var_os("SCRIPTOTAR_DB_PATH")
@@ -641,4 +625,20 @@ pub fn run_http_from_env() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     runtime.block_on(crate::http::serve(server, port))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn jsonrpc_errors_have_correct_codes() {
+        let e = rpc_error(&json!(4), -32601, "missing");
+        assert_eq!(e["error"]["code"], -32601);
+        assert_eq!(e["id"], 4);
+    }
+    #[test]
+    fn tool_catalog_advertises_all_gated_capabilities() {
+        let tools = tool_catalog()["tools"].as_array().unwrap().clone();
+        assert_eq!(tools.len(), 14);
+    }
 }

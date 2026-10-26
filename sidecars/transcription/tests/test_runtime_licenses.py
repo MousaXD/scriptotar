@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import unittest
 from pathlib import Path
 
@@ -7,6 +8,32 @@ from runtime_licenses import LICENSE_METADATA_FALLBACKS, classify_ffmpeg_license
 
 
 class RuntimeLicenseTests(unittest.TestCase):
+    def test_curl_cffi_native_wheel_matches_reviewed_recipe(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        requirements = root / "requirements-engine.txt"
+        declared = [
+            line.strip().split("==", 1)[1]
+            for line in requirements.read_text(encoding="utf-8").splitlines()
+            if line.startswith("curl-cffi==")
+        ]
+        # Parse the compliance constants without importing bundler-only
+        # dependencies (static_ffmpeg must not be needed by sidecar unit tests).
+        source = ast.parse((root / "distribution_compliance.py").read_text(encoding="utf-8"))
+        assignments = {
+            target.id: ast.literal_eval(node.value)
+            for node in source.body
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+            and target.id in {"CURL_CFFI_VERSION", "CURL_CFFI_NATIVE_RECIPE"}
+        }
+        reviewed = assignments["CURL_CFFI_VERSION"]
+        self.assertEqual(declared, [reviewed])
+        self.assertEqual(
+            assignments["CURL_CFFI_NATIVE_RECIPE"]["curl_cffi_source"],
+            f"https://github.com/lexiforest/curl_cffi/tree/v{reviewed}",
+        )
+
     def test_ytdlp_bundle_label_matches_locked_runtime_requirement(self) -> None:
         requirement = Path(__file__).resolve().parents[1] / "requirements-engine.txt"
         source = Path(__file__).resolve().parents[1] / "build_runtime.py"
