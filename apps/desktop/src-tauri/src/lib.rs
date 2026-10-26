@@ -21,6 +21,7 @@ use dto::{
 };
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
+use scriptotar_mcp::{load_permissions, save_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -37,6 +38,90 @@ struct BackendHealth {
 struct OperationalState {
     data_dir: PathBuf,
     store: SqliteStore,
+}
+
+#[derive(Default)]
+struct McpGatewayState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpGatewayStatus {
+    running: bool,
+    endpoint: String,
+}
+
+const MCP_HTTP_PORT: u16 = 39761;
+
+impl Drop for McpGatewayState {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.get_mut() {
+            if let Some(mut child) = child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+fn stop_gateway(state: &McpGatewayState) -> Result<(), String> {
+    let mut child = state.child.lock().map_err(|_| "MCP gateway state is unavailable")?;
+    if let Some(mut process) = child.take() {
+        let _ = process.kill();
+        let _ = process.wait();
+    }
+    Ok(())
+}
+
+fn gateway_status(state: &McpGatewayState) -> Result<McpGatewayStatus, String> {
+    let mut child = state.child.lock().map_err(|_| "MCP gateway state is unavailable")?;
+    if let Some(process) = child.as_mut() {
+        if process.try_wait().map_err(|_| "cannot inspect MCP gateway")?.is_some() {
+            child.take();
+        }
+    }
+    Ok(McpGatewayStatus { running: child.is_some(), endpoint: format!("http://127.0.0.1:{MCP_HTTP_PORT}/mcp") })
+}
+
+#[tauri::command]
+fn mcp_gateway_status(state: tauri::State<'_, McpGatewayState>) -> Result<McpGatewayStatus, String> {
+    gateway_status(&state)
+}
+
+#[tauri::command]
+fn start_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+) -> Result<McpGatewayStatus, String> {
+    let permissions = load_permissions(&operational.data_dir)?;
+    if !permissions.enabled || permissions.http_token.is_empty() {
+        return Err("Enable MCP and save local permissions before starting the gateway".into());
+    }
+    if gateway_status(&gateway)?.running { return gateway_status(&gateway); }
+    let exe = env::current_exe().map_err(|_| "cannot locate Scriptotar executable")?;
+    let child = Command::new(exe)
+        .arg("--mcp-http")
+        .env("SCRIPTOTAR_DB_PATH", operational.data_dir.join("scriptotar.sqlite3"))
+        .env("SCRIPTOTAR_MCP_PORT", MCP_HTTP_PORT.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn().map_err(|_| "could not launch local MCP gateway")?;
+    {
+        let mut process = gateway.child.lock().map_err(|_| "MCP gateway state is unavailable")?;
+        *process = Some(child);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let status = gateway_status(&gateway)?;
+    if !status.running { return Err("MCP gateway exited during startup; check whether port 39761 is available".into()); }
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_mcp_gateway(gateway: tauri::State<'_, McpGatewayState>) -> Result<McpGatewayStatus, String> {
+    stop_gateway(&gateway)?;
+    gateway_status(&gateway)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -445,6 +530,29 @@ fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, Stri
 }
 
 #[tauri::command]
+fn get_mcp_permissions(state: tauri::State<'_, OperationalState>) -> Result<McpPermissions, String> {
+    load_permissions(&state.data_dir)
+}
+
+#[tauri::command]
+fn save_mcp_permissions(
+    permissions: McpPermissions,
+    acknowledge_sensitive_access: bool,
+    state: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+) -> Result<McpPermissions, String> {
+    if permissions.enabled
+        && (permissions.write_files || permissions.overwrite_files || permissions.execute_commands)
+        && !acknowledge_sensitive_access
+    {
+        return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
+    }
+    let policy = save_permissions(&state.data_dir, permissions)?;
+    if !policy.enabled { stop_gateway(&gateway)?; }
+    Ok(policy)
+}
+
+#[tauri::command]
 fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.save_settings(settings).map_err(command_error)
 }
@@ -637,6 +745,7 @@ pub fn run() {
                 store: operational_store,
             });
             app.manage(services);
+            app.manage(McpGatewayState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -659,6 +768,11 @@ pub fn run() {
             retry_job,
             get_settings,
             save_settings,
+            get_mcp_permissions,
+            save_mcp_permissions,
+            mcp_gateway_status,
+            start_mcp_gateway,
+            stop_mcp_gateway,
             save_watchlist,
             scan_creator,
             queue_research,

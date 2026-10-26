@@ -7,13 +7,16 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/mcp-e2e.yml'
       - 'tests/mcp_stdio_e2e.py'
+      - 'tests/mcp_http_e2e.py'
+      - 'apps/desktop-ui/src/**'
+      - 'apps/desktop/src-tauri/src/**'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   mcp:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
@@ -23,3 +26,13 @@ jobs:
       - run: cargo test -p scriptotar-mcp --locked
       - run: cargo build -p scriptotar-mcp --locked
       - run: python3 tests/mcp_stdio_e2e.py
+      - run: python3 tests/mcp_http_e2e.py
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - run: npm ci --prefix apps/desktop-ui
+      - run: npm run check --prefix apps/desktop-ui
+      - run: npm run test --prefix apps/desktop-ui -- --run
+      - run: npm run build --prefix apps/desktop-ui

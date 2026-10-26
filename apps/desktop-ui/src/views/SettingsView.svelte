@@ -1,7 +1,8 @@
 <script lang="ts">
   import { locale, setLocale, type AppLocale } from '../i18n';
+  import { onMount } from 'svelte';
   import { translator } from '../i18n/translate';
-  import type { AppSettings, MigrationStatus } from '../types';
+  import type { AppSettings, McpPermissions, McpGatewayStatus, MigrationStatus } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import { persistAppearance } from '../appearance';
 
@@ -16,6 +17,66 @@
   let saveError = '';
   let migrationBusy = false;
   let busy = false;
+  let mcp: McpPermissions | null = null;
+  let mcpGateway: McpGatewayStatus | null = null;
+  let mcpShowToken = false;
+  let mcpBusy = false;
+  let mcpError = '';
+  let mcpStatus = '';
+  let mcpPathText = '';
+  let mcpProgramText = '';
+  let mcpAcknowledge = false;
+
+  onMount(() => {
+    void api.mcpGatewayStatus().then((status) => { mcpGateway = status; }).catch(() => {});
+    void api.getMcpPermissions().then((value) => {
+      mcp = value;
+      mcpPathText = value.allowedPaths.join('\n');
+      mcpProgramText = value.allowedPrograms.join('\n');
+    }).catch((error) => {
+      mcpError = error instanceof Error ? error.message : 'Could not load MCP permissions.';
+    });
+  });
+
+  async function toggleMcpGateway() {
+    if (mcpBusy || !mcpGateway) return;
+    mcpBusy = true;
+    mcpError = '';
+    mcpStatus = '';
+    try {
+      mcpGateway = mcpGateway.running ? await api.stopMcpGateway() : await api.startMcpGateway();
+      mcpStatus = mcpGateway.running ? 'MCP gateway started on localhost.' : 'MCP gateway stopped.';
+    } catch (error) {
+      mcpError = error instanceof Error ? error.message : 'Could not change MCP gateway state.';
+    } finally {
+      mcpBusy = false;
+    }
+  }
+
+  async function saveMcp() {
+    if (!mcp || mcpBusy) return;
+    mcpBusy = true;
+    mcpError = '';
+    mcpStatus = '';
+    try {
+      const next = {
+        ...mcp,
+        allowedPaths: mcpPathText.split('\n').map((path) => path.trim()).filter(Boolean),
+        allowedPrograms: mcpProgramText.split('\n').map((path) => path.trim()).filter(Boolean)
+      };
+      mcp = await api.saveMcpPermissions(next, mcpAcknowledge);
+      mcpPathText = mcp.allowedPaths.join('\n');
+      mcpProgramText = mcp.allowedPrograms.join('\n');
+      mcpStatus = 'MCP permissions saved locally. Connected MCP tools use the new policy on their next call.';
+      mcpAcknowledge = false;
+      mcpGateway = await api.mcpGatewayStatus();
+    } catch (error) {
+      mcpError = error instanceof Error ? error.message : 'Could not save MCP permissions.';
+    } finally {
+      mcpBusy = false;
+    }
+  }
+
 
   $: dirty = JSON.stringify(draft) !== JSON.stringify(settings);
 
@@ -134,6 +195,7 @@
     <a href="#settings-watchlists">{$translator('settings.nav.watchlists')}</a>
     <span class="settings-nav-title secondary-group">{$translator('settings.advanced')}</span>
     <a href="#settings-migration">{$translator('settings.nav.migration')}</a>
+    <a href="#settings-mcp">MCP access</a>
     <a href="#settings-interface">{$translator('settings.nav.interface')}</a>
   </aside>
 
@@ -174,6 +236,54 @@
       </div>
     </section>
 
+    <section id="settings-mcp" class="panel settings-section mcp-section" data-testid="mcp-permissions">
+      <div>
+        <span class="eyebrow">Agent integration</span>
+        <h2>MCP permissions</h2>
+        <p>Control what ChatGPT and other MCP clients can do on this computer. The app enforces these permissions for every tool call. Everything starts disabled.</p>
+      </div>
+      <div class="mcp-settings">
+        {#if mcp}
+          <label class="watch-toggle"><input type="checkbox" bind:checked={mcp.enabled}/><span><strong>Enable MCP access</strong><small>The server exposes its tool catalog but rejects all tool calls while disabled.</small></span></label>
+          <div class="toggle-grid mcp-toggles">
+            <label><input type="checkbox" bind:checked={mcp.readData}/><span><strong>Read projects and transcripts</strong><small>List research, project jobs and transcript contents.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.writeData}/><span><strong>Write Scriptotar data</strong><small>Create projects through the local database.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.readFiles}/><span><strong>Read text files</strong><small>Only from directories listed below.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.writeFiles}/><span><strong>Write text files</strong><small>Create files only in approved directories.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.overwriteFiles}/><span><strong>Overwrite files</strong><small>High-risk: allow replacement of existing files.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.executeCommands}/><span><strong>Execute commands</strong><small>High-risk: approved executables can still access other data with your OS rights.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.searchCreators}/><span><strong>Search creators</strong><small>Use the existing yt-dlp research engine.</small></span></label>
+            <label><input type="checkbox" bind:checked={mcp.downloadVideos}/><span><strong>Download videos</strong><small>Queue downloads through Scriptotar's transcription jobs.</small></span></label>
+          </div>
+          <label class="mcp-field"><strong>Approved directories — one absolute path per line</strong><textarea rows="3" bind:value={mcpPathText} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
+          <label class="mcp-field"><strong>Approved command executables — one absolute path per line</strong><textarea rows="3" bind:value={mcpProgramText} placeholder="/usr/bin/git"></textarea></label>
+          <p class="mcp-warning"><strong>Command access is not a sandbox.</strong> An approved shell, interpreter or powerful executable can access everything your operating-system account can. Only authorize executables and paths you trust. ChatGPT permissions are not this security boundary.</p>
+          {#if mcp.enabled && (mcp.writeFiles || mcp.overwriteFiles || mcp.executeCommands)}
+            <label class="watch-toggle"><input type="checkbox" bind:checked={mcpAcknowledge}/><span><strong>I approve powerful local access</strong><small>Required each time you save powerful file or command permissions.</small></span></label>
+          {/if}
+          <button class="button primary" disabled={mcpBusy || (mcp.enabled && (mcp.writeFiles || mcp.overwriteFiles || mcp.executeCommands) && !mcpAcknowledge)} on:click={saveMcp}>Apply MCP permissions</button>
+          <div class="mcp-gateway-control">
+            <strong>Local MCP gateway</strong>
+            <p>{mcpGateway?.endpoint || 'http://127.0.0.1:39761/mcp'}</p>
+            <p>{mcpGateway?.running ? 'Running (localhost only)' : 'Stopped'}</p>
+            <button class="button secondary" disabled={mcpBusy || !mcpGateway || (!mcpGateway.running && !mcp.enabled)} on:click={toggleMcpGateway}>{mcpGateway?.running ? 'Stop local MCP gateway' : 'Start local MCP gateway'}</button>
+          </div>
+          {#if mcp.httpToken}
+            <div class="mcp-token">
+              <strong>Gateway bearer token — keep private</strong>
+              <button class="button secondary" on:click={() => { mcpShowToken = !mcpShowToken; }}>{mcpShowToken ? 'Hide token' : 'Reveal token'}</button>
+              {#if mcpShowToken}<code>{mcp.httpToken}</code>{/if}
+              <p>The token authenticates connections; Scriptotar's permissions still authorize each action. Use a secure MCP tunnel for ChatGPT.</p>
+            </div>
+          {/if}
+        {:else}
+          <p>Loading local MCP policy…</p>
+        {/if}
+        {#if mcpStatus}<p class="status-copy" aria-live="polite">{mcpStatus}</p>{/if}
+        {#if mcpError}<p class="status-copy" role="alert">{mcpError}</p>{/if}
+      </div>
+    </section>
+
     <section id="settings-interface" class="panel settings-section"><div><span class="eyebrow">Appearance</span><h2>Interface</h2><p>Dark stays fixed; System follows the operating-system light/dark preference. Appearance is a local UI preference and contains no sensitive data.</p></div><div class="settings-grid"><label><span>Theme</span><select aria-label="Theme" bind:value={draft.appearance}><option value="dark">Dark</option><option value="system">System</option></select></label><label data-i18n-ignore><span>{$translator('language.label')}</span><select aria-label="Settings interface language" value={$locale} on:change={changeLocale}><option value="en">{$translator('language.english')}</option><option value="ar">{$translator('language.arabic')}</option></select></label></div></section>
   </div>
 </div>
@@ -182,6 +292,15 @@
 {#if saveError}<p class="status-copy settings-status" role="alert">{saveError}</p>{/if}
 
 <style>
+  .mcp-settings { display: grid; gap: 12px; width: 100%; }
+  .mcp-field { display: grid; gap: 7px; }
+  .mcp-token, .mcp-gateway-control { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+  .mcp-token code { display: block; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; }
+  .mcp-token p, .mcp-gateway-control p { font-size: 11px; margin: 0; }
+  .mcp-field textarea { width: 100%; min-height: 66px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); background: var(--surface); font-family: monospace; font-size: 11px; }
+  .mcp-field strong { font-size: 11px; }
+  .mcp-warning { font-size: 11px; line-height: 1.6; }
+  .mcp-toggles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-head { align-items: center; }
   .save-cluster { display: flex; align-items: center; gap: 10px; }
   .dirty-indicator { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; white-space: nowrap; }

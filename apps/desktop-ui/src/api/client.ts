@@ -6,6 +6,8 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  McpPermissions,
+  McpGatewayStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -55,4 +57,9 @@ export interface ScriptotarApi {
   runAi(input: AiPromptInput): Promise<string>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
+  getMcpPermissions(): Promise<McpPermissions>;
+  mcpGatewayStatus(): Promise<McpGatewayStatus>;
+  startMcpGateway(): Promise<McpGatewayStatus>;
+  stopMcpGateway(): Promise<McpGatewayStatus>;
+  saveMcpPermissions(permissions: McpPermissions, acknowledgeSensitiveAccess: boolean): Promise<McpPermissions>;
 }

@@ -2955,6 +2955,7 @@ dependencies = [
  "scriptotar-db",
  "scriptotar-jobs",
  "scriptotar-media",
+ "scriptotar-mcp",
  "scriptotar-orchestrator",
  "scriptotar-research",
  "serde",
@@ -2980,9 +2981,19 @@ dependencies = [
 name = "scriptotar-mcp"
 version = "1.0.0"
 dependencies = [
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "tokio",
  "scriptotar-core",
  "scriptotar-db",
+ "scriptotar-jobs",
+ "scriptotar-orchestrator",
+ "scriptotar-research",
+ "serde",
  "serde_json",
+ "tempfile",
  "uuid",
 ]
 

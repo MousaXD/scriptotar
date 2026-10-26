@@ -1,3 +1,23 @@
+export interface McpGatewayStatus {
+  running: boolean;
+  endpoint: string;
+}
+
+export interface McpPermissions {
+  enabled: boolean;
+  httpToken: string;
+  readData: boolean;
+  writeData: boolean;
+  readFiles: boolean;
+  writeFiles: boolean;
+  overwriteFiles: boolean;
+  executeCommands: boolean;
+  searchCreators: boolean;
+  downloadVideos: boolean;
+  allowedPaths: string[];
+  allowedPrograms: string[];
+}
+
 export type ViewId = 'dashboard' | 'research' | 'jobs' | 'transcript' | 'ai' | 'library' | 'settings';
 export type JobState = 'queued' | 'preparing' | 'downloading' | 'transcribing' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type LibraryKind = 'Transcript' | 'Research' | 'AI run' | 'Project' | 'Creator';

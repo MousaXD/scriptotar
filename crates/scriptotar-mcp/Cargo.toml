@@ -8,5 +8,15 @@ repository.workspace = true
 [dependencies]
 scriptotar-core = { path = "../scriptotar-core" }
 scriptotar-db = { path = "../scriptotar-db" }
+bytes = "1"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+tokio = { version = "1", features = ["net", "rt", "time", "sync"] }
+serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+scriptotar-jobs = { path = "../scriptotar-jobs" }
+scriptotar-orchestrator = { path = "../scriptotar-orchestrator" }
+scriptotar-research = { path = "../scriptotar-research" }
 uuid.workspace = true

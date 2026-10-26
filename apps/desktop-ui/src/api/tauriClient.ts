@@ -5,6 +5,8 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  McpPermissions,
+  McpGatewayStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -62,5 +64,11 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     runAi: (input: AiPromptInput) => invoke<string>('run_ai', { input }),
     getSettings: () => invoke<AppSettings>('get_settings'),
     saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { settings }),
+    getMcpPermissions: () => invoke<McpPermissions>('get_mcp_permissions'),
+    mcpGatewayStatus: () => invoke<McpGatewayStatus>('mcp_gateway_status'),
+    startMcpGateway: () => invoke<McpGatewayStatus>('start_mcp_gateway'),
+    stopMcpGateway: () => invoke<McpGatewayStatus>('stop_mcp_gateway'),
+    saveMcpPermissions: (permissions: McpPermissions, acknowledgeSensitiveAccess: boolean) =>
+      invoke<McpPermissions>('save_mcp_permissions', { permissions, acknowledgeSensitiveAccess }),
   };
 }

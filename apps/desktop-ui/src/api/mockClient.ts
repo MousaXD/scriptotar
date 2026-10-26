@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { BackendJob, BootstrapData, Project } from '../types';
+import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus } from '../types';
 
 export const mockBootstrap: BootstrapData = {
   activeProjectId: 'p-creator-lab',
@@ -92,6 +92,12 @@ function backendJob(projectId: string, kind: 'url' | 'local_file', value: string
 export function createMockClient(overrides?: Partial<ScriptotarApi>): ScriptotarApi {
   let active = mockBootstrap.activeProjectId;
   let settings = structuredClone(mockBootstrap.settings);
+  let mcpGateway: McpGatewayStatus = { running: false, endpoint: 'http://127.0.0.1:39761/mcp' };
+  let mcp: McpPermissions = {
+    enabled: false, httpToken: '',  readData: false, writeData: false, readFiles: false, writeFiles: false,
+    overwriteFiles: false, executeCommands: false, searchCreators: false, downloadVideos: false,
+    allowedPaths: [], allowedPrograms: []
+  };
   let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
   let projects = structuredClone(mockBootstrap.projects);
   let projectCounter = 0;
@@ -161,6 +167,25 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async runAi(input: AiPromptInput) { return `Mock ${input.provider} result for ${input.task}.`; },
     async getSettings() { return structuredClone(settings); },
     async saveSettings(next) { settings = structuredClone(next); },
+    async getMcpPermissions() { return structuredClone(mcp); },
+    async mcpGatewayStatus() { return structuredClone(mcpGateway); },
+    async startMcpGateway() {
+      if (!mcp.enabled) throw new Error('Enable MCP first');
+      mcpGateway = { ...mcpGateway, running: true };
+      return structuredClone(mcpGateway);
+    },
+    async stopMcpGateway() {
+      mcpGateway = { ...mcpGateway, running: false };
+      return structuredClone(mcpGateway);
+    },
+    async saveMcpPermissions(next, acknowledgeSensitiveAccess) {
+      if (next.enabled && (next.writeFiles || next.overwriteFiles || next.executeCommands) && !acknowledgeSensitiveAccess) {
+        throw new Error('Powerful MCP permissions require acknowledgement in Scriptotar Settings.');
+      }
+      mcp = structuredClone({ ...next, httpToken: next.httpToken || 'a'.repeat(64) });
+      if (!mcp.enabled) mcpGateway.running = false;
+      return structuredClone(mcp);
+    },
   };
   return { ...client, ...overrides };
 }

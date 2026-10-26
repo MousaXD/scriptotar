@@ -62,6 +62,12 @@ The original Python/Tkinter implementation (v1.0.0 – v1.3.0) has been archived
 
 ---
 
+## ChatGPT MCP integration
+
+Scriptotar includes a Rust MCP server with read/write/research/video-job tools,
+application-owned permission controls and an authenticated localhost gateway.
+See [MCP setup and security](docs/mcp/README.md). All capabilities start disabled.
+
 ## Development & Building
 
 ### Prerequisites
