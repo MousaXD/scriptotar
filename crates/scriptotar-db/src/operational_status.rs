@@ -30,9 +30,7 @@ impl WatchlistRefreshState {
             "retry_scheduled" => Ok(Self::RetryScheduled),
             "failed" => Ok(Self::Failed),
             "healthy" => Ok(Self::Healthy),
-            other => Err(RepositoryError::Storage(format!(
-                "unknown persisted watchlist refresh state: {other}"
-            ))),
+            other => Err(RepositoryError::Storage(format!("unknown persisted watchlist refresh state: {other}"))),
         }
     }
 }
@@ -87,12 +85,8 @@ fn storage_error(error: rusqlite::Error) -> RepositoryError {
 
 fn open_connection(store: &SqliteStore) -> RepositoryResult<Connection> {
     let connection = Connection::open(store.path()).map_err(storage_error)?;
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .map_err(storage_error)?;
-    connection
-        .busy_timeout(Duration::from_secs(5))
-        .map_err(storage_error)?;
+    connection.pragma_update(None, "foreign_keys", true).map_err(storage_error)?;
+    connection.busy_timeout(Duration::from_secs(5)).map_err(storage_error)?;
     Ok(connection)
 }
 
@@ -112,11 +106,7 @@ fn ensure_schema(connection: &Connection) -> RepositoryResult<()> {
 }
 
 impl SqliteStore {
-    pub fn try_begin_watchlist_refresh(
-        &self,
-        watchlist_id: Uuid,
-        attempted_at: &str,
-    ) -> RepositoryResult<bool> {
+    pub fn try_begin_watchlist_refresh(&self, watchlist_id: Uuid, attempted_at: &str) -> RepositoryResult<bool> {
         self.run_integration_migrations()?;
         let connection = open_connection(self)?;
         ensure_schema(&connection)?;
@@ -137,11 +127,7 @@ impl SqliteStore {
         Ok(changed == 1)
     }
 
-    pub fn record_watchlist_refresh_success(
-        &self,
-        watchlist_id: Uuid,
-        succeeded_at: &str,
-    ) -> RepositoryResult<()> {
+    pub fn record_watchlist_refresh_success(&self, watchlist_id: Uuid, succeeded_at: &str) -> RepositoryResult<()> {
         self.run_integration_migrations()?;
         let connection = open_connection(self)?;
         ensure_schema(&connection)?;
@@ -172,11 +158,8 @@ impl SqliteStore {
         self.run_integration_migrations()?;
         let connection = open_connection(self)?;
         ensure_schema(&connection)?;
-        let state = if next_retry_at.is_some() {
-            WatchlistRefreshState::RetryScheduled
-        } else {
-            WatchlistRefreshState::Failed
-        };
+        let state =
+            if next_retry_at.is_some() { WatchlistRefreshState::RetryScheduled } else { WatchlistRefreshState::Failed };
         connection
             .execute(
                 "INSERT INTO watchlist_refresh_status(
@@ -187,13 +170,7 @@ impl SqliteStore {
                     last_attempt_at = COALESCE(watchlist_refresh_status.last_attempt_at, excluded.last_attempt_at),
                     last_error = excluded.last_error,
                     next_retry_at = excluded.next_retry_at",
-                params![
-                    watchlist_id.to_string(),
-                    state.as_str(),
-                    failed_at,
-                    safe_error,
-                    next_retry_at,
-                ],
+                params![watchlist_id.to_string(), state.as_str(), failed_at, safe_error, next_retry_at,],
             )
             .map_err(storage_error)?;
         Ok(())
@@ -235,22 +212,14 @@ impl SqliteStore {
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
         let rows = if let Some(project_id) = project_id {
-            statement
-                .query_map(params![project_id.to_string()], RefreshStatusRow::read)
-                .map_err(storage_error)?
+            statement.query_map(params![project_id.to_string()], RefreshStatusRow::read).map_err(storage_error)?
         } else {
-            statement
-                .query_map([], RefreshStatusRow::read)
-                .map_err(storage_error)?
+            statement.query_map([], RefreshStatusRow::read).map_err(storage_error)?
         };
-        rows.map(|row| row.map_err(storage_error)?.into_status())
-            .collect()
+        rows.map(|row| row.map_err(storage_error)?.into_status()).collect()
     }
 
-    pub fn watchlist_refresh_status(
-        &self,
-        watchlist_id: Uuid,
-    ) -> RepositoryResult<Option<WatchlistRefreshStatus>> {
+    pub fn watchlist_refresh_status(&self, watchlist_id: Uuid) -> RepositoryResult<Option<WatchlistRefreshStatus>> {
         self.run_integration_migrations()?;
         let connection = open_connection(self)?;
         ensure_schema(&connection)?;
@@ -283,32 +252,16 @@ mod tests {
         store.run_integration_migrations().unwrap();
         let project = Project::new("Inbox");
         store.create_project(&project).unwrap();
-        let watchlist = store
-            .upsert_watchlist(
-                project.id,
-                "Creator",
-                "https://www.youtube.com/@creator",
-                25,
-            )
-            .unwrap();
+        let watchlist = store.upsert_watchlist(project.id, "Creator", "https://www.youtube.com/@creator", 25).unwrap();
         (temp, store, watchlist.id)
     }
 
     #[test]
     fn never_scanned_watchlist_has_no_operational_row_until_first_attempt() {
         let (_temp, store, watchlist_id) = store_with_watchlist();
-        assert!(store
-            .watchlist_refresh_status(watchlist_id)
-            .unwrap()
-            .is_none());
-        assert!(store
-            .list_watchlist_refresh_status(None)
-            .unwrap()
-            .is_empty());
-        assert!(store
-            .list_watchlist_refresh_status(None)
-            .unwrap()
-            .is_empty());
+        assert!(store.watchlist_refresh_status(watchlist_id).unwrap().is_none());
+        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
+        assert!(store.list_watchlist_refresh_status(None).unwrap().is_empty());
     }
 
     #[test]
@@ -316,21 +269,13 @@ mod tests {
         let (temp, store, watchlist_id) = store_with_watchlist();
         let database = temp.path().join("scriptotar.sqlite3");
         let connection = Connection::open(&database).unwrap();
-        connection
-            .execute_batch("DROP TABLE IF EXISTS watchlist_refresh_status;")
-            .unwrap();
+        connection.execute_batch("DROP TABLE IF EXISTS watchlist_refresh_status;").unwrap();
         drop(connection);
         drop(store);
 
         let reopened = SqliteStore::open(&database).unwrap();
-        assert!(reopened
-            .watchlist_refresh_status(watchlist_id)
-            .unwrap()
-            .is_none());
-        assert!(reopened
-            .list_watchlist_refresh_status(None)
-            .unwrap()
-            .is_empty());
+        assert!(reopened.watchlist_refresh_status(watchlist_id).unwrap().is_none());
+        assert!(reopened.list_watchlist_refresh_status(None).unwrap().is_empty());
         let table_exists: i64 = Connection::open(&database)
             .unwrap()
             .query_row(
@@ -345,18 +290,10 @@ mod tests {
     #[test]
     fn refresh_claim_is_atomic_and_released_by_completion() {
         let (_temp, store, watchlist_id) = store_with_watchlist();
-        assert!(store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
-            .unwrap());
-        assert!(!store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z")
-            .unwrap());
-        store
-            .record_watchlist_refresh_success(watchlist_id, "2026-08-10T10:01:00Z")
-            .unwrap();
-        assert!(store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:02:00Z")
-            .unwrap());
+        assert!(store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z").unwrap());
+        assert!(!store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z").unwrap());
+        store.record_watchlist_refresh_success(watchlist_id, "2026-08-10T10:01:00Z").unwrap();
+        assert!(store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:02:00Z").unwrap());
     }
 
     #[test]
@@ -367,32 +304,23 @@ mod tests {
         let first_barrier = barrier.clone();
         let first = thread::spawn(move || {
             first_barrier.wait();
-            first_store
-                .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
-                .unwrap()
+            first_store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z").unwrap()
         });
         let second_store = store.clone();
         let second_barrier = barrier.clone();
         let second = thread::spawn(move || {
             second_barrier.wait();
-            second_store
-                .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z")
-                .unwrap()
+            second_store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:01Z").unwrap()
         });
         barrier.wait();
-        let winners = [first.join().unwrap(), second.join().unwrap()]
-            .into_iter()
-            .filter(|claimed| *claimed)
-            .count();
+        let winners = [first.join().unwrap(), second.join().unwrap()].into_iter().filter(|claimed| *claimed).count();
         assert_eq!(winners, 1);
     }
 
     #[test]
     fn refresh_failure_and_recovery_survive_restart() {
         let (temp, store, watchlist_id) = store_with_watchlist();
-        assert!(store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
-            .unwrap());
+        assert!(store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z").unwrap());
         store
             .record_watchlist_refresh_failure(
                 watchlist_id,
@@ -404,54 +332,30 @@ mod tests {
         drop(store);
 
         let reopened = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
-        let status = reopened
-            .watchlist_refresh_status(watchlist_id)
-            .unwrap()
-            .unwrap();
+        let status = reopened.watchlist_refresh_status(watchlist_id).unwrap().unwrap();
         assert_eq!(status.state, WatchlistRefreshState::RetryScheduled);
-        assert_eq!(
-            status.last_error.as_deref(),
-            Some("Provider authentication is required.")
-        );
-        assert_eq!(
-            status.next_retry_at.as_deref(),
-            Some("2026-08-10T11:00:00Z")
-        );
+        assert_eq!(status.last_error.as_deref(), Some("Provider authentication is required."));
+        assert_eq!(status.next_retry_at.as_deref(), Some("2026-08-10T11:00:00Z"));
 
-        reopened
-            .record_watchlist_refresh_success(watchlist_id, "2026-08-10T11:01:00Z")
-            .unwrap();
-        let recovered = reopened
-            .watchlist_refresh_status(watchlist_id)
-            .unwrap()
-            .unwrap();
+        reopened.record_watchlist_refresh_success(watchlist_id, "2026-08-10T11:01:00Z").unwrap();
+        let recovered = reopened.watchlist_refresh_status(watchlist_id).unwrap().unwrap();
         assert_eq!(recovered.state, WatchlistRefreshState::Healthy);
         assert!(recovered.last_error.is_none());
         assert!(recovered.next_retry_at.is_none());
-        assert_eq!(
-            recovered.last_success_at.as_deref(),
-            Some("2026-08-10T11:01:00Z")
-        );
+        assert_eq!(recovered.last_success_at.as_deref(), Some("2026-08-10T11:01:00Z"));
     }
 
     #[test]
     fn interrupted_refresh_is_marked_failed_on_restart_recovery() {
         let (_temp, store, watchlist_id) = store_with_watchlist();
-        assert!(store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z")
-            .unwrap());
+        assert!(store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:00:00Z").unwrap());
         assert_eq!(store.recover_interrupted_watchlist_refreshes().unwrap(), 1);
-        let status = store
-            .watchlist_refresh_status(watchlist_id)
-            .unwrap()
-            .unwrap();
+        let status = store.watchlist_refresh_status(watchlist_id).unwrap().unwrap();
         assert_eq!(status.state, WatchlistRefreshState::Failed);
         assert_eq!(
             status.last_error.as_deref(),
             Some("The previous automatic refresh was interrupted before completion.")
         );
-        assert!(store
-            .try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:05:00Z")
-            .unwrap());
+        assert!(store.try_begin_watchlist_refresh(watchlist_id, "2026-08-10T10:05:00Z").unwrap());
     }
 }

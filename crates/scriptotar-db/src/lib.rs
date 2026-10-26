@@ -7,8 +7,8 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction, TransactionBehavior};
 use scriptotar_core::{
-    now_rfc3339, ApplicationSettings, Job, JobInput, JobRepository, JobState, Project,
-    ProjectRepository, RepositoryError, RepositoryResult, SettingsRepository,
+    now_rfc3339, ApplicationSettings, Job, JobInput, JobRepository, JobState, Project, ProjectRepository,
+    RepositoryError, RepositoryResult, SettingsRepository,
 };
 use uuid::Uuid;
 
@@ -23,9 +23,7 @@ impl SqliteStore {
     pub fn open(path: impl AsRef<Path>) -> RepositoryResult<Self> {
         let path = path.as_ref().to_path_buf();
         prepare_private_path(&path)?;
-        let store = Self {
-            path: Arc::new(path),
-        };
+        let store = Self { path: Arc::new(path) };
         let mut connection = store.connection()?;
         migrate(&mut connection)?;
         enforce_private_file_permissions(store.path.as_ref())?;
@@ -38,9 +36,7 @@ impl SqliteStore {
 
     pub fn schema_version(&self) -> RepositoryResult<u32> {
         let connection = self.connection()?;
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
-            .map_err(storage_error)
+        connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).map_err(storage_error)
     }
 
     pub fn search_transcript_ids(
@@ -54,11 +50,7 @@ impl SqliteStore {
         };
         let connection = self.connection()?;
         let fts5_enabled: i64 = connection
-            .query_row(
-                "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |row| row.get(0))
             .map_err(storage_error)?;
         let limit = limit.clamp(1, 50) as i64;
 
@@ -102,9 +94,7 @@ impl SqliteStore {
             )
             .map_err(storage_error)?;
         let rows = statement
-            .query_map(params![project_id.to_string(), like_query, limit], |row| {
-                parse_uuid(row.get::<_, String>(0)?)
-            })
+            .query_map(params![project_id.to_string(), like_query, limit], |row| parse_uuid(row.get::<_, String>(0)?))
             .map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -117,18 +107,10 @@ impl SqliteStore {
 }
 
 fn configure_connection(connection: &Connection) -> RepositoryResult<()> {
-    connection
-        .pragma_update(None, "foreign_keys", true)
-        .map_err(storage_error)?;
-    connection
-        .pragma_update(None, "journal_mode", "WAL")
-        .map_err(storage_error)?;
-    connection
-        .pragma_update(None, "synchronous", "FULL")
-        .map_err(storage_error)?;
-    connection
-        .busy_timeout(Duration::from_secs(5))
-        .map_err(storage_error)?;
+    connection.pragma_update(None, "foreign_keys", true).map_err(storage_error)?;
+    connection.pragma_update(None, "journal_mode", "WAL").map_err(storage_error)?;
+    connection.pragma_update(None, "synchronous", "FULL").map_err(storage_error)?;
+    connection.busy_timeout(Duration::from_secs(5)).map_err(storage_error)?;
     Ok(())
 }
 
@@ -143,25 +125,21 @@ fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
         )
         .map_err(storage_error)?;
 
-    let mut current = connection
-        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
-        .map_err(storage_error)?;
+    let mut current =
+        connection.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0)).map_err(storage_error)?;
 
     for migration in MIGRATIONS {
         if migration.version <= current {
             continue;
         }
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(storage_error)?;
         (migration.apply)(&tx).map_err(storage_error)?;
         tx.execute(
             "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
             params![migration.version, migration.name, now_rfc3339()],
         )
         .map_err(storage_error)?;
-        tx.pragma_update(None, "user_version", migration.version)
-            .map_err(storage_error)?;
+        tx.pragma_update(None, "user_version", migration.version).map_err(storage_error)?;
         tx.commit().map_err(storage_error)?;
         current = migration.version;
     }
@@ -181,21 +159,9 @@ struct Migration {
 }
 
 const MIGRATIONS: &[Migration] = &[
-    Migration {
-        version: 1,
-        name: "initial_domain_schema",
-        apply: migration_1,
-    },
-    Migration {
-        version: 2,
-        name: "transcript_search",
-        apply: migration_2,
-    },
-    Migration {
-        version: 3,
-        name: "transcript_search_backfill",
-        apply: migration_3,
-    },
+    Migration { version: 1, name: "initial_domain_schema", apply: migration_1 },
+    Migration { version: 2, name: "transcript_search", apply: migration_2 },
+    Migration { version: 3, name: "transcript_search_backfill", apply: migration_3 },
 ];
 
 fn migration_1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -308,11 +274,7 @@ fn migration_1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
 }
 
 fn migration_2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
-    let fts5_enabled: i64 = tx.query_row(
-        "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
-        [],
-        |row| row.get(0),
-    )?;
+    let fts5_enabled: i64 = tx.query_row("SELECT sqlite_compileoption_used('ENABLE_FTS5')", [], |row| row.get(0))?;
 
     if fts5_enabled == 1 {
         tx.execute_batch(
@@ -371,10 +333,7 @@ fn fts5_search_query(raw_query: &str) -> Option<String> {
 }
 
 fn escape_like(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
+    value.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
 }
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
@@ -384,24 +343,16 @@ fn storage_error(error: rusqlite::Error) -> RepositoryError {
 fn validate_project_name(name: &str) -> RepositoryResult<&str> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err(RepositoryError::Validation(
-            "project name cannot be empty".to_owned(),
-        ));
+        return Err(RepositoryError::Validation("project name cannot be empty".to_owned()));
     }
     if trimmed.chars().count() > 120 {
-        return Err(RepositoryError::Validation(
-            "project name must be 120 characters or fewer".to_owned(),
-        ));
+        return Err(RepositoryError::Validation("project name must be 120 characters or fewer".to_owned()));
     }
     Ok(trimmed)
 }
 
 fn row_project(row: &Row<'_>) -> rusqlite::Result<Project> {
-    Ok(Project {
-        id: parse_uuid(row.get::<_, String>(0)?)?,
-        name: row.get(1)?,
-        created_at: row.get(2)?,
-    })
+    Ok(Project { id: parse_uuid(row.get::<_, String>(0)?)?, name: row.get(1)?, created_at: row.get(2)? })
 }
 
 fn row_job(row: &Row<'_>) -> rusqlite::Result<Job> {
@@ -447,11 +398,7 @@ impl ProjectRepository for SqliteStore {
     fn get_project(&self, id: Uuid) -> RepositoryResult<Project> {
         let connection = self.connection()?;
         connection
-            .query_row(
-                "SELECT id, name, created_at FROM projects WHERE id = ?1",
-                params![id.to_string()],
-                row_project,
-            )
+            .query_row("SELECT id, name, created_at FROM projects WHERE id = ?1", params![id.to_string()], row_project)
             .optional()
             .map_err(storage_error)?
             .ok_or_else(|| RepositoryError::NotFound(format!("project {id}")))
@@ -462,9 +409,7 @@ impl ProjectRepository for SqliteStore {
         let mut statement = connection
             .prepare("SELECT id, name, created_at FROM projects ORDER BY name COLLATE NOCASE")
             .map_err(storage_error)?;
-        let rows = statement
-            .query_map([], row_project)
-            .map_err(storage_error)?;
+        let rows = statement.query_map([], row_project).map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
@@ -523,9 +468,7 @@ impl JobRepository for SqliteStore {
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
         let rows = if let Some(project_id) = project_id {
-            statement
-                .query_map(params![project_id.to_string()], row_job)
-                .map_err(storage_error)?
+            statement.query_map(params![project_id.to_string()], row_job).map_err(storage_error)?
         } else {
             statement.query_map([], row_job).map_err(storage_error)?
         };
@@ -534,9 +477,7 @@ impl JobRepository for SqliteStore {
 
     fn transition_job(&self, id: Uuid, next: JobState) -> RepositoryResult<Job> {
         let mut connection = self.connection()?;
-        let tx = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(storage_error)?;
+        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(storage_error)?;
         let current = tx
             .query_row(
                 "SELECT id, project_id, input_kind, input_value, state, progress,
@@ -549,29 +490,17 @@ impl JobRepository for SqliteStore {
             .map_err(storage_error)?
             .ok_or_else(|| RepositoryError::NotFound(format!("job {id}")))?;
         current.state.validate_transition(next)?;
-        let progress = if next == JobState::Completed {
-            Some(1.0_f32)
-        } else {
-            current.progress
-        };
+        let progress = if next == JobState::Completed { Some(1.0_f32) } else { current.progress };
         let updated_at = now_rfc3339();
         let changed = tx
             .execute(
                 "UPDATE jobs SET state = ?1, progress = ?2, updated_at = ?3
                  WHERE id = ?4 AND state = ?5",
-                params![
-                    next.as_str(),
-                    progress,
-                    updated_at,
-                    id.to_string(),
-                    current.state.as_str(),
-                ],
+                params![next.as_str(), progress, updated_at, id.to_string(), current.state.as_str(),],
             )
             .map_err(storage_error)?;
         if changed != 1 {
-            return Err(RepositoryError::Conflict(format!(
-                "job {id} changed while transitioning"
-            )));
+            return Err(RepositoryError::Conflict(format!("job {id} changed while transitioning")));
         }
         let updated = tx
             .query_row(
@@ -602,23 +531,19 @@ impl SettingsRepository for SqliteStore {
     fn load_settings(&self) -> RepositoryResult<ApplicationSettings> {
         let connection = self.connection()?;
         let json = connection
-            .query_row(
-                "SELECT settings_json FROM application_settings WHERE singleton = 1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
+            .query_row("SELECT settings_json FROM application_settings WHERE singleton = 1", [], |row| {
+                row.get::<_, String>(0)
+            })
             .optional()
             .map_err(storage_error)?;
         match json {
-            Some(json) => serde_json::from_str(&json)
-                .map_err(|error| RepositoryError::Storage(error.to_string())),
+            Some(json) => serde_json::from_str(&json).map_err(|error| RepositoryError::Storage(error.to_string())),
             None => Ok(ApplicationSettings::default()),
         }
     }
 
     fn save_settings(&self, settings: &ApplicationSettings) -> RepositoryResult<()> {
-        let json = serde_json::to_string(settings)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let json = serde_json::to_string(settings).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let connection = self.connection()?;
         connection
             .execute(
@@ -637,8 +562,7 @@ impl SettingsRepository for SqliteStore {
 fn prepare_private_path(path: &Path) -> RepositoryResult<()> {
     if let Some(parent) = path.parent() {
         let parent_existed = parent.exists();
-        std::fs::create_dir_all(parent)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        std::fs::create_dir_all(parent).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         if !parent_existed {
             enforce_private_directory_permissions(parent)?;
         }
@@ -692,11 +616,8 @@ mod tests {
         let (_temp, db) = store();
         assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         let connection = db.connection().unwrap();
-        let applied: u32 = connection
-            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
+        let applied: u32 =
+            connection.query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0)).unwrap();
         assert_eq!(applied, LATEST_SCHEMA_VERSION);
     }
 
@@ -730,11 +651,7 @@ mod tests {
         assert_eq!(db.schema_version().unwrap(), 3);
         let connection = db.connection().unwrap();
         let count: u32 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM schema_migrations WHERE version IN (2, 3)",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM schema_migrations WHERE version IN (2, 3)", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 2);
     }
@@ -814,10 +731,7 @@ mod tests {
 
         let db = SqliteStore::open(&path).unwrap();
         assert_eq!(db.schema_version().unwrap(), 3);
-        assert_eq!(
-            db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(),
-            vec![transcript_id]
-        );
+        assert_eq!(db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(), vec![transcript_id]);
     }
 
     #[test]
@@ -829,10 +743,9 @@ mod tests {
         let second_transcript = Uuid::new_v4();
         let now = now_rfc3339();
 
-        for (project_id, transcript_id, suffix) in [
-            (first.id, first_transcript, "first"),
-            (second.id, second_transcript, "second"),
-        ] {
+        for (project_id, transcript_id, suffix) in
+            [(first.id, first_transcript, "first"), (second.id, second_transcript, "second")]
+        {
             let source_id = Uuid::new_v4();
             let media_id = Uuid::new_v4();
             let connection = db.connection().unwrap();
@@ -840,24 +753,14 @@ mod tests {
                 .execute(
                     "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
                      VALUES(?1, ?2, NULL, 'local_file', ?3, NULL, ?4)",
-                    params![
-                        source_id.to_string(),
-                        project_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![source_id.to_string(), project_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection
                 .execute(
                     "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
                      VALUES(?1, ?2, ?3, 4.0, NULL, ?4)",
-                    params![
-                        media_id.to_string(),
-                        source_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![media_id.to_string(), source_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection
@@ -870,14 +773,8 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(
-            db.search_transcript_ids(first.id, "payoff!!!", 10).unwrap(),
-            vec![first_transcript]
-        );
-        assert!(db
-            .search_transcript_ids(first.id, "%%%", 10)
-            .unwrap()
-            .is_empty());
+        assert_eq!(db.search_transcript_ids(first.id, "payoff!!!", 10).unwrap(), vec![first_transcript]);
+        assert!(db.search_transcript_ids(first.id, "%%%", 10).unwrap().is_empty());
     }
 
     #[test]
@@ -892,10 +789,7 @@ mod tests {
     fn job_state_change_is_atomic_and_validated() {
         let (_temp, db) = store();
         let project = project(&db, "Inbox");
-        let job = Job::new(
-            project.id,
-            JobInput::Url("https://youtu.be/example".to_owned()),
-        );
+        let job = Job::new(project.id, JobInput::Url("https://youtu.be/example".to_owned()));
         db.insert_job(&job).unwrap();
 
         let error = db.transition_job(job.id, JobState::Completed).unwrap_err();
@@ -930,11 +824,7 @@ mod tests {
 
         let connection = db.connection().unwrap();
         let raw: String = connection
-            .query_row(
-                "SELECT settings_json FROM application_settings WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT settings_json FROM application_settings WHERE singleton = 1", [], |row| row.get(0))
             .unwrap();
         assert!(!raw.to_ascii_lowercase().contains("api_key"));
     }
@@ -944,11 +834,7 @@ mod tests {
     fn storage_permissions_are_private() {
         use std::os::unix::fs::PermissionsExt;
         let (temp, db) = store();
-        let parent_mode = std::fs::metadata(db.path().parent().unwrap())
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777;
+        let parent_mode = std::fs::metadata(db.path().parent().unwrap()).unwrap().permissions().mode() & 0o777;
         let file_mode = std::fs::metadata(db.path()).unwrap().permissions().mode() & 0o777;
         assert_eq!(parent_mode, 0o700);
         assert_eq!(file_mode, 0o600);

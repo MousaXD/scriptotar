@@ -23,12 +23,12 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 
 ### Windows
 Download and run the installer:
-- **`Scriptotar-1.1.0-x64-setup.exe`** (or `Scriptotar-latest-x64-setup.exe`)
+- **`Scriptotar-Next-1.1.0-x64-setup.exe`** (or rolling `Scriptotar-Next-latest-x64-setup.exe`)
 
 ### Linux (Debian / Ubuntu / Pop!_OS)
 Download and install the Debian package:
 ```bash
-sudo apt install ./Scriptotar-1.1.0-amd64.deb
+sudo apt install ./Scriptotar-Next-1.1.0-amd64.deb
 ```
 
 ---
@@ -47,7 +47,7 @@ Important data within that directory:
 
 ## Historical Archive
 
-The original Python/Tkinter implementation (v1.1.0 – v1.3.0) has been archived in [`archive/legacy-python/`](archive/legacy-python/) for historical reference.
+The original Python/Tkinter implementation (v1.0.0 – v1.3.0) has been archived in [`archive/legacy-python/`](archive/legacy-python/) for historical reference.
 
 ---
 

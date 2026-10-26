@@ -56,8 +56,7 @@ impl UiMigrationStatus {
     pub fn no_legacy_database() -> Self {
         Self {
             state: "no_legacy_db".to_owned(),
-            message: "No Scriptotar Classic database was found in the standard legacy locations."
-                .to_owned(),
+            message: "No Scriptotar Classic database was found in the standard legacy locations.".to_owned(),
             candidates: Vec::new(),
             report: None,
         }
@@ -93,21 +92,11 @@ impl UiMigrationStatus {
     }
 
     pub fn invalid_database(message: impl Into<String>) -> Self {
-        Self {
-            state: "invalid_db".to_owned(),
-            message: message.into(),
-            candidates: Vec::new(),
-            report: None,
-        }
+        Self { state: "invalid_db".to_owned(), message: message.into(), candidates: Vec::new(), report: None }
     }
 
     pub fn failed(message: impl Into<String>) -> Self {
-        Self {
-            state: "failed".to_owned(),
-            message: message.into(),
-            candidates: Vec::new(),
-            report: None,
-        }
+        Self { state: "failed".to_owned(), message: message.into(), candidates: Vec::new(), report: None }
     }
 
     pub fn previously_completed() -> Self {
@@ -122,8 +111,7 @@ impl UiMigrationStatus {
 
     pub fn completed(report: LegacyImportReport) -> Self {
         let message = if report.skipped {
-            "Legacy migration was already completed for this snapshot; no duplicate rows were created."
-                .to_owned()
+            "Legacy migration was already completed for this snapshot; no duplicate rows were created.".to_owned()
         } else {
             format!(
                 "Legacy migration completed: {} projects, {} jobs, {} transcripts, {} research items, {} watchlists, {} AI runs.",
@@ -135,12 +123,7 @@ impl UiMigrationStatus {
                 report.ai_runs,
             )
         };
-        Self {
-            state: "completed".to_owned(),
-            message,
-            candidates: Vec::new(),
-            report: Some(report),
-        }
+        Self { state: "completed".to_owned(), message, candidates: Vec::new(), report: Some(report) }
     }
 }
 

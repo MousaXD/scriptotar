@@ -36,7 +36,10 @@ with tempfile.TemporaryDirectory(prefix='scriptotar-installed-mcp-') as temporar
             response = json.loads(line)
             assert response['id'] == command['id'], response
             if command['method'] == 'initialize':
-                assert response['result']['serverInfo']['name'] == 'scriptotar', response
+                identity = response['result']['serverInfo']
+                assert identity['name'] == 'scriptotar', response
+                expected = json.loads((Path(__file__).resolve().parents[1] / 'apps/desktop/src-tauri/tauri.conf.json').read_text())['version']
+                assert identity['version'] == expected, f'Installed MCP binary is {identity["version"]}; expected {expected}'
             if command['method'] == 'tools/list':
                 assert any(tool['name'] == 'download_video' for tool in response['result']['tools']), response
             if command['method'] == 'tools/call':

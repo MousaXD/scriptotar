@@ -16,14 +16,11 @@ use tauri::{
 };
 use tempfile::TempDir;
 
-use super::{
-    bootstrap_app, create_project, enqueue_local_media, list_jobs, select_project, AppServices,
-};
+use super::{bootstrap_app, create_project, enqueue_local_media, list_jobs, select_project, AppServices};
 use crate::{
-    __cmd__bootstrap_app, __cmd__create_project, __cmd__enqueue_local_media, __cmd__list_jobs,
-    __cmd__select_project, __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
-    __tauri_command_name_enqueue_local_media, __tauri_command_name_list_jobs,
-    __tauri_command_name_select_project,
+    __cmd__bootstrap_app, __cmd__create_project, __cmd__enqueue_local_media, __cmd__list_jobs, __cmd__select_project,
+    __tauri_command_name_bootstrap_app, __tauri_command_name_create_project, __tauri_command_name_enqueue_local_media,
+    __tauri_command_name_list_jobs, __tauri_command_name_select_project,
 };
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
@@ -35,10 +32,7 @@ struct EnvGuard {
 
 impl EnvGuard {
     fn set(values: &[(&'static str, &Path)]) -> Self {
-        let previous = values
-            .iter()
-            .map(|(key, _)| (*key, env::var_os(key)))
-            .collect::<Vec<_>>();
+        let previous = values.iter().map(|(key, _)| (*key, env::var_os(key))).collect::<Vec<_>>();
         for (key, value) in values {
             env::set_var(key, value);
         }
@@ -71,11 +65,7 @@ fn create_fixture_engine_wrapper(temp: &TempDir) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let wrapper = temp.path().join("scriptotar-installed-e2e-engine");
-    fs::write(
-        &wrapper,
-        "#!/bin/sh\nset -eu\nexec python3 \"$SCRIPTOTAR_E2E_FIXTURE_SCRIPT\"\n",
-    )
-    .unwrap();
+    fs::write(&wrapper, "#!/bin/sh\nset -eu\nexec python3 \"$SCRIPTOTAR_E2E_FIXTURE_SCRIPT\"\n").unwrap();
     let mut permissions = fs::metadata(&wrapper).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&wrapper, permissions).unwrap();
@@ -116,9 +106,7 @@ fn build_app(data_dir: &Path) -> App<MockRuntime> {
 }
 
 fn build_webview(app: &App<MockRuntime>, label: &str) -> WebviewWindow<MockRuntime> {
-    WebviewWindowBuilder::new(app, label, Default::default())
-        .build()
-        .expect("build mock-runtime webview")
+    WebviewWindowBuilder::new(app, label, Default::default()).build().expect("build mock-runtime webview")
 }
 
 fn ipc(webview: &WebviewWindow<MockRuntime>, command: &str, args: Value) -> Value {
@@ -128,22 +116,14 @@ fn ipc(webview: &WebviewWindow<MockRuntime>, command: &str, args: Value) -> Valu
             cmd: command.into(),
             callback: CallbackFn(0),
             error: CallbackFn(1),
-            url: if cfg!(windows) {
-                "http://tauri.localhost"
-            } else {
-                "tauri://localhost"
-            }
-            .parse()
-            .unwrap(),
+            url: if cfg!(windows) { "http://tauri.localhost" } else { "tauri://localhost" }.parse().unwrap(),
             body: InvokeBody::Json(args),
             headers: Default::default(),
             invoke_key: INVOKE_KEY.to_owned(),
         },
     )
     .unwrap_or_else(|error| panic!("IPC command {command} failed: {error:?}"));
-    response
-        .deserialize::<Value>()
-        .unwrap_or_else(|error| panic!("IPC response for {command} was not JSON: {error}"))
+    response.deserialize::<Value>().unwrap_or_else(|error| panic!("IPC response for {command} was not JSON: {error}"))
 }
 
 fn completed_job(bootstrap: &Value, job_id: &str) -> bool {
@@ -156,14 +136,9 @@ fn completed_job(bootstrap: &Value, job_id: &str) -> bool {
 
 fn assert_completed_state(bootstrap: &Value, project_id: &str, job_id: &str) {
     assert_eq!(bootstrap["activeProjectId"], project_id);
-    assert!(
-        completed_job(bootstrap, job_id),
-        "completed job missing: {bootstrap:#}"
-    );
+    assert!(completed_job(bootstrap, job_id), "completed job missing: {bootstrap:#}");
 
-    let transcripts = bootstrap["transcripts"]
-        .as_array()
-        .expect("transcripts array");
+    let transcripts = bootstrap["transcripts"].as_array().expect("transcripts array");
     let transcript = transcripts
         .iter()
         .find(|item| item["text"] == EXPECTED_TRANSCRIPT)
@@ -176,9 +151,7 @@ fn assert_completed_state(bootstrap: &Value, project_id: &str, job_id: &str) {
     let library = bootstrap["library"].as_array().expect("library array");
     assert!(
         library.iter().any(|item| {
-            item["kind"] == "Transcript"
-                && item["projectId"] == project_id
-                && item["title"] == "Installed E2E Fixture"
+            item["kind"] == "Transcript" && item["projectId"] == project_id && item["title"] == "Installed E2E Fixture"
         }),
         "transcript library item missing: {bootstrap:#}"
     );
@@ -199,16 +172,8 @@ fn installed_app_e2e_round_trip_survives_restart() {
     let runtime = packaged_runtime();
     let supervisor = runtime.join(executable_name("scriptotar-transcription"));
     let sidecar_script = runtime.join("sidecar.py");
-    assert!(
-        supervisor.is_file(),
-        "missing installed supervisor: {}",
-        supervisor.display()
-    );
-    assert!(
-        sidecar_script.is_file(),
-        "missing installed sidecar: {}",
-        sidecar_script.display()
-    );
+    assert!(supervisor.is_file(), "missing installed supervisor: {}", supervisor.display());
+    assert!(sidecar_script.is_file(), "missing installed sidecar: {}", sidecar_script.display());
 
     let temp = TempDir::new().expect("create E2E temp directory");
     let fixture_engine = create_fixture_engine_wrapper(&temp);
@@ -221,10 +186,7 @@ fn installed_app_e2e_round_trip_survives_restart() {
     ]);
 
     let data_dir = temp.path().join("app-data");
-    assert!(
-        !data_dir.exists(),
-        "E2E must begin with a clean app-data directory"
-    );
+    assert!(!data_dir.exists(), "E2E must begin with a clean app-data directory");
     let media = temp.path().join("fixture.mp4");
     fs::write(&media, b"deterministic local media fixture").expect("write media fixture");
 
@@ -236,16 +198,10 @@ fn installed_app_e2e_round_trip_survives_restart() {
     assert_eq!(initial["jobs"].as_array().unwrap().len(), 0);
 
     let created = ipc(&webview, "create_project", json!({"name": "Installed E2E"}));
-    let project_id = created["activeProjectId"]
-        .as_str()
-        .expect("created project ID")
-        .to_owned();
+    let project_id = created["activeProjectId"].as_str().expect("created project ID").to_owned();
 
-    let queued = ipc(
-        &webview,
-        "enqueue_local_media",
-        json!({"projectId": project_id, "path": media.to_string_lossy()}),
-    );
+    let queued =
+        ipc(&webview, "enqueue_local_media", json!({"projectId": project_id, "path": media.to_string_lossy()}));
     let job_id = queued["id"].as_str().expect("queued job ID").to_owned();
 
     let deadline = Instant::now() + E2E_TIMEOUT;
@@ -269,24 +225,14 @@ fn installed_app_e2e_round_trip_survives_restart() {
     };
 
     assert_completed_state(&completed, &project_id, &job_id);
-    let artifact = data_dir
-        .join("transcription-output")
-        .join(format!("installed-e2e-{job_id}"))
-        .join("transcript.txt");
-    assert_eq!(
-        fs::read_to_string(&artifact).expect("fixture transcript artifact"),
-        format!("{EXPECTED_TRANSCRIPT}\n")
-    );
+    let artifact = data_dir.join("transcription-output").join(format!("installed-e2e-{job_id}")).join("transcript.txt");
+    assert_eq!(fs::read_to_string(&artifact).expect("fixture transcript artifact"), format!("{EXPECTED_TRANSCRIPT}\n"));
 
     drop(webview);
     drop(app);
 
     let restarted_app = build_app(&data_dir);
     let restarted_webview = build_webview(&restarted_app, "installed-e2e-restart");
-    let restored = ipc(
-        &restarted_webview,
-        "select_project",
-        json!({"projectId": project_id}),
-    );
+    let restored = ipc(&restarted_webview, "select_project", json!({"projectId": project_id}));
     assert_completed_state(&restored, &project_id, &job_id);
 }

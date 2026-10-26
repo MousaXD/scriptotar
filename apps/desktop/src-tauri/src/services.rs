@@ -11,14 +11,11 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use scriptotar_ai::{
-    AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind,
-};
+use scriptotar_ai::{AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind};
 use scriptotar_core::{
-    now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository,
-    Creator, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, RepositoryError,
-    RepositoryResult, ResearchItem, ResearchRepository, SettingsRepository, SourceType,
-    TranscriptBundle, Watchlist, WatchlistRepository,
+    now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository, Creator, Job, JobInput,
+    JobRepository, JobState, Project, ProjectRepository, RepositoryError, RepositoryResult, ResearchItem,
+    ResearchRepository, SettingsRepository, SourceType, TranscriptBundle, Watchlist, WatchlistRepository,
 };
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
@@ -29,8 +26,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
-    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem, UiProject, UiResearchItem,
+    UiSettings, UiTranscript, UiTranscriptSegment,
 };
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
@@ -75,13 +72,9 @@ impl AppServices {
         Self::new_with_job_notifier(data_dir, Arc::new(|_| {}))
     }
 
-    pub fn new_with_job_notifier(
-        data_dir: impl AsRef<Path>,
-        notifier: JobChangeNotifier,
-    ) -> RepositoryResult<Self> {
+    pub fn new_with_job_notifier(data_dir: impl AsRef<Path>, notifier: JobChangeNotifier) -> RepositoryResult<Self> {
         let data_dir = data_dir.as_ref();
-        std::fs::create_dir_all(data_dir)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        std::fs::create_dir_all(data_dir).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
         store.run_integration_migrations()?;
         store.recover_interrupted_watchlist_refreshes()?;
@@ -95,11 +88,8 @@ impl AppServices {
             store.create_project(&inbox)?;
             projects.push(inbox);
         }
-        let fallback_project = projects
-            .iter()
-            .find(|project| project.name.eq_ignore_ascii_case("Inbox"))
-            .unwrap_or(&projects[0])
-            .id;
+        let fallback_project =
+            projects.iter().find(|project| project.name.eq_ignore_ascii_case("Inbox")).unwrap_or(&projects[0]).id;
         let mut settings = store.load_settings()?;
         let active_project = settings
             .active_project_id
@@ -115,8 +105,7 @@ impl AppServices {
             notifier,
         );
         let research_command = YtDlpCommand::from_environment();
-        let watchlist_refresher =
-            spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher = spawn_watchlist_refresher(store.clone(), research_command.clone());
 
         Ok(Self {
             store,
@@ -141,10 +130,7 @@ impl AppServices {
         let active_project = self.active_project_id()?;
         let jobs = self.store.list_jobs(Some(active_project))?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
-        Ok(jobs
-            .iter()
-            .map(|job| job_to_ui(job, transcript_links.get(&job.id).copied()))
-            .collect())
+        Ok(jobs.iter().map(|job| job_to_ui(job, transcript_links.get(&job.id).copied())).collect())
     }
 
     pub fn search_transcripts(&self, query: &str, limit: usize) -> RepositoryResult<Vec<String>> {
@@ -158,9 +144,7 @@ impl AppServices {
         let active_project = self.active_project_id()?;
         let transcript = self.store.get_transcript_bundle(transcript_id)?;
         if transcript.project_id != active_project {
-            return Err(RepositoryError::NotFound(format!(
-                "transcript {transcript_id} in active project"
-            )));
+            return Err(RepositoryError::NotFound(format!("transcript {transcript_id} in active project")));
         }
         Ok(transcript_to_ui(&transcript))
     }
@@ -182,9 +166,7 @@ impl AppServices {
     pub fn create_project(&self, name: String) -> RepositoryResult<BootstrapData> {
         let name = name.trim();
         if name.is_empty() {
-            return Err(RepositoryError::Validation(
-                "project name cannot be empty".to_owned(),
-            ));
+            return Err(RepositoryError::Validation("project name cannot be empty".to_owned()));
         }
         let project = Project::new(name);
         self.store.create_project(&project)?;
@@ -195,49 +177,33 @@ impl AppServices {
         self.store.get_project(project_id)?;
         let input_path = Path::new(path.trim());
         if !input_path.is_file() {
-            return Err(RepositoryError::Validation(format!(
-                "local media does not exist: {}",
-                input_path.display()
-            )));
+            return Err(RepositoryError::Validation(format!("local media does not exist: {}", input_path.display())));
         }
-        MediaPolicy
-            .validate_local_input(input_path)
-            .map_err(|error| RepositoryError::Validation(error.to_string()))?;
-        let job = JobService::new(self.store.clone()).enqueue(
-            project_id,
-            JobInput::LocalFile(input_path.to_string_lossy().into_owned()),
-        )?;
-        self.orchestrator
-            .enqueue(job.id)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        MediaPolicy.validate_local_input(input_path).map_err(|error| RepositoryError::Validation(error.to_string()))?;
+        let job = JobService::new(self.store.clone())
+            .enqueue(project_id, JobInput::LocalFile(input_path.to_string_lossy().into_owned()))?;
+        self.orchestrator.enqueue(job.id).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         Ok(job)
     }
 
     pub fn enqueue_url(&self, project_id: Uuid, url: String) -> RepositoryResult<Job> {
         self.store.get_project(project_id)?;
-        let validated = NetworkPolicy
-            .validate(url.trim())
-            .map_err(|error| RepositoryError::Validation(error.to_string()))?;
-        let job = JobService::new(self.store.clone())
-            .enqueue(project_id, JobInput::Url(validated.as_url().to_string()))?;
-        self.orchestrator
-            .enqueue(job.id)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let validated =
+            NetworkPolicy.validate(url.trim()).map_err(|error| RepositoryError::Validation(error.to_string()))?;
+        let job =
+            JobService::new(self.store.clone()).enqueue(project_id, JobInput::Url(validated.as_url().to_string()))?;
+        self.orchestrator.enqueue(job.id).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         Ok(job)
     }
 
     pub fn cancel_job(&self, job_id: Uuid) -> RepositoryResult<()> {
         self.store.get_job(job_id)?;
-        self.orchestrator
-            .cancel(job_id)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))
+        self.orchestrator.cancel(job_id).map_err(|error| RepositoryError::Storage(error.to_string()))
     }
 
     pub fn retry_job(&self, job_id: Uuid) -> RepositoryResult<Job> {
         let job = JobService::new(self.store.clone()).retry(job_id)?;
-        self.orchestrator
-            .enqueue(job.id)
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        self.orchestrator.enqueue(job.id).map_err(|error| RepositoryError::Storage(error.to_string()))?;
         Ok(job)
     }
 
@@ -262,33 +228,21 @@ impl AppServices {
 
     pub fn save_watchlist(&self, query: ResearchQuery) -> Result<BootstrapData, String> {
         validate_research_limit(query.limit)?;
-        let validated = NetworkPolicy
-            .validate(&query.profile_url)
-            .map_err(|error| error.to_string())?;
+        let validated = NetworkPolicy.validate(&query.profile_url).map_err(|error| error.to_string())?;
         let profile_url = validated.as_url().to_string();
         let label = profile_label(validated.as_url());
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
+        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
         self.store
             .upsert_watchlist(active_project, &label, &profile_url, u32::from(query.limit))
             .map_err(|error| error.to_string())?;
-        self.bootstrap_for(active_project)
-            .map_err(|error| error.to_string())
+        self.bootstrap_for(active_project).map_err(|error| error.to_string())
     }
 
     pub fn scan_creator(&self, query: ResearchQuery) -> Result<(), String> {
         validate_research_limit(query.limit)?;
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
-        let settings = self
-            .store
-            .load_settings()
-            .map_err(|error| error.to_string())?;
-        let validated = NetworkPolicy
-            .validate(&query.profile_url)
-            .map_err(|error| error.to_string())?;
+        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
+        let settings = self.store.load_settings().map_err(|error| error.to_string())?;
+        let validated = NetworkPolicy.validate(&query.profile_url).map_err(|error| error.to_string())?;
         let canonical_url = validated.as_url().to_string();
         let watchlist = self
             .store
@@ -304,8 +258,7 @@ impl AppServices {
                 .map_err(|error| error.to_string())?;
             if !claimed {
                 return Err(
-                    "A refresh for this saved watchlist is already running. Try again after it finishes."
-                        .to_owned(),
+                    "A refresh for this saved watchlist is already running. Try again after it finishes.".to_owned()
                 );
             }
         }
@@ -329,15 +282,10 @@ impl AppServices {
             Err(error) => {
                 let safe_error = safe_watchlist_error(&error);
                 if let Some(watchlist) = watchlist {
-                    if let Err(status_error) = self.store.record_watchlist_refresh_failure(
-                        watchlist.id,
-                        &attempted_at,
-                        &safe_error,
-                        None,
-                    ) {
-                        eprintln!(
-                            "[scriptotar-watchlist] could not persist manual refresh failure: {status_error}"
-                        );
+                    if let Err(status_error) =
+                        self.store.record_watchlist_refresh_failure(watchlist.id, &attempted_at, &safe_error, None)
+                    {
+                        eprintln!("[scriptotar-watchlist] could not persist manual refresh failure: {status_error}");
                     }
                 }
                 Err(safe_error)
@@ -350,26 +298,18 @@ impl AppServices {
             return Err("select at least one research item".to_owned());
         }
         if ids.len() > MAX_RESEARCH_QUEUE_ITEMS {
-            return Err(format!(
-                "select at most {MAX_RESEARCH_QUEUE_ITEMS} research items at once"
-            ));
+            return Err(format!("select at most {MAX_RESEARCH_QUEUE_ITEMS} research items at once"));
         }
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
+        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
         let mut unique = Vec::new();
         let mut seen = HashSet::new();
         for raw in ids {
-            let id = Uuid::parse_str(raw.trim())
-                .map_err(|_| format!("invalid research item ID: {raw}"))?;
+            let id = Uuid::parse_str(raw.trim()).map_err(|_| format!("invalid research item ID: {raw}"))?;
             if seen.insert(id) {
                 unique.push(id);
             }
         }
-        let items = self
-            .store
-            .get_research_items(&unique)
-            .map_err(|error| error.to_string())?;
+        let items = self.store.get_research_items(&unique).map_err(|error| error.to_string())?;
         if items.iter().any(|item| item.project_id != active_project) {
             return Err("research selection contains an item from another project".to_owned());
         }
@@ -386,9 +326,7 @@ impl AppServices {
             .collect::<HashSet<_>>();
 
         for item in items {
-            let validated = NetworkPolicy
-                .validate(&item.source_url)
-                .map_err(|error| error.to_string())?;
+            let validated = NetworkPolicy.validate(&item.source_url).map_err(|error| error.to_string())?;
             let source_url = validated.as_url().to_string();
             if !existing_sources.insert(source_url.clone()) {
                 continue;
@@ -396,9 +334,7 @@ impl AppServices {
             let job = JobService::new(self.store.clone())
                 .enqueue(active_project, JobInput::Url(source_url))
                 .map_err(|error| error.to_string())?;
-            self.orchestrator
-                .enqueue(job.id)
-                .map_err(|error| error.to_string())?;
+            self.orchestrator.enqueue(job.id).map_err(|error| error.to_string())?;
         }
         Ok(())
     }
@@ -409,9 +345,7 @@ impl AppServices {
 
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
         let prompt = self.build_ai_prompt(input)?;
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
+        let active_project = self.active_project_id().map_err(|error| error.to_string())?;
         if !input.mode.eq_ignore_ascii_case("byok") {
             self.store
                 .insert_ai_run(&AiRun {
@@ -442,25 +376,12 @@ impl AppServices {
         let config = ProviderConfig {
             provider,
             model: input.model.trim().to_owned(),
-            base_url: input
-                .base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
+            base_url: input.base_url.as_deref().map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned),
         };
-        EndpointPolicy
-            .endpoint_for(&config)
-            .map_err(|error| error.to_string())?;
+        EndpointPolicy.endpoint_for(&config).map_err(|error| error.to_string())?;
         let provider_client = HttpAiProvider::new(provider).map_err(|error| error.to_string())?;
         let response = AiService::new(provider_client)
-            .generate(
-                &config,
-                api_key,
-                &AiRequest {
-                    prompt: prompt.clone(),
-                },
-            )
+            .generate(&config, api_key, &AiRequest { prompt: prompt.clone() })
             .map_err(|error| error.to_string())?;
         self.store
             .insert_ai_run(&AiRun {
@@ -494,14 +415,9 @@ impl AppServices {
         let ai_runs = self.store.list_ai_runs(Some(active_project))?;
         let stored_creators = self.store.list_creators(Some(active_project))?;
         let watchlists = self.store.list_watchlists(Some(active_project))?;
-        let watch_by_url = watchlists
-            .iter()
-            .map(|watchlist| (watchlist.profile_url.clone(), watchlist))
-            .collect::<HashMap<_, _>>();
-        let creator_by_id = stored_creators
-            .iter()
-            .map(|creator| (creator.id, creator))
-            .collect::<HashMap<_, _>>();
+        let watch_by_url =
+            watchlists.iter().map(|watchlist| (watchlist.profile_url.clone(), watchlist)).collect::<HashMap<_, _>>();
+        let creator_by_id = stored_creators.iter().map(|creator| (creator.id, creator)).collect::<HashMap<_, _>>();
         let mut creator_urls = HashSet::new();
         let mut creators = stored_creators
             .iter()
@@ -523,20 +439,17 @@ impl AppServices {
                 }
             })
             .collect::<Vec<_>>();
-        creators.extend(
-            watchlists
-                .iter()
-                .filter(|watchlist| !creator_urls.contains(&watchlist.profile_url))
-                .map(|watchlist| UiCreator {
-                    id: watchlist.id.to_string(),
-                    name: watchlist.label.clone(),
-                    handle: watchlist.profile_url.clone(),
-                    platform: source_platform(&watchlist.profile_url, SourceType::Url),
-                    avatar: None,
-                    watchlisted: true,
-                    last_scanned_at: watchlist.last_scan_at.clone(),
-                }),
-        );
+        creators.extend(watchlists.iter().filter(|watchlist| !creator_urls.contains(&watchlist.profile_url)).map(
+            |watchlist| UiCreator {
+                id: watchlist.id.to_string(),
+                name: watchlist.label.clone(),
+                handle: watchlist.profile_url.clone(),
+                platform: source_platform(&watchlist.profile_url, SourceType::Url),
+                avatar: None,
+                watchlisted: true,
+                last_scanned_at: watchlist.last_scan_at.clone(),
+            },
+        ));
 
         let jobs = all_jobs
             .iter()
@@ -552,19 +465,14 @@ impl AppServices {
                 JobInput::LocalFile(_) => None,
             })
             .collect::<HashSet<_>>();
-        let ui_research = research_items
-            .iter()
-            .map(|item| research_to_ui(item, &creator_by_id, &queued_sources))
-            .collect::<Vec<_>>();
+        let ui_research =
+            research_items.iter().map(|item| research_to_ui(item, &creator_by_id, &queued_sources)).collect::<Vec<_>>();
         let ui_ai_runs = ai_runs.iter().map(ai_run_to_ui).collect::<Vec<_>>();
         let ui_transcripts = transcripts.iter().map(transcript_to_ui).collect::<Vec<_>>();
         let ui_projects = projects
             .iter()
             .map(|project| {
-                let project_jobs = all_jobs
-                    .iter()
-                    .filter(|job| job.project_id == project.id)
-                    .collect::<Vec<_>>();
+                let project_jobs = all_jobs.iter().filter(|job| job.project_id == project.id).collect::<Vec<_>>();
                 let updated_at = project_jobs
                     .iter()
                     .map(|job| job.updated_at.as_str())
@@ -603,20 +511,15 @@ impl AppServices {
             metric: None,
             date: transcript.created_at.clone(),
         }));
-        library.extend(ui_research.iter().map(|item| {
-            UiLibraryItem {
-                id: format!("research:{}", item.id),
-                kind: "Research".to_owned(),
-                title: item.title.clone(),
-                subtitle: item.creator.clone(),
-                project_id: active_project.to_string(),
-                platform: Some(item.platform.clone()),
-                metric: item.views.map(|views| format!("{views} views")),
-                date: item
-                    .published_at
-                    .clone()
-                    .unwrap_or_else(|| "Unknown date".to_owned()),
-            }
+        library.extend(ui_research.iter().map(|item| UiLibraryItem {
+            id: format!("research:{}", item.id),
+            kind: "Research".to_owned(),
+            title: item.title.clone(),
+            subtitle: item.creator.clone(),
+            project_id: active_project.to_string(),
+            platform: Some(item.platform.clone()),
+            metric: item.views.map(|views| format!("{views} views")),
+            date: item.published_at.clone().unwrap_or_else(|| "Unknown date".to_owned()),
         }));
         library.extend(ai_runs.iter().map(|run| {
             UiLibraryItem {
@@ -661,12 +564,8 @@ fn scan_and_persist_research(
     cookie_browser: Option<&str>,
 ) -> Result<usize, String> {
     validate_research_limit(limit)?;
-    store
-        .get_project(project_id)
-        .map_err(|error| error.to_string())?;
-    let validated = NetworkPolicy
-        .validate(profile_url.trim())
-        .map_err(|error| error.to_string())?;
+    store.get_project(project_id).map_err(|error| error.to_string())?;
+    let validated = NetworkPolicy.validate(profile_url.trim()).map_err(|error| error.to_string())?;
     if cookie_browser.is_some() && validated.as_url().scheme() != "https" {
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
@@ -681,15 +580,12 @@ fn scan_and_persist_research(
             created_at: now_rfc3339(),
         })
         .map_err(|error| error.to_string())?;
-    let provider = YtDlpProvider::new(command.clone())
-        .with_cookie_browser(cookie_browser)
-        .map_err(|error| error.to_string())?;
+    let provider =
+        YtDlpProvider::new(command.clone()).with_cookie_browser(cookie_browser).map_err(|error| error.to_string())?;
     let items = ResearchService::new(provider)
         .scan(project_id, Some(creator.id), &canonical_url, limit)
         .map_err(|error| error.to_string())?;
-    let persisted = store
-        .upsert_research_items(&items)
-        .map_err(|error| error.to_string())?;
+    let persisted = store.upsert_research_items(&items).map_err(|error| error.to_string())?;
     let scanned_at = now_rfc3339();
     store
         .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
@@ -698,9 +594,7 @@ fn scan_and_persist_research(
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
-    let retry_at = DateTime::parse_from_rfc3339(value)
-        .ok()?
-        .with_timezone(&Utc);
+    let retry_at = DateTime::parse_from_rfc3339(value).ok()?.with_timezone(&Utc);
     let remaining = retry_at.signed_duration_since(now).to_std().ok()?;
     if remaining.is_zero() {
         None
@@ -725,14 +619,11 @@ fn safe_watchlist_error(error: &str) -> String {
         || lower.contains("connection")
         || lower.contains("dns")
     {
-        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff."
-            .to_owned()
+        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff.".to_owned()
     } else if lower.contains("yt-dlp") || lower.contains("executable") || lower.contains("spawn") {
-        "The local research runtime could not start. Repair the packaged runtime before retrying."
-            .to_owned()
+        "The local research runtime could not start. Repair the packaged runtime before retrying.".to_owned()
     } else if lower.contains("unsupported") || lower.contains("invalid") {
-        "The creator profile could not be scanned because the provider rejected or does not support it."
-            .to_owned()
+        "The creator profile could not be scanned because the provider rejected or does not support it.".to_owned()
     } else {
         "Creator refresh failed. Open Research and run a manual scan for more detail.".to_owned()
     }
@@ -763,10 +654,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             }
         };
         let persisted = match store.list_watchlist_refresh_status(None) {
-            Ok(statuses) => statuses
-                .into_iter()
-                .map(|status| (status.watchlist_id, status))
-                .collect::<HashMap<_, _>>(),
+            Ok(statuses) => statuses.into_iter().map(|status| (status.watchlist_id, status)).collect::<HashMap<_, _>>(),
             Err(error) => {
                 eprintln!("[scriptotar-watchlist] could not load refresh status: {error}");
                 continue;
@@ -793,10 +681,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
                 Ok(true) => {}
                 Ok(false) => continue,
                 Err(error) => {
-                    eprintln!(
-                        "[scriptotar-watchlist] could not claim refresh for {}: {error}",
-                        watchlist.id
-                    );
+                    eprintln!("[scriptotar-watchlist] could not claim refresh for {}: {error}", watchlist.id);
                     continue;
                 }
             }
@@ -810,9 +695,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
                 settings.cookie_browser.as_deref(),
             ) {
                 Ok(_) => {
-                    if let Err(error) =
-                        store.record_watchlist_refresh_success(watchlist.id, &now_rfc3339())
-                    {
+                    if let Err(error) = store.record_watchlist_refresh_success(watchlist.id, &now_rfc3339()) {
                         eprintln!(
                             "[scriptotar-watchlist] could not persist refresh success for {}: {error}",
                             watchlist.id
@@ -821,9 +704,8 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
                 }
                 Err(error) => {
                     let retry = watchlist_failure_retry(settings.watch_interval_minutes);
-                    let retry_at = Utc::now()
-                        + chrono::Duration::from_std(retry)
-                            .unwrap_or_else(|_| chrono::Duration::hours(6));
+                    let retry_at =
+                        Utc::now() + chrono::Duration::from_std(retry).unwrap_or_else(|_| chrono::Duration::hours(6));
                     let retry_at = retry_at.to_rfc3339();
                     let safe_error = safe_watchlist_error(&error);
                     if let Err(status_error) = store.record_watchlist_refresh_failure(
@@ -845,12 +727,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             }
         }
     });
-    WatchlistRefresher {
-        _inner: Arc::new(WatchlistRefresherInner {
-            stop,
-            handle: Mutex::new(Some(handle)),
-        }),
-    }
+    WatchlistRefresher { _inner: Arc::new(WatchlistRefresherInner { stop, handle: Mutex::new(Some(handle)) }) }
 }
 
 fn watchlist_failure_retry(interval_minutes: u32) -> Duration {
@@ -934,16 +811,9 @@ fn task_instructions(task: &str) -> &'static str {
 
 fn build_ai_prompt_text(input: &AiPromptInput) -> Result<String, String> {
     validate_ai_input(input)?;
-    let mut sections = vec![format!(
-        "Task: {}\n\nTask instructions:\n{}",
-        input.task.trim(),
-        task_instructions(&input.task)
-    )];
-    push_prompt_field(
-        &mut sections,
-        "Source transcript / context",
-        &input.source_text,
-    );
+    let mut sections =
+        vec![format!("Task: {}\n\nTask instructions:\n{}", input.task.trim(), task_instructions(&input.task))];
+    push_prompt_field(&mut sections, "Source transcript / context", &input.source_text);
     push_prompt_field(&mut sections, "Topic / goal", &input.topic);
     push_prompt_field(&mut sections, "Audience", &input.audience);
     push_prompt_field(&mut sections, "Target duration", &input.duration);
@@ -993,20 +863,12 @@ fn research_to_ui(
         .raw_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
-        .and_then(|value| {
-            value
-                .get("thumbnail")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
+        .and_then(|value| value.get("thumbnail").and_then(Value::as_str).map(str::to_owned));
     UiResearchItem {
         id: item.id.to_string(),
         creator_id: item.creator_id.map(|id| id.to_string()).unwrap_or_default(),
         creator: creator_name,
-        title: item
-            .title
-            .clone()
-            .unwrap_or_else(|| "Untitled research item".to_owned()),
+        title: item.title.clone().unwrap_or_else(|| "Untitled research item".to_owned()),
         source_url: item.source_url.clone(),
         platform: item.platform.clone(),
         views: item.view_count,
@@ -1048,9 +910,7 @@ fn runtime_config(fallback_output_root: PathBuf) -> RuntimeConfig {
         .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
     let sidecar_script = env::var_os("SCRIPTOTAR_SIDECAR_SCRIPT")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sidecars/transcription/sidecar.py")
-        });
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sidecars/transcription/sidecar.py"));
     RuntimeConfig::new(python, sidecar_script, fallback_output_root)
 }
 
@@ -1068,9 +928,7 @@ fn job_to_ui(job: &Job, completed_transcript_id: Option<Uuid>) -> UiJob {
         source: source.to_owned(),
         state: job.state.as_str().to_owned(),
         stage_label: stage_label(job.state),
-        progress: job
-            .progress
-            .map(|value| (value.clamp(0.0, 1.0) * 100.0).round() as u8),
+        progress: job.progress.map(|value| (value.clamp(0.0, 1.0) * 100.0).round() as u8),
         updated_at: job.updated_at.clone(),
         detail: job.last_error.clone(),
         completed_transcript_id: completed_transcript_id.map(|id| id.to_string()),
@@ -1093,26 +951,13 @@ fn stage_label(state: JobState) -> String {
 }
 
 fn transcript_to_ui(bundle: &TranscriptBundle) -> UiTranscript {
-    let language = bundle
-        .transcript
-        .language
-        .clone()
-        .unwrap_or_else(|| "unknown".to_owned());
-    let direction = if language.to_ascii_lowercase().starts_with("ar") {
-        "rtl"
-    } else {
-        "ltr"
-    };
+    let language = bundle.transcript.language.clone().unwrap_or_else(|| "unknown".to_owned());
+    let direction = if language.to_ascii_lowercase().starts_with("ar") { "rtl" } else { "ltr" };
     let title = bundle
         .source
         .title
         .clone()
-        .or_else(|| {
-            Path::new(&bundle.source.locator)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .map(str::to_owned)
-        })
+        .or_else(|| Path::new(&bundle.source.locator).file_name().and_then(|value| value.to_str()).map(str::to_owned))
         .unwrap_or_else(|| "Transcript".to_owned());
     UiTranscript {
         id: bundle.transcript.id.to_string(),
@@ -1148,14 +993,8 @@ fn parse_segments(raw: Option<&str>) -> Vec<UiTranscriptSegment> {
                     .and_then(Value::as_u64)
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| index.to_string()),
-                start_seconds: object
-                    .get("start")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-                end_seconds: object
-                    .get("end")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
+                start_seconds: object.get("start").and_then(Value::as_f64).unwrap_or_default(),
+                end_seconds: object.get("end").and_then(Value::as_f64).unwrap_or_default(),
                 text,
             })
         })
@@ -1196,10 +1035,7 @@ fn settings_to_ui(settings: &ApplicationSettings) -> UiSettings {
             value => value,
         }
         .to_owned(),
-        cookies: settings
-            .cookie_browser
-            .clone()
-            .unwrap_or_else(|| "none".to_owned()),
+        cookies: settings.cookie_browser.clone().unwrap_or_else(|| "none".to_owned()),
         max_duration: match settings.max_duration_seconds {
             0 => "Unlimited",
             1800 => "30 min",
@@ -1223,20 +1059,13 @@ fn settings_to_ui(settings: &ApplicationSettings) -> UiSettings {
     }
 }
 
-fn settings_from_ui(
-    ui: UiSettings,
-    mut settings: ApplicationSettings,
-) -> RepositoryResult<ApplicationSettings> {
+fn settings_from_ui(ui: UiSettings, mut settings: ApplicationSettings) -> RepositoryResult<ApplicationSettings> {
     settings.output_directory = validate_output_directory(ui.output_directory)?;
     if !["small", "medium", "turbo", "large-v3"].contains(&ui.whisper_model.as_str()) {
-        return Err(RepositoryError::Validation(
-            "unsupported transcription model".to_owned(),
-        ));
+        return Err(RepositoryError::Validation("unsupported transcription model".to_owned()));
     }
     if !["auto", "cpu", "cuda"].contains(&ui.device.as_str()) {
-        return Err(RepositoryError::Validation(
-            "unsupported transcription device".to_owned(),
-        ));
+        return Err(RepositoryError::Validation("unsupported transcription device".to_owned()));
     }
     settings.transcription_model = ui.whisper_model;
     settings.transcription_device = ui.device;
@@ -1244,11 +1073,7 @@ fn settings_from_ui(
         "auto" => "auto",
         "Arabic" => "ar",
         "English" => "en",
-        _ => {
-            return Err(RepositoryError::Validation(
-                "unsupported transcription language".to_owned(),
-            ))
-        }
+        _ => return Err(RepositoryError::Validation("unsupported transcription language".to_owned())),
     }
     .to_owned();
     settings.download_quality = match ui.quality.as_str() {
@@ -1256,32 +1081,20 @@ fn settings_from_ui(
         "1080p" => "1080p",
         "Best" => "best",
         "Audio only" => "audio-only",
-        _ => {
-            return Err(RepositoryError::Validation(
-                "unsupported download quality".to_owned(),
-            ))
-        }
+        _ => return Err(RepositoryError::Validation("unsupported download quality".to_owned())),
     }
     .to_owned();
     settings.cookie_browser = match ui.cookies.as_str() {
         "none" => None,
         "firefox" | "chrome" | "chromium" | "brave" => Some(ui.cookies),
-        _ => {
-            return Err(RepositoryError::Validation(
-                "unsupported cookie browser".to_owned(),
-            ))
-        }
+        _ => return Err(RepositoryError::Validation("unsupported cookie browser".to_owned())),
     };
     settings.max_duration_seconds = match ui.max_duration.as_str() {
         "30 min" => 1800,
         "60 min" => 3600,
         "2 hours" => 7200,
         "Unlimited" => 0,
-        _ => {
-            return Err(RepositoryError::Validation(
-                "unsupported max duration".to_owned(),
-            ))
-        }
+        _ => return Err(RepositoryError::Validation("unsupported max duration".to_owned())),
     };
     settings.copy_source = ui.copy_local_source;
     settings.translate = ui.translate;
@@ -1293,16 +1106,10 @@ fn settings_from_ui(
         "60 min" => 60,
         "2 hours" => 120,
         "6 hours" => 360,
-        _ => {
-            return Err(RepositoryError::Validation(
-                "unsupported watch interval".to_owned(),
-            ))
-        }
+        _ => return Err(RepositoryError::Validation("unsupported watch interval".to_owned())),
     };
     if !["dark", "system"].contains(&ui.appearance.as_str()) {
-        return Err(RepositoryError::Validation(
-            "unsupported appearance setting".to_owned(),
-        ));
+        return Err(RepositoryError::Validation("unsupported appearance setting".to_owned()));
     }
     settings.appearance = ui.appearance;
     Ok(settings)
@@ -1323,23 +1130,17 @@ fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<S
             path.display()
         )));
     }
-    let canonical = std::fs::canonicalize(path).map_err(|error| {
-        RepositoryError::Validation(format!("cannot access output directory: {error}"))
-    })?;
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| RepositoryError::Validation(format!("cannot access output directory: {error}")))?;
     let probe = canonical.join(format!(".scriptotar-write-test-{}", Uuid::new_v4()));
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&probe)
-        .map_err(|error| {
-            RepositoryError::Validation(format!("output directory is not writable: {error}"))
-        })?;
+        .map_err(|error| RepositoryError::Validation(format!("output directory is not writable: {error}")))?;
     drop(file);
-    std::fs::remove_file(&probe).map_err(|error| {
-        RepositoryError::Storage(format!(
-            "failed to clean output-directory write test: {error}"
-        ))
-    })?;
+    std::fs::remove_file(&probe)
+        .map_err(|error| RepositoryError::Storage(format!("failed to clean output-directory write test: {error}")))?;
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
@@ -1447,19 +1248,11 @@ mod tests {
 
     #[test]
     fn persisted_retry_timestamps_handle_clock_changes_safely() {
-        let now = DateTime::parse_from_rfc3339("2026-08-10T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let now = DateTime::parse_from_rfc3339("2026-08-10T10:00:00Z").unwrap().with_timezone(&Utc);
         assert!(persisted_retry_delay("2026-08-10T09:59:59Z", now).is_none());
         assert!(persisted_retry_delay("not-a-time", now).is_none());
-        assert_eq!(
-            persisted_retry_delay("2036-08-10T10:00:00Z", now),
-            Some(MAX_PERSISTED_RETRY_DELAY)
-        );
-        assert_eq!(
-            persisted_retry_delay("2026-08-10T10:05:00Z", now),
-            Some(Duration::from_secs(5 * 60))
-        );
+        assert_eq!(persisted_retry_delay("2036-08-10T10:00:00Z", now), Some(MAX_PERSISTED_RETRY_DELAY));
+        assert_eq!(persisted_retry_delay("2026-08-10T10:05:00Z", now), Some(Duration::from_secs(5 * 60)));
     }
 
     #[test]
@@ -1489,50 +1282,26 @@ mod tests {
         store.run_integration_migrations().unwrap();
         let project = Project::new("Inbox");
         store.create_project(&project).unwrap();
-        let watchlist = store
-            .upsert_watchlist(
-                project.id,
-                "Creator",
-                "https://www.youtube.com/@creator",
-                25,
-            )
-            .unwrap();
-        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let watchlist = store.upsert_watchlist(project.id, "Creator", "https://www.youtube.com/@creator", 25).unwrap();
+        let raw =
+            "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
         let safe = safe_watchlist_error(raw);
-        store
-            .record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None)
-            .unwrap();
-        let displayable = store
-            .watchlist_refresh_status(watchlist.id)
-            .unwrap()
-            .unwrap()
-            .last_error
-            .unwrap();
+        store.record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None).unwrap();
+        let displayable = store.watchlist_refresh_status(watchlist.id).unwrap().unwrap().last_error.unwrap();
         assert_eq!(displayable, safe);
-        for forbidden in [
-            "super-secret",
-            "query-secret",
-            "/home/user",
-            "<html>",
-            "Traceback",
-            "Bearer",
-        ] {
+        for forbidden in ["super-secret", "query-secret", "/home/user", "<html>", "Traceback", "Bearer"] {
             assert!(!displayable.contains(forbidden));
         }
     }
 
     #[test]
     fn output_directory_validation_accepts_writable_directory_and_normalizes_empty() {
-        let temp =
-            std::env::temp_dir().join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
+        let temp = std::env::temp_dir().join(format!("scriptotar-output-validation-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp).unwrap();
         let expected = std::fs::canonicalize(&temp).unwrap();
         let value = validate_output_directory(Some(temp.to_string_lossy().into_owned())).unwrap();
         assert_eq!(value.as_deref(), Some(expected.to_string_lossy().as_ref()));
-        assert_eq!(
-            validate_output_directory(Some("   ".to_owned())).unwrap(),
-            None
-        );
+        assert_eq!(validate_output_directory(Some("   ".to_owned())).unwrap(), None);
         std::fs::remove_dir_all(&temp).unwrap();
     }
 
@@ -1542,17 +1311,10 @@ mod tests {
         let services = AppServices::new(temp.path()).unwrap();
         let bootstrap = services.bootstrap().unwrap();
         let active_project = bootstrap_active_id(&bootstrap);
-        let inbox = bootstrap
-            .projects
-            .iter()
-            .find(|project| project.name.eq_ignore_ascii_case("Inbox"))
-            .unwrap();
+        let inbox = bootstrap.projects.iter().find(|project| project.name.eq_ignore_ascii_case("Inbox")).unwrap();
 
         assert_eq!(inbox.id, active_project.to_string());
-        assert_eq!(
-            services.store.load_settings().unwrap().active_project_id,
-            Some(active_project)
-        );
+        assert_eq!(services.store.load_settings().unwrap().active_project_id, Some(active_project));
     }
 
     #[test]
@@ -1562,18 +1324,12 @@ mod tests {
             let services = AppServices::new(temp.path()).unwrap();
             let bootstrap = services.create_project("Project X".to_owned()).unwrap();
             let selected_project = bootstrap_active_id(&bootstrap);
-            assert_eq!(
-                services.store.load_settings().unwrap().active_project_id,
-                Some(selected_project)
-            );
+            assert_eq!(services.store.load_settings().unwrap().active_project_id, Some(selected_project));
             selected_project
         };
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(
-            bootstrap_active_id(&restarted.bootstrap().unwrap()),
-            selected_project
-        );
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), selected_project);
     }
 
     #[test]
@@ -1588,23 +1344,12 @@ mod tests {
         };
 
         let connection = Connection::open(database_path(&temp)).unwrap();
-        connection
-            .execute(
-                "DELETE FROM projects WHERE id = ?1",
-                params![selected_project.to_string()],
-            )
-            .unwrap();
+        connection.execute("DELETE FROM projects WHERE id = ?1", params![selected_project.to_string()]).unwrap();
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(
-            bootstrap_active_id(&restarted.bootstrap().unwrap()),
-            inbox_id
-        );
-        assert_eq!(
-            restarted.store.load_settings().unwrap().active_project_id,
-            Some(inbox_id)
-        );
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(restarted.store.load_settings().unwrap().active_project_id, Some(inbox_id));
     }
 
     #[test]
@@ -1617,11 +1362,7 @@ mod tests {
 
         let connection = Connection::open(database_path(&temp)).unwrap();
         let raw: String = connection
-            .query_row(
-                "SELECT settings_json FROM application_settings WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT settings_json FROM application_settings WHERE singleton = 1", [], |row| row.get(0))
             .unwrap();
         let mut value: Value = serde_json::from_str(&raw).unwrap();
         value.as_object_mut().unwrap().remove("active_project_id");
@@ -1634,14 +1375,8 @@ mod tests {
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(
-            bootstrap_active_id(&restarted.bootstrap().unwrap()),
-            inbox_id
-        );
-        assert_eq!(
-            restarted.store.load_settings().unwrap().active_project_id,
-            Some(inbox_id)
-        );
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(restarted.store.load_settings().unwrap().active_project_id, Some(inbox_id));
     }
 
     #[test]
@@ -1654,17 +1389,10 @@ mod tests {
 
         let connection = Connection::open(database_path(&temp)).unwrap();
         let raw: String = connection
-            .query_row(
-                "SELECT settings_json FROM application_settings WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT settings_json FROM application_settings WHERE singleton = 1", [], |row| row.get(0))
             .unwrap();
         let mut value: Value = serde_json::from_str(&raw).unwrap();
-        value.as_object_mut().unwrap().insert(
-            "active_project_id".to_owned(),
-            Value::String("broken-id".to_owned()),
-        );
+        value.as_object_mut().unwrap().insert("active_project_id".to_owned(), Value::String("broken-id".to_owned()));
         connection
             .execute(
                 "UPDATE application_settings SET settings_json = ?1 WHERE singleton = 1",
@@ -1674,13 +1402,7 @@ mod tests {
         drop(connection);
 
         let restarted = AppServices::new(temp.path()).unwrap();
-        assert_eq!(
-            bootstrap_active_id(&restarted.bootstrap().unwrap()),
-            inbox_id
-        );
-        assert_eq!(
-            restarted.store.load_settings().unwrap().active_project_id,
-            Some(inbox_id)
-        );
+        assert_eq!(bootstrap_active_id(&restarted.bootstrap().unwrap()), inbox_id);
+        assert_eq!(restarted.store.load_settings().unwrap().active_project_id, Some(inbox_id));
     }
 }

@@ -47,8 +47,7 @@ pub trait ContentRepository: Send + Sync {
         transcript: &Transcript,
     ) -> RepositoryResult<Job>;
 
-    fn list_transcripts(&self, project_id: Option<Uuid>)
-        -> RepositoryResult<Vec<TranscriptBundle>>;
+    fn list_transcripts(&self, project_id: Option<Uuid>) -> RepositoryResult<Vec<TranscriptBundle>>;
 }
 
 pub trait WatchlistRepository: Send + Sync {

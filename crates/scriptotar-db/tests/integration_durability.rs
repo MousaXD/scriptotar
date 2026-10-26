@@ -2,8 +2,8 @@ use std::fs;
 
 use rusqlite::Connection;
 use scriptotar_core::{
-    now_rfc3339, ContentRepository, Job, JobInput, JobRepository, JobState, Media, Project,
-    ProjectRepository, Source, SourceType, Transcript,
+    now_rfc3339, ContentRepository, Job, JobInput, JobRepository, JobState, Media, Project, ProjectRepository, Source,
+    SourceType, Transcript,
 };
 use scriptotar_db::SqliteStore;
 use tempfile::TempDir;
@@ -23,15 +23,11 @@ fn completed_transcript_survives_database_reopen() {
         project_id = project.id;
         store.create_project(&project).unwrap();
 
-        let job = Job::new(
-            project.id,
-            JobInput::LocalFile(temp.path().join("clip.mp4").to_string_lossy().into_owned()),
-        );
+        let job =
+            Job::new(project.id, JobInput::LocalFile(temp.path().join("clip.mp4").to_string_lossy().into_owned()));
         store.insert_job(&job).unwrap();
         store.transition_job(job.id, JobState::Preparing).unwrap();
-        store
-            .transition_job(job.id, JobState::Transcribing)
-            .unwrap();
+        store.transition_job(job.id, JobState::Transcribing).unwrap();
         store.transition_job(job.id, JobState::Processing).unwrap();
 
         let now = now_rfc3339();
@@ -63,9 +59,7 @@ fn completed_transcript_survives_database_reopen() {
             updated_at: now,
         };
         transcript_id = transcript.id;
-        let completed = store
-            .persist_transcription(job.id, &source, &media, &transcript)
-            .unwrap();
+        let completed = store.persist_transcription(job.id, &source, &media, &transcript).unwrap();
         assert_eq!(completed.state, JobState::Completed);
     }
 

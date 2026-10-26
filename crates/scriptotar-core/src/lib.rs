@@ -18,11 +18,7 @@ pub struct Project {
 
 impl Project {
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            name: name.into(),
-            created_at: now_rfc3339(),
-        }
+        Self { id: Uuid::new_v4(), name: name.into(), created_at: now_rfc3339() }
     }
 }
 
@@ -142,9 +138,7 @@ impl JobInput {
         match kind {
             "url" => Ok(Self::Url(value)),
             "local_file" => Ok(Self::LocalFile(value)),
-            other => Err(RepositoryError::Storage(format!(
-                "unknown persisted job input kind: {other}"
-            ))),
+            other => Err(RepositoryError::Storage(format!("unknown persisted job input kind: {other}"))),
         }
     }
 }
@@ -179,10 +173,7 @@ impl JobState {
     }
 
     pub const fn is_active(self) -> bool {
-        matches!(
-            self,
-            Self::Preparing | Self::Downloading | Self::Transcribing | Self::Processing
-        )
+        matches!(self, Self::Preparing | Self::Downloading | Self::Transcribing | Self::Processing)
     }
 
     pub const fn can_transition_to(self, next: Self) -> bool {
@@ -190,24 +181,13 @@ impl JobState {
             Self::Queued => matches!(next, Self::Preparing | Self::Cancelled),
             Self::Preparing => matches!(
                 next,
-                Self::Downloading
-                    | Self::Transcribing
-                    | Self::Failed
-                    | Self::Cancelled
-                    | Self::Interrupted
+                Self::Downloading | Self::Transcribing | Self::Failed | Self::Cancelled | Self::Interrupted
             ),
-            Self::Downloading => matches!(
-                next,
-                Self::Transcribing | Self::Failed | Self::Cancelled | Self::Interrupted
-            ),
-            Self::Transcribing => matches!(
-                next,
-                Self::Processing | Self::Failed | Self::Cancelled | Self::Interrupted
-            ),
-            Self::Processing => matches!(
-                next,
-                Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted
-            ),
+            Self::Downloading => {
+                matches!(next, Self::Transcribing | Self::Failed | Self::Cancelled | Self::Interrupted)
+            }
+            Self::Transcribing => matches!(next, Self::Processing | Self::Failed | Self::Cancelled | Self::Interrupted),
+            Self::Processing => matches!(next, Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted),
             Self::Failed | Self::Cancelled | Self::Interrupted => matches!(next, Self::Queued),
             Self::Completed => false,
         }
@@ -217,9 +197,7 @@ impl JobState {
         if self.can_transition_to(next) {
             Ok(())
         } else {
-            Err(RepositoryError::Conflict(format!(
-                "invalid job transition: {self} -> {next}"
-            )))
+            Err(RepositoryError::Conflict(format!("invalid job transition: {self} -> {next}")))
         }
     }
 }
@@ -244,9 +222,7 @@ impl FromStr for JobState {
             "failed" => Ok(Self::Failed),
             "cancelled" => Ok(Self::Cancelled),
             "interrupted" => Ok(Self::Interrupted),
-            other => Err(RepositoryError::Storage(format!(
-                "unknown persisted job state: {other}"
-            ))),
+            other => Err(RepositoryError::Storage(format!("unknown persisted job state: {other}"))),
         }
     }
 }
@@ -406,22 +382,14 @@ mod tests {
 
     #[test]
     fn local_media_can_skip_downloading() {
-        assert!(JobState::Preparing
-            .validate_transition(JobState::Transcribing)
-            .is_ok());
+        assert!(JobState::Preparing.validate_transition(JobState::Transcribing).is_ok());
     }
 
     #[test]
     fn invalid_transitions_are_rejected() {
-        assert!(JobState::Queued
-            .validate_transition(JobState::Completed)
-            .is_err());
-        assert!(JobState::Completed
-            .validate_transition(JobState::Queued)
-            .is_err());
-        assert!(JobState::Downloading
-            .validate_transition(JobState::Preparing)
-            .is_err());
+        assert!(JobState::Queued.validate_transition(JobState::Completed).is_err());
+        assert!(JobState::Completed.validate_transition(JobState::Queued).is_err());
+        assert!(JobState::Downloading.validate_transition(JobState::Preparing).is_err());
     }
 
     #[test]
@@ -462,10 +430,7 @@ mod tests {
             serde_json::json!(42),
         ] {
             let mut value = serde_json::to_value(ApplicationSettings::default()).unwrap();
-            value
-                .as_object_mut()
-                .unwrap()
-                .insert("active_project_id".to_owned(), malformed);
+            value.as_object_mut().unwrap().insert("active_project_id".to_owned(), malformed);
             let settings: ApplicationSettings = serde_json::from_value(value).unwrap();
             assert_eq!(settings.active_project_id, None);
         }
@@ -474,10 +439,7 @@ mod tests {
     #[test]
     fn active_project_id_round_trips_when_valid() {
         let project_id = Uuid::new_v4();
-        let settings = ApplicationSettings {
-            active_project_id: Some(project_id),
-            ..ApplicationSettings::default()
-        };
+        let settings = ApplicationSettings { active_project_id: Some(project_id), ..ApplicationSettings::default() };
         let json = serde_json::to_string(&settings).unwrap();
         let restored: ApplicationSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.active_project_id, Some(project_id));
