@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
-from runtime_licenses import classify_ffmpeg_license, parse_pyav_ffmpeg_report
+from runtime_licenses import LICENSE_METADATA_FALLBACKS, classify_ffmpeg_license, parse_pyav_ffmpeg_report
 
 
 class RuntimeLicenseTests(unittest.TestCase):
+    def test_tokenizers_requirement_matches_reviewed_license_fallback(self) -> None:
+        reviewed = LICENSE_METADATA_FALLBACKS["tokenizers"]["version"]
+        requirements = Path(__file__).resolve().parents[1] / "requirements-engine.txt"
+        pinned = {
+            line.split("==", 1)[0].strip(): line.split("==", 1)[1].strip()
+            for line in requirements.read_text(encoding="utf-8").splitlines()
+            if "==" in line and not line.strip().startswith("#")
+        }
+        self.assertEqual(pinned.get("tokenizers"), reviewed)
+
     def test_gpl_v3_build(self) -> None:
         self.assertEqual(
             classify_ffmpeg_license("configuration: --enable-gpl --enable-version3 --enable-libx264"),
