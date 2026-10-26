@@ -196,6 +196,10 @@
     </nav>
 
     <div class="sidebar-utility">
+      <button class="settings-link" type="button" title="Connect ChatGPT using the MCP setup wizard" on:click={() => navigate('settings')}>
+        <Icon name="globe" />
+        <span class="nav-label">MCP Setup</span>
+      </button>
       <button class:active={activeView === 'settings'} class="settings-link" aria-current={activeView === 'settings' ? 'page' : undefined} title={`${$translator('nav.settings')} · ,`} on:click={() => navigate('settings')}>
         <Icon name="settings" />
         <span class="nav-label">{$translator('nav.settings')}</span>

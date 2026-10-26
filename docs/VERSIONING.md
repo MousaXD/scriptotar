@@ -1,15 +1,15 @@
 # Scriptotar versioning and release identity
 
-Scriptotar **1.0.0** is the primary cross-platform desktop application built with Rust (Tauri v2) and Svelte 5.
+Scriptotar **1.1.0** is the primary cross-platform desktop application built with Rust (Tauri v2) and Svelte 5.
 
 ## Current product versions
 
 | Product line / component | Current version | Role |
 | --- | --- | --- |
-| Scriptotar desktop application | `1.0.0` | Primary cross-platform desktop application. |
-| Scriptotar Rust workspace | `1.0.0` | Rust crate/application version used by the codebase. |
-| Scriptotar Svelte package | `1.0.0` | Frontend package identity. |
-| Scriptotar transcription sidecar | `1.0.0` | Packaged sidecar/runtime component. |
+| Scriptotar desktop application | `1.1.0` | Primary cross-platform desktop application. |
+| Scriptotar Rust workspace | `1.1.0` | Rust crate/application version used by the codebase. |
+| Scriptotar Svelte package | `1.1.0` | Frontend package identity. |
+| Scriptotar transcription sidecar | `1.1.0` | Packaged sidecar/runtime component. |
 | Sidecar protocol | `1` | Wire-protocol compatibility version. |
 | Scriptotar Classic (Archived) | `1.3.0` | Historical legacy Python/Tkinter line (archived in `archive/legacy-python/`). |
 
@@ -40,8 +40,8 @@ tauri-next-latest
 Versioned package jobs stage files such as:
 
 ```text
-Scriptotar-Next-0.1.0-x64-setup.exe
-Scriptotar-Next-0.1.0-amd64.deb
+Scriptotar-Next-1.1.0-x64-setup.exe
+Scriptotar-Next-1.1.0-amd64.deb
 ```
 
 The rolling GitHub prerelease renames the public assets to:
@@ -99,6 +99,6 @@ For a Next change:
 
 ## Why Classic and Next differ
 
-`1.3.0` describes the mature Python/Tkinter line. `0.1.0` describes the newer Tauri replacement while it is still being released as a preview. Treating one as the version of the other would make package filenames, support statements, migration documentation, and release channels ambiguous.
+`1.3.0` describes the mature Python/Tkinter line. `1.1.0` describes the current Tauri replacement while it is still being released as a preview. Treating one as the version of the other would make package filenames, support statements, migration documentation, and release channels ambiguous.
 
 The repository's version-identity regression test exists to catch accidental drift across these declared source files and the top-level documentation.

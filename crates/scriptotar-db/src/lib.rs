@@ -840,24 +840,14 @@ mod tests {
                 .execute(
                     "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
                      VALUES(?1, ?2, NULL, 'local_file', ?3, NULL, ?4)",
-                    params![
-                        source_id.to_string(),
-                        project_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![source_id.to_string(), project_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection
                 .execute(
                     "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
                      VALUES(?1, ?2, ?3, 4.0, NULL, ?4)",
-                    params![
-                        media_id.to_string(),
-                        source_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![media_id.to_string(), source_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection

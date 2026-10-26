@@ -1,5 +1,6 @@
 <script lang="ts">
   import { locale, setLocale, type AppLocale } from '../i18n';
+  import McpSetupWizard from '../components/McpSetupWizard.svelte';
   import { translator } from '../i18n/translate';
   import type { AppSettings, MigrationStatus } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -16,7 +17,6 @@
   let saveError = '';
   let migrationBusy = false;
   let busy = false;
-
   $: dirty = JSON.stringify(draft) !== JSON.stringify(settings);
 
   const migrationLabel: Record<MigrationStatus['state'], string> = {
@@ -127,6 +127,7 @@
 <div class="settings-layout" aria-busy={busy || migrationBusy}>
   <aside class="settings-nav panel" aria-label={$translator('settings.sections')} data-i18n-ignore>
     <span class="settings-nav-title">{$translator('settings.preferences')}</span>
+    <a href="#settings-mcp">MCP setup wizard</a>
     <a href="#settings-transcription">{$translator('settings.nav.transcription')}</a>
     <a href="#settings-media">{$translator('settings.nav.media')}</a>
     <a href="#settings-storage">{$translator('settings.nav.storage')}</a>
@@ -138,6 +139,8 @@
   </aside>
 
   <div class="settings-stack">
+    <McpSetupWizard {api} />
+
     <section id="settings-transcription" class="panel settings-section"><div><span class="eyebrow">Transcription</span><h2>Speech engine</h2><p>Choose quality and compute defaults. Model installation remains a host responsibility.</p></div><div class="settings-grid"><label><span>Whisper model</span><select bind:value={draft.whisperModel}><option>small</option><option>medium</option><option>turbo</option><option>large-v3</option></select></label><label><span>Device</span><select bind:value={draft.device}><option>auto</option><option>cpu</option><option>cuda</option></select></label><label><span>Language</span><select bind:value={draft.language}><option>auto</option><option>Arabic</option><option>English</option></select></label></div></section>
 
     <section id="settings-media" class="panel settings-section"><div><span class="eyebrow">Downloads + cookies</span><h2>Media acquisition</h2><p>Browser cookies are selected by browser name only. Cookie secrets never belong in the frontend.</p></div><div class="settings-grid"><label><span>Quality</span><select bind:value={draft.quality}><option>720p</option><option>1080p</option><option>Best</option><option>Audio only</option></select></label><label><span>Browser cookies</span><select bind:value={draft.cookies}><option>none</option><option>firefox</option><option>chrome</option><option>chromium</option><option>brave</option></select></label><label><span>Duration safety limit</span><select bind:value={draft.maxDuration}><option>30 min</option><option>60 min</option><option>2 hours</option><option>Unlimited</option></select></label></div></section>

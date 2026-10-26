@@ -76,10 +76,10 @@ pub fn activate_pending_stage(data_dir: &Path) -> Result<PathBuf, String> {
     harden_private_file_permissions(&pending)?;
     let active = data_dir.join(ACTIVE_STAGE_NAME);
     match fs::symlink_metadata(&active) {
-        Ok(_) => Err(
-            "A legacy import staging file already exists. Restart Scriptotar before retrying the migration."
-                .to_owned(),
-        ),
+        Ok(_) => {
+            Err("A legacy import staging file already exists. Restart Scriptotar before retrying the migration."
+                .to_owned())
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             fs::rename(&pending, &active)
                 .map_err(|_| "Could not activate the prepared legacy import snapshot.".to_owned())?;
@@ -128,24 +128,20 @@ fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
             }
             let pending = data_dir.join(PENDING_STAGE_NAME);
             match fs::symlink_metadata(&pending) {
-                Ok(_) => {
-                    return Preparation::Failed(
-                        "A previous migration snapshot is still pending. Restart Scriptotar and retry migration discovery."
-                            .to_owned(),
-                    )
-                }
+                Ok(_) => return Preparation::Failed(
+                    "A previous migration snapshot is still pending. Restart Scriptotar and retry migration discovery."
+                        .to_owned(),
+                ),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                 Err(_) => {
                     return Preparation::Failed(
-                        "Scriptotar could not inspect the pending legacy migration snapshot."
-                            .to_owned(),
+                        "Scriptotar could not inspect the pending legacy migration snapshot.".to_owned(),
                     )
                 }
             }
             if fs::rename(&active, &pending).is_err() {
                 return Preparation::Failed(
-                    "Scriptotar could not safely prepare the existing migration snapshot for import."
-                        .to_owned(),
+                    "Scriptotar could not safely prepare the existing migration snapshot for import.".to_owned(),
                 );
             }
             if let Err(error) = harden_private_file_permissions(&pending) {
@@ -167,8 +163,7 @@ fn prepare_from_roots(data_dir: &Path, roots: &[PathBuf]) -> Preparation {
             if metadata.file_type().is_symlink() || !metadata.is_file() {
                 let _ = quarantine_unsafe_stage(&pending, data_dir);
                 return Preparation::InvalidDatabase(
-                    "The pending legacy migration snapshot is not a regular file. It was not followed."
-                        .to_owned(),
+                    "The pending legacy migration snapshot is not a regular file. It was not followed.".to_owned(),
                 );
             }
             return match validate_sqlite_header(&pending)
@@ -290,8 +285,7 @@ fn discover_legacy_databases(roots: &[PathBuf]) -> Result<Vec<PathBuf>, String> 
             };
             if metadata.file_type().is_symlink() {
                 return Err(
-                    "A legacy database candidate is a symbolic link; Scriptotar refuses to follow it."
-                        .to_owned(),
+                    "A legacy database candidate is a symbolic link; Scriptotar refuses to follow it.".to_owned()
                 );
             }
             if !metadata.is_file() {
@@ -438,10 +432,9 @@ fn stage_legacy_database(candidate: &Path, staged: &Path) -> Result<(), String> 
     if let Err(error) = harden_private_file_permissions(&temporary_path)
         .and_then(|_| validate_sqlite_header(&temporary_path))
         .and_then(|_| match fs::symlink_metadata(staged) {
-            Ok(_) => Err(
-                "A migration snapshot appeared while Scriptotar was staging; it was not overwritten."
-                    .to_owned(),
-            ),
+            Ok(_) => {
+                Err("A migration snapshot appeared while Scriptotar was staging; it was not overwritten.".to_owned())
+            }
             Err(inspect_error) if inspect_error.kind() == io::ErrorKind::NotFound => {
                 fs::rename(&temporary_path, staged)
                     .map_err(|_| "Scriptotar could not finalize the migration snapshot.".to_owned())

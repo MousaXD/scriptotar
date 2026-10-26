@@ -1,4 +1,5 @@
 mod dto;
+mod mcp_connect;
 mod migration;
 mod security;
 mod services;
@@ -19,8 +20,10 @@ use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
     UiTranscript, UiWatchlistStatus,
 };
+use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
+use scriptotar_mcp::{load_permissions, save_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -37,6 +40,184 @@ struct BackendHealth {
 struct OperationalState {
     data_dir: PathBuf,
     store: SqliteStore,
+}
+
+#[derive(Default)]
+struct McpGatewayState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpGatewayStatus {
+    running: bool,
+    endpoint: String,
+}
+
+const MCP_HTTP_PORT: u16 = 39761;
+
+impl Drop for McpGatewayState {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.get_mut() {
+            if let Some(mut child) = child.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    }
+}
+
+fn stop_gateway(state: &McpGatewayState) -> Result<(), String> {
+    let mut child = state
+        .child
+        .lock()
+        .map_err(|_| "MCP gateway state is unavailable")?;
+    if let Some(mut process) = child.take() {
+        let _ = process.kill();
+        let _ = process.wait();
+    }
+    Ok(())
+}
+
+fn gateway_status(state: &McpGatewayState) -> Result<McpGatewayStatus, String> {
+    let mut child = state
+        .child
+        .lock()
+        .map_err(|_| "MCP gateway state is unavailable")?;
+    if let Some(process) = child.as_mut() {
+        if process
+            .try_wait()
+            .map_err(|_| "cannot inspect MCP gateway")?
+            .is_some()
+        {
+            child.take();
+        }
+    }
+    Ok(McpGatewayStatus {
+        running: child.is_some(),
+        endpoint: format!("http://127.0.0.1:{MCP_HTTP_PORT}/mcp"),
+    })
+}
+
+#[tauri::command]
+fn mcp_gateway_status(
+    state: tauri::State<'_, McpGatewayState>,
+) -> Result<McpGatewayStatus, String> {
+    gateway_status(&state)
+}
+
+#[tauri::command]
+fn start_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+) -> Result<McpGatewayStatus, String> {
+    start_gateway_for_data(&operational.data_dir, &gateway)
+}
+
+fn start_gateway_for_data(
+    data_dir: &Path,
+    gateway: &McpGatewayState,
+) -> Result<McpGatewayStatus, String> {
+    let permissions = load_permissions(data_dir)?;
+    if !permissions.enabled || permissions.http_token.is_empty() {
+        return Err("Enable MCP and save local permissions before starting the gateway".into());
+    }
+    if gateway_status(gateway)?.running {
+        return gateway_status(gateway);
+    }
+    let exe = env::current_exe().map_err(|_| "cannot locate Scriptotar executable")?;
+    let child = Command::new(exe)
+        .arg("--mcp-http")
+        .env("SCRIPTOTAR_DB_PATH", data_dir.join("scriptotar.sqlite3"))
+        .env("SCRIPTOTAR_MCP_PORT", MCP_HTTP_PORT.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| "could not launch local MCP gateway")?;
+    {
+        let mut process = gateway
+            .child
+            .lock()
+            .map_err(|_| "MCP gateway state is unavailable")?;
+        *process = Some(child);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let status = gateway_status(gateway)?;
+    if !status.running {
+        return Err(
+            "MCP gateway exited during startup; check whether port 39761 is available".into(),
+        );
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_mcp_gateway(
+    gateway: tauri::State<'_, McpGatewayState>,
+) -> Result<McpGatewayStatus, String> {
+    stop_gateway(&gateway)?;
+    gateway_status(&gateway)
+}
+
+#[tauri::command]
+fn mcp_connection_status(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> McpConnectionStatus {
+    manager.status(&app)
+}
+
+#[tauri::command]
+fn mcp_connect_cloudflare(
+    app: tauri::AppHandle,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_cloudflare(&app, &operational.data_dir, &gateway)
+}
+
+#[tauri::command]
+fn mcp_connect_openai(
+    app: tauri::AppHandle,
+    tunnel_id: String,
+    api_key: String,
+    remember_key: bool,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_openai(
+        &app,
+        &operational.data_dir,
+        &gateway,
+        &tunnel_id,
+        &api_key,
+        remember_key,
+    )
+}
+
+#[tauri::command]
+fn mcp_connect_manual(
+    app: tauri::AppHandle,
+    hostname: String,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_manual(&app, &operational.data_dir, &gateway, &hostname)
+}
+
+#[tauri::command]
+fn mcp_disconnect(
+    app: tauri::AppHandle,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.stop(&operational.data_dir, &gateway)?;
+    Ok(manager.status(&app))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,6 +280,41 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
     }
     if let Ok(joined) = env::join_paths(search_path) {
         env::set_var("PATH", joined);
+    }
+}
+
+/// Discover the same bundled runtime that the GUI registers during Tauri setup.
+/// The CLI MCP path does not enter Tauri's `.setup` hook, so it must configure
+/// the runtime independently before it opens the sidecar/job orchestrator.
+fn packaged_resource_dir_for_executable(executable: &Path) -> Option<PathBuf> {
+    let bin_dir = executable.parent()?;
+    let candidates = [
+        bin_dir.to_path_buf(),
+        bin_dir.join("resources"),
+        bin_dir.join("../Resources"),
+        bin_dir.join("../lib/Scriptotar"),
+        bin_dir.join("../share/Scriptotar"),
+    ];
+    candidates.into_iter().find(|root| {
+        let runtime = root.join("transcription-runtime");
+        runtime.join("sidecar.py").is_file()
+            && runtime
+                .join(packaged_executable("scriptotar-transcription"))
+                .is_file()
+            && runtime
+                .join(packaged_executable("scriptotar-ytdlp"))
+                .is_file()
+    })
+}
+
+/// Called by the packaged binary's `--mcp-stdio` / `--mcp-http` entrypoints.
+/// Never requires a bundled runtime for local source builds with explicit
+/// developer sidecar settings; absent packaging does not unlock capabilities.
+pub fn configure_mcp_cli_runtime(data_dir: &Path) {
+    if let Ok(executable) = env::current_exe() {
+        if let Some(resource_dir) = packaged_resource_dir_for_executable(&executable) {
+            configure_packaged_runtime(&resource_dir, data_dir);
+        }
     }
 }
 
@@ -445,6 +661,36 @@ fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, Stri
 }
 
 #[tauri::command]
+fn get_mcp_permissions(
+    state: tauri::State<'_, OperationalState>,
+) -> Result<McpPermissions, String> {
+    load_permissions(&state.data_dir)
+}
+
+#[tauri::command]
+fn save_mcp_permissions(
+    mut permissions: McpPermissions,
+    acknowledge_sensitive_access: bool,
+    state: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpPermissions, String> {
+    if permissions.enabled
+        && (permissions.write_files || permissions.overwrite_files || permissions.execute_commands)
+        && !acknowledge_sensitive_access
+    {
+        return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
+    }
+    let current = load_permissions(&state.data_dir)?;
+    mcp_connect::preserve_authentication_secrets(&mut permissions, &current);
+    let policy = save_permissions(&state.data_dir, permissions)?;
+    if !policy.enabled {
+        manager.stop(&state.data_dir, &gateway)?;
+    }
+    Ok(policy)
+}
+
+#[tauri::command]
 fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.save_settings(settings).map_err(command_error)
 }
@@ -637,6 +883,8 @@ pub fn run() {
                 store: operational_store,
             });
             app.manage(services);
+            app.manage(McpGatewayState::default());
+            app.manage(McpConnectionState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -659,6 +907,16 @@ pub fn run() {
             retry_job,
             get_settings,
             save_settings,
+            get_mcp_permissions,
+            save_mcp_permissions,
+            mcp_gateway_status,
+            start_mcp_gateway,
+            stop_mcp_gateway,
+            mcp_connection_status,
+            mcp_connect_cloudflare,
+            mcp_connect_openai,
+            mcp_connect_manual,
+            mcp_disconnect,
             save_watchlist,
             scan_creator,
             queue_research,
@@ -673,6 +931,35 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn discovers_linux_packaged_runtime_for_headless_mcp() {
+        let temp = TempDir::new().unwrap();
+        let bin = temp.path().join("bin");
+        let runtime = temp.path().join("lib/Scriptotar/transcription-runtime");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("sidecar.py"), "fixture").unwrap();
+        fs::write(
+            runtime.join(packaged_executable("scriptotar-transcription")),
+            "fixture",
+        )
+        .unwrap();
+        fs::write(
+            runtime.join(packaged_executable("scriptotar-ytdlp")),
+            "fixture",
+        )
+        .unwrap();
+        let exe = bin.join(packaged_executable("scriptotar-desktop"));
+        fs::write(&exe, "fixture").unwrap();
+        assert_eq!(
+            packaged_resource_dir_for_executable(&exe)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            runtime.parent().unwrap().canonicalize().unwrap()
+        );
+    }
 
     #[test]
     fn migration_completion_marker_survives_restart_and_is_private() {

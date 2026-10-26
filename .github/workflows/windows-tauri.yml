@@ -66,6 +66,8 @@ jobs:
         run: >-
           python sidecars/transcription/validate_runtime.py
           apps/desktop/src-tauri/resources/transcription-runtime
+      - name: Bundle pinned, checksum-verified MCP tunnel clients
+        run: python scripts/prepare_mcp_tools.py --platform windows --output apps/desktop/src-tauri/resources/mcp-tools
       - name: Generate Windows icons and platform bundle config
         working-directory: apps/desktop
         shell: pwsh
@@ -77,7 +79,8 @@ jobs:
               "active": true,
               "targets": ["nsis"],
               "resources": {
-                "resources/transcription-runtime/": "transcription-runtime/"
+                "resources/transcription-runtime/": "transcription-runtime/",
+                "resources/mcp-tools/": "mcp-tools/"
               },
               "icon": [
                 "icons/32x32.png",
@@ -206,12 +209,18 @@ jobs:
             throw "Installed Scriptotar backend smoke did not initialize SQLite: $database"
           }
 
+          $tools = Get-ChildItem -Path $installDir -Recurse -Directory -Filter 'mcp-tools' | Select-Object -First 1
+          if (-not $tools) { throw 'MCP tunnel tools missing in installed package' }
+          python scripts/prepare_mcp_tools.py --output $tools.FullName --validate
+
           $runtime = Get-ChildItem -Path $installDir -Recurse -Directory -Filter 'transcription-runtime' | Select-Object -First 1
           if (-not $runtime) {
             throw 'Installed transcription-runtime resource directory was not found.'
           }
           python sidecars/transcription/validate_runtime.py $runtime.FullName
           python sidecars/transcription/compliance_finalize.py --validate $runtime.FullName
+
+          python tests/mcp_installed_smoke.py --binary $app.FullName
 
           $uninstaller = Get-ChildItem -Path $installDir -Recurse -Filter 'uninstall.exe' | Select-Object -First 1
           if (-not $uninstaller) {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import gc
 import json
 import os
@@ -31,14 +32,33 @@ class WhisperCache:
         self.model: Any = None
         self.key: tuple[str, str, str] | None = None
         self.batched_pipeline: Any = None
+        # A missing CUDA dependency can fail when a transcription iterator is
+        # consumed, well after WhisperModel has finished initializing.
+        self.auto_cuda_disabled = False
 
     @staticmethod
-    def choose_device(requested: str) -> tuple[str, str]:
+    def cuda_runtime_available() -> bool:
+        # nvidia-smi only proves that the driver sees a GPU; it does not prove
+        # that the cuBLAS/cuDNN libraries required by CTranslate2 are loaded.
+        if os.name == "nt":
+            libraries = ("cublas64_12.dll", "cublasLt64_12.dll", "cudnn64_9.dll")
+        elif sys.platform.startswith("linux"):
+            libraries = ("libcublas.so.12", "libcublasLt.so.12", "libcudnn.so.9")
+        else:
+            return False
+        try:
+            for library in libraries:
+                ctypes.CDLL(library)
+        except OSError:
+            return False
+        return True
+
+    def choose_device(self, requested: str) -> tuple[str, str]:
         if requested == "cpu":
             return "cpu", "int8"
         if requested == "cuda":
             return "cuda", "int8_float16"
-        if shutil.which("nvidia-smi"):
+        if not self.auto_cuda_disabled and shutil.which("nvidia-smi"):
             try:
                 subprocess.run(
                     ["nvidia-smi"],
@@ -47,10 +67,18 @@ class WhisperCache:
                     timeout=3,
                     check=True,
                 )
-                return "cuda", "int8_float16"
+                if self.cuda_runtime_available():
+                    return "cuda", "int8_float16"
             except (OSError, subprocess.SubprocessError):
                 pass
         return "cpu", "int8"
+
+    def disable_auto_cuda(self) -> None:
+        self.auto_cuda_disabled = True
+        self.model = None
+        self.key = None
+        self.batched_pipeline = None
+        gc.collect()
 
     def load(self, model_name: str, requested_device: str, use_batched: bool, emit: EventSink):
         from faster_whisper import BatchedInferencePipeline, WhisperModel
@@ -68,6 +96,7 @@ class WhisperCache:
         except Exception:
             if requested_device != "auto" or device != "cuda":
                 raise
+            self.disable_auto_cuda()
             device, compute = "cpu", "int8"
             key = (model_name, device, compute)
             model = WhisperModel(model_name, device=device, compute_type=compute)
@@ -235,9 +264,11 @@ def prepare_local(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[
     return media, metadata
 
 
-def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink) -> dict[str, Any]:
+def _transcribe_media_attempt(
+    job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink, requested_device: str
+) -> dict[str, Any]:
     model, batched, device, compute = MODEL_CACHE.load(
-        job.get("model", "medium"), job.get("device", "auto"), bool(job.get("batched", False)), emit
+        job.get("model", "medium"), requested_device, bool(job.get("batched", False)), emit
     )
     language = None if job.get("language") == "auto" else job.get("language")
     task = "translate" if job.get("translate") else "transcribe"
@@ -313,6 +344,57 @@ def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any],
         "compute_type": compute,
         "task": task,
     }
+
+
+def _is_cuda_runtime_failure(exc: Exception) -> bool:
+    if not isinstance(exc, (RuntimeError, OSError)):
+        return False
+    detail = str(exc).lower()
+    return any(
+        marker in detail
+        for marker in (
+            "cuda",
+            "cublas",
+            "cudnn",
+            "cudart",
+            "cufft",
+            "no kernel image",
+        )
+    )
+
+
+def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink) -> dict[str, Any]:
+    requested_device = job.get("device", "auto")
+    try:
+        return _transcribe_media_attempt(job, media, metadata, emit, requested_device)
+    except (RuntimeError, OSError) as exc:
+        if requested_device == "cuda" and _is_cuda_runtime_failure(exc):
+            raise SidecarError(
+                "CUDA_RUNTIME_UNAVAILABLE",
+                "CUDA transcription cannot start because its GPU runtime failed. "
+                "Select CPU or Auto in Scriptotar's transcription settings and retry the job.",
+            ) from exc
+        # A CTranslate2 CUDA failure can be raised by batched.transcribe(),
+        # model.transcribe(), or only when segments_iter is consumed. Always
+        # restart the *entire* attempt on CPU, discarding any partial CUDA
+        # segments, so the transcript and its timestamps cannot be duplicated.
+        if (
+            requested_device != "auto"
+            or MODEL_CACHE.key is None
+            or MODEL_CACHE.key[1] != "cuda"
+            or not _is_cuda_runtime_failure(exc)
+        ):
+            raise
+        MODEL_CACHE.disable_auto_cuda()
+        emit(
+            "progress",
+            {
+                "stage": "transcribing",
+                "percent": 0.0,
+                "message": "CUDA is unavailable during transcription. Retrying on CPU without re-downloading media.",
+            },
+        )
+        return _transcribe_media_attempt(job, media, metadata, emit, "cpu")
 
 
 def write_outputs(

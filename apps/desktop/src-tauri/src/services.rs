@@ -304,8 +304,7 @@ impl AppServices {
                 .map_err(|error| error.to_string())?;
             if !claimed {
                 return Err(
-                    "A refresh for this saved watchlist is already running. Try again after it finishes."
-                        .to_owned(),
+                    "A refresh for this saved watchlist is already running. Try again after it finishes.".to_owned()
                 );
             }
         }
@@ -335,9 +334,7 @@ impl AppServices {
                         &safe_error,
                         None,
                     ) {
-                        eprintln!(
-                            "[scriptotar-watchlist] could not persist manual refresh failure: {status_error}"
-                        );
+                        eprintln!("[scriptotar-watchlist] could not persist manual refresh failure: {status_error}");
                     }
                 }
                 Err(safe_error)
@@ -725,14 +722,12 @@ fn safe_watchlist_error(error: &str) -> String {
         || lower.contains("connection")
         || lower.contains("dns")
     {
-        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff."
-            .to_owned()
+        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff.".to_owned()
     } else if lower.contains("yt-dlp") || lower.contains("executable") || lower.contains("spawn") {
         "The local research runtime could not start. Repair the packaged runtime before retrying."
             .to_owned()
     } else if lower.contains("unsupported") || lower.contains("invalid") {
-        "The creator profile could not be scanned because the provider rejected or does not support it."
-            .to_owned()
+        "The creator profile could not be scanned because the provider rejected or does not support it.".to_owned()
     } else {
         "Creator refresh failed. Open Research and run a manual scan for more detail.".to_owned()
     }
@@ -1497,7 +1492,8 @@ mod tests {
                 25,
             )
             .unwrap();
-        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let raw =
+            "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
         let safe = safe_watchlist_error(raw);
         store
             .record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None)

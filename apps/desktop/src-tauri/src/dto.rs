@@ -122,8 +122,7 @@ impl UiMigrationStatus {
 
     pub fn completed(report: LegacyImportReport) -> Self {
         let message = if report.skipped {
-            "Legacy migration was already completed for this snapshot; no duplicate rows were created."
-                .to_owned()
+            "Legacy migration was already completed for this snapshot; no duplicate rows were created.".to_owned()
         } else {
             format!(
                 "Legacy migration completed: {} projects, {} jobs, {} transcripts, {} research items, {} watchlists, {} AI runs.",

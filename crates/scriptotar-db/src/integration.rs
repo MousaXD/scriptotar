@@ -225,10 +225,7 @@ impl SqliteStore {
                 |row| {
                     let project_id = parse_uuid(row.get::<_, String>(0)?)?;
                     let source_id = parse_uuid(row.get::<_, String>(1)?)?;
-                    let creator_id = row
-                        .get::<_, Option<String>>(2)?
-                        .map(parse_uuid)
-                        .transpose()?;
+                    let creator_id = row.get::<_, Option<String>>(2)?.map(parse_uuid).transpose()?;
                     let source_type: String = row.get(3)?;
                     let source = Source {
                         id: source_id,
@@ -262,12 +259,7 @@ impl SqliteStore {
                         created_at: row.get(17)?,
                         updated_at: row.get(18)?,
                     };
-                    Ok(TranscriptBundle {
-                        project_id,
-                        source,
-                        media,
-                        transcript,
-                    })
+                    Ok(TranscriptBundle { project_id, source, media, transcript })
                 },
             )
             .optional()
@@ -461,12 +453,7 @@ impl SqliteStore {
                         "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
                          VALUES(?1, ?2, ?3, NULL, NULL, ?4)
                          ON CONFLICT(id) DO UPDATE SET local_path = excluded.local_path",
-                        params![
-                            media_id.to_string(),
-                            source_id.to_string(),
-                            local_path,
-                            row.created_at,
-                        ],
+                        params![media_id.to_string(), source_id.to_string(), local_path, row.created_at,],
                     )
                     .map_err(storage_error)?;
                     tx.execute(
@@ -477,13 +464,7 @@ impl SqliteStore {
                             language = excluded.language,
                             text = excluded.text,
                             updated_at = excluded.updated_at",
-                        params![
-                            transcript_id.to_string(),
-                            media_id.to_string(),
-                            row.language,
-                            text,
-                            row.created_at,
-                        ],
+                        params![transcript_id.to_string(), media_id.to_string(), row.language, text, row.created_at,],
                     )
                     .map_err(storage_error)?;
                     tx.execute(
@@ -545,13 +526,7 @@ impl SqliteStore {
                         "INSERT INTO creators(id, project_id, platform, profile_url, display_name, created_at)
                          VALUES(?1, ?2, ?3, ?4, NULL, ?5)
                          ON CONFLICT(id) DO NOTHING",
-                        params![
-                            id.to_string(),
-                            project_id.to_string(),
-                            platform,
-                            row.creator_url,
-                            row.scanned_at,
-                        ],
+                        params![id.to_string(), project_id.to_string(), platform, row.creator_url, row.scanned_at,],
                     )
                     .map_err(storage_error)?;
                     Some(id)
