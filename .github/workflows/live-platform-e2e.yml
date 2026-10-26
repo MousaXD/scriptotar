@@ -44,12 +44,17 @@ jobs:
         run: |
           python3 -m unittest discover -s tests -p test_live_media_contract.py -v
           python3 scripts/live_media_e2e.py --validate-only
-      - name: Require FFmpeg with audio support
+      - name: Install and verify FFmpeg audio decoding tools
         run: |
           set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
           command -v ffmpeg
           command -v ffprobe
-          ffmpeg -version | head -1
+          ffprobe -version
+          ffmpeg -version
       - name: Install production-pinned downloader and Whisper dependencies
         run: |
           python3 -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-engine.txt
