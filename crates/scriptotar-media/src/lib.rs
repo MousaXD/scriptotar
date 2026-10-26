@@ -232,8 +232,13 @@ mod tests {
             protocol: SIDECAR_PROTOCOL_VERSION,
             request_id: None,
             job_id: "abc".to_owned(),
-            input: SidecarInput { kind: SidecarInputKind::File, value: "/tmp/a.mp4".to_owned() },
-            output: SidecarOutput { root: "/tmp/out".to_owned() },
+            input: SidecarInput {
+                kind: SidecarInputKind::File,
+                value: "/tmp/a.mp4".to_owned(),
+            },
+            output: SidecarOutput {
+                root: "/tmp/out".to_owned(),
+            },
             options: SidecarOptions {
                 model: "medium".to_owned(),
                 device: "auto".to_owned(),
@@ -295,9 +300,17 @@ mod tests {
     #[test]
     fn local_media_extension_and_model_are_validated() {
         let policy = MediaPolicy;
-        assert!(policy.validate_local_input(Path::new("/tmp/video.mp4")).is_ok());
-        assert_eq!(policy.validate_local_input(Path::new("/tmp/payload.sh")), Err(MediaError::UnsupportedExtension));
+        assert!(policy
+            .validate_local_input(Path::new("/tmp/video.mp4"))
+            .is_ok());
+        assert_eq!(
+            policy.validate_local_input(Path::new("/tmp/payload.sh")),
+            Err(MediaError::UnsupportedExtension)
+        );
         assert!(policy.validate_model("large-v3").is_ok());
-        assert!(matches!(policy.validate_model("../../model"), Err(MediaError::UnsupportedModel(_))));
+        assert!(matches!(
+            policy.validate_model("../../model"),
+            Err(MediaError::UnsupportedModel(_))
+        ));
     }
 }

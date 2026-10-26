@@ -72,9 +72,14 @@ async fn handle(
     // URL connection, which cannot set custom bearer headers. /mcp requires the
     // original bearer header and never accepts a path secret as a fallback.
     let authorized = if let Some(secret) = public_secret {
-        policy.url_token.len() == 64 && constant_time_eq(secret.as_bytes(), policy.url_token.as_bytes())
+        policy.url_token.len() == 64
+            && constant_time_eq(secret.as_bytes(), policy.url_token.as_bytes())
     } else {
-        let auth = request.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).unwrap_or("");
+        let auth = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
         auth.starts_with("Bearer ")
             && constant_time_eq(
                 auth.strip_prefix("Bearer ").unwrap_or_default().as_bytes(),
@@ -85,18 +90,36 @@ async fn handle(
         return Ok(reply(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     if request.method() == Method::GET {
-        return Ok(reply(StatusCode::METHOD_NOT_ALLOWED, "SSE is not supported"));
+        return Ok(reply(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "SSE is not supported",
+        ));
     }
     if request.method() != Method::POST {
         return Ok(reply(StatusCode::METHOD_NOT_ALLOWED, "method not allowed"));
     }
-    if !request.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").starts_with("application/json")
+    if !request
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .starts_with("application/json")
     {
-        return Ok(reply(StatusCode::UNSUPPORTED_MEDIA_TYPE, "expected application/json"));
+        return Ok(reply(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "expected application/json",
+        ));
     }
-    let accept = request.headers().get(ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let accept = request
+        .headers()
+        .get(ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
     if !accept.contains("application/json") {
-        return Ok(reply(StatusCode::NOT_ACCEPTABLE, "Accept must include application/json"));
+        return Ok(reply(
+            StatusCode::NOT_ACCEPTABLE,
+            "Accept must include application/json",
+        ));
     }
     if request
         .headers()
@@ -105,11 +128,22 @@ async fn handle(
         .and_then(|v| v.parse::<usize>().ok())
         .is_some_and(|v| v > MAX_HTTP_BODY)
     {
-        return Ok(reply(StatusCode::PAYLOAD_TOO_LARGE, "MCP request too large"));
+        return Ok(reply(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "MCP request too large",
+        ));
     }
-    let body = match Limited::new(request.into_body(), MAX_HTTP_BODY).collect().await {
+    let body = match Limited::new(request.into_body(), MAX_HTTP_BODY)
+        .collect()
+        .await
+    {
         Ok(body) => body.to_bytes(),
-        Err(_) => return Ok(reply(StatusCode::PAYLOAD_TOO_LARGE, "MCP request too large")),
+        Err(_) => {
+            return Ok(reply(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "MCP request too large",
+            ))
+        }
     };
     let message: Value = match serde_json::from_slice(&body) {
         Ok(message) => message,
@@ -128,7 +162,10 @@ async fn handle(
     match result {
         Ok(Some(value)) => Ok(json_reply(StatusCode::OK, &value)),
         Ok(None) => Ok(reply(StatusCode::ACCEPTED, "")),
-        Err(_) => Ok(reply(StatusCode::INTERNAL_SERVER_ERROR, "MCP worker failed")),
+        Err(_) => Ok(reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "MCP worker failed",
+        )),
     }
 }
 

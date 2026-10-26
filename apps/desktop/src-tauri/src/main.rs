@@ -1,30 +1,41 @@
 fn main() {
     if std::env::args().any(|argument| argument == "--mcp-stdio" || argument == "--mcp-http") {
         if std::env::var_os("SCRIPTOTAR_DB_PATH").is_none() {
-            let root = std::env::var_os("SCRIPTOTAR_DATA_DIR").map(std::path::PathBuf::from).or_else(|| {
-                #[cfg(target_os = "windows")]
-                {
-                    std::env::var_os("APPDATA")
-                        .map(|p| std::path::PathBuf::from(p).join("io.github.mousaxd.scriptotar"))
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    std::env::var_os("XDG_DATA_HOME")
-                        .map(std::path::PathBuf::from)
-                        .or_else(|| std::env::var_os("HOME").map(|p| std::path::PathBuf::from(p).join(".local/share")))
-                        .map(|p| p.join("io.github.mousaxd.scriptotar"))
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    std::env::var_os("HOME").map(|p| {
-                        std::path::PathBuf::from(p).join("Library/Application Support/io.github.mousaxd.scriptotar")
-                    })
-                }
-                #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-                {
-                    None
-                }
-            });
+            let root = std::env::var_os("SCRIPTOTAR_DATA_DIR")
+                .map(std::path::PathBuf::from)
+                .or_else(|| {
+                    #[cfg(target_os = "windows")]
+                    {
+                        std::env::var_os("APPDATA").map(|p| {
+                            std::path::PathBuf::from(p).join("io.github.mousaxd.scriptotar")
+                        })
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        std::env::var_os("XDG_DATA_HOME")
+                            .map(std::path::PathBuf::from)
+                            .or_else(|| {
+                                std::env::var_os("HOME")
+                                    .map(|p| std::path::PathBuf::from(p).join(".local/share"))
+                            })
+                            .map(|p| p.join("io.github.mousaxd.scriptotar"))
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        std::env::var_os("HOME").map(|p| {
+                            std::path::PathBuf::from(p)
+                                .join("Library/Application Support/io.github.mousaxd.scriptotar")
+                        })
+                    }
+                    #[cfg(not(any(
+                        target_os = "windows",
+                        target_os = "linux",
+                        target_os = "macos"
+                    )))]
+                    {
+                        None
+                    }
+                });
             let Some(root) = root else {
                 eprintln!("MCP requires SCRIPTOTAR_DB_PATH or SCRIPTOTAR_DATA_DIR");
                 std::process::exit(1);

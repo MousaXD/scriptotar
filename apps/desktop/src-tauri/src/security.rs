@@ -31,8 +31,10 @@ pub fn validated_local_media_path(raw: &str) -> Result<String, String> {
     if !path.is_absolute() {
         return Err("local media path must be absolute".to_owned());
     }
-    let canonical = fs::canonicalize(path).map_err(|_| "local media path could not be resolved".to_owned())?;
-    let metadata = fs::metadata(&canonical).map_err(|_| "local media path could not be inspected".to_owned())?;
+    let canonical =
+        fs::canonicalize(path).map_err(|_| "local media path could not be resolved".to_owned())?;
+    let metadata = fs::metadata(&canonical)
+        .map_err(|_| "local media path could not be inspected".to_owned())?;
     if !metadata.is_file() {
         return Err("local media path must point to a regular file".to_owned());
     }
@@ -64,7 +66,9 @@ pub fn validate_research_ids(ids: &[String]) -> Result<(), String> {
         return Err("select at least one research item".to_owned());
     }
     if ids.len() > MAX_RESEARCH_IDS {
-        return Err(format!("at most {MAX_RESEARCH_IDS} research items can be queued at once"));
+        return Err(format!(
+            "at most {MAX_RESEARCH_IDS} research items can be queued at once"
+        ));
     }
     for id in ids {
         let trimmed = id.trim();
@@ -84,7 +88,11 @@ pub fn validate_ai_input(input: &AiPromptInput) -> Result<(), String> {
     validate_text_size("AI provider", input.provider.trim(), 128)?;
     validate_text_size("AI model", input.model.trim(), MAX_MODEL_BYTES)?;
     validate_text_size("AI task", input.task.trim(), MAX_TASK_BYTES)?;
-    validate_text_size("AI source context", &input.source_text, MAX_AI_CONTEXT_BYTES)?;
+    validate_text_size(
+        "AI source context",
+        &input.source_text,
+        MAX_AI_CONTEXT_BYTES,
+    )?;
     for (label, value) in [
         ("AI topic", input.topic.as_str()),
         ("AI audience", input.audience.as_str()),
@@ -103,7 +111,10 @@ pub fn validate_ai_input(input: &AiPromptInput) -> Result<(), String> {
         if api_key.len() > MAX_API_KEY_BYTES {
             return Err("API key exceeds the supported size".to_owned());
         }
-        if api_key.chars().any(|character| matches!(character, '\r' | '\n' | '\0')) {
+        if api_key
+            .chars()
+            .any(|character| matches!(character, '\r' | '\n' | '\0'))
+        {
             return Err("API key contains invalid control characters".to_owned());
         }
     }
@@ -137,7 +148,9 @@ mod tests {
     #[test]
     fn rejects_oversized_ipc_payloads() {
         assert!(validate_project_name(&"x".repeat(MAX_PROJECT_NAME_BYTES + 1)).is_err());
-        let ids = (0..=MAX_RESEARCH_IDS).map(|index| index.to_string()).collect::<Vec<_>>();
+        let ids = (0..=MAX_RESEARCH_IDS)
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>();
         assert!(validate_research_ids(&ids).is_err());
     }
 }

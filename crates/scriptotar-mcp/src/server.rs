@@ -9,11 +9,12 @@ use std::{
 };
 
 use crate::{
-    authorized_directory, authorized_program, authorized_read, authorized_write, load_permissions, McpPermissions,
+    authorized_directory, authorized_program, authorized_read, authorized_write, load_permissions,
+    McpPermissions,
 };
 use scriptotar_core::{
-    now_rfc3339, ContentRepository, Creator, JobInput, JobRepository, Project, ProjectRepository, ResearchRepository,
-    SettingsRepository,
+    now_rfc3339, ContentRepository, Creator, JobInput, JobRepository, Project, ProjectRepository,
+    ResearchRepository, SettingsRepository,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_jobs::JobService;
@@ -42,18 +43,31 @@ impl Server {
             return Err("SCRIPTOTAR_DB_PATH must be absolute".into());
         }
         let store = SqliteStore::open(db_path).map_err(|e| e.to_string())?;
-        let data_dir = fs::canonicalize(db_path.parent().ok_or("database parent directory required")?)
-            .map_err(|_| "could not canonicalize Scriptotar application data directory")?;
-        store.run_integration_migrations().map_err(|e| e.to_string())?;
+        let data_dir = fs::canonicalize(
+            db_path
+                .parent()
+                .ok_or("database parent directory required")?,
+        )
+        .map_err(|_| "could not canonicalize Scriptotar application data directory")?;
+        store
+            .run_integration_migrations()
+            .map_err(|e| e.to_string())?;
         let python = std::env::var_os("SCRIPTOTAR_SIDECAR_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
         let sidecar = std::env::var_os("SCRIPTOTAR_SIDECAR_SCRIPT")
             .map(PathBuf::from)
-            .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../sidecars/transcription/sidecar.py"));
+            .unwrap_or_else(|| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../sidecars/transcription/sidecar.py")
+            });
         let config = RuntimeConfig::new(python, sidecar, data_dir.join("transcription-output"));
         let orchestrator = JobOrchestrator::start(store.clone(), config);
-        Ok(Self { store, data_dir, orchestrator })
+        Ok(Self {
+            store,
+            data_dir,
+            orchestrator,
+        })
     }
 
     pub(crate) fn response(&self, request: &Value) -> Option<Value> {
@@ -63,7 +77,9 @@ impl Server {
         }
         let result = match request.get("method").and_then(Value::as_str) {
             Some("initialize") => {
-                let requested = request.pointer("/params/protocolVersion").and_then(Value::as_str);
+                let requested = request
+                    .pointer("/params/protocolVersion")
+                    .and_then(Value::as_str);
                 let protocol = match requested {
                     Some("2025-11-25") => "2025-11-25",
                     Some("2025-06-18") => "2025-06-18",
@@ -86,7 +102,10 @@ impl Server {
         let Some(name) = params.get("name").and_then(Value::as_str) else {
             return rpc_error(id, -32602, "tool name required");
         };
-        let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        let args = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
         let Some(args) = args.as_object() else {
             return rpc_error(id, -32602, "arguments must be an object");
         };
@@ -103,7 +122,12 @@ impl Server {
         }
     }
 
-    fn run_tool(&self, name: &str, args: &Map<String, Value>, policy: &McpPermissions) -> Result<Value, String> {
+    fn run_tool(
+        &self,
+        name: &str,
+        args: &Map<String, Value>,
+        policy: &McpPermissions,
+    ) -> Result<Value, String> {
         match name {
             "list_projects" => {
                 keys(args, &[], &[])?;
@@ -116,7 +140,10 @@ impl Server {
                 policy.require(policy.read_data, "read-data")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let items = self.store.list_research_items(Some(project)).map_err(|e| e.to_string())?;
+                let items = self
+                    .store
+                    .list_research_items(Some(project))
+                    .map_err(|e| e.to_string())?;
                 Ok(json!(items.into_iter().take(50).map(|i|json!({"id":i.id,"source_url":i.source_url,"platform":i.platform,"title":i.title,"view_count":i.view_count,"published_at":i.published_at})).collect::<Vec<_>>()))
             }
             "list_transcripts" => {
@@ -124,7 +151,10 @@ impl Server {
                 policy.require(policy.read_data, "read-data")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let items = self.store.list_transcripts(Some(project)).map_err(|e| e.to_string())?;
+                let items = self
+                    .store
+                    .list_transcripts(Some(project))
+                    .map_err(|e| e.to_string())?;
                 Ok(json!(items.into_iter().take(50).map(|i|json!({"id":i.transcript.id,"source_url":i.source.locator,"language":i.transcript.language,"updated_at":i.transcript.updated_at})).collect::<Vec<_>>()))
             }
             "get_transcript" => {
@@ -133,7 +163,10 @@ impl Server {
                 let project = uuid_arg(args, "project_id")?;
                 let transcript = uuid_arg(args, "transcript_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let matches = self.store.list_transcripts(Some(project)).map_err(|e| e.to_string())?;
+                let matches = self
+                    .store
+                    .list_transcripts(Some(project))
+                    .map_err(|e| e.to_string())?;
                 let bundle = matches
                     .into_iter()
                     .find(|item| item.transcript.id == transcript)
@@ -151,7 +184,10 @@ impl Server {
                 let query = string_arg(args, "query", 200)?;
                 let limit = optional_number(args, "limit", 10, 1, 50)?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let matches = self.store.search_transcript_ids(project, query, limit).map_err(|e| e.to_string())?;
+                let matches = self
+                    .store
+                    .search_transcript_ids(project, query, limit)
+                    .map_err(|e| e.to_string())?;
                 Ok(json!(matches))
             }
             "list_jobs" => {
@@ -159,7 +195,10 @@ impl Server {
                 policy.require(policy.read_data, "read-data")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let jobs = self.store.list_jobs(Some(project)).map_err(|e| e.to_string())?;
+                let jobs = self
+                    .store
+                    .list_jobs(Some(project))
+                    .map_err(|e| e.to_string())?;
                 Ok(json!(jobs.into_iter().take(50).collect::<Vec<_>>()))
             }
             "create_project" => {
@@ -170,7 +209,9 @@ impl Server {
                     return Err("project name required".into());
                 }
                 let project = Project::new(name);
-                self.store.create_project(&project).map_err(|e| e.to_string())?;
+                self.store
+                    .create_project(&project)
+                    .map_err(|e| e.to_string())?;
                 Ok(json!(project))
             }
             "list_directory" => {
@@ -180,7 +221,8 @@ impl Server {
                 let mut entries = Vec::new();
                 for item in fs::read_dir(&path).map_err(|_| "cannot list directory")? {
                     let entry = item.map_err(|_| "directory listing failed")?;
-                    let meta = fs::symlink_metadata(entry.path()).map_err(|_| "cannot inspect directory entry")?;
+                    let meta = fs::symlink_metadata(entry.path())
+                        .map_err(|_| "cannot inspect directory entry")?;
                     entries.push(json!({"name":entry.file_name().to_string_lossy(), "kind": if meta.file_type().is_symlink() { "symlink" } else if meta.is_dir() { "directory" } else if meta.is_file() { "file" } else { "other" }}));
                     if entries.len() >= 200 {
                         break;
@@ -190,12 +232,15 @@ impl Server {
             }
             "read_file" => {
                 keys(args, &["path"], &[])?;
-                let path = authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
+                let path =
+                    authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
                 // Enforce the byte cap while reading, not just with a pre-read
                 // metadata check: a file can grow after metadata is checked.
                 let file = fs::File::open(&path).map_err(|_| "cannot open file")?;
                 let mut data = Vec::new();
-                file.take(MAX_FILE + 1).read_to_end(&mut data).map_err(|_| "cannot read file")?;
+                file.take(MAX_FILE + 1)
+                    .read_to_end(&mut data)
+                    .map_err(|_| "cannot read file")?;
                 if data.len() as u64 > MAX_FILE {
                     return Err("file exceeds 128 KiB text limit".into());
                 }
@@ -209,16 +254,24 @@ impl Server {
                     .map(Value::as_bool)
                     .unwrap_or(Some(false))
                     .ok_or("overwrite must be a boolean")?;
-                let path = authorized_write(policy, &self.data_dir, string_arg(args, "path", 4096)?, overwrite)?;
+                let path = authorized_write(
+                    policy,
+                    &self.data_dir,
+                    string_arg(args, "path", 4096)?,
+                    overwrite,
+                )?;
                 let content = string_arg(args, "content", MAX_WRITE)?;
-                let mut tmp = tempfile::NamedTempFile::new_in(path.parent().ok_or("invalid output directory")?)
-                    .map_err(|_| "cannot create temporary output")?;
+                let mut tmp = tempfile::NamedTempFile::new_in(
+                    path.parent().ok_or("invalid output directory")?,
+                )
+                .map_err(|_| "cannot create temporary output")?;
                 tmp.write_all(content.as_bytes())
                     .and_then(|_| tmp.as_file_mut().sync_all())
                     .map_err(|_| "cannot write file")?;
                 if !overwrite {
                     // Persist without replacing an existing destination.
-                    tmp.persist_noclobber(&path).map_err(|_| "file exists or could not be saved")?;
+                    tmp.persist_noclobber(&path)
+                        .map_err(|_| "file exists or could not be saved")?;
                 } else {
                     tmp.persist(&path).map_err(|_| "could not replace file")?;
                 }
@@ -241,12 +294,16 @@ impl Server {
                     cli_args.push(arg.to_owned());
                 }
                 let cwd = match args.get("cwd") {
-                    Some(value) => authorized_directory(policy, value.as_str().ok_or("cwd must be a string")?)?,
+                    Some(value) => {
+                        authorized_directory(policy, value.as_str().ok_or("cwd must be a string")?)?
+                    }
                     None => policy
                         .allowed_paths
                         .first()
                         .map(PathBuf::from)
-                        .unwrap_or_else(|| program.parent().unwrap_or(Path::new("/")).to_path_buf()),
+                        .unwrap_or_else(|| {
+                            program.parent().unwrap_or(Path::new("/")).to_path_buf()
+                        }),
                 };
                 run_command(&program, &cli_args, &cwd)
             }
@@ -255,7 +312,9 @@ impl Server {
                 policy.require(policy.search_creators, "search-creators")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let url = NetworkPolicy.validate(string_arg(args, "profile_url", 2048)?).map_err(|e| e.to_string())?;
+                let url = NetworkPolicy
+                    .validate(string_arg(args, "profile_url", 2048)?)
+                    .map_err(|e| e.to_string())?;
                 let limit = optional_number(args, "limit", 20, 1, 200)? as u16;
                 let source = url.as_url();
                 let canonical_url = source.to_string();
@@ -283,7 +342,10 @@ impl Server {
                 let items = ResearchService::new(provider)
                     .scan(project, Some(creator.id), &canonical_url, limit)
                     .map_err(|e| e.to_string())?;
-                let saved = self.store.upsert_research_items(&items).map_err(|e| e.to_string())?;
+                let saved = self
+                    .store
+                    .upsert_research_items(&items)
+                    .map_err(|e| e.to_string())?;
                 Ok(json!({"project_id":project,"creator_id":creator.id,"saved":saved.len()}))
             }
             "enqueue_local_media" => {
@@ -291,12 +353,20 @@ impl Server {
                 policy.require(policy.download_videos, "download-videos")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let path = authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
-                MediaPolicy.validate_local_input(&path).map_err(|e| e.to_string())?;
-                let job = JobService::new(self.store.clone())
-                    .enqueue(project, JobInput::LocalFile(path.to_string_lossy().into_owned()))
+                let path =
+                    authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
+                MediaPolicy
+                    .validate_local_input(&path)
                     .map_err(|e| e.to_string())?;
-                self.orchestrator.enqueue(job.id).map_err(|e| e.to_string())?;
+                let job = JobService::new(self.store.clone())
+                    .enqueue(
+                        project,
+                        JobInput::LocalFile(path.to_string_lossy().into_owned()),
+                    )
+                    .map_err(|e| e.to_string())?;
+                self.orchestrator
+                    .enqueue(job.id)
+                    .map_err(|e| e.to_string())?;
                 Ok(json!({"job_id":job.id,"state":"queued"}))
             }
             "download_video" => {
@@ -304,11 +374,15 @@ impl Server {
                 policy.require(policy.download_videos, "download-videos")?;
                 let project = uuid_arg(args, "project_id")?;
                 self.store.get_project(project).map_err(|e| e.to_string())?;
-                let validated = NetworkPolicy.validate(string_arg(args, "url", 2048)?).map_err(|e| e.to_string())?;
+                let validated = NetworkPolicy
+                    .validate(string_arg(args, "url", 2048)?)
+                    .map_err(|e| e.to_string())?;
                 let job = JobService::new(self.store.clone())
                     .enqueue(project, JobInput::Url(validated.as_url().to_string()))
                     .map_err(|e| e.to_string())?;
-                self.orchestrator.enqueue(job.id).map_err(|e| e.to_string())?;
+                self.orchestrator
+                    .enqueue(job.id)
+                    .map_err(|e| e.to_string())?;
                 Ok(
                     json!({"job_id":job.id,"state":"queued","note":"queued to Scriptotar's existing download and transcription orchestrator; use list_jobs to follow progress"}),
                 )
@@ -332,9 +406,14 @@ fn keys(args: &Map<String, Value>, required: &[&str], optional: &[&str]) -> Resu
     Ok(())
 }
 fn string_arg<'a>(args: &'a Map<String, Value>, key: &str, max: usize) -> Result<&'a str, String> {
-    let value = args.get(key).and_then(Value::as_str).ok_or_else(|| format!("{key} must be a string"))?;
+    let value = args
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{key} must be a string"))?;
     if value.len() > max || value.contains('\0') {
-        return Err(format!("{key} exceeds allowed size or contains invalid NUL"));
+        return Err(format!(
+            "{key} exceeds allowed size or contains invalid NUL"
+        ));
     }
     Ok(value)
 }
@@ -349,8 +428,11 @@ fn optional_number(
     max: usize,
 ) -> Result<usize, String> {
     let value = match args.get(key) {
-        Some(v) => usize::try_from(v.as_u64().ok_or_else(|| format!("{key} must be an integer"))?)
-            .map_err(|_| "number too large")?,
+        Some(v) => usize::try_from(
+            v.as_u64()
+                .ok_or_else(|| format!("{key} must be an integer"))?,
+        )
+        .map_err(|_| "number too large")?,
         None => default,
     };
     if !(min..=max).contains(&value) {
@@ -463,7 +545,11 @@ fn bounded_line(reader: &mut impl BufRead) -> io::Result<Option<(Vec<u8>, bool)>
     loop {
         let buffer = reader.fill_buf()?;
         if buffer.is_empty() {
-            return if result.is_empty() && !overflow { Ok(None) } else { Ok(Some((result, overflow))) };
+            return if result.is_empty() && !overflow {
+                Ok(None)
+            } else {
+                Ok(Some((result, overflow)))
+            };
         }
         let end = buffer.iter().position(|b| *b == b'\n').map(|i| i + 1);
         let taken = end.unwrap_or(buffer.len());
@@ -489,14 +575,22 @@ pub fn run_stdio_from_env() -> Result<(), Box<dyn std::error::Error>> {
     let mut output = io::stdout().lock();
     while let Some((line, too_long)) = bounded_line(&mut input)? {
         if too_long {
-            writeln!(output, "{}", rpc_error(&Value::Null, -32600, "request exceeds 1 MiB limit"))?;
+            writeln!(
+                output,
+                "{}",
+                rpc_error(&Value::Null, -32600, "request exceeds 1 MiB limit")
+            )?;
             output.flush()?;
             continue;
         }
         let request: Value = match serde_json::from_slice(&line) {
             Ok(value) => value,
             Err(_) => {
-                writeln!(output, "{}", rpc_error(&Value::Null, -32700, "invalid JSON"))?;
+                writeln!(
+                    output,
+                    "{}",
+                    rpc_error(&Value::Null, -32700, "invalid JSON")
+                )?;
                 output.flush()?;
                 continue;
             }
@@ -527,17 +621,24 @@ mod tests {
 
 /// The remote tunnel terminates at an authenticated, localhost-only Streamable HTTP endpoint.
 pub fn run_http_from_env() -> Result<(), Box<dyn std::error::Error>> {
-    let path = std::env::var_os("SCRIPTOTAR_DB_PATH").ok_or("SCRIPTOTAR_DB_PATH is required for MCP HTTP")?;
+    let path = std::env::var_os("SCRIPTOTAR_DB_PATH")
+        .ok_or("SCRIPTOTAR_DB_PATH is required for MCP HTTP")?;
     let server = Server::new(Path::new(&path))?;
     let policy = load_permissions(&server.data_dir)?;
     if !policy.enabled || policy.http_token.is_empty() {
-        return Err("Enable MCP in Scriptotar Settings and save a token before starting HTTP".into());
+        return Err(
+            "Enable MCP in Scriptotar Settings and save a token before starting HTTP".into(),
+        );
     }
-    let port = std::env::var("SCRIPTOTAR_MCP_PORT").unwrap_or_else(|_| "39761".into()).parse::<u16>()?;
+    let port = std::env::var("SCRIPTOTAR_MCP_PORT")
+        .unwrap_or_else(|_| "39761".into())
+        .parse::<u16>()?;
     if port < 1024 {
         return Err("MCP HTTP port must be above 1023".into());
     }
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
     runtime.block_on(crate::http::serve(server, port))?;
     Ok(())
 }

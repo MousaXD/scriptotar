@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use scriptotar_core::{
-    AiRun, AiRunMode, AiRunRepository, Creator, ProjectRepository, RepositoryError, RepositoryResult, ResearchItem,
-    ResearchRepository,
+    AiRun, AiRunMode, AiRunRepository, Creator, ProjectRepository, RepositoryError,
+    RepositoryResult, ResearchItem, ResearchRepository,
 };
 use uuid::Uuid;
 
@@ -21,14 +21,20 @@ fn storage_error(error: rusqlite::Error) -> RepositoryError {
 
 fn open_connection(store: &SqliteStore) -> RepositoryResult<Connection> {
     let connection = Connection::open(store.path()).map_err(storage_error)?;
-    connection.pragma_update(None, "foreign_keys", true).map_err(storage_error)?;
-    connection.busy_timeout(Duration::from_secs(5)).map_err(storage_error)?;
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(storage_error)?;
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(storage_error)?;
     Ok(connection)
 }
 
 fn validate_text(field: &str, value: &str, max_chars: usize) -> RepositoryResult<()> {
     if value.trim().is_empty() {
-        return Err(RepositoryError::Validation(format!("{field} cannot be empty")));
+        return Err(RepositoryError::Validation(format!(
+            "{field} cannot be empty"
+        )));
     }
     if value.chars().count() > max_chars {
         return Err(RepositoryError::Validation(format!("{field} is too long")));
@@ -36,7 +42,11 @@ fn validate_text(field: &str, value: &str, max_chars: usize) -> RepositoryResult
     Ok(())
 }
 
-fn validate_optional_text(field: &str, value: Option<&str>, max_chars: usize) -> RepositoryResult<()> {
+fn validate_optional_text(
+    field: &str,
+    value: Option<&str>,
+    max_chars: usize,
+) -> RepositoryResult<()> {
     if value.is_some_and(|value| value.chars().count() > max_chars) {
         return Err(RepositoryError::Validation(format!("{field} is too long")));
     }
@@ -44,8 +54,9 @@ fn validate_optional_text(field: &str, value: Option<&str>, max_chars: usize) ->
 }
 
 fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {
-    Uuid::parse_str(&value)
-        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))
+    Uuid::parse_str(&value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
+    })
 }
 
 fn row_creator(row: &Row<'_>) -> rusqlite::Result<Creator> {
@@ -63,7 +74,10 @@ fn row_research(row: &Row<'_>) -> rusqlite::Result<ResearchItem> {
     Ok(ResearchItem {
         id: parse_uuid(row.get(0)?)?,
         project_id: parse_uuid(row.get(1)?)?,
-        creator_id: row.get::<_, Option<String>>(2)?.map(parse_uuid).transpose()?,
+        creator_id: row
+            .get::<_, Option<String>>(2)?
+            .map(parse_uuid)
+            .transpose()?,
         source_url: row.get(3)?,
         platform: row.get(4)?,
         title: row.get(5)?,
@@ -93,7 +107,9 @@ fn row_ai_run(row: &Row<'_>) -> rusqlite::Result<AiRun> {
             return Err(rusqlite::Error::FromSqlConversionFailure(
                 3,
                 rusqlite::types::Type::Text,
-                Box::new(RepositoryError::Storage(format!("unknown persisted AI run mode: {other}"))),
+                Box::new(RepositoryError::Storage(format!(
+                    "unknown persisted AI run mode: {other}"
+                ))),
             ))
         }
     };
@@ -131,7 +147,11 @@ impl ResearchRepository for SqliteStore {
                 .execute(
                     "UPDATE creators SET platform = ?1, display_name = COALESCE(?2, display_name)
                      WHERE id = ?3",
-                    params![creator.platform, creator.display_name, existing.id.to_string()],
+                    params![
+                        creator.platform,
+                        creator.display_name,
+                        existing.id.to_string()
+                    ],
                 )
                 .map_err(storage_error)?;
             return connection
@@ -171,9 +191,13 @@ impl ResearchRepository for SqliteStore {
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
         let rows = if let Some(project_id) = project_id {
-            statement.query_map(params![project_id.to_string()], row_creator).map_err(storage_error)?
+            statement
+                .query_map(params![project_id.to_string()], row_creator)
+                .map_err(storage_error)?
         } else {
-            statement.query_map([], row_creator).map_err(storage_error)?
+            statement
+                .query_map([], row_creator)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -183,13 +207,19 @@ impl ResearchRepository for SqliteStore {
             return Ok(Vec::new());
         }
         let mut connection = open_connection(self)?;
-        let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate).map_err(storage_error)?;
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(storage_error)?;
         let mut persisted = Vec::with_capacity(items.len());
         for item in items {
             validate_text("research source URL", &item.source_url, MAX_URL_CHARS)?;
             validate_text("research platform", &item.platform, 64)?;
             validate_optional_text("research title", item.title.as_deref(), MAX_TITLE_CHARS)?;
-            validate_optional_text("research raw metadata", item.raw_json.as_deref(), MAX_RAW_JSON_CHARS)?;
+            validate_optional_text(
+                "research raw metadata",
+                item.raw_json.as_deref(),
+                MAX_RAW_JSON_CHARS,
+            )?;
             let existing_id = tx
                 .query_row(
                     "SELECT id FROM research_items
@@ -203,7 +233,10 @@ impl ResearchRepository for SqliteStore {
             let is_new = existing_id.is_none();
             let id = existing_id
                 .as_deref()
-                .map(|value| Uuid::parse_str(value).map_err(|error| RepositoryError::Storage(error.to_string())))
+                .map(|value| {
+                    Uuid::parse_str(value)
+                        .map_err(|error| RepositoryError::Storage(error.to_string()))
+                })
                 .transpose()?
                 .unwrap_or(item.id);
             if is_new {
@@ -273,9 +306,13 @@ impl ResearchRepository for SqliteStore {
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
         let rows = if let Some(project_id) = project_id {
-            statement.query_map(params![project_id.to_string()], row_research).map_err(storage_error)?
+            statement
+                .query_map(params![project_id.to_string()], row_research)
+                .map_err(storage_error)?
         } else {
-            statement.query_map([], row_research).map_err(storage_error)?
+            statement
+                .query_map([], row_research)
+                .map_err(storage_error)?
         };
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
@@ -342,7 +379,9 @@ impl AiRunRepository for SqliteStore {
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
         let rows = if let Some(project_id) = project_id {
-            statement.query_map(params![project_id.to_string()], row_ai_run).map_err(storage_error)?
+            statement
+                .query_map(params![project_id.to_string()], row_ai_run)
+                .map_err(storage_error)?
         } else {
             statement.query_map([], row_ai_run).map_err(storage_error)?
         };
@@ -383,7 +422,10 @@ mod tests {
         renamed.display_name = Some("Creator renamed".to_owned());
         let second_creator = store.upsert_creator(&renamed).unwrap();
         assert_eq!(first_creator.id, second_creator.id);
-        assert_eq!(second_creator.display_name.as_deref(), Some("Creator renamed"));
+        assert_eq!(
+            second_creator.display_name.as_deref(),
+            Some("Creator renamed")
+        );
 
         let first = ResearchItem {
             id: Uuid::new_v4(),
@@ -400,7 +442,9 @@ mod tests {
             raw_json: None,
             scanned_at: now_rfc3339(),
         };
-        let first_saved = store.upsert_research_items(std::slice::from_ref(&first)).unwrap();
+        let first_saved = store
+            .upsert_research_items(std::slice::from_ref(&first))
+            .unwrap();
         let mut refreshed = first;
         refreshed.id = Uuid::new_v4();
         refreshed.title = Some("Refreshed".to_owned());

@@ -56,7 +56,8 @@ impl UiMigrationStatus {
     pub fn no_legacy_database() -> Self {
         Self {
             state: "no_legacy_db".to_owned(),
-            message: "No Scriptotar Classic database was found in the standard legacy locations.".to_owned(),
+            message: "No Scriptotar Classic database was found in the standard legacy locations."
+                .to_owned(),
             candidates: Vec::new(),
             report: None,
         }
@@ -92,11 +93,21 @@ impl UiMigrationStatus {
     }
 
     pub fn invalid_database(message: impl Into<String>) -> Self {
-        Self { state: "invalid_db".to_owned(), message: message.into(), candidates: Vec::new(), report: None }
+        Self {
+            state: "invalid_db".to_owned(),
+            message: message.into(),
+            candidates: Vec::new(),
+            report: None,
+        }
     }
 
     pub fn failed(message: impl Into<String>) -> Self {
-        Self { state: "failed".to_owned(), message: message.into(), candidates: Vec::new(), report: None }
+        Self {
+            state: "failed".to_owned(),
+            message: message.into(),
+            candidates: Vec::new(),
+            report: None,
+        }
     }
 
     pub fn previously_completed() -> Self {
@@ -123,7 +134,12 @@ impl UiMigrationStatus {
                 report.ai_runs,
             )
         };
-        Self { state: "completed".to_owned(), message, candidates: Vec::new(), report: Some(report) }
+        Self {
+            state: "completed".to_owned(),
+            message,
+            candidates: Vec::new(),
+            report: Some(report),
+        }
     }
 }
 

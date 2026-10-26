@@ -13,7 +13,10 @@ fn persisted_running_job_is_interrupted_after_restart_and_requires_explicit_retr
     store.create_project(&project).unwrap();
     let service = JobService::new(store.clone());
     let job = service
-        .enqueue(project.id, JobInput::LocalFile(temp.path().join("clip.mp4").to_string_lossy().into_owned()))
+        .enqueue(
+            project.id,
+            JobInput::LocalFile(temp.path().join("clip.mp4").to_string_lossy().into_owned()),
+        )
         .unwrap();
     service.advance(job.id, JobState::Preparing).unwrap();
     service.advance(job.id, JobState::Transcribing).unwrap();
@@ -23,7 +26,10 @@ fn persisted_running_job_is_interrupted_after_restart_and_requires_explicit_retr
     let reopened = SqliteStore::open(&database).unwrap();
     let restarted = JobService::new(reopened.clone());
     assert_eq!(restarted.recover_after_unclean_shutdown().unwrap(), 1);
-    assert_eq!(reopened.get_job(job.id).unwrap().state, JobState::Interrupted);
+    assert_eq!(
+        reopened.get_job(job.id).unwrap().state,
+        JobState::Interrupted
+    );
 
     let retried = restarted.retry(job.id).unwrap();
     assert_eq!(retried.state, JobState::Queued);

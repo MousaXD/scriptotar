@@ -38,7 +38,9 @@ impl McpPermissions {
             return Err("MCP is disabled in Scriptotar Settings".into());
         }
         if !allowed {
-            return Err(format!("{capability} permission is disabled in Scriptotar Settings"));
+            return Err(format!(
+                "{capability} permission is disabled in Scriptotar Settings"
+            ));
         }
         Ok(())
     }
@@ -46,12 +48,14 @@ impl McpPermissions {
     /// Only the desktop app calls save_permissions. The MCP protocol never exposes it.
     pub fn validate(&mut self) -> Result<(), String> {
         if !self.url_token.is_empty()
-            && (self.url_token.len() != 64 || !self.url_token.bytes().all(|c| c.is_ascii_hexdigit()))
+            && (self.url_token.len() != 64
+                || !self.url_token.bytes().all(|c| c.is_ascii_hexdigit()))
         {
             return Err("invalid MCP URL secret".into());
         }
         if !self.http_token.is_empty()
-            && (self.http_token.len() != 64 || !self.http_token.bytes().all(|c| c.is_ascii_hexdigit()))
+            && (self.http_token.len() != 64
+                || !self.http_token.bytes().all(|c| c.is_ascii_hexdigit()))
         {
             return Err("invalid MCP HTTP bearer token".into());
         }
@@ -63,7 +67,8 @@ impl McpPermissions {
         }
         for program in &mut self.allowed_programs {
             let path = strict_absolute(program)?;
-            let canonical = fs::canonicalize(&path).map_err(|_| "approved executable does not exist".to_owned())?;
+            let canonical = fs::canonicalize(&path)
+                .map_err(|_| "approved executable does not exist".to_owned())?;
             if !canonical.is_file() {
                 return Err("approved executable must be a file".into());
             }
@@ -75,10 +80,15 @@ impl McpPermissions {
         self.allowed_programs.dedup();
         if self.enabled {
             if (self.read_files || self.write_files) && self.allowed_paths.is_empty() {
-                return Err("file access requires a directory explicitly approved in the app".into());
+                return Err(
+                    "file access requires a directory explicitly approved in the app".into(),
+                );
             }
             if self.execute_commands && self.allowed_programs.is_empty() {
-                return Err("command execution requires an executable explicitly approved in the app".into());
+                return Err(
+                    "command execution requires an executable explicitly approved in the app"
+                        .into(),
+                );
             }
             if self.overwrite_files && !self.write_files {
                 return Err("overwrite requires write-files permission".into());
@@ -93,15 +103,19 @@ fn strict_absolute(raw: &str) -> Result<PathBuf, String> {
         return Err("invalid path".into());
     }
     let path = PathBuf::from(raw);
-    if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir | Component::CurDir)) {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::CurDir))
+    {
         return Err("an absolute normalized path is required".into());
     }
     Ok(path)
 }
 
 fn canonical_directory(raw: &str) -> Result<PathBuf, String> {
-    let canonical =
-        fs::canonicalize(strict_absolute(raw)?).map_err(|_| "approved directory does not exist".to_owned())?;
+    let canonical = fs::canonicalize(strict_absolute(raw)?)
+        .map_err(|_| "approved directory does not exist".to_owned())?;
     if !canonical.is_dir() {
         return Err("approved path must be a directory".into());
     }
@@ -130,8 +144,8 @@ pub fn load_permissions(data_dir: &Path) -> Result<McpPermissions, String> {
         }
     }
     let content = fs::read(&path).map_err(|_| "MCP permissions cannot be read".to_owned())?;
-    let mut policy: McpPermissions =
-        serde_json::from_slice(&content).map_err(|_| "MCP permissions are invalid; access denied".to_owned())?;
+    let mut policy: McpPermissions = serde_json::from_slice(&content)
+        .map_err(|_| "MCP permissions are invalid; access denied".to_owned())?;
     policy.validate()?;
     Ok(policy)
 }
@@ -142,7 +156,10 @@ pub fn new_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-pub fn save_permissions(data_dir: &Path, mut policy: McpPermissions) -> Result<McpPermissions, String> {
+pub fn save_permissions(
+    data_dir: &Path,
+    mut policy: McpPermissions,
+) -> Result<McpPermissions, String> {
     policy.validate()?;
     if policy.http_token.is_empty() {
         policy.http_token = new_token();
@@ -150,7 +167,8 @@ pub fn save_permissions(data_dir: &Path, mut policy: McpPermissions) -> Result<M
     if policy.url_token.is_empty() {
         policy.url_token = new_token();
     }
-    fs::create_dir_all(data_dir).map_err(|_| "could not prepare Scriptotar data directory".to_owned())?;
+    fs::create_dir_all(data_dir)
+        .map_err(|_| "could not prepare Scriptotar data directory".to_owned())?;
     let dest = permissions_path(data_dir);
     if let Ok(meta) = fs::symlink_metadata(&dest) {
         if !meta.is_file() || meta.file_type().is_symlink() {
@@ -166,7 +184,9 @@ pub fn save_permissions(data_dir: &Path, mut policy: McpPermissions) -> Result<M
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(&tmp).map_err(|_| "could not create private permissions file".to_owned())?;
+        let mut file = options
+            .open(&tmp)
+            .map_err(|_| "could not create private permissions file".to_owned())?;
         file.write_all(&serde_json::to_vec_pretty(&policy).map_err(|e| e.to_string())?)
             .and_then(|_| file.sync_all())
             .map_err(|_| "could not persist MCP permissions".to_owned())?;
@@ -180,7 +200,11 @@ pub fn save_permissions(data_dir: &Path, mut policy: McpPermissions) -> Result<M
     result.map(|()| policy)
 }
 
-pub fn authorized_read(policy: &McpPermissions, data_dir: &Path, raw: &str) -> Result<PathBuf, String> {
+pub fn authorized_read(
+    policy: &McpPermissions,
+    data_dir: &Path,
+    raw: &str,
+) -> Result<PathBuf, String> {
     policy.require(policy.read_files, "read-files")?;
     let path = strict_absolute(raw)?;
     let resolved = fs::canonicalize(&path).map_err(|_| "file not found".to_owned())?;
@@ -222,8 +246,13 @@ pub fn authorized_write(
 
 pub fn authorized_program(policy: &McpPermissions, raw: &str) -> Result<PathBuf, String> {
     policy.require(policy.execute_commands, "execute-commands")?;
-    let actual = fs::canonicalize(strict_absolute(raw)?).map_err(|_| "executable not found".to_owned())?;
-    if !policy.allowed_programs.iter().any(|program| Path::new(program) == actual) {
+    let actual =
+        fs::canonicalize(strict_absolute(raw)?).map_err(|_| "executable not found".to_owned())?;
+    if !policy
+        .allowed_programs
+        .iter()
+        .any(|program| Path::new(program) == actual)
+    {
         return Err("executable is not approved in Scriptotar Settings".into());
     }
     if !actual.is_file() {
@@ -239,7 +268,11 @@ pub fn authorized_directory(policy: &McpPermissions, raw: &str) -> Result<PathBu
 }
 
 fn authorize_path(policy: &McpPermissions, path: &Path) -> Result<(), String> {
-    if policy.allowed_paths.iter().any(|root| path.starts_with(root)) {
+    if policy
+        .allowed_paths
+        .iter()
+        .any(|root| path.starts_with(root))
+    {
         Ok(())
     } else {
         Err("path is outside the directories approved in Scriptotar Settings".into())
@@ -249,11 +282,22 @@ fn authorize_path(policy: &McpPermissions, path: &Path) -> Result<(), String> {
 fn block_policy_file(data_dir: &Path, path: &Path) -> Result<(), String> {
     // Distinct database permissions must not be bypassed through file tools.
     // SQLite WAL/SHM files can contain database contents and transactional state.
-    let protected = ["mcp-permissions.json", "scriptotar.sqlite3", "scriptotar.sqlite3-wal", "scriptotar.sqlite3-shm"];
+    let protected = [
+        "mcp-permissions.json",
+        "scriptotar.sqlite3",
+        "scriptotar.sqlite3-wal",
+        "scriptotar.sqlite3-shm",
+    ];
     if path.parent() == Some(data_dir)
-        && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| protected.contains(&name))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| protected.contains(&name))
     {
-        Err("MCP cannot access its permissions or Scriptotar SQLite database through file tools".into())
+        Err(
+            "MCP cannot access its permissions or Scriptotar SQLite database through file tools"
+                .into(),
+        )
     } else {
         Ok(())
     }
@@ -284,12 +328,25 @@ mod tests {
         };
         p = save_permissions(dir.path(), p).unwrap();
         assert!(authorized_read(&p, dir.path(), secret.to_str().unwrap()).is_err());
-        assert!(authorized_write(&p, dir.path(), sub.join("new.txt").to_str().unwrap(), false).is_ok());
-        assert!(authorized_read(&p, dir.path(), permissions_path(dir.path()).to_str().unwrap()).is_err());
+        assert!(
+            authorized_write(&p, dir.path(), sub.join("new.txt").to_str().unwrap(), false).is_ok()
+        );
+        assert!(authorized_read(
+            &p,
+            dir.path(),
+            permissions_path(dir.path()).to_str().unwrap()
+        )
+        .is_err());
         p.enabled = false;
         save_permissions(dir.path(), p).unwrap();
         let revoked = load_permissions(dir.path()).unwrap();
-        assert!(authorized_write(&revoked, dir.path(), sub.join("new.txt").to_str().unwrap(), false).is_err());
+        assert!(authorized_write(
+            &revoked,
+            dir.path(),
+            sub.join("new.txt").to_str().unwrap(),
+            false
+        )
+        .is_err());
     }
     #[cfg(unix)]
     #[test]
@@ -302,7 +359,11 @@ mod tests {
         assert!(load_permissions(dir.path()).is_err());
         fs::remove_file(permissions_path(dir.path())).unwrap();
         fs::copy(&f, permissions_path(dir.path())).unwrap();
-        fs::set_permissions(permissions_path(dir.path()), fs::Permissions::from_mode(0o644)).unwrap();
+        fs::set_permissions(
+            permissions_path(dir.path()),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
         assert!(load_permissions(dir.path()).is_err());
     }
 }

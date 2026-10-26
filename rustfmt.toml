@@ -1,0 +1,4 @@
+# Keep formatting deterministic on developer PCs and GitHub CI runners.
+# CI has always enforced the 100-column standard; do not relax the gate.
+max_width = 100
+edition = "2021"

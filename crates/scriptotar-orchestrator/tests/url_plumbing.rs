@@ -1,8 +1,8 @@
 use std::{path::Path, thread, time::Duration};
 
 use scriptotar_core::{
-    ContentRepository, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository,
-    SourceType,
+    ContentRepository, Job, JobInput, JobRepository, JobState, Project, ProjectRepository,
+    SettingsRepository, SourceType,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
@@ -20,8 +20,10 @@ fn url_job_flows_through_download_stage_and_persists_url_source() {
     store.save_settings(&settings).unwrap();
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture_sidecar.py");
-    let orchestrator =
-        JobOrchestrator::start(store.clone(), RuntimeConfig::new("python3", fixture, temp.path().join("output")));
+    let orchestrator = JobOrchestrator::start(
+        store.clone(),
+        RuntimeConfig::new("python3", fixture, temp.path().join("output")),
+    );
     let source_url = "https://www.youtube.com/watch?v=scriptotar-fixture";
     let job = Job::new(project.id, JobInput::Url(source_url.to_owned()));
     store.insert_job(&job).unwrap();
@@ -31,8 +33,10 @@ fn url_job_flows_through_download_stage_and_persists_url_source() {
     let completed = loop {
         let current = store.get_job(job.id).unwrap();
         saw_downloading |= current.state == JobState::Downloading;
-        if matches!(current.state, JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted)
-        {
+        if matches!(
+            current.state,
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+        ) {
             break current;
         }
         thread::sleep(Duration::from_millis(10));
@@ -44,5 +48,8 @@ fn url_job_flows_through_download_stage_and_persists_url_source() {
     assert_eq!(transcripts.len(), 1);
     assert_eq!(transcripts[0].source.source_type, SourceType::Url);
     assert_eq!(transcripts[0].source.locator, source_url);
-    assert_eq!(transcripts[0].media.local_path, "/tmp/downloaded-fixture.mp4");
+    assert_eq!(
+        transcripts[0].media.local_path,
+        "/tmp/downloaded-fixture.mp4"
+    );
 }

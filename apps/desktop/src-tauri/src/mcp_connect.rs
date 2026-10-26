@@ -80,14 +80,17 @@ impl Drop for McpConnectionState {
 }
 
 pub(crate) fn valid_tunnel_id(tunnel_id: &str) -> bool {
-    tunnel_id
-        .strip_prefix("tunnel_")
-        .is_some_and(|id| id.len() == 32 && id.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()))
+    tunnel_id.strip_prefix("tunnel_").is_some_and(|id| {
+        id.len() == 32
+            && id
+                .bytes()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    })
 }
 
 pub(crate) fn validated_origin(raw: &str) -> Result<String, String> {
-    let url =
-        Url::parse(raw.trim()).map_err(|_| "Enter your Cloudflare HTTPS hostname, e.g. https://mcp.example.com")?;
+    let url = Url::parse(raw.trim())
+        .map_err(|_| "Enter your Cloudflare HTTPS hostname, e.g. https://mcp.example.com")?;
     if url.scheme() != "https"
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -97,7 +100,9 @@ pub(crate) fn validated_origin(raw: &str) -> Result<String, String> {
         || url.path() != "/"
         || url.port().is_some()
     {
-        return Err("Use only a public HTTPS origin without a path, credentials, port or query".into());
+        return Err(
+            "Use only a public HTTPS origin without a path, credentials, port or query".into(),
+        );
     }
     let host = url.host_str().unwrap();
     if !host.contains('.')
@@ -115,14 +120,22 @@ fn quick_tunnel_host(line: &str) -> Option<String> {
     // candidate URL instead of matching substrings: an attacker-controlled
     // hostname such as foo.trycloudflare.com@evil.com must never be accepted.
     for word in line.split_whitespace() {
-        let Some(pos) = word.find("https://") else { continue };
+        let Some(pos) = word.find("https://") else {
+            continue;
+        };
         let candidate = word[pos..].trim_end_matches(['\"', '\'', ',', ')', ']', ';']);
-        let Ok(url) = Url::parse(candidate) else { continue };
+        let Ok(url) = Url::parse(candidate) else {
+            continue;
+        };
         let Some(host) = url.host_str() else { continue };
-        let Some(label) = host.strip_suffix(".trycloudflare.com") else { continue };
+        let Some(label) = host.strip_suffix(".trycloudflare.com") else {
+            continue;
+        };
         if url.scheme() == "https"
             && !label.is_empty()
-            && label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
             && url.username().is_empty()
             && url.password().is_none()
             && url.port().is_none()
@@ -180,8 +193,10 @@ fn safe_child_environment(command: &mut Command) {
         "XDG_RUNTIME_DIR",
         "DBUS_SESSION_BUS_ADDRESS",
     ];
-    let safe =
-        names.into_iter().filter_map(|name| std::env::var_os(name).map(|value| (name, value))).collect::<Vec<_>>();
+    let safe = names
+        .into_iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (name, value)))
+        .collect::<Vec<_>>();
     command.env_clear();
     for (name, value) in safe {
         command.env(name, value);
@@ -202,24 +217,41 @@ fn read_cloudflared_output<R: Read + Send + 'static>(
             if let Some(host) = quick_tunnel_host(&line) {
                 if let Ok(mut state) = report.lock() {
                     state.public_url = Some(format!("{host}{secret_path}"));
-                    state.detail = "Cloudflare URL ready. Add it to ChatGPT, then verify a tool call.".into();
+                    state.detail =
+                        "Cloudflare URL ready. Add it to ChatGPT, then verify a tool call.".into();
                 }
             }
         }
     })
 }
 
-fn launch_cloudflared(binary: &Path, report: Arc<Mutex<ConnectionReport>>, local_url: &str) -> Result<Child, String> {
+fn launch_cloudflared(
+    binary: &Path,
+    report: Arc<Mutex<ConnectionReport>>,
+    local_url: &str,
+) -> Result<Child, String> {
     let mut command = Command::new(binary);
-    command.args(["tunnel", "--no-autoupdate", "--url", LOCAL_ROOT, "--http-host-header", "127.0.0.1:39761"]);
+    command.args([
+        "tunnel",
+        "--no-autoupdate",
+        "--url",
+        LOCAL_ROOT,
+        "--http-host-header",
+        "127.0.0.1:39761",
+    ]);
     safe_child_environment(&mut command);
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| "Cloudflare could not start. Verify the packaged cloudflared executable.".to_owned())?;
-    let path = local_url.strip_prefix(LOCAL_ROOT).ok_or("invalid local URL")?.to_owned();
+        .map_err(|_| {
+            "Cloudflare could not start. Verify the packaged cloudflared executable.".to_owned()
+        })?;
+    let path = local_url
+        .strip_prefix(LOCAL_ROOT)
+        .ok_or("invalid local URL")?
+        .to_owned();
     if let Some(stdout) = child.stdout.take() {
         let _ = read_cloudflared_output(stdout, Arc::clone(&report), path.clone());
     }
@@ -230,27 +262,36 @@ fn launch_cloudflared(binary: &Path, report: Arc<Mutex<ConnectionReport>>, local
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(KEYRING_SERVICE, TUNNEL_PROFILE)
-        .map_err(|_| "The system keyring is unavailable. You can connect without saving the API key.".to_owned())
+    keyring::Entry::new(KEYRING_SERVICE, TUNNEL_PROFILE).map_err(|_| {
+        "The system keyring is unavailable. You can connect without saving the API key.".to_owned()
+    })
 }
 
 fn tunnel_key(passed: &str, save: bool) -> Result<String, String> {
     if !passed.is_empty() {
-        if passed.len() > 2048 || !passed.starts_with("sk-") || passed.chars().any(char::is_whitespace) {
+        if passed.len() > 2048
+            || !passed.starts_with("sk-")
+            || passed.chars().any(char::is_whitespace)
+        {
             return Err("Enter a valid OpenAI restricted API key".into());
         }
         if save {
             keyring_entry()?.set_password(passed).map_err(|_| {
-                "Cannot save the key to your OS keyring. Uncheck Remember key and try again.".to_owned()
+                "Cannot save the key to your OS keyring. Uncheck Remember key and try again."
+                    .to_owned()
             })?;
         }
         return Ok(passed.into());
     }
-    keyring_entry()?.get_password().map_err(|_| "Enter a runtime API key or unlock your OS keyring".to_owned())
+    keyring_entry()?
+        .get_password()
+        .map_err(|_| "Enter a runtime API key or unlock your OS keyring".to_owned())
 }
 
 fn healthy_local_mcp(local_url: &str) -> bool {
-    let Ok(url) = Url::parse(local_url) else { return false };
+    let Ok(url) = Url::parse(local_url) else {
+        return false;
+    };
     if url.host_str() != Some("127.0.0.1") || url.port() != Some(MCP_HTTP_PORT) {
         return false;
     }
@@ -266,7 +307,11 @@ fn healthy_local_mcp(local_url: &str) -> bool {
         "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         url.path(), MCP_HTTP_PORT, request.len()
     );
-    if stream.write_all(header.as_bytes()).and_then(|_| stream.write_all(request)).is_err() {
+    if stream
+        .write_all(header.as_bytes())
+        .and_then(|_| stream.write_all(request))
+        .is_err()
+    {
         return false;
     }
     let mut body = Vec::new();
@@ -276,19 +321,29 @@ fn healthy_local_mcp(local_url: &str) -> bool {
 }
 
 fn http_health_ready(file: &Path) -> bool {
-    let Ok(raw) = fs::read_to_string(file) else { return false };
-    let Ok(url) = Url::parse(raw.trim()) else { return false };
-    if url.scheme() != "http" || !["127.0.0.1", "localhost"].contains(&url.host_str().unwrap_or_default()) {
+    let Ok(raw) = fs::read_to_string(file) else {
+        return false;
+    };
+    let Ok(url) = Url::parse(raw.trim()) else {
+        return false;
+    };
+    if url.scheme() != "http"
+        || !["127.0.0.1", "localhost"].contains(&url.host_str().unwrap_or_default())
+    {
         return false;
     }
     let Some(port) = url.port() else { return false };
-    let Ok(mut stream) =
-        TcpStream::connect_timeout(&format!("127.0.0.1:{port}").parse().unwrap(), Duration::from_millis(400))
-    else {
+    let Ok(mut stream) = TcpStream::connect_timeout(
+        &format!("127.0.0.1:{port}").parse().unwrap(),
+        Duration::from_millis(400),
+    ) else {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_millis(700)));
-    if stream.write_all(b"GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").is_err() {
+    if stream
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
         return false;
     }
     let mut result = [0u8; 80];
@@ -303,7 +358,10 @@ fn http_health_ready(file: &Path) -> bool {
 
 impl McpConnectionState {
     pub(crate) fn stop(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
-        let mut active = self.active.lock().map_err(|_| "MCP connection state unavailable")?;
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "MCP connection state unavailable")?;
         if let Some(mut connected) = active.take() {
             if let Some(child) = connected.child.as_mut() {
                 let _ = child.kill();
@@ -333,8 +391,12 @@ impl McpConnectionState {
             cloudflare_available,
             openai_available,
         };
-        let Ok(mut state) = self.active.lock() else { return result() };
-        let Some(connection) = state.as_mut() else { return result() };
+        let Ok(mut state) = self.active.lock() else {
+            return result();
+        };
+        let Some(connection) = state.as_mut() else {
+            return result();
+        };
         if let Some(child) = connection.child.as_mut() {
             match child.try_wait() {
                 Ok(Some(_)) => {
@@ -359,10 +421,16 @@ impl McpConnectionState {
         }
         let report = connection.report.lock().ok();
         let public_url = report.as_ref().and_then(|r| r.public_url.clone());
-        let detail = report.as_ref().map(|r| r.detail.clone()).unwrap_or_default();
+        let detail = report
+            .as_ref()
+            .map(|r| r.detail.clone())
+            .unwrap_or_default();
         let ready = match connection.mode {
             "cloudflare" => public_url.is_some() && healthy_local_mcp(&connection.local_url),
-            "openai" => report.as_ref().and_then(|r| r.health_file.as_deref()).is_some_and(http_health_ready),
+            "openai" => report
+                .as_ref()
+                .and_then(|r| r.health_file.as_deref())
+                .is_some_and(http_health_ready),
             "manual" => healthy_local_mcp(&connection.local_url),
             _ => false,
         };
@@ -379,7 +447,8 @@ impl McpConnectionState {
             detail: if ready {
                 detail
             } else if state_name == "error" {
-                "Connection did not become ready. Review your tunnel credentials and local network.".into()
+                "Connection did not become ready. Review your tunnel credentials and local network."
+                    .into()
             } else {
                 "Establishing a connection...".into()
             },
@@ -423,7 +492,10 @@ impl McpConnectionState {
                 return Err(e);
             }
         };
-        *self.active.lock().map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        *self
+            .active
+            .lock()
+            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
             mode: "cloudflare",
             started: Instant::now(),
             child: Some(child),
@@ -450,7 +522,10 @@ impl McpConnectionState {
             detail: "Point your Cloudflare named tunnel at 127.0.0.1:39761, then add the HTTPS URL in ChatGPT.".into(),
             ..Default::default()
         }));
-        *self.active.lock().map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        *self
+            .active
+            .lock()
+            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
             mode: "manual",
             started: Instant::now(),
             child: None,
@@ -472,23 +547,41 @@ impl McpConnectionState {
         remember: bool,
     ) -> Result<McpConnectionStatus, String> {
         if !valid_tunnel_id(id) {
-            return Err("Enter a tunnel ID like tunnel_ followed by 32 lowercase hex characters".into());
+            return Err(
+                "Enter a tunnel ID like tunnel_ followed by 32 lowercase hex characters".into(),
+            );
         }
-        let binary = built_in_executable(app, "tunnel-client")
-            .ok_or("OpenAI tunnel-client is not bundled. Install the verified client to use this option.")?;
+        let binary = built_in_executable(app, "tunnel-client").ok_or(
+            "OpenAI tunnel-client is not bundled. Install the verified client to use this option.",
+        )?;
         let secret = tunnel_key(api_key, remember)?;
         let local_url = self.begin(data_dir, gateway)?;
-        let temp = tempfile::tempdir_in(data_dir).map_err(|_| "Could not create a private tunnel working directory")?;
+        let temp = tempfile::tempdir_in(data_dir)
+            .map_err(|_| "Could not create a private tunnel working directory")?;
         let health_file = temp.path().join("health.url");
         let mut command = Command::new(binary);
         command
-            .args(["run", "--control-plane.tunnel-id", id, "--health.listen-addr", "127.0.0.1:0", "--health.url-file"])
+            .args([
+                "run",
+                "--control-plane.tunnel-id",
+                id,
+                "--health.listen-addr",
+                "127.0.0.1:0",
+                "--health.url-file",
+            ])
             .arg(&health_file)
             .arg("--log.level")
             .arg("warn");
         safe_child_environment(&mut command);
-        command.env("CONTROL_PLANE_API_KEY", secret).env("MCP_SERVER_URL", format!("url={local_url},channel=main"));
-        let child = match command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        command
+            .env("CONTROL_PLANE_API_KEY", secret)
+            .env("MCP_SERVER_URL", format!("url={local_url},channel=main"));
+        let child = match command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Ok(child) => child,
             Err(_) => {
                 let _ = self.stop(data_dir, gateway);
@@ -497,10 +590,15 @@ impl McpConnectionState {
         };
         let report = Arc::new(Mutex::new(ConnectionReport {
             health_file: Some(health_file),
-            detail: "OpenAI tunnel is ready. Select this tunnel ID in ChatGPT's custom MCP connector.".into(),
+            detail:
+                "OpenAI tunnel is ready. Select this tunnel ID in ChatGPT's custom MCP connector."
+                    .into(),
             ..Default::default()
         }));
-        *self.active.lock().map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        *self
+            .active
+            .lock()
+            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
             mode: "openai",
             started: Instant::now(),
             child: Some(child),
@@ -533,16 +631,23 @@ mod tests {
         preserve_authentication_secrets(&mut edited, &current);
         assert_eq!(edited.http_token, current.http_token);
         assert_eq!(edited.url_token, current.url_token);
-        assert!(edited.read_data, "Ordinary permission edits must still be honored");
+        assert!(
+            edited.read_data,
+            "Ordinary permission edits must still be honored"
+        );
     }
     #[test]
     fn reader_handles_stdout_and_stderr_without_losing_secret_path() {
         let report = Arc::new(Mutex::new(ConnectionReport::default()));
         let stdout = std::io::Cursor::new(b"INF some unrelated startup message\n".to_vec());
-        let stderr = std::io::Cursor::new(b"INF Quick Tunnel https://valid-name.trycloudflare.com\n".to_vec());
+        let stderr = std::io::Cursor::new(
+            b"INF Quick Tunnel https://valid-name.trycloudflare.com\n".to_vec(),
+        );
         let secret_path = "/mcp/p/".to_owned() + &"f".repeat(64);
-        let stdout_reader = read_cloudflared_output(stdout, Arc::clone(&report), secret_path.clone());
-        let stderr_reader = read_cloudflared_output(stderr, Arc::clone(&report), secret_path.clone());
+        let stdout_reader =
+            read_cloudflared_output(stdout, Arc::clone(&report), secret_path.clone());
+        let stderr_reader =
+            read_cloudflared_output(stderr, Arc::clone(&report), secret_path.clone());
         stdout_reader.join().expect("stdout reader must finish");
         stderr_reader.join().expect("stderr reader must finish");
         assert_eq!(
@@ -567,7 +672,10 @@ mod tests {
     }
     #[test]
     fn manual_hostname_rejects_local_or_url_injection() {
-        assert_eq!(validated_origin("https://mcp.example.com/").unwrap(), "https://mcp.example.com");
+        assert_eq!(
+            validated_origin("https://mcp.example.com/").unwrap(),
+            "https://mcp.example.com"
+        );
         for url in [
             "http://mcp.example.com",
             "https://localhost",

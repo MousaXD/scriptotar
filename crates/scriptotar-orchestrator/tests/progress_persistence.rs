@@ -1,6 +1,8 @@
 use std::{fs, path::Path, thread, time::Duration};
 
-use scriptotar_core::{Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository};
+use scriptotar_core::{
+    Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository,
+};
 use scriptotar_db::SqliteStore;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
 use tempfile::TempDir;
@@ -17,12 +19,17 @@ fn sidecar_progress_is_persisted_before_completion() {
     store.save_settings(&settings).unwrap();
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixture_sidecar.py");
-    let orchestrator =
-        JobOrchestrator::start(store.clone(), RuntimeConfig::new("python3", fixture, temp.path().join("output")));
+    let orchestrator = JobOrchestrator::start(
+        store.clone(),
+        RuntimeConfig::new("python3", fixture, temp.path().join("output")),
+    );
 
     let input = temp.path().join("progress-hold.mp4");
     fs::write(&input, b"fixture").unwrap();
-    let job = Job::new(project.id, JobInput::LocalFile(input.to_string_lossy().into_owned()));
+    let job = Job::new(
+        project.id,
+        JobInput::LocalFile(input.to_string_lossy().into_owned()),
+    );
     store.insert_job(&job).unwrap();
     orchestrator.enqueue(job.id).unwrap();
 
@@ -33,8 +40,10 @@ fn sidecar_progress_is_persisted_before_completion() {
             observed = true;
             break;
         }
-        if matches!(current.state, JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted)
-        {
+        if matches!(
+            current.state,
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+        ) {
             break;
         }
         thread::sleep(Duration::from_millis(10));

@@ -13,12 +13,13 @@ use std::{
 };
 
 use scriptotar_core::{
-    now_rfc3339, ApplicationSettings, ContentRepository, Job, JobInput, JobRepository, JobRuntimeRepository, JobState,
-    Media, RepositoryError, SettingsRepository, Source, SourceType, Transcript,
+    now_rfc3339, ApplicationSettings, ContentRepository, Job, JobInput, JobRepository,
+    JobRuntimeRepository, JobState, Media, RepositoryError, SettingsRepository, Source, SourceType,
+    Transcript,
 };
 use scriptotar_media::{
-    SidecarCommand, SidecarEvent, SidecarInput, SidecarInputKind, SidecarOptions, SidecarOutput, SidecarResult,
-    SIDECAR_PROTOCOL_VERSION,
+    SidecarCommand, SidecarEvent, SidecarInput, SidecarInputKind, SidecarOptions, SidecarOutput,
+    SidecarResult, SIDECAR_PROTOCOL_VERSION,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -106,18 +107,15 @@ impl SidecarHost {
         }
 
         let mut child = command.spawn()?;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| OrchestratorError::Unavailable("sidecar stdin was not piped".to_owned()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| OrchestratorError::Unavailable("sidecar stdout was not piped".to_owned()))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| OrchestratorError::Unavailable("sidecar stderr was not piped".to_owned()))?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            OrchestratorError::Unavailable("sidecar stdin was not piped".to_owned())
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            OrchestratorError::Unavailable("sidecar stdout was not piped".to_owned())
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| {
+            OrchestratorError::Unavailable("sidecar stderr was not piped".to_owned())
+        })?;
 
         let (tx, events) = mpsc::channel();
         thread::spawn(move || {
@@ -155,7 +153,11 @@ impl SidecarHost {
             }
         });
 
-        let mut host = Self { child, stdin, events };
+        let mut host = Self {
+            child,
+            stdin,
+            events,
+        };
         host.wait_ready()?;
         Ok(host)
     }
@@ -163,9 +165,14 @@ impl SidecarHost {
     fn wait_ready(&mut self) -> Result<(), OrchestratorError> {
         match self.events.recv_timeout(Duration::from_secs(10)) {
             Ok(ReaderEvent::Protocol(event)) => match *event {
-                SidecarEvent::Ready { protocol, capabilities } => {
+                SidecarEvent::Ready {
+                    protocol,
+                    capabilities,
+                } => {
                     if protocol != SIDECAR_PROTOCOL_VERSION
-                        || !capabilities.protocol_versions.contains(&SIDECAR_PROTOCOL_VERSION)
+                        || !capabilities
+                            .protocol_versions
+                            .contains(&SIDECAR_PROTOCOL_VERSION)
                     {
                         return Err(OrchestratorError::Protocol(format!(
                             "sidecar does not support protocol {}",
@@ -174,21 +181,26 @@ impl SidecarHost {
                     }
                     Ok(())
                 }
-                other => Err(OrchestratorError::Protocol(format!("expected ready event, got {other:?}"))),
+                other => Err(OrchestratorError::Protocol(format!(
+                    "expected ready event, got {other:?}"
+                ))),
             },
             Ok(ReaderEvent::Violation(error)) => Err(OrchestratorError::Protocol(error)),
-            Ok(ReaderEvent::Closed) => Err(OrchestratorError::Unavailable("sidecar exited before ready".to_owned())),
-            Err(RecvTimeoutError::Timeout) => {
-                Err(OrchestratorError::Unavailable("sidecar did not become ready".to_owned()))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                Err(OrchestratorError::Unavailable("sidecar event reader stopped".to_owned()))
-            }
+            Ok(ReaderEvent::Closed) => Err(OrchestratorError::Unavailable(
+                "sidecar exited before ready".to_owned(),
+            )),
+            Err(RecvTimeoutError::Timeout) => Err(OrchestratorError::Unavailable(
+                "sidecar did not become ready".to_owned(),
+            )),
+            Err(RecvTimeoutError::Disconnected) => Err(OrchestratorError::Unavailable(
+                "sidecar event reader stopped".to_owned(),
+            )),
         }
     }
 
     fn send(&mut self, command: &SidecarCommand) -> Result<(), OrchestratorError> {
-        let encoded = serde_json::to_string(command).map_err(|error| OrchestratorError::Protocol(error.to_string()))?;
+        let encoded = serde_json::to_string(command)
+            .map_err(|error| OrchestratorError::Protocol(error.to_string()))?;
         self.stdin.write_all(encoded.as_bytes())?;
         self.stdin.write_all(b"\n")?;
         self.stdin.flush()?;
@@ -199,7 +211,9 @@ impl SidecarHost {
         Ok(self.child.try_wait()?.is_none())
     }
 
-    fn wait_for_exit_after_stream_close(&mut self) -> Result<Option<std::process::ExitStatus>, OrchestratorError> {
+    fn wait_for_exit_after_stream_close(
+        &mut self,
+    ) -> Result<Option<std::process::ExitStatus>, OrchestratorError> {
         for _ in 0..20 {
             if let Some(status) = self.child.try_wait()? {
                 return Ok(Some(status));
@@ -210,7 +224,10 @@ impl SidecarHost {
     }
 
     fn shutdown(&mut self) {
-        let _ = self.send(&SidecarCommand::Shutdown { protocol: SIDECAR_PROTOCOL_VERSION, request_id: None });
+        let _ = self.send(&SidecarCommand::Shutdown {
+            protocol: SIDECAR_PROTOCOL_VERSION,
+            request_id: None,
+        });
         for _ in 0..20 {
             match self.child.try_wait() {
                 Ok(Some(_)) => return,
@@ -245,30 +262,52 @@ pub struct JobOrchestrator<R> {
 
 impl<R> JobOrchestrator<R>
 where
-    R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone + Send + Sync + 'static,
+    R: JobRepository
+        + JobRuntimeRepository
+        + SettingsRepository
+        + ContentRepository
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     pub fn start(repository: R, config: RuntimeConfig) -> Self {
         Self::start_with_notifier(repository, config, Arc::new(|_| {}))
     }
 
-    pub fn start_with_notifier(repository: R, config: RuntimeConfig, notifier: JobChangeNotifier) -> Self {
+    pub fn start_with_notifier(
+        repository: R,
+        config: RuntimeConfig,
+        notifier: JobChangeNotifier,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let worker_repository = repository.clone();
         thread::spawn(move || worker_loop(worker_repository, config, rx, notifier));
-        Self { control: tx, _repository: repository }
+        Self {
+            control: tx,
+            _repository: repository,
+        }
     }
 
     pub fn enqueue(&self, job_id: Uuid) -> Result<(), OrchestratorError> {
-        self.control.send(Control::Enqueue(job_id)).map_err(|_| OrchestratorError::Closed)
+        self.control
+            .send(Control::Enqueue(job_id))
+            .map_err(|_| OrchestratorError::Closed)
     }
 
     pub fn cancel(&self, job_id: Uuid) -> Result<(), OrchestratorError> {
-        self.control.send(Control::Cancel(job_id)).map_err(|_| OrchestratorError::Closed)
+        self.control
+            .send(Control::Cancel(job_id))
+            .map_err(|_| OrchestratorError::Closed)
     }
 }
 
-fn worker_loop<R>(repository: R, config: RuntimeConfig, controls: Receiver<Control>, notifier: JobChangeNotifier)
-where
+fn worker_loop<R>(
+    repository: R,
+    config: RuntimeConfig,
+    controls: Receiver<Control>,
+    notifier: JobChangeNotifier,
+) where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
     let mut queue = VecDeque::new();
@@ -276,7 +315,15 @@ where
 
     loop {
         if let Some(job_id) = queue.pop_front() {
-            if let Err(error) = run_job(&repository, &config, &controls, &mut queue, &mut host, job_id, &notifier) {
+            if let Err(error) = run_job(
+                &repository,
+                &config,
+                &controls,
+                &mut queue,
+                &mut host,
+                job_id,
+                &notifier,
+            ) {
                 record_runtime_error(&repository, job_id, &error, &notifier);
             }
             continue;
@@ -284,7 +331,9 @@ where
 
         match controls.recv() {
             Ok(Control::Enqueue(job_id)) => queue.push_back(job_id),
-            Ok(Control::Cancel(job_id)) => cancel_queued(&repository, &mut queue, job_id, &notifier),
+            Ok(Control::Cancel(job_id)) => {
+                cancel_queued(&repository, &mut queue, job_id, &notifier)
+            }
             Err(_) => break,
         }
     }
@@ -313,8 +362,11 @@ where
     let job = repository.transition_job(job_id, JobState::Preparing)?;
     notify_job(notifier, job_id);
     let settings = repository.load_settings()?;
-    let output_root =
-        settings.output_directory.as_deref().map(PathBuf::from).unwrap_or_else(|| config.fallback_output_root.clone());
+    let output_root = settings
+        .output_directory
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| config.fallback_output_root.clone());
     fs::create_dir_all(&output_root)?;
 
     let should_restart = match host.as_mut() {
@@ -324,7 +376,9 @@ where
     if should_restart {
         *host = Some(SidecarHost::start(config)?);
     }
-    let sidecar = host.as_mut().ok_or_else(|| OrchestratorError::Unavailable("sidecar did not start".to_owned()))?;
+    let sidecar = host
+        .as_mut()
+        .ok_or_else(|| OrchestratorError::Unavailable("sidecar did not start".to_owned()))?;
 
     sidecar.send(&transcribe_command(&job, &settings, &output_root))?;
 
@@ -332,22 +386,26 @@ where
         drain_controls(repository, controls, queue, sidecar, job_id, notifier)?;
 
         match sidecar.events.recv_timeout(Duration::from_millis(50)) {
-            Ok(ReaderEvent::Protocol(event)) => match handle_event(repository, &job, *event, notifier) {
-                Ok(true) => return Ok(()),
-                Ok(false) => {}
-                Err(error @ OrchestratorError::Protocol(_)) => {
-                    sidecar.shutdown();
-                    return Err(error);
+            Ok(ReaderEvent::Protocol(event)) => {
+                match handle_event(repository, &job, *event, notifier) {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {}
+                    Err(error @ OrchestratorError::Protocol(_)) => {
+                        sidecar.shutdown();
+                        return Err(error);
+                    }
+                    Err(error) => return Err(error),
                 }
-                Err(error) => return Err(error),
-            },
+            }
             Ok(ReaderEvent::Violation(error)) => {
                 sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
             }
             Ok(ReaderEvent::Closed) => match sidecar.wait_for_exit_after_stream_close()? {
                 Some(status) if !status.success() => {
-                    return Err(OrchestratorError::Unavailable(format!("sidecar exited with {status}")));
+                    return Err(OrchestratorError::Unavailable(format!(
+                        "sidecar exited with {status}"
+                    )));
                 }
                 Some(_) => {
                     let current = repository.get_job(job_id)?;
@@ -367,7 +425,9 @@ where
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 sidecar.shutdown();
-                return Err(OrchestratorError::Unavailable("sidecar event stream disconnected".to_owned()));
+                return Err(OrchestratorError::Unavailable(
+                    "sidecar event stream disconnected".to_owned(),
+                ));
             }
         }
     }
@@ -404,13 +464,21 @@ where
     }
 }
 
-fn cancel_queued<R>(repository: &R, queue: &mut VecDeque<Uuid>, job_id: Uuid, notifier: &JobChangeNotifier)
-where
+fn cancel_queued<R>(
+    repository: &R,
+    queue: &mut VecDeque<Uuid>,
+    job_id: Uuid,
+    notifier: &JobChangeNotifier,
+) where
     R: JobRepository,
 {
     queue.retain(|queued| *queued != job_id);
-    if repository.get_job(job_id).is_ok_and(|job| job.state == JobState::Queued)
-        && repository.transition_job(job_id, JobState::Cancelled).is_ok()
+    if repository
+        .get_job(job_id)
+        .is_ok_and(|job| job.state == JobState::Queued)
+        && repository
+            .transition_job(job_id, JobState::Cancelled)
+            .is_ok()
     {
         notify_job(notifier, job_id);
     }
@@ -435,7 +503,10 @@ where
         SidecarEvent::Progress { stage, percent, .. } => {
             enter_stage(repository, original_job, &stage)?;
             if let Some(percent) = percent {
-                repository.update_job_progress(original_job.id, Some((percent / 100.0).clamp(0.0, 1.0)))?;
+                repository.update_job_progress(
+                    original_job.id,
+                    Some((percent / 100.0).clamp(0.0, 1.0)),
+                )?;
             }
             notify_job(notifier, original_job.id);
             Ok(false)
@@ -492,7 +563,9 @@ fn validate_event_for_job(job_id: Uuid, event: &SidecarEvent) -> Result<(), Orch
         | SidecarEvent::Result { job_id, .. }
         | SidecarEvent::Cancelled { job_id, .. } => Some(job_id.as_str()),
         SidecarEvent::Error { job_id, .. } => job_id.as_deref(),
-        SidecarEvent::Ready { .. } | SidecarEvent::Pong { .. } | SidecarEvent::Shutdown { .. } => None,
+        SidecarEvent::Ready { .. } | SidecarEvent::Pong { .. } | SidecarEvent::Shutdown { .. } => {
+            None
+        }
     };
     if let Some(sidecar_job_id) = sidecar_job_id {
         if !event_job_matches(job_id, sidecar_job_id) {
@@ -521,7 +594,11 @@ where
     Ok(())
 }
 
-fn transition_if_needed<R>(repository: &R, job: &Job, target: JobState) -> Result<(), OrchestratorError>
+fn transition_if_needed<R>(
+    repository: &R,
+    job: &Job,
+    target: JobState,
+) -> Result<(), OrchestratorError>
 where
     R: JobRepository,
 {
@@ -537,7 +614,9 @@ where
                 JobInput::Url(_) => JobState::Downloading,
                 JobInput::LocalFile(_) => JobState::Transcribing,
             },
-            (JobState::Downloading, JobState::Transcribing | JobState::Processing) => JobState::Transcribing,
+            (JobState::Downloading, JobState::Transcribing | JobState::Processing) => {
+                JobState::Transcribing
+            }
             (JobState::Transcribing, JobState::Processing) => JobState::Processing,
             _ => return Ok(()),
         };
@@ -552,7 +631,11 @@ where
     transition_if_needed(repository, job, JobState::Processing)
 }
 
-fn persist_result<R>(repository: &R, job: &Job, result: SidecarResult) -> Result<(), OrchestratorError>
+fn persist_result<R>(
+    repository: &R,
+    job: &Job,
+    result: SidecarResult,
+) -> Result<(), OrchestratorError>
 where
     R: JobRepository + ContentRepository,
 {
@@ -581,7 +664,10 @@ where
         id: Uuid::new_v4(),
         source_id: source.id,
         local_path: media_path,
-        duration_seconds: result.transcript.duration_seconds.or(result.source.duration_seconds),
+        duration_seconds: result
+            .transcript
+            .duration_seconds
+            .or(result.source.duration_seconds),
         mime_type: None,
         created_at: now.clone(),
     };
@@ -609,7 +695,11 @@ where
     Ok(())
 }
 
-fn transcribe_command(job: &Job, settings: &ApplicationSettings, output_root: &Path) -> SidecarCommand {
+fn transcribe_command(
+    job: &Job,
+    settings: &ApplicationSettings,
+    output_root: &Path,
+) -> SidecarCommand {
     let (kind, value) = match &job.input {
         JobInput::Url(value) => (SidecarInputKind::Url, value.clone()),
         JobInput::LocalFile(value) => (SidecarInputKind::File, value.clone()),
@@ -619,13 +709,18 @@ fn transcribe_command(job: &Job, settings: &ApplicationSettings, output_root: &P
         request_id: None,
         job_id: job.id.to_string(),
         input: SidecarInput { kind, value },
-        output: SidecarOutput { root: output_root.to_string_lossy().into_owned() },
+        output: SidecarOutput {
+            root: output_root.to_string_lossy().into_owned(),
+        },
         options: SidecarOptions {
             model: settings.transcription_model.clone(),
             device: settings.transcription_device.clone(),
             language: settings.language.clone(),
             quality: settings.download_quality.clone(),
-            cookies_browser: settings.cookie_browser.clone().unwrap_or_else(|| "none".to_owned()),
+            cookies_browser: settings
+                .cookie_browser
+                .clone()
+                .unwrap_or_else(|| "none".to_owned()),
             max_duration_seconds: settings.max_duration_seconds,
             copy_source: settings.copy_source,
             translate: settings.translate,
@@ -636,8 +731,12 @@ fn transcribe_command(job: &Job, settings: &ApplicationSettings, output_root: &P
     }
 }
 
-fn record_runtime_error<R>(repository: &R, job_id: Uuid, error: &OrchestratorError, notifier: &JobChangeNotifier)
-where
+fn record_runtime_error<R>(
+    repository: &R,
+    job_id: Uuid,
+    error: &OrchestratorError,
+    notifier: &JobChangeNotifier,
+) where
     R: JobRepository + JobRuntimeRepository,
 {
     if let Ok(job) = repository.get_job(job_id) {
@@ -655,7 +754,10 @@ mod tests {
     use tempfile::TempDir;
 
     fn paths() -> (PathBuf, PathBuf) {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
         (
             root.join("sidecars/transcription/sidecar.py"),
             root.join("sidecars/transcription/tests/fake_engine_worker.py"),
@@ -673,15 +775,25 @@ mod tests {
         store.save_settings(&settings).unwrap();
         let (sidecar, fake_worker) = paths();
         let config = RuntimeConfig::new("python3", sidecar, temp.path().join("output"))
-            .with_environment("SCRIPTOTAR_SIDECAR_ENGINE_WORKER", fake_worker.to_string_lossy().into_owned());
+            .with_environment(
+                "SCRIPTOTAR_SIDECAR_ENGINE_WORKER",
+                fake_worker.to_string_lossy().into_owned(),
+            );
         let orchestrator = JobOrchestrator::start(store.clone(), config);
         (temp, store, orchestrator)
     }
 
-    fn enqueue_file(store: &SqliteStore, orchestrator: &JobOrchestrator<SqliteStore>, path: &Path) -> Job {
+    fn enqueue_file(
+        store: &SqliteStore,
+        orchestrator: &JobOrchestrator<SqliteStore>,
+        path: &Path,
+    ) -> Job {
         fs::write(path, b"fixture").unwrap();
         let project_id = store.list_projects().unwrap()[0].id;
-        let job = Job::new(project_id, JobInput::LocalFile(path.to_string_lossy().into_owned()));
+        let job = Job::new(
+            project_id,
+            JobInput::LocalFile(path.to_string_lossy().into_owned()),
+        );
         store.insert_job(&job).unwrap();
         orchestrator.enqueue(job.id).unwrap();
         job
@@ -690,8 +802,13 @@ mod tests {
     fn wait_for_terminal(store: &SqliteStore, job_id: Uuid) -> Job {
         for _ in 0..300 {
             let job = store.get_job(job_id).unwrap();
-            if matches!(job.state, JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted)
-            {
+            if matches!(
+                job.state,
+                JobState::Completed
+                    | JobState::Failed
+                    | JobState::Cancelled
+                    | JobState::Interrupted
+            ) {
                 return job;
             }
             thread::sleep(Duration::from_millis(20));
@@ -711,7 +828,10 @@ mod tests {
         store.save_settings(&settings).unwrap();
         let (sidecar, fake_worker) = paths();
         let config = RuntimeConfig::new("python3", sidecar, temp.path().join("output"))
-            .with_environment("SCRIPTOTAR_SIDECAR_ENGINE_WORKER", fake_worker.to_string_lossy().into_owned());
+            .with_environment(
+                "SCRIPTOTAR_SIDECAR_ENGINE_WORKER",
+                fake_worker.to_string_lossy().into_owned(),
+            );
         let (notify_tx, notify_rx) = mpsc::channel();
         let notifier: JobChangeNotifier = Arc::new(move |job_id| {
             let _ = notify_tx.send(job_id);
@@ -744,7 +864,10 @@ mod tests {
         let failed = enqueue_file(&store, &orchestrator, &temp.path().join("fail.mp4"));
         let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
         assert_eq!(wait_for_terminal(&store, failed.id).state, JobState::Failed);
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 
     #[test]
@@ -752,8 +875,14 @@ mod tests {
         let (temp, store, orchestrator) = setup();
         let crashed = enqueue_file(&store, &orchestrator, &temp.path().join("crash.mp4"));
         let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
-        assert_eq!(wait_for_terminal(&store, crashed.id).state, JobState::Failed);
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, crashed.id).state,
+            JobState::Failed
+        );
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 
     #[test]
@@ -769,7 +898,13 @@ mod tests {
         }
         orchestrator.cancel(blocked.id).unwrap();
         let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
-        assert_eq!(wait_for_terminal(&store, blocked.id).state, JobState::Cancelled);
-        assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+        assert_eq!(
+            wait_for_terminal(&store, blocked.id).state,
+            JobState::Cancelled
+        );
+        assert_eq!(
+            wait_for_terminal(&store, next.id).state,
+            JobState::Completed
+        );
     }
 }

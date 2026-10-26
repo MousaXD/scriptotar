@@ -57,13 +57,17 @@ impl NetworkPolicy {
         }
         let url = Url::parse(raw).map_err(|error| ResearchError::InvalidUrl(error.to_string()))?;
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(ResearchError::InvalidUrl("only http and https are supported".to_owned()));
+            return Err(ResearchError::InvalidUrl(
+                "only http and https are supported".to_owned(),
+            ));
         }
         if !url.username().is_empty() || url.password().is_some() {
             return Err(ResearchError::EmbeddedCredentials);
         }
         if url.fragment().is_some() {
-            return Err(ResearchError::InvalidUrl("URL fragments are not supported".to_owned()));
+            return Err(ResearchError::InvalidUrl(
+                "URL fragments are not supported".to_owned(),
+            ));
         }
         if let Some(port) = url.port() {
             let standard = matches!((url.scheme(), port), ("http", 80) | ("https", 443));
@@ -73,7 +77,10 @@ impl NetworkPolicy {
         }
         let host = url.host_str().ok_or(ResearchError::HostNotAllowed)?;
         let host = host.trim_end_matches('.').to_ascii_lowercase();
-        if !ALLOWED_DOMAINS.iter().any(|domain| host == *domain || host.ends_with(&format!(".{domain}"))) {
+        if !ALLOWED_DOMAINS
+            .iter()
+            .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+        {
             return Err(ResearchError::HostNotAllowed);
         }
         Ok(ValidatedResearchUrl(url))
@@ -94,7 +101,11 @@ pub struct ResearchObservation {
 }
 
 pub trait ResearchProvider: Send + Sync {
-    fn scan(&self, profile: &ValidatedResearchUrl, limit: u16) -> Result<Vec<ResearchObservation>, ResearchError>;
+    fn scan(
+        &self,
+        profile: &ValidatedResearchUrl,
+        limit: u16,
+    ) -> Result<Vec<ResearchObservation>, ResearchError>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,11 +116,17 @@ pub struct YtDlpCommand {
 
 impl YtDlpCommand {
     pub fn executable(program: impl Into<PathBuf>) -> Self {
-        Self { program: program.into(), prefix_args: Vec::new() }
+        Self {
+            program: program.into(),
+            prefix_args: Vec::new(),
+        }
     }
 
     pub fn python_module(python: impl Into<PathBuf>) -> Self {
-        Self { program: python.into(), prefix_args: vec!["-m".to_owned(), "yt_dlp".to_owned()] }
+        Self {
+            program: python.into(),
+            prefix_args: vec!["-m".to_owned(), "yt_dlp".to_owned()],
+        }
     }
 
     fn from_overrides(executable: Option<OsString>, python: Option<OsString>) -> Self {
@@ -123,7 +140,10 @@ impl YtDlpCommand {
     }
 
     pub fn from_environment() -> Self {
-        Self::from_overrides(env::var_os("SCRIPTOTAR_YTDLP_EXECUTABLE"), env::var_os("SCRIPTOTAR_YTDLP_PYTHON"))
+        Self::from_overrides(
+            env::var_os("SCRIPTOTAR_YTDLP_EXECUTABLE"),
+            env::var_os("SCRIPTOTAR_YTDLP_PYTHON"),
+        )
     }
 }
 
@@ -141,17 +161,27 @@ impl Default for YtDlpProvider {
 
 impl YtDlpProvider {
     pub fn new(command: YtDlpCommand) -> Self {
-        Self { command, cookie_browser: None }
+        Self {
+            command,
+            cookie_browser: None,
+        }
     }
 
-    pub fn with_cookie_browser(mut self, cookie_browser: Option<&str>) -> Result<Self, ResearchError> {
+    pub fn with_cookie_browser(
+        mut self,
+        cookie_browser: Option<&str>,
+    ) -> Result<Self, ResearchError> {
         self.cookie_browser = validate_cookie_browser(cookie_browser)?;
         Ok(self)
     }
 }
 
 impl ResearchProvider for YtDlpProvider {
-    fn scan(&self, profile: &ValidatedResearchUrl, limit: u16) -> Result<Vec<ResearchObservation>, ResearchError> {
+    fn scan(
+        &self,
+        profile: &ValidatedResearchUrl,
+        limit: u16,
+    ) -> Result<Vec<ResearchObservation>, ResearchError> {
         let limit = limit.clamp(1, 200);
         let mut command = Command::new(&self.command.program);
         command.args(&self.command.prefix_args).args([
@@ -179,15 +209,24 @@ impl ResearchProvider for YtDlpProvider {
             .stderr(Stdio::piped());
 
         let mut child = command.spawn().map_err(|error| {
-            ResearchError::Provider(format!("could not start yt-dlp runtime: {}", provider_io_message(&error)))
+            ResearchError::Provider(format!(
+                "could not start yt-dlp runtime: {}",
+                provider_io_message(&error)
+            ))
         })?;
-        let stdout =
-            child.stdout.take().ok_or_else(|| ResearchError::Provider("yt-dlp stdout was unavailable".to_owned()))?;
-        let stderr =
-            child.stderr.take().ok_or_else(|| ResearchError::Provider("yt-dlp stderr was unavailable".to_owned()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ResearchError::Provider("yt-dlp stdout was unavailable".to_owned()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| ResearchError::Provider("yt-dlp stderr was unavailable".to_owned()))?;
         let stderr_reader = thread::spawn(move || {
             let mut bytes = Vec::new();
-            let _ = stderr.take(MAX_PROVIDER_ERROR_BYTES).read_to_end(&mut bytes);
+            let _ = stderr
+                .take(MAX_PROVIDER_ERROR_BYTES)
+                .read_to_end(&mut bytes);
             String::from_utf8_lossy(&bytes).trim().to_owned()
         });
 
@@ -230,7 +269,9 @@ impl ResearchProvider for YtDlpProvider {
             }
         }
 
-        let status = child.wait().map_err(|error| ResearchError::Provider(provider_io_message(&error)))?;
+        let status = child
+            .wait()
+            .map_err(|error| ResearchError::Provider(provider_io_message(&error)))?;
         let stderr = stderr_reader.join().unwrap_or_default();
         if !status.success() && observations.is_empty() {
             let detail = safe_provider_detail(&stderr);
@@ -250,15 +291,20 @@ impl ResearchProvider for YtDlpProvider {
 }
 
 fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, ResearchError> {
-    let Some(value) = raw.map(str::trim).filter(|value| !value.is_empty() && *value != "none") else {
+    let Some(value) = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "none")
+    else {
         return Ok(None);
     };
     if value.chars().count() > 160
-        || value
-            .chars()
-            .any(|character| !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':' | '.' | '+')))
+        || value.chars().any(|character| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':' | '.' | '+'))
+        })
     {
-        return Err(ResearchError::Provider("cookie browser setting contains unsupported characters".to_owned()));
+        return Err(ResearchError::Provider(
+            "cookie browser setting contains unsupported characters".to_owned(),
+        ));
     }
     Ok(Some(value.to_owned()))
 }
@@ -282,7 +328,10 @@ fn safe_provider_detail(raw: &str) -> String {
     }
 }
 
-fn normalize_research_item(raw: &Value, creator_url: &Url) -> Result<Option<ResearchObservation>, ResearchError> {
+fn normalize_research_item(
+    raw: &Value,
+    creator_url: &Url,
+) -> Result<Option<ResearchObservation>, ResearchError> {
     let source_url = first_string(raw, &["webpage_url", "original_url", "url"])
         .filter(|value| is_absolute_http_url(value))
         .map(str::to_owned)
@@ -295,8 +344,9 @@ fn normalize_research_item(raw: &Value, creator_url: &Url) -> Result<Option<Rese
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.chars().take(2_000).collect());
-    let published_at =
-        first_string(raw, &["upload_date", "release_date"]).and_then(normalize_upload_date).or_else(|| {
+    let published_at = first_string(raw, &["upload_date", "release_date"])
+        .and_then(normalize_upload_date)
+        .or_else(|| {
             raw.get("timestamp")
                 .or_else(|| raw.get("release_timestamp"))
                 .and_then(Value::as_f64)
@@ -318,15 +368,22 @@ fn normalize_research_item(raw: &Value, creator_url: &Url) -> Result<Option<Rese
 }
 
 fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter().find_map(|key| value.get(*key).and_then(Value::as_str))
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
 }
 
 fn integer_metric(value: Option<&Value>) -> Option<i64> {
-    value.and_then(|value| value.as_i64().or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok())))
+    value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+    })
 }
 
 fn is_absolute_http_url(raw: &str) -> bool {
-    Url::parse(raw).ok().is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
+    Url::parse(raw)
+        .ok()
+        .is_some_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
 }
 
 fn youtube_fallback(raw: &Value) -> Option<String> {
@@ -380,13 +437,19 @@ fn sanitized_raw_json(raw: &Value) -> Result<Option<String>, ResearchError> {
     let mut safe = Map::new();
     for key in ["id", "uploader", "channel", "channel_url", "thumbnail"] {
         if let Some(value) = raw.get(key).and_then(Value::as_str) {
-            safe.insert(key.to_owned(), json!(value.chars().take(2_048).collect::<String>()));
+            safe.insert(
+                key.to_owned(),
+                json!(value.chars().take(2_048).collect::<String>()),
+            );
         }
     }
     if let Some(description) = raw.get("description").and_then(Value::as_str) {
         safe.insert(
             "description".to_owned(),
-            json!(description.chars().take(MAX_RAW_DESCRIPTION_CHARS).collect::<String>()),
+            json!(description
+                .chars()
+                .take(MAX_RAW_DESCRIPTION_CHARS)
+                .collect::<String>()),
         );
     }
     if safe.is_empty() {
@@ -408,7 +471,10 @@ where
     P: ResearchProvider,
 {
     pub fn new(provider: P) -> Self {
-        Self { provider, policy: NetworkPolicy }
+        Self {
+            provider,
+            policy: NetworkPolicy,
+        }
     }
 
     pub fn scan(
@@ -460,8 +526,15 @@ mod tests {
     }
 
     impl ResearchProvider for FakeProvider {
-        fn scan(&self, profile: &ValidatedResearchUrl, limit: u16) -> Result<Vec<ResearchObservation>, ResearchError> {
-            self.calls.lock().unwrap().push((profile.as_url().to_string(), limit));
+        fn scan(
+            &self,
+            profile: &ValidatedResearchUrl,
+            limit: u16,
+        ) -> Result<Vec<ResearchObservation>, ResearchError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
     }
@@ -469,9 +542,13 @@ mod tests {
     #[test]
     fn accepts_supported_platform_subdomains_and_standard_ports() {
         let policy = NetworkPolicy;
-        assert!(policy.validate("https://www.instagram.com/example/").is_ok());
+        assert!(policy
+            .validate("https://www.instagram.com/example/")
+            .is_ok());
         assert!(policy.validate("https://m.youtube.com/@example").is_ok());
-        assert!(policy.validate("https://www.youtube.com:443/@example").is_ok());
+        assert!(policy
+            .validate("https://www.youtube.com:443/@example")
+            .is_ok());
     }
 
     #[test]
@@ -481,10 +558,22 @@ mod tests {
             policy.validate("https://youtube.com.attacker.example/watch?v=1"),
             Err(ResearchError::HostNotAllowed)
         );
-        assert_eq!(policy.validate("https://youtube.com:444/@example"), Err(ResearchError::NonStandardPort));
-        assert_eq!(policy.validate("https://user:pass@youtube.com/@example"), Err(ResearchError::EmbeddedCredentials));
-        assert!(matches!(policy.validate("file:///etc/passwd"), Err(ResearchError::InvalidUrl(_))));
-        assert!(matches!(policy.validate("not a url"), Err(ResearchError::InvalidUrl(_))));
+        assert_eq!(
+            policy.validate("https://youtube.com:444/@example"),
+            Err(ResearchError::NonStandardPort)
+        );
+        assert_eq!(
+            policy.validate("https://user:pass@youtube.com/@example"),
+            Err(ResearchError::EmbeddedCredentials)
+        );
+        assert!(matches!(
+            policy.validate("file:///etc/passwd"),
+            Err(ResearchError::InvalidUrl(_))
+        ));
+        assert!(matches!(
+            policy.validate("not a url"),
+            Err(ResearchError::InvalidUrl(_))
+        ));
     }
 
     #[test]
@@ -492,7 +581,9 @@ mod tests {
         let provider = FakeProvider::default();
         let calls = provider.calls.clone();
         let service = ResearchService::new(provider);
-        assert!(service.scan(Uuid::new_v4(), None, "http://127.0.0.1/private", 50).is_err());
+        assert!(service
+            .scan(Uuid::new_v4(), None, "http://127.0.0.1/private", 50)
+            .is_err());
         assert!(calls.lock().unwrap().is_empty());
     }
 
@@ -501,7 +592,14 @@ mod tests {
         let provider = FakeProvider::default();
         let calls = provider.calls.clone();
         let service = ResearchService::new(provider);
-        service.scan(Uuid::new_v4(), None, "https://www.tiktok.com/@example", u16::MAX).unwrap();
+        service
+            .scan(
+                Uuid::new_v4(),
+                None,
+                "https://www.tiktok.com/@example",
+                u16::MAX,
+            )
+            .unwrap();
         assert_eq!(calls.lock().unwrap()[0].1, 200);
     }
 
@@ -536,8 +634,10 @@ mod tests {
 
     #[test]
     fn dedicated_ytdlp_override_has_priority_and_python_is_explicit() {
-        let executable =
-            YtDlpCommand::from_overrides(Some(OsString::from("packaged-ytdlp")), Some(OsString::from("python-dev")));
+        let executable = YtDlpCommand::from_overrides(
+            Some(OsString::from("packaged-ytdlp")),
+            Some(OsString::from("python-dev")),
+        );
         assert_eq!(executable.program, PathBuf::from("packaged-ytdlp"));
         assert!(executable.prefix_args.is_empty());
 
@@ -563,7 +663,9 @@ mod tests {
             "printf '%s\\n' '{\"id\":\"abc\",\"extractor_key\":\"Youtube\",\"title\":\"Fixture\",\"view_count\":42,\"like_count\":5,\"comment_count\":2,\"upload_date\":\"20260809\",\"duration\":12.5}'",
         );
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
-        let validated = NetworkPolicy.validate("https://www.youtube.com/@creator").unwrap();
+        let validated = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
         let items = provider.scan(&validated, 25).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].source_url, "https://www.youtube.com/watch?v=abc");
@@ -577,8 +679,13 @@ mod tests {
     fn yt_dlp_failure_and_empty_success_are_distinct() {
         let (_temp, failure) = fixture_script("echo 'fixture failure' >&2; exit 2");
         let provider = YtDlpProvider::new(YtDlpCommand::executable(failure));
-        let validated = NetworkPolicy.validate("https://www.youtube.com/@creator").unwrap();
-        assert!(matches!(provider.scan(&validated, 25), Err(ResearchError::Provider(_))));
+        let validated = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
+        assert!(matches!(
+            provider.scan(&validated, 25),
+            Err(ResearchError::Provider(_))
+        ));
 
         let (_temp, empty) = fixture_script("exit 0");
         let provider = YtDlpProvider::new(YtDlpCommand::executable(empty));
@@ -591,7 +698,9 @@ mod tests {
         let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
         let (_temp, fixture) = fixture_script(body);
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
-        let validated = NetworkPolicy.validate("https://www.youtube.com/@creator").unwrap();
+        let validated = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
         let items = provider.scan(&validated, 1).unwrap();
         assert_eq!(items.len(), 1);
     }

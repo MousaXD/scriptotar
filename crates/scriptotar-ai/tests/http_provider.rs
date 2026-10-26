@@ -18,7 +18,10 @@ fn spawn_server(
     let address = listener.local_addr().unwrap();
     let captured = Arc::new(Mutex::new(String::new()));
     let captured_thread = captured.clone();
-    let headers = headers.iter().map(|(name, value)| ((*name).to_owned(), (*value).to_owned())).collect::<Vec<_>>();
+    let headers = headers
+        .iter()
+        .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+        .collect::<Vec<_>>();
     thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut data = Vec::new();
@@ -73,7 +76,14 @@ fn endpoint(base: &str) -> scriptotar_ai::ValidatedEndpoint {
 fn generate(kind: ProviderKind, base: &str, model: &str, key: &str) -> Result<String, AiError> {
     let provider = HttpAiProvider::with_timeout(kind, Duration::from_millis(500)).unwrap();
     provider
-        .generate(&endpoint(base), model, key, &AiRequest { prompt: "fixture prompt".to_owned() })
+        .generate(
+            &endpoint(base),
+            model,
+            key,
+            &AiRequest {
+                prompt: "fixture prompt".to_owned(),
+            },
+        )
         .map(|response| response.text)
 }
 
@@ -85,25 +95,66 @@ fn openai_anthropic_gemini_and_compatible_success() {
         r#"{"output":[{"content":[{"type":"output_text","text":"openai ok"}]}]}"#,
         Duration::ZERO,
     );
-    assert_eq!(generate(ProviderKind::OpenAi, &base, "gpt-test", "openai-secret").unwrap(), "openai ok");
-    assert!(request.lock().unwrap().to_ascii_lowercase().contains("authorization: bearer openai-secret"));
+    assert_eq!(
+        generate(ProviderKind::OpenAi, &base, "gpt-test", "openai-secret").unwrap(),
+        "openai ok"
+    );
+    assert!(request
+        .lock()
+        .unwrap()
+        .to_ascii_lowercase()
+        .contains("authorization: bearer openai-secret"));
 
-    let (base, request) =
-        spawn_server(200, &[], r#"{"content":[{"type":"text","text":"anthropic ok"}]}"#, Duration::ZERO);
-    assert_eq!(generate(ProviderKind::Anthropic, &base, "claude-test", "anthropic-secret").unwrap(), "anthropic ok");
-    assert!(request.lock().unwrap().to_ascii_lowercase().contains("x-api-key: anthropic-secret"));
+    let (base, request) = spawn_server(
+        200,
+        &[],
+        r#"{"content":[{"type":"text","text":"anthropic ok"}]}"#,
+        Duration::ZERO,
+    );
+    assert_eq!(
+        generate(
+            ProviderKind::Anthropic,
+            &base,
+            "claude-test",
+            "anthropic-secret"
+        )
+        .unwrap(),
+        "anthropic ok"
+    );
+    assert!(request
+        .lock()
+        .unwrap()
+        .to_ascii_lowercase()
+        .contains("x-api-key: anthropic-secret"));
 
-    let (base, request) =
-        spawn_server(200, &[], r#"{"candidates":[{"content":{"parts":[{"text":"gemini ok"}]}}]}"#, Duration::ZERO);
-    assert_eq!(generate(ProviderKind::Gemini, &base, "gemini-test", "gemini-secret").unwrap(), "gemini ok");
+    let (base, request) = spawn_server(
+        200,
+        &[],
+        r#"{"candidates":[{"content":{"parts":[{"text":"gemini ok"}]}}]}"#,
+        Duration::ZERO,
+    );
+    assert_eq!(
+        generate(ProviderKind::Gemini, &base, "gemini-test", "gemini-secret").unwrap(),
+        "gemini ok"
+    );
     let request = request.lock().unwrap().to_ascii_lowercase();
     assert!(request.contains("post /models/gemini-test:generatecontent "));
     assert!(request.contains("x-goog-api-key: gemini-secret"));
 
-    let (base, _) = spawn_server(200, &[], r#"{"choices":[{"message":{"content":"compatible ok"}}]}"#, Duration::ZERO);
+    let (base, _) = spawn_server(
+        200,
+        &[],
+        r#"{"choices":[{"message":{"content":"compatible ok"}}]}"#,
+        Duration::ZERO,
+    );
     assert_eq!(
-        generate(ProviderKind::OpenAiCompatible, &format!("{base}/v1"), "compatible-test", "compatible-secret")
-            .unwrap(),
+        generate(
+            ProviderKind::OpenAiCompatible,
+            &format!("{base}/v1"),
+            "compatible-test",
+            "compatible-secret"
+        )
+        .unwrap(),
         "compatible ok"
     );
 }
@@ -111,7 +162,12 @@ fn openai_anthropic_gemini_and_compatible_success() {
 #[test]
 fn provider_4xx_5xx_and_malformed_json_are_structured_errors() {
     for status in [400_u16, 503_u16] {
-        let (base, _) = spawn_server(status, &[], r#"{"error":{"message":"provider fixture error"}}"#, Duration::ZERO);
+        let (base, _) = spawn_server(
+            status,
+            &[],
+            r#"{"error":{"message":"provider fixture error"}}"#,
+            Duration::ZERO,
+        );
         let error = generate(ProviderKind::OpenAiCompatible, &base, "model", "secret").unwrap_err();
         assert!(matches!(error, AiError::Provider(_)));
         assert!(error.to_string().contains(&status.to_string()));
@@ -126,9 +182,16 @@ fn provider_4xx_5xx_and_malformed_json_are_structured_errors() {
 
 #[test]
 fn timeout_is_reported_without_panicking() {
-    let (base, _) =
-        spawn_server(200, &[], r#"{"choices":[{"message":{"content":"late"}}]}"#, Duration::from_millis(800));
-    assert_eq!(generate(ProviderKind::OpenAiCompatible, &base, "model", "secret").unwrap_err(), AiError::Timeout);
+    let (base, _) = spawn_server(
+        200,
+        &[],
+        r#"{"choices":[{"message":{"content":"late"}}]}"#,
+        Duration::from_millis(800),
+    );
+    assert_eq!(
+        generate(ProviderKind::OpenAiCompatible, &base, "model", "secret").unwrap_err(),
+        AiError::Timeout
+    );
 }
 
 fn assert_redirect_blocked(location: &str) {
@@ -154,5 +217,8 @@ fn ordinary_non_redirect_request_still_works() {
         r#"{"output":[{"content":[{"type":"output_text","text":"no redirect"}]}]}"#,
         Duration::ZERO,
     );
-    assert_eq!(generate(ProviderKind::OpenAi, &base, "gpt-test", "secret").unwrap(), "no redirect");
+    assert_eq!(
+        generate(ProviderKind::OpenAi, &base, "gpt-test", "secret").unwrap(),
+        "no redirect"
+    );
 }

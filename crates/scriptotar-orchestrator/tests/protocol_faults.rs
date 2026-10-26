@@ -1,7 +1,8 @@
 use std::{fs, path::Path, thread, time::Duration};
 
 use scriptotar_core::{
-    ContentRepository, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository,
+    ContentRepository, Job, JobInput, JobRepository, JobState, Project, ProjectRepository,
+    SettingsRepository,
 };
 use scriptotar_db::SqliteStore;
 use scriptotar_orchestrator::{JobOrchestrator, RuntimeConfig};
@@ -24,10 +25,17 @@ fn setup() -> (TempDir, SqliteStore, JobOrchestrator<SqliteStore>) {
     (temp, store, orchestrator)
 }
 
-fn enqueue_file(store: &SqliteStore, orchestrator: &JobOrchestrator<SqliteStore>, path: &Path) -> Job {
+fn enqueue_file(
+    store: &SqliteStore,
+    orchestrator: &JobOrchestrator<SqliteStore>,
+    path: &Path,
+) -> Job {
     fs::write(path, b"fixture").unwrap();
     let project_id = store.list_projects().unwrap()[0].id;
-    let job = Job::new(project_id, JobInput::LocalFile(path.to_string_lossy().into_owned()));
+    let job = Job::new(
+        project_id,
+        JobInput::LocalFile(path.to_string_lossy().into_owned()),
+    );
     store.insert_job(&job).unwrap();
     orchestrator.enqueue(job.id).unwrap();
     job
@@ -36,7 +44,10 @@ fn enqueue_file(store: &SqliteStore, orchestrator: &JobOrchestrator<SqliteStore>
 fn wait_for_terminal(store: &SqliteStore, job_id: Uuid) -> Job {
     for _ in 0..300 {
         let job = store.get_job(job_id).unwrap();
-        if matches!(job.state, JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted) {
+        if matches!(
+            job.state,
+            JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
+        ) {
             return job;
         }
         thread::sleep(Duration::from_millis(20));
@@ -52,12 +63,24 @@ fn assert_protocol_fault_recovers(file_name: &str) {
     let failed = wait_for_terminal(&store, broken.id);
     assert_eq!(failed.state, JobState::Failed);
     assert!(
-        failed.last_error.as_deref().is_some_and(|message| message.contains("sidecar protocol error")),
+        failed
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("sidecar protocol error")),
         "unexpected persisted protocol error: {:?}",
         failed.last_error
     );
-    assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
-    assert_eq!(store.list_transcripts(Some(broken.project_id)).unwrap().len(), 1);
+    assert_eq!(
+        wait_for_terminal(&store, next.id).state,
+        JobState::Completed
+    );
+    assert_eq!(
+        store
+            .list_transcripts(Some(broken.project_id))
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -84,9 +107,15 @@ fn nonzero_sidecar_exit_fails_current_job_and_later_job_succeeds() {
     let failed = wait_for_terminal(&store, broken.id);
     assert_eq!(failed.state, JobState::Failed);
     assert!(
-        failed.last_error.as_deref().is_some_and(|message| message.contains("sidecar exited")),
+        failed
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("sidecar exited")),
         "unexpected persisted exit error: {:?}",
         failed.last_error
     );
-    assert_eq!(wait_for_terminal(&store, next.id).state, JobState::Completed);
+    assert_eq!(
+        wait_for_terminal(&store, next.id).state,
+        JobState::Completed
+    );
 }

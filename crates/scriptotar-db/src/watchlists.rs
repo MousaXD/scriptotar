@@ -12,18 +12,26 @@ fn storage_error(error: rusqlite::Error) -> RepositoryError {
 
 fn open_connection(store: &SqliteStore) -> RepositoryResult<Connection> {
     let connection = Connection::open(store.path()).map_err(storage_error)?;
-    connection.pragma_update(None, "foreign_keys", true).map_err(storage_error)?;
-    connection.busy_timeout(Duration::from_secs(5)).map_err(storage_error)?;
+    connection
+        .pragma_update(None, "foreign_keys", true)
+        .map_err(storage_error)?;
+    connection
+        .busy_timeout(Duration::from_secs(5))
+        .map_err(storage_error)?;
     Ok(connection)
 }
 
 fn validate_watchlist_text<'a>(field: &str, value: &'a str) -> RepositoryResult<&'a str> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(RepositoryError::Validation(format!("watchlist {field} cannot be empty")));
+        return Err(RepositoryError::Validation(format!(
+            "watchlist {field} cannot be empty"
+        )));
     }
     if value.chars().count() > 2_048 {
-        return Err(RepositoryError::Validation(format!("watchlist {field} is too long")));
+        return Err(RepositoryError::Validation(format!(
+            "watchlist {field} is too long"
+        )));
     }
     Ok(value)
 }
@@ -41,7 +49,9 @@ impl SqliteStore {
         let label = validate_watchlist_text("label", label)?;
         let profile_url = validate_watchlist_text("profile URL", profile_url)?;
         if !(1..=200).contains(&limit_count) {
-            return Err(RepositoryError::Validation("watchlist limit must be between 1 and 200".to_owned()));
+            return Err(RepositoryError::Validation(
+                "watchlist limit must be between 1 and 200".to_owned(),
+            ));
         }
 
         let connection = open_connection(self)?;
@@ -55,7 +65,8 @@ impl SqliteStore {
             .map_err(storage_error)?;
 
         let (id, last_scan_at) = if let Some((id, last_scan_at)) = existing {
-            let id = Uuid::parse_str(&id).map_err(|error| RepositoryError::Storage(error.to_string()))?;
+            let id = Uuid::parse_str(&id)
+                .map_err(|error| RepositoryError::Storage(error.to_string()))?;
             connection
                 .execute(
                     "UPDATE watchlists SET label = ?1, limit_count = ?2 WHERE id = ?3",
@@ -122,12 +133,30 @@ mod tests {
         store.create_project(&first_project).unwrap();
         store.create_project(&second_project).unwrap();
 
-        let first =
-            store.upsert_watchlist(first_project.id, "Creator", "https://www.youtube.com/@creator", 25).unwrap();
-        let updated = store
-            .upsert_watchlist(first_project.id, "Creator updated", "https://www.youtube.com/@creator", 50)
+        let first = store
+            .upsert_watchlist(
+                first_project.id,
+                "Creator",
+                "https://www.youtube.com/@creator",
+                25,
+            )
             .unwrap();
-        store.upsert_watchlist(second_project.id, "Creator", "https://www.youtube.com/@creator", 10).unwrap();
+        let updated = store
+            .upsert_watchlist(
+                first_project.id,
+                "Creator updated",
+                "https://www.youtube.com/@creator",
+                50,
+            )
+            .unwrap();
+        store
+            .upsert_watchlist(
+                second_project.id,
+                "Creator",
+                "https://www.youtube.com/@creator",
+                10,
+            )
+            .unwrap();
 
         assert_eq!(first.id, updated.id);
         let first_project_rows = store.list_watchlists(Some(first_project.id)).unwrap();
@@ -138,7 +167,11 @@ mod tests {
 
         let scan_time = now_rfc3339();
         assert!(store
-            .mark_watchlist_scanned_by_profile(first_project.id, "https://www.youtube.com/@creator", &scan_time,)
+            .mark_watchlist_scanned_by_profile(
+                first_project.id,
+                "https://www.youtube.com/@creator",
+                &scan_time,
+            )
             .unwrap());
         let scanned = store.list_watchlists(Some(first_project.id)).unwrap();
         assert_eq!(scanned[0].last_scan_at.as_deref(), Some(scan_time.as_str()));
@@ -149,7 +182,13 @@ mod tests {
         let reopened_rows = reopened.list_watchlists(Some(first_project.id)).unwrap();
         assert_eq!(reopened_rows.len(), 1);
         assert_eq!(reopened_rows[0].id, first.id);
-        assert_eq!(reopened_rows[0].profile_url, "https://www.youtube.com/@creator");
-        assert_eq!(reopened_rows[0].last_scan_at.as_deref(), Some(scan_time.as_str()));
+        assert_eq!(
+            reopened_rows[0].profile_url,
+            "https://www.youtube.com/@creator"
+        );
+        assert_eq!(
+            reopened_rows[0].last_scan_at.as_deref(),
+            Some(scan_time.as_str())
+        );
     }
 }
