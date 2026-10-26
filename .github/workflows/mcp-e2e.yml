@@ -56,11 +56,7 @@ jobs:
       - run: npm run test --prefix apps/desktop-ui -- --run
       - run: npm run build --prefix apps/desktop-ui
       - name: Install Linux desktop dependencies for Tauri host compile
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            libgtk-3-dev libssl-dev libdbus-1-dev pkg-config patchelf
+        run: bash scripts/install_tauri_deps.sh
       - name: Compile real Tauri MCP settings and local gateway host
         run: cargo check -p scriptotar-desktop --locked
       - name: Full Rust workspace feature and API regression suite
