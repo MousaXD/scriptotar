@@ -31,7 +31,7 @@ jobs:
     env:
       PYTHONPATH: sidecars/transcription
       PYTHONUNBUFFERED: '1'
-      HF_HOME: ${{ runner.temp }}/scriptotar-huggingface-cache
+      HF_HOME: ${{ github.workspace }}/.scriptotar-huggingface-cache
       HF_HUB_DISABLE_TELEMETRY: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
