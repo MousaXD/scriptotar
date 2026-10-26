@@ -162,7 +162,7 @@
           <label class="field"><span>Approved directories (one absolute path per line)</span><textarea rows="2" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
           <label class="field"><span>Approved executables (one absolute path per line)</span><textarea rows="2" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
           <p class="warning"><strong>Powerful access:</strong> approved executables use your operating-system account's privileges, so permitting a shell or interpreter is not a security sandbox.</p>
-        {/if}
+        </div>
       {/if}
       {#if permissions.enabled && powerful(permissions)}
         <label class="switch"><input type="checkbox" bind:checked={acknowledge}/> I approve powerful file and command access on this computer</label>
