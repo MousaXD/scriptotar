@@ -25,7 +25,9 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ubuntu-22.04
+    # Validation can use the newer runner; the distributable Linux .deb is
+    # deliberately still built on Ubuntu 22.04 for older glibc compatibility.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
