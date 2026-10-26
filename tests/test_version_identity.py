@@ -56,9 +56,27 @@ class VersionIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             {workspace_version, tauri_version, frontend_version, sidecar_version},
-            {"1.0.0"},
+            {"1.1.0"},
             "Scriptotar application versions drifted; keep Cargo, Tauri, Frontend, and Sidecar aligned",
         )
+
+    def test_frontend_lockfile_has_release_version(self) -> None:
+        lock = json.loads(read("apps/desktop-ui/package-lock.json"))
+        version = json.loads(read("apps/desktop-ui/package.json"))["version"]
+        self.assertEqual(lock["version"], version)
+        self.assertEqual(lock["packages"][""]["version"], version)
+
+    def test_cargo_locked_local_workspace_versions_match(self) -> None:
+        expected = toml_string_in_section("Cargo.toml", "workspace.package", "version")
+        cargo_lock = read("Cargo.lock")
+        package_blocks = re.findall(r"(?m)^\[\[package\]\]\n(.*?)(?=^\[\[package\]\]|\Z)", cargo_lock, re.S | re.M)
+        checked = 0
+        for block in package_blocks:
+            match = re.search(r'^name = "(scriptotar(?:-[a-z]+)*)"\nversion = "([^"]+)"', block, re.M)
+            if match:
+                checked += 1
+                self.assertEqual(match.group(2), expected, f"{match.group(1)} drift")
+        self.assertGreaterEqual(checked, 8)
 
     def test_legacy_archive_is_preserved_and_documented(self) -> None:
         archive_readme = read("archive/legacy-python/README.md")

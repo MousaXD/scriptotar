@@ -6,7 +6,7 @@ Built with **Rust (Tauri v2)** and **Svelte 5**, Scriptotar provides high-perfor
 
 ## Overview
 
-- **Version**: `1.0.0`
+- **Version**: `1.1.0`
 - **Supported Platforms**: Windows (`.exe` NSIS installer) and Linux (`.deb` package)
 - **Zero Configuration**: Bundles Faster Whisper, FFmpeg, and yt-dlp. No separate Python or FFmpeg installation required.
 - **Bilingual & RTL**: Native Arabic and English localization with instant language switching.
@@ -23,12 +23,12 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 
 ### Windows
 Download and run the installer:
-- **`Scriptotar-1.0.0-x64-setup.exe`** (or `Scriptotar-latest-x64-setup.exe`)
+- **`Scriptotar-1.1.0-x64-setup.exe`** (or `Scriptotar-latest-x64-setup.exe`)
 
 ### Linux (Debian / Ubuntu / Pop!_OS)
 Download and install the Debian package:
 ```bash
-sudo apt install ./Scriptotar-1.0.0-amd64.deb
+sudo apt install ./Scriptotar-1.1.0-amd64.deb
 ```
 
 ---
@@ -47,7 +47,7 @@ Important data within that directory:
 
 ## Historical Archive
 
-The original Python/Tkinter implementation (v1.0.0 – v1.3.0) has been archived in [`archive/legacy-python/`](archive/legacy-python/) for historical reference.
+The original Python/Tkinter implementation (v1.1.0 – v1.3.0) has been archived in [`archive/legacy-python/`](archive/legacy-python/) for historical reference.
 
 ---
 
