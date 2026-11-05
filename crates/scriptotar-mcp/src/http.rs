@@ -151,9 +151,17 @@ async fn handle(
     {
         Ok(Ok(body)) => body.to_bytes(),
         Ok(Err(_)) => {
-            return Ok(reply(StatusCode::PAYLOAD_TOO_LARGE, "MCP request too large"));
+            return Ok(reply(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "MCP request too large",
+            ));
         }
-        Err(_) => return Ok(reply(StatusCode::REQUEST_TIMEOUT, "MCP request body timed out")),
+        Err(_) => {
+            return Ok(reply(
+                StatusCode::REQUEST_TIMEOUT,
+                "MCP request body timed out",
+            ))
+        }
     };
     // Revocation and token rotation must invalidate a request even when the
     // client authenticated before streaming an incomplete HTTP request body.
@@ -195,7 +203,10 @@ fn authenticated(secret: Option<&str>, bearer: &str, policy: &crate::McpPermissi
     } else {
         bearer.starts_with("Bearer ")
             && constant_time_eq(
-                bearer.strip_prefix("Bearer ").unwrap_or_default().as_bytes(),
+                bearer
+                    .strip_prefix("Bearer ")
+                    .unwrap_or_default()
+                    .as_bytes(),
                 policy.http_token.as_bytes(),
             )
     }
@@ -250,8 +261,16 @@ mod tests {
             ..before.clone()
         };
         assert!(authenticated(Some(&before.url_token), "", &before));
-        assert!(authenticated(None, &format!("Bearer {}", before.http_token), &before));
+        assert!(authenticated(
+            None,
+            &format!("Bearer {}", before.http_token),
+            &before
+        ));
         assert!(!authenticated(Some(&before.url_token), "", &after));
-        assert!(!authenticated(None, &format!("Bearer {}", before.http_token), &after));
+        assert!(!authenticated(
+            None,
+            &format!("Bearer {}", before.http_token),
+            &after
+        ));
     }
 }

@@ -15,7 +15,9 @@ use serde::Serialize;
 use tauri::Manager;
 use url::Url;
 
-use super::{start_gateway_for_data, stop_gateway, McpGatewayState, OperationalState, MCP_HTTP_PORT};
+use super::{
+    start_gateway_for_data, stop_gateway, McpGatewayState, OperationalState, MCP_HTTP_PORT,
+};
 use scriptotar_mcp::{load_permissions, new_token, save_permissions, McpPermissions};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);

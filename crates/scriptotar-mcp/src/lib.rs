@@ -317,14 +317,16 @@ fn block_policy_file(data_dir: &Path, path: &Path) -> Result<(), String> {
                 let entries = fs::read_dir(data_dir)
                     .map_err(|_| "cannot inspect Scriptotar protected files".to_owned())?;
                 for entry in entries {
-                    let entry =
-                        entry.map_err(|_| "cannot inspect Scriptotar protected files".to_owned())?;
+                    let entry = entry
+                        .map_err(|_| "cannot inspect Scriptotar protected files".to_owned())?;
                     if !protected_app_name(&entry.file_name().to_string_lossy()) {
                         continue;
                     }
                     if let Ok(secret) = fs::metadata(entry.path()) {
                         if candidate.dev() == secret.dev() && candidate.ino() == secret.ino() {
-                            return Err("MCP cannot access internal permissions or SQLite files".into());
+                            return Err(
+                                "MCP cannot access internal permissions or SQLite files".into()
+                            );
                         }
                     }
                 }
