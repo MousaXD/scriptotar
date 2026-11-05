@@ -1334,6 +1334,47 @@ mod tests {
     }
 
     #[test]
+    fn integration_migration_rejects_spoofed_versions_and_names() {
+        for corrupt_name in [false, true] {
+            let temp = TempDir::new().unwrap();
+            let store = new_store(&temp);
+            let project = Project::new("Preserve integration data");
+            store.create_project(&project).unwrap();
+            let connection = connection(&store).unwrap();
+            if corrupt_name {
+                connection
+                    .execute(
+                        "UPDATE integration_schema_migrations
+                         SET name = 'unexpected' WHERE version = 2",
+                        [],
+                    )
+                    .unwrap();
+            } else {
+                // Preserve max/count while replacing the first migration with version 0.
+                connection
+                    .execute(
+                        "DELETE FROM integration_schema_migrations WHERE version = 1",
+                        [],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                         VALUES(0, 'legacy_import_support', '2026-01-01T00:00:00Z')",
+                        [],
+                    )
+                    .unwrap();
+            }
+            drop(connection);
+            assert!(matches!(
+                store.run_integration_migrations(),
+                Err(RepositoryError::Storage(_))
+            ));
+            assert_eq!(store.get_project(project.id).unwrap().name, project.name);
+        }
+    }
+
+    #[test]
     fn transcription_commit_finishes_job_atomically() {
         let temp = TempDir::new().unwrap();
         let store = new_store(&temp);
