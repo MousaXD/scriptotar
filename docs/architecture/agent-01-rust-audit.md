@@ -131,10 +131,31 @@ fail-closed until their respective owners remediate and revalidate:
   distrusted root intermediate). The advisory specifies `>=1.0.10`.
   This exact 1.0.9 version was already present in the baseline
   `517877b26df9028cdd32af69f6f5a88a68b948e9` `Cargo.lock`.
-  A dependency/lockfile owner must update and verify affected dependency
-  chains without ignoring the advisory, then run the full exact-SHA gates.
+  Agent 01 received a cross-agent request from Agent 04 to resolve this
+  shared Rust dependency blocker. The branch now updates **only** the
+  `webpki-roots` 1.0.9 lockfile entry to 1.0.10, including the verified
+  crates.io index checksum. Both releases have identical **normal**
+  dependency requirements (`rustls-pki-types ^1.8`); no package manifest,
+  security ignore rule, or runtime policy was changed. CI must still confirm
+  the exact HEAD passes `cargo audit` and `cargo --locked` build/test gates.
 
 Integrated Tauri compilation was still in progress at inspection time.
-Agent 01 does **not** change the global lockfile or Python sidecar to mask
-these failures. This PR remains unmerged and blocked until the current HEAD
-passes required checks and independent QA provides review.
+Agent 01 did **not** modify the Python sidecar, CPython licensing rules,
+release script, or security policy. The one-package lockfile patch is a
+security fix, not an advisory suppression. The PR remains unmerged and
+blocked until exact-HEAD checks pass and independent QA provides review.
+
+## Verified Rust dependency remediation
+
+For `webpki-roots` 1.0.10, official `rust-lang/crates.io-index`
+(`we/bp/webpki-roots`) records checksum
+`1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9`.
+The index declares the release non-yanked with minimum Rust 1.71,
+and retains exactly the same normal dependency requirement as 1.0.9.
+The security advisory `RUSTSEC-2026-0381` identifies 1.0.10 as the
+minimum fixed release. `Cargo.lock` now uses this precise package
+version and checksum, leaving other dependency entries untouched.
+
+This is source/index verification, **not** substituted for
+`cargo audit`, reproducible `--locked` builds or installer
+acceptance evidence on the new exact PR HEAD.
