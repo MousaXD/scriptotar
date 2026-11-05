@@ -1199,6 +1199,55 @@ mod tests {
     }
 
     #[test]
+    fn spoofed_migration_versions_and_names_fail_closed_without_data_loss() {
+        for corrupt_name in [false, true] {
+            let (temp, db) = store();
+            let project = project(&db, "Preserve on ledger corruption");
+            let connection = db.connection().unwrap();
+            if corrupt_name {
+                connection
+                    .execute(
+                        "UPDATE schema_migrations SET name = 'unexpected' WHERE version = 2",
+                        [],
+                    )
+                    .unwrap();
+            } else {
+                // Highest version and count still match user_version, but v1 is absent.
+                connection
+                    .execute("DELETE FROM schema_migrations WHERE version = 1", [])
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name, applied_at)
+                         VALUES(0, 'initial_domain_schema', '2026-01-01T00:00:00Z')",
+                        [],
+                    )
+                    .unwrap();
+            }
+            drop(connection);
+            drop(db);
+            let path = temp.path().join("private").join("scriptotar.sqlite3");
+            assert!(matches!(
+                SqliteStore::open(&path),
+                Err(RepositoryError::Storage(_))
+            ));
+            let connection = Connection::open(&path).unwrap();
+            let name: String = connection
+                .query_row(
+                    "SELECT name FROM projects WHERE id = ?1",
+                    params![project.id.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(name, "Preserve on ledger corruption");
+            let version: u32 = connection
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, LATEST_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
     fn inconsistent_schema_ledger_is_rejected_without_changing_project_data() {
         let (temp, db) = store();
         let project = project(&db, "Keep me");
