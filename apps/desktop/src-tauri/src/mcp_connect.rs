@@ -454,7 +454,14 @@ impl McpConnectionState {
             };
             if let Some(reason) = failed {
                 let mode = connection.mode;
-                *state = None;
+                if let Some(mut expired) = state.take() {
+                    if let Some(child) = expired.child.as_mut() {
+                        // try_wait() can also fail while the process is alive.
+                        // Never drop an owned child without attempting cleanup.
+                        let _ = child.kill();
+                        let _ = child.wait();
+                    }
+                }
                 // Hold the connection-state lock while revoking to prevent a
                 // competing Connect from racing a delayed stale cleanup.
                 let revoked = match (
@@ -776,6 +783,47 @@ mod tests {
         let current = load_permissions(dir.path()).unwrap();
         assert_ne!(initial.url_token, current.url_token);
         assert!(!current.url_token.is_empty());
+    }
+
+    #[test]
+    fn disconnect_waits_for_transition_then_revokes_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let state = Arc::new(McpConnectionState::default());
+        let gateway = Arc::new(McpGatewayState::default());
+        let transition = state.transition.lock().unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let data_dir = dir.path().to_path_buf();
+        let worker = {
+            let state = Arc::clone(&state);
+            let gateway = Arc::clone(&gateway);
+            thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                done_tx.send(state.stop(&data_dir, &gateway)).unwrap();
+            })
+        };
+        started_rx.recv().unwrap();
+        assert!(
+            done_rx.try_recv().is_err(),
+            "disconnect must not bypass an active transition"
+        );
+        drop(transition);
+        done_rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        let current = load_permissions(dir.path()).unwrap();
+        assert_ne!(initial.url_token, current.url_token);
     }
 
     #[test]
