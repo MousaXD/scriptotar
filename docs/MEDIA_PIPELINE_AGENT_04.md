@@ -142,6 +142,20 @@ Independent inspection found that a normal `cancel()` acknowledgement had the sa
 
 **Status: IN PROGRESS; READY FOR AGENT 00 REVIEW: NO.** Audit-documentation commit itself advances HEAD again, so certification must always reference the final exact commit. No merges to base or main.
 
+## Certification checkpoint — 2026-11-06 01:29 GST, code HEAD `8e5a030a578ec13c1586db9ca17e1685b8c890a6`
+
+**STATUS: IN PROGRESS; READY FOR AGENT 00 REVIEW: NO.** The code HEAD passed [Transcription Sidecar 42111000726](https://github.com/MousaXD/scriptotar/actions/runs/42111000726): [unit job 127538202760](https://github.com/MousaXD/scriptotar/actions/runs/42111000726/job/127538202760) ran **71 tests, 1 skipped** (Windows-only real descendant cleanup). The two newly added cancellation-ordering and failed-termination tests **PASSED**. [Real dependency imports job 127538203232](https://github.com/MousaXD/scriptotar/actions/runs/42111000726/job/127538203232) **PASSED**. These tests use deterministic mocks/fixtures and real imports, **not** a live GPU or model benchmark.
+
+- [MCP E2E 42111001096](https://github.com/MousaXD/scriptotar/actions/runs/42111001096) **SUCCESS**.
+- [General CI 42111000821](https://github.com/MousaXD/scriptotar/actions/runs/42111000821) **IN PROGRESS** (installing Linux Tauri native libraries; no final result).
+- [Windows Tauri Installer 42111000490](https://github.com/MousaXD/scriptotar/actions/runs/42111000490) **IN PROGRESS** (bundling NSIS installer). This packaging workflow is not a native descendant-process termination test.
+- [Linux Tauri Package 42111000519](https://github.com/MousaXD/scriptotar/actions/runs/42111000519) **IN PROGRESS** (installing pinned Tauri CLI).
+- [Tauri migration integration 42111000417](https://github.com/MousaXD/scriptotar/actions/runs/42111000417) **QUEUED/IN PROGRESS** as aggregate: Rust↔sidecar integration and Svelte jobs **SUCCESS** individually; Rust workspace, Python sidecar, supply-chain jobs **QUEUED** at inspection. Prior supply-chain failure on `webpki-roots 1.0.9` / `RUSTSEC-2026-0381` remains unresolved in previously inspected SHA; do not assert result of this queued job.
+- [Security hygiene 42111000919](https://github.com/MousaXD/scriptotar/actions/runs/42111000919) **PENDING**.
+- [Real YouTube Instagram TikTok E2E 42111000447](https://github.com/MousaXD/scriptotar/actions/runs/42111000447), [job 127538374606](https://github.com/MousaXD/scriptotar/actions/runs/42111000447/job/127538374606) **FAILED overall** because YouTube required bot sign-in (`SOURCE_ACCESS_FAILED`, no download or inference). Instagram **real download + Faster Whisper inference PASSED** (15 s excerpt, 3 segments, 35.48 s observed elapsed); TikTok **real download + inference PASSED** (10.8 s excerpt, 0 segments, 4.87 s observed elapsed). These are per-run diagnostics, not controlled benchmarks or claims about multilingual accuracy, CUDA, or speedup.
+
+All supported models, formats, providers, language, quality and device options remain intact. Authentication, runtime licensing, and fail-closed behavior were not weakened. Native Windows process-tree cleanup remains unverified on Windows. The documentation-only commit recording this checkpoint advances the SHA and **requires fresh exact-SHA validation**. No base/main writes or self-merge.
+
 ## Performance tradeoffs / open questions
 
 - Recovery integrity intentionally reads the completed media file once to hash it and once upon attempted restart reuse. This is bounded-memory O(media size) I/O; no throughput benchmark has been measured. Avoid claiming performance gains without measurements.
