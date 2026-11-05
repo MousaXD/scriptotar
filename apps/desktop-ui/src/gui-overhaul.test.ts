@@ -176,4 +176,30 @@ describe('Creator Control Room GUI', () => {
     expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
   });
 
+  it('keeps the native media queue workflow usable in Arabic', async () => {
+    await ready();
+    await fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
+    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+
+    expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'مرشحات المهام' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'اختيار فيديو' }));
+    expect(await screen.findByText('تم اختيار الفيديو. أضفه إلى الطابور عندما تكون جاهزاً.')).toBeInTheDocument();
+    expect(screen.getByText('/mock/selected-video.mp4')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'إضافة المحدد للطابور' })).toBeEnabled();
+  });
+
+  it('localizes transcript controls without translating user-authored segments', async () => {
+    await ready();
+    await fireEvent.click(screen.getByRole('button', { name: 'Transcripts' }));
+    const content = await screen.findByTestId('transcript-content');
+    const before = content.textContent;
+    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+
+    expect(await screen.findByRole('heading', { name: 'مساحة النصوص المفرغة' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'نسخ النص' })).toBeInTheDocument();
+    expect(content).toHaveAttribute('dir', 'rtl');
+    expect(content.textContent).toBe(before);
+  });
+
 });
