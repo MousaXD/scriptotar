@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { translator } from './i18n/translate';
   import { getApi, type ScriptotarApi } from './api';
   import { applyAppearance, loadAppearance } from './appearance';
   import type { AppSettings, BootstrapData, Job, LibraryItem, MigrationStatus, ViewId, WorkspaceSearchResult } from './types';
@@ -286,16 +287,16 @@
 <svelte:window onkeydown={keyNav} />
 
 {#if loading}
-  <div class="boot-screen" aria-busy="true"><div class="boot-mark">S</div><div><strong>Opening Scriptotar</strong><span>Loading your local workspace…</span></div></div>
+  <div class="boot-screen" aria-busy="true"><div class="boot-mark">S</div><div><strong>{$translator('boot.opening')}</strong><span>{$translator('boot.loading')}</span></div></div>
 {:else if error}
-  <div class="boot-screen error-boot"><ErrorState title="Could not open Scriptotar" message={error} onRetry={() => load()} /></div>
+  <div class="boot-screen error-boot"><ErrorState title={$translator('error.bootTitle')} message={error} onRetry={() => load()} /></div>
 {:else if data && activeProject}
   <AppShell {activeView} activeProjectId={data.activeProjectId} projects={data.projects} {activeJobs} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
     {#if switchError}
-      <ErrorState title="Could not switch projects" message={switchError} />
+      <ErrorState title={$translator('error.projectTitle')} message={switchError} />
     {/if}
     {#if operationalError}
-      <ErrorState title="Background status unavailable" message={operationalError} onRetry={refreshOperationalStatus} />
+      <ErrorState title={$translator('error.backgroundTitle')} message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
