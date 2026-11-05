@@ -610,13 +610,22 @@ mod tests {
         let source = b"first\nsecond\n";
         let mut reader = BufReader::new(source.as_slice());
         let mut line = Vec::new();
-        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 6);
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            6
+        );
         assert_eq!(line, b"first\n");
         line.clear();
-        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 7);
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            7
+        );
         assert_eq!(line, b"second\n");
         line.clear();
-        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 0);
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            0
+        );
     }
 
     #[test]
