@@ -1188,12 +1188,9 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
         .optional()
         .map_err(storage_error)?
     {
-        if existing_id != id.to_string() {
-            return Err(RepositoryError::Conflict(format!(
-                "legacy project {normalized:?} conflicts with an existing project; refusing to merge unrelated data"
-            )));
-        }
-        return Ok(id);
+        return Err(RepositoryError::Conflict(format!(
+            "legacy project {normalized:?} already exists as {existing_id}; refusing to merge historical imports with existing user data"
+        )));
     }
     tx.execute(
         "INSERT INTO projects(id, name, created_at) VALUES(?1, ?2, ?3)",
