@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import threading
 import unittest
 
+from scriptotar_sidecar.errors import SidecarError
 from scriptotar_sidecar.protocol import ProtocolWriter
 from scriptotar_sidecar.service import EngineSupervisor
 
@@ -115,7 +117,8 @@ class EngineTerminalRaceTests(unittest.TestCase):
 
     def test_cancel_does_not_acknowledge_termination_failure(self):
         supervisor, output = self.supervisor()
-        supervisor.proc = FakeProcess([])
+        proc = FakeProcess([])
+        supervisor.proc = proc
         supervisor.active_job_id = "job-1"
 
         def fail_termination(_proc):
@@ -124,9 +127,72 @@ class EngineTerminalRaceTests(unittest.TestCase):
         supervisor._terminate_process_group = fail_termination
         with self.assertRaisesRegex(RuntimeError, "termination failed"):
             supervisor.cancel("job-1")
+        self.assertIs(supervisor.proc, proc, "failed termination must preserve worker tracking")
+        self.assertEqual(supervisor.active_job_id, "job-1", "failed termination must hold the job slot")
+        self.assertTrue(supervisor._cancel_in_progress, "late events must remain suppressed")
+        self.assertEqual(output.getvalue(), "", "failed termination must not be acknowledged as cancelled")
+        with self.assertRaises(SidecarError) as busy:
+            supervisor.start_job({"id": "successor"})
+        self.assertEqual(busy.exception.code, "BUSY")
+
+        # Once the worker is known to be dead, retry can safely finish.
+        supervisor._terminate_process_group = lambda _proc: None
+        supervisor.cancel("job-1")
+        self.assertIsNone(supervisor.proc)
         self.assertIsNone(supervisor.active_job_id)
         self.assertFalse(supervisor._cancel_in_progress)
-        self.assertEqual(output.getvalue(), "", "failed termination must not be acknowledged as cancelled")
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([event["type"] for event in events], ["cancelled"])
+
+    def test_cancel_refuses_normal_termination_return_while_worker_is_alive(self):
+        supervisor, output = self.supervisor()
+
+        class StillRunningProcess:
+            def poll(self):
+                return None
+
+        proc = StillRunningProcess()
+        supervisor.proc = proc
+        supervisor.active_job_id = "job-1"
+        supervisor._terminate_process_group = lambda _proc: None
+
+        with self.assertRaises(SidecarError) as raised:
+            supervisor.cancel("job-1")
+        self.assertEqual(raised.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertIs(supervisor.proc, proc)
+        self.assertEqual(supervisor.active_job_id, "job-1")
+        self.assertTrue(supervisor._cancel_in_progress)
+        self.assertEqual(output.getvalue(), "")
+
+    def test_termination_wait_timeout_is_not_silently_accepted(self):
+        supervisor, _ = self.supervisor()
+
+        class StillRunningProcess:
+            pid = 4242
+
+            def poll(self):
+                return None
+
+            def kill(self):
+                pass
+
+            def wait(self, timeout=None):
+                raise subprocess.TimeoutExpired("fake-engine", timeout)
+
+        proc = StillRunningProcess()
+        # Exercise the real termination helper, not just a patched callback.
+        # Use the Windows branch with a mocked taskkill invocation so POSIX
+        # process groups on the runner are never signaled.
+        from unittest.mock import patch
+        from scriptotar_sidecar import service
+
+        with (
+            patch.object(service.os, "name", "nt"),
+            patch.object(service.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)),
+        ):
+            with self.assertRaises(SidecarError) as raised:
+                supervisor._terminate_process_group(proc, grace_seconds=0)
+        self.assertEqual(raised.exception.code, "ENGINE_TERMINATION_FAILED")
 
     def test_cancel_requested_blocks_in_flight_result(self):
         supervisor, output = self.supervisor()
