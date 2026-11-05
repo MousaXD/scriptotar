@@ -253,8 +253,10 @@
     // Modal dialogs must own keyboard input; workspace shortcuts must not navigate behind them.
     if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
-    const target = event.target as HTMLElement | null;
-    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    const target = event.target;
+    // Window-dispatched shortcuts have no Element target; nested editor content
+    // must not accidentally trigger workspace navigation either.
+    if (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"]')) return;
     const shortcuts: Record<string, ViewId> = { d: 'dashboard', r: 'research', j: 'jobs', t: 'transcript', a: 'ai', l: 'library', ',': 'settings' };
     if (shortcuts[event.key.toLowerCase()]) activeView = shortcuts[event.key.toLowerCase()];
   }
