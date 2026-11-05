@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import gc
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -131,7 +132,8 @@ def probe_duration(path: Path) -> float | None:
             text=True,
             timeout=30,
         )
-        return float(result.stdout.strip())
+        duration = float(result.stdout.strip())
+        return duration if math.isfinite(duration) and duration > 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
@@ -157,11 +159,19 @@ def _quality_format(quality: str) -> tuple[str, str | None, list[str]]:
 
 def _limited_metadata(info: dict[str, Any], fallback_url: str) -> dict[str, Any]:
     duration = info.get("duration")
+    valid_duration = (
+        float(duration)
+        if isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration > 0
+        else None
+    )
     return {
         "title": str(info.get("title") or "video")[:500],
         "uploader": (str(info.get("uploader") or info.get("channel"))[:300] if info.get("uploader") or info.get("channel") else None),
         "source_url": str(info.get("webpage_url") or fallback_url),
-        "duration_seconds": float(duration) if isinstance(duration, (int, float)) else None,
+        "duration_seconds": valid_duration,
         "extractor": str(info.get("extractor_key") or info.get("extractor") or "")[:100] or None,
     }
 
@@ -180,8 +190,16 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     }
     if job.get("cookies") != "none":
         preflight_opts["cookiesfrombrowser"] = (job["cookies"],)
-    with yt_dlp.YoutubeDL(preflight_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(preflight_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as exc:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source platform could not provide media metadata. Check the URL, network, "
+            "regional availability and any required account access before retrying.",
+            retryable=True,
+        ) from exc
     if not isinstance(info, dict):
         raise SidecarError("MEDIA_METADATA_FAILED", "The source returned no usable media metadata.", retryable=True)
     if info.get("is_live"):
@@ -226,8 +244,22 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     if job.get("cookies") != "none":
         options["cookiesfrombrowser"] = (job["cookies"],)
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            status = ydl.download([url])
+    except yt_dlp.utils.DownloadError as exc:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source platform did not complete the download. Check source access "
+            "and connectivity; retry or use an authorized local copy.",
+            retryable=True,
+        ) from exc
+    if status != 0:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source downloader reported a nonzero exit status.",
+            retryable=True,
+        )
 
     candidates = [
         path
