@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { createMockClient } from './api/mockClient';
@@ -77,4 +77,68 @@ describe('Creator Control Room GUI', () => {
     expect(screen.getByText('التفضيلات')).toBeInTheDocument();
     expect(screen.getByText('ترحيل البيانات القديمة')).toBeInTheDocument();
   });
+  it('keeps utility navigation available to keyboard and assistive technology', async () => {
+    await ready();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'MCP Setup' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Skip to main workspace' })).toHaveAttribute('href', '#workspace-main');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'MCP Setup' })).toBeInTheDocument();
+  });
+
+  it('traps Tab inside the command palette and returns focus to its opener', async () => {
+    await ready();
+    const opener = screen.getByRole('button', { name: 'Settings' });
+    opener.focus();
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+
+    const dialog = screen.getByRole('dialog', { name: 'Command palette' });
+    const search = within(dialog).getByRole('textbox', { name: 'Search workspace and commands' });
+    expect(search).toHaveFocus();
+
+    const buttons = within(dialog).getAllByRole('button');
+    const last = buttons[buttons.length - 1];
+    last.focus();
+    await fireEvent.keyDown(last, { key: 'Tab' });
+    expect(search).toHaveFocus();
+
+    await fireEvent.keyDown(search, { key: 'Tab', shiftKey: true });
+    expect(last).toHaveFocus();
+
+    await fireEvent.keyDown(search, { key: 'Escape' });
+    await waitFor(() => expect(opener).toHaveFocus());
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+  });
+
+  it('can reopen search after Escape without a focus-driven dialog loop', async () => {
+    await ready();
+    const trigger = screen.getByRole('textbox', { name: 'Search workspace' });
+    trigger.focus();
+    const search = await screen.findByRole('textbox', { name: 'Search workspace and commands' });
+    await fireEvent.keyDown(search, { key: 'Escape' });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+
+    await fireEvent.click(trigger);
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+  });
+
+  it('localizes Library controls in Arabic without changing creator or transcript titles', async () => {
+    await ready();
+    await fireEvent.click(screen.getByRole('button', { name: 'Library' }));
+    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+
+    expect(await screen.findByRole('heading', { name: 'المكتبة' })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'نوع عناصر المكتبة' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'إعداد MCP' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /فتح نص مفرغ: Hook breakdown — Arabic sample/ })).toBeInTheDocument();
+
+    const search = screen.getByRole('textbox', { name: 'البحث في المكتبة' });
+    await fireEvent.input(search, { target: { value: 'not present' } });
+    expect(screen.getByText('لا توجد نتائج مطابقة')).toBeInTheDocument();
+    expect(document.documentElement.dir).toBe('rtl');
+  });
+
 });
