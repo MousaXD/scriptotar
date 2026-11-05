@@ -281,7 +281,7 @@
 
 {#if paletteOpen}
   <div class="palette-backdrop" role="presentation" on:mousedown={(event) => { if (event.currentTarget === event.target) closePalette(); }} data-i18n-ignore>
-    <div class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')} on:keydown={paletteKeys}>
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')} tabindex="-1" on:keydown={paletteKeys}>
       <label class="palette-search">
         <Icon name="search" size={19} />
         <span class="sr-only">{$translator('search.open')}</span>
