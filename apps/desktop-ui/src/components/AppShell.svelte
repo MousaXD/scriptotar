@@ -413,6 +413,7 @@
     .sidebar-utility { display: flex; flex: 0 0 auto; gap: 4px; margin-top: 0; }
     .sidebar-utility .settings-link { display: flex; align-items: center; justify-content: center; width: 42px; min-height: 42px; padding: 0; }
     .sidebar-utility .settings-link .nav-label, .sidebar-utility .local-status { display: none; }
+    .sidebar-utility .settings-link.active::before { inset-inline-start: 9px; inset-block-start: auto; bottom: -5px; width: 22px; height: 3px; }
     .nav-group { display: flex; gap: 4px; }
     .nav-group button { display: flex; min-width: 42px; width: 42px; justify-content: center; padding: 0; }
     .nav-group button.active::before { inset-inline-start: 9px; inset-block-start: auto; bottom: -5px; width: 22px; height: 3px; }
