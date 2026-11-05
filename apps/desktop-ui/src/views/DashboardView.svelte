@@ -124,7 +124,7 @@
         </button>
       {/each}
       {#if transcripts.length === 0}
-        <button class="quiet-empty" on:click={() => onNavigate('jobs')}><strong>{$translator('home.transcript')}</strong><span>{$translator('home.jobs')} →</span></button>
+        <button class="quiet-empty" on:click={() => onNavigate('jobs')}><strong>{$translator('home.transcript')}</strong><span>{$translator('home.jobsLink')}</span></button>
       {/if}
     </div>
   </section>
