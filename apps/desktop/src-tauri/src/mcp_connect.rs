@@ -463,6 +463,27 @@ impl McpConnectionState {
     }
 
     pub(crate) fn status(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
+        // Status polling can revoke a dead tunnel. That revocation must be
+        // serialized with settings saves and new connections, or a stale save
+        // can restore the just-revoked URL credential.
+        let Ok(_transition) = self.transition.lock() else {
+            return McpConnectionStatus {
+                mode: "none".into(),
+                state: "error".into(),
+                detail: "MCP connection state is unavailable; disable MCP permissions locally."
+                    .into(),
+                public_url: None,
+                local_url: None,
+                tunnel_id: None,
+                cloudflare_available: false,
+                openai_available: false,
+            };
+        };
+        self.status_inner(app)
+    }
+
+    // Only call under the transition lock, including from Connect handlers.
+    fn status_inner(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
         let cloudflare_available = built_in_executable(app, "cloudflared").is_some();
         let openai_available = built_in_executable(app, "tunnel-client").is_some();
         let result = || McpConnectionStatus {
@@ -610,7 +631,7 @@ impl McpConnectionState {
                 _temp: None,
             },
         )?;
-        Ok(self.status(app))
+        Ok(self.status_inner(app))
     }
 
     pub(crate) fn connect_manual(
@@ -645,7 +666,7 @@ impl McpConnectionState {
                 _temp: None,
             },
         )?;
-        Ok(self.status(app))
+        Ok(self.status_inner(app))
     }
 
     pub(crate) fn connect_openai(
@@ -728,7 +749,7 @@ impl McpConnectionState {
                 _temp: Some(temp),
             },
         )?;
-        Ok(self.status(app))
+        Ok(self.status_inner(app))
     }
 }
 
