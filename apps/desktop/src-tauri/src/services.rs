@@ -1,3 +1,5 @@
+mod project_jobs;
+
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -32,6 +34,7 @@ use crate::dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
     UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
 };
+use project_jobs::summarize_project_jobs;
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
@@ -485,6 +488,9 @@ impl AppServices {
     fn bootstrap_for(&self, active_project: Uuid) -> RepositoryResult<BootstrapData> {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
+        // Precompute project counts and latest updates once. Repeatedly filtering all
+        // jobs for every project makes bootstrap CPU work quadratic in workspace size.
+        let project_job_summaries = summarize_project_jobs(&all_jobs);
         let transcripts = self.store.list_transcripts(Some(active_project))?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
@@ -558,14 +564,9 @@ impl AppServices {
         let ui_projects = projects
             .iter()
             .map(|project| {
-                let project_jobs = all_jobs
-                    .iter()
-                    .filter(|job| job.project_id == project.id)
-                    .collect::<Vec<_>>();
-                let updated_at = project_jobs
-                    .iter()
-                    .map(|job| job.updated_at.as_str())
-                    .max()
+                let summary = project_job_summaries.get(&project.id);
+                let updated_at = summary
+                    .and_then(|summary| summary.latest_updated_at)
                     .unwrap_or(&project.created_at)
                     .to_owned();
                 UiProject {
@@ -573,7 +574,7 @@ impl AppServices {
                     name: project.name.clone(),
                     description: None,
                     updated_at,
-                    item_count: project_jobs.len(),
+                    item_count: summary.map(|summary| summary.item_count).unwrap_or(0),
                 }
             })
             .collect::<Vec<_>>();
