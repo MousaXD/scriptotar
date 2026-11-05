@@ -25,7 +25,7 @@ dependencies from domain adapters to SQLite fixtures are deliberate.
 | --- | --- | --- | --- |
 | Full-bootstrap project metrics repeatedly scan *all* jobs once **per project**. | `AppServices::bootstrap_for` previously ran `all_jobs.iter().filter(...)` inside `projects.iter().map(...)` in `apps/desktop/src-tauri/src/services.rs`. | Medium (scales with workspace size) | **Fixed in this branch**. Added a single linear aggregation in `services/project_jobs.rs`. |
 | Full bootstrap materializes complete jobs, transcripts (including text/segments), research items, AI runs, creators, and watchlists, even when only a project header changes. | `AppServices::bootstrap_for` calls all `list_*` methods and serializes `BootstrapData`; `create_project`, `select_project`, and `save_watchlist` return that whole DTO. | High potential latency/memory cost for large libraries; **not measured** | **Open, cross-agent**. Needs DB-owned SQL summary/list pagination plus frontend/API contract negotiation. Do not silently shrink existing `bootstrap_app` payload. |
-| Tauri IPC uses synchronous handlers for disk/database operations and potentially long-running network/provider calls. | `#[tauri::command] fn bootstrap_app`, `scan_creator`, and `run_ai` delegate to synchronous service implementations. | Medium potential latency / host thread pressure; **not measured** | **Open, cross-agent**. Consider bounded async blocking pools and cancellable background operations with tests. Do not change provider orchestration in this agent. |
+| Tauri IPC originally used synchronous handlers for large bootstrap reads and long-running network/provider calls. | The base SHA has `#[tauri::command] fn bootstrap_app`, `scan_creator`, and `run_ai` calling blocking service methods. | Medium potential latency / host thread pressure; **not measured** | **Partially fixed**. Eight expensive IPC commands now use an async adapter and `tauri::async_runtime::spawn_blocking`; other host commands and background cancellation remain future work. |
 | The SQLite store opens/configures a connection per operation. | `SqliteStore::connection` in `crates/scriptotar-db/src/lib.rs`. | Opportunity; **not yet proven a bottleneck** | **DB owner** to profile connection initialization and decide whether connection reuse is justified. Do not introduce shared locks without evidence. |
 | UI API release tests enumerate all Tauri commands and frontend methods. | `tests/test_api_surface_contract.py` requires exact command counts and matching `tauriClient`, `mockClient`, and invocation tests. | Compatibility safeguard | **Preserved**. Do not add unpaired IPC commands; coordinate any paginated interface with the UI agent. |
 
@@ -49,6 +49,29 @@ each project and allocated a temporary job-reference vector for every project.
   measured runtime benchmarks. The remaining full-data fetch and transcript
   parsing still dominate some large-workspace cases.
 
+## Async IPC service adapters
+
+Eight handlers (`bootstrap_app`, `list_jobs`, `get_transcript`,
+`select_project`, `create_project`, `save_watchlist`,
+`scan_creator`, `run_ai`) keep validation and their public names,
+arguments, return payloads, and errors while calling the blocking service
+work on a Tauri background blocking worker. This prevents long disk,
+subprocess, and AI/provider operations from executing inline in those IPC
+handlers.
+
+- `on_blocking_worker` preserves `Result<T, String>` and converts a
+  panicked/cancelled worker join into a generic error rather than exposing
+  arbitrary panic text as a user-visible error.
+- The frontend API contract remains unchanged; the release-inventory regex
+  now recognizes `#[tauri::command] async fn` in addition to sync handlers
+  without reducing the expected number of commands.
+- A Rust regression test checks off-caller-thread execution and correct
+  success/error propagation.
+- Async scheduling **does not** change SQL access patterns or confer
+  cancellation on running provider/subprocess tasks. Concurrent invocation
+  behavior (particularly overlapping project selection and watchlist work)
+  merits explicit end-to-end stress tests before expanding the offload scope.
+
 ## Future typed queries / pagination — coordination contract
 
 Keep existing unbounded `bootstrap_app` semantics while introducing
@@ -69,6 +92,10 @@ and the UI agent:
 
 This avoids cross-agent database and frontend conflicts and prevents an
 unvalidated public API from bypassing release coverage.
+
+The current change does not add any paginated public APIs: SQL-level backing
+queries and paired frontend contract tests remain required before such APIs
+can be honestly advertised as scalable.
 
 ## Validation obligations
 
