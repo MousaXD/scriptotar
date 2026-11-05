@@ -243,7 +243,7 @@
 </div>
 
 <div class="ai-action-bar">
-  <span class="status-copy" aria-live="polite">{status}</span>
+  <span class="status-copy" role="status" aria-live="polite">{status}</span>
   <div class="ai-actions">
     <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
     <button class="button primary" disabled={building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
