@@ -151,16 +151,16 @@ fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
             );",
         )
         .map_err(storage_error)?;
-    let recorded_version: u32 = connection
+    let (recorded_version, recorded_count): (u32, u32) = connection
         .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            "SELECT COALESCE(MAX(version), 0), COUNT(*) FROM schema_migrations",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(storage_error)?;
-    if current != recorded_version {
+    if current != recorded_version || current != recorded_count {
         return Err(RepositoryError::Storage(format!(
-            "database schema version {current} does not match migration ledger {recorded_version}; refusing to modify existing data"
+            "database schema version {current} does not match migration ledger (highest {recorded_version}, count {recorded_count}); refusing to modify existing data"
         )));
     }
 
@@ -621,7 +621,9 @@ impl SqliteStore {
              ORDER BY name COLLATE NOCASE"
         };
         let mut statement = connection.prepare(sql).map_err(storage_error)?;
-        let rows = statement.query_map([], row_project).map_err(storage_error)?;
+        let rows = statement
+            .query_map([], row_project)
+            .map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
