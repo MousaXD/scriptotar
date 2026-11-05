@@ -322,6 +322,59 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
             |row| row.get(0),
         )
         .unwrap();
+    // Valid same-project rewiring must remain possible on a non-destructive v5 schema.
+    let source_peer = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO sources(id, project_id, source_type, locator, created_at)
+         VALUES(?1, ?2, 'local_file', '/tmp/peer.mp4', ?3)",
+        params![source_peer.to_string(), a.id.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE media SET source_id = ?1 WHERE id = ?2",
+        params![source_peer.to_string(), media_a.to_string()],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE transcripts SET media_id = ?1 WHERE id = ?2",
+        params![media_a.to_string(), transcript_b.to_string()],
+    )
+    .unwrap();
+
+    // Unlinked records are free to move to another existing project.
+    let free_creator = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO creators(id, project_id, platform, profile_url, created_at)
+         VALUES(?1, ?2, 'youtube', 'https://example.invalid/unlinked', ?3)",
+        params![free_creator.to_string(), a.id.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE creators SET project_id = ?1 WHERE id = ?2",
+        params![b.id.to_string(), free_creator.to_string()],
+    )
+    .unwrap();
+    let free_source = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO sources(id, project_id, source_type, locator, created_at)
+         VALUES(?1, ?2, 'local_file', '/tmp/unlinked.mp4', ?3)",
+        params![free_source.to_string(), a.id.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE sources SET project_id = ?1 WHERE id = ?2",
+        params![b.id.to_string(), free_source.to_string()],
+    )
+    .unwrap();
+    let free_job = Job::new(a.id, JobInput::LocalFile("/tmp/free.mp4".to_owned()));
+    store.insert_job(&free_job).unwrap();
+    conn.execute(
+        "UPDATE jobs SET project_id = ?1 WHERE id = ?2",
+        params![b.id.to_string(), free_job.id.to_string()],
+    )
+    .unwrap();
+    assert_eq!(store.get_job(free_job.id).unwrap().project_id, b.id);
+
     assert_eq!(project, a.id.to_string());
     assert_eq!(store.get_job(job.id).unwrap().project_id, a.id);
     assert_eq!(
