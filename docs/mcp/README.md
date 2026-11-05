@@ -4,8 +4,10 @@ Scriptotar has 14 native Rust MCP tools and a **guided connection wizard**, patt
 on Chat On Steroids' provider choices. Permissions remain **app-owned**, never
 controlled by ChatGPT. For a production installer, Scriptotar bundles **pinned,
 SHA-256-verified** OpenAI `tunnel-client` and Cloudflare `cloudflared` binaries,
-including provenance and license files. These programs are not downloaded or
-updated in the background on customer computers.
+including provenance and license files. Production builds only use the
+bundled tunnel executables; they never silently load unverified tools from PATH.
+Debug/development builds may use PATH for local testing. These programs are not
+downloaded or updated in the background on customer computers.
 
 ## Setup in Scriptotar (no terminal required)
 

@@ -160,7 +160,12 @@ fn built_in_executable(app: &tauri::AppHandle, filename: &str) -> Option<PathBuf
             return Some(bundled);
         }
     }
-    // App releases prefer the audited bundle. PATH fallback supports dev builds.
+    // Only development builds may use arbitrary binaries from PATH.
+    // Production must fail closed when the reviewed bundle is absent: otherwise
+    // an unrelated PATH entry could receive the restricted OpenAI API key.
+    if !cfg!(debug_assertions) {
+        return None;
+    }
     if let Some(paths) = std::env::var_os("PATH") {
         for path in std::env::split_paths(&paths) {
             let candidate = path.join(&binary);

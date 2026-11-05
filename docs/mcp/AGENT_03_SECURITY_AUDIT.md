@@ -16,6 +16,7 @@
 | Medium | Permission or executable grant revocation was checked only at the start of a command, so a long-running child continued for up to 15 seconds after revocation. | Re-read app policy and revalidate executable and cwd grants while command runs; terminate the direct child on revocation. |
 | Low | HTTP accepted misleading media types beginning with `application/json`, such as `application/jsonp`. | Require JSON MIME type prior to optional parameters. |
 | Medium | The wizard's OS-keyring credential persistence option started checked, which conflicts with the documented explicit-remember security boundary. | Default the Remember checkbox to off and add a frontend test that selects it deliberately. |
+| High | A production installer missing its reviewed tunnel binary could fall back to a PATH-discovered unverified executable, exposing the OpenAI runtime key to it. | Restrict PATH fallback to debug/development builds; release builds require bundled tunnel binaries and fail closed if absent. |
 | Medium | Unexpected managed tunnel process exit was only reported by status polling, without gateway cleanup or URL-secret revocation. | On status detection, clear managed state, stop local gateway and rotate the URL secret; add revocation regression test. |
 
 ## Protected functionality
