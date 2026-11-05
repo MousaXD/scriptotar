@@ -92,6 +92,23 @@ A subsequent CI run on the **new final HEAD** must certify these changes, includ
 
 **Benchmarks:** No CPU/GPU speed, memory, throughput, or checkpoint-hashing runtime benchmark has been measured. The recovery integrity check adds bounded 1 MiB streaming I/O and no uncontrolled inference concurrency.
 
+## Certification continuation — exact 2026-11-05 SHA `ca2fe9d8527804a5ed268bd88e4b32a9f8a987e1`
+
+- [Transcription Sidecar 42098689298](https://github.com/MousaXD/scriptotar/actions/runs/42098689298): **SUCCESS** — actual pinned dependency imports and Python protocol/unit suite (the real Windows descendant test is **SKIPPED** on Linux).
+- [CI 42098689261](https://github.com/MousaXD/scriptotar/actions/runs/42098689261): **SUCCESS**.
+- [Linux Tauri Package 42098689195](https://github.com/MousaXD/scriptotar/actions/runs/42098689195): **SUCCESS** — package build, installed runtime/attribution smoke and legal inventory checks including Python runtime license checksum.
+- [Windows Tauri Installer 42098689211](https://github.com/MousaXD/scriptotar/actions/runs/42098689211): **SUCCESS** — installer smoke. This does **not** run the new native Windows child-process test; Agent 01 was asked to add Windows runner coverage in workflow ownership.
+- [Security hygiene 42098689188](https://github.com/MousaXD/scriptotar/actions/runs/42098689188): **SUCCESS**.
+- [Tauri migration integration 42098689219](https://github.com/MousaXD/scriptotar/actions/runs/42098689219): **FAILED as aggregate** because [Rust advisories job 127495428177](https://github.com/MousaXD/scriptotar/actions/runs/42098689219/job/127495428177) finds `RUSTSEC-2026-0381` in `webpki-roots 1.0.9` (fixed in >=1.0.10). Rust workspace, Svelte, Python, Rust↔sidecar and integrated Tauri build jobs individually **SUCCESS**. Do **not** relax or suppress the advisory, owned by Rust/release agents.
+- [MCP E2E 42098689289](https://github.com/MousaXD/scriptotar/actions/runs/42098689289): **FAILED in Ubuntu desktop-dependency apt install** after package mirrors repeatedly stalled and the step exited 124 ([job 127495431211](https://github.com/MousaXD/scriptotar/actions/runs/42098689289/job/127495431211)). Earlier individual MCP tests passed within that workflow before the apt step. This is a runner/package-network blocker and not proof of a functional MCP regression. No workflow or dependency changes were made by Agent 04; escalate to the appropriate owners.
+- [Real YouTube Instagram TikTok E2E 42098689240](https://github.com/MousaXD/scriptotar/actions/runs/42098689240): **FAILED overall**. [Job 127495984915](https://github.com/MousaXD/scriptotar/actions/runs/42098689240/job/127495984915) reports YouTube bot-sign-in request and `SOURCE_ACCESS_FAILED`, with no YouTube download/inference; real Instagram download and 15-second Whisper inference **PASSED** (3 segments, 16.56 seconds reported elapsed), real TikTok download and inference **PASSED** (0 segments, 2.75 seconds elapsed). These are per-case **observed wall-clock timings**, **not** a controlled performance benchmark, speedup, CUDA test or language-accuracy certification.
+
+### Follow-up media correctness hardening
+
+Independent code audit identified an additional terminal-event race: `EngineSupervisor._abort_engine_protocol` and the unexpected-worker-exit path cleared `active_job_id` under the start/cancel lock but emitted the fatal error after unlocking. A concurrently accepted successor job could then appear before the previous job's failure event. Agent 04 changed both paths to emit while still holding the shared arbitration lock, preserving the existing diagnostic code and retryable flag. Two deterministic adversarial tests in `test_supervisor_races.py` launch a competing thread inside the event-write callback and assert it cannot acquire the supervisor state lock during either fatal emission. **These follow-up changes require green CI on their new exact HEAD**. The new test is a concurrency fixture, not real model inference.
+
+**Compatibility and limits:** no models, formats, providers, device modes, locale options or application-owned security checks were removed. GPU performance, mixed Arabic/English recognition accuracy, and actual Windows descendant cleanup remain unmeasured/unverified. No self-merge.
+
 ## Performance tradeoffs / open questions
 
 - Recovery integrity intentionally reads the completed media file once to hash it and once upon attempted restart reuse. This is bounded-memory O(media size) I/O; no throughput benchmark has been measured. Avoid claiming performance gains without measurements.
