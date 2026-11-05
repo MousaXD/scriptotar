@@ -37,6 +37,20 @@ No public protocol version, supported provider/domain, model choice (`small`, `m
 - Live YouTube, Instagram, TikTok: separate E2E workflow; network restrictions, rate limits and provider authentication may prevent success. Never relabel a blocked provider test as product success.
 - Faster Whisper CPU/CUDA inference, Arabic/English/mixed-language accuracy and GPU memory behavior: unit fixtures are **mocks**, not actual model inference; these checks require model downloads and appropriate hardware or explicit recorded fixtures.
 
+## Current CI findings (2026-11-05, exact pre-fix SHA `eccf55561dd1f72295a4c98c4aae1ab5fd50baba`)
+
+- [Transcription Sidecar](https://github.com/MousaXD/scriptotar/actions/runs/42084349548): **SUCCESS** — Python protocol/unit tests and actual pinned dependency import checks.
+- [Windows Tauri Installer](https://github.com/MousaXD/scriptotar/actions/runs/42084349484): **SUCCESS** — installer build/smoke job. This does **not** certify native Windows descendant termination, which is separately mocked.
+- [MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/42084349758) and [Security hygiene](https://github.com/MousaXD/scriptotar/actions/runs/42084349684): **SUCCESS**.
+- [Tauri migration integration](https://github.com/MousaXD/scriptotar/actions/runs/42084349565): Rust workspace and Rust↔sidecar integration jobs **SUCCESS**; Rust advisories job **FAILED** at `webpki-roots 1.0.9`, `RUSTSEC-2026-0381` (upgrade to >=1.0.10). Agent 01 notified on PR #73; no advisory bypass or Rust dependency modification in Agent 04's branch.
+- [Linux Tauri Package](https://github.com/MousaXD/scriptotar/actions/runs/42084349473): **FAILED** during packaged runtime licensing because the GitHub runner updated to CPython **3.12.16**, whereas the existing reviewed exact-version list ended at 3.12.15. Upstream `https://raw.githubusercontent.com/python/cpython/v3.12.16/LICENSE` and the previous pinned `v3.12.14/LICENSE` were compared and are text-identical (13,936 characters); `runtime_licenses.py` now admits exactly 3.12.16 while retaining the same pinned license SHA-256 verification, and tests protect against admitting a future 3.12.17 by accident. **Follow-up Linux CI result still required on the new SHA.** Agent 07 notified on PR #76.
+- [Real YouTube Instagram TikTok E2E](https://github.com/MousaXD/scriptotar/actions/runs/42084349607): **FAILED overall** because the exact YouTube URL was challenged for bot sign-in on the hosted runner (`SOURCE_ACCESS_FAILED`); Instagram's real download and Faster Whisper excerpt transcription **PASSED** (3 segments, ~15 s excerpt); TikTok's real download and inference **PASSED** (0 speech segments for its 10.8 s excerpt). These real provider observations do **not** certify Arabic/English/mixed-language accuracy or all accounts/regions. The job stays a strict failure; no cookies bypass, alternate fixture, or skip.
+- CI aggregate and integrated Tauri build had not completed when first inspected; **do not imply a pass without the final run's status**.
+
+## Follow-up remediation and boundaries
+
+The narrowly scoped CPython 3.12.16 review and regression test are committed on the Agent 04 branch, without changing upstream license content, legal bundle files, runtime validation, allowed algorithms, or trusted hashes. Subsequent release packaging must prove the legal bundle is generated and validated successfully. Agents 01/07 own the cross-branch Rust dependency advisory and release gate, respectively. No performance or GPU benchmark was measured.
+
 ## Performance tradeoffs / open questions
 
 - Recovery integrity intentionally reads the completed media file once to hash it and once upon attempted restart reuse. This is bounded-memory O(media size) I/O; no throughput benchmark has been measured. Avoid claiming performance gains without measurements.
