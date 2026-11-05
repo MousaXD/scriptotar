@@ -216,4 +216,41 @@ with tempfile.TemporaryDirectory() as directory:
         assert len(content(call('list_projects'))) == 1
         process.stdin.close()
         assert process.wait(timeout=10) == 0
-print('PASS: real MCP process, permissions, files, commands, validation, revocation, URL safety')
+
+    # Regression: SCRIPTOTAR_DB_PATH is intentionally configurable. File tools
+    # must protect the database that this MCP process actually opened, rather
+    # than only the conventional scriptotar.sqlite3 filename.
+    custom_db = data / 'custom-storage.db'
+    grant(enabled=True, readFiles=True, writeFiles=True, overwriteFiles=True,
+          allowedPaths=[str(data)])
+    custom_env = {**env, 'SCRIPTOTAR_DB_PATH': str(custom_db)}
+    with subprocess.Popen([str(BIN)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True, env=custom_env) as custom:
+        def custom_call(name, **arguments):
+            request_payload = {'jsonrpc': '2.0', 'id': 1,
+                                'method': 'tools/call',
+                                'params': {'name': name, 'arguments': arguments}}
+            custom.stdin.write(json.dumps(request_payload) + '\n')
+            custom.stdin.flush()
+            answer = custom.stdout.readline()
+            assert answer, f'custom database MCP process exited: {custom.poll()}'
+            result = json.loads(answer)
+            assert result['id'] == 1, result
+            return result
+
+        assert custom_db.exists(), 'MCP must create and migrate the custom SQLite DB'
+        reply = custom_call('read_file', path=str(custom_db))
+        assert reply['result']['isError'] is True, reply
+        for suffix in ('', '-wal', '-shm', '-journal'):
+            reply = custom_call('write_file', path=str(custom_db) + suffix,
+                                content='overwrite', overwrite=True)
+            assert reply['result']['isError'] is True, (suffix, reply)
+        if os.name == 'posix':
+            alias = data / 'custom-db-hardlink.txt'
+            os.link(custom_db, alias)
+            reply = custom_call('read_file', path=str(alias))
+            assert reply['result']['isError'] is True, reply
+            alias.unlink()
+        custom.stdin.close()
+        assert custom.wait(timeout=10) == 0
+print('PASS: real MCP process, permissions, files, commands, custom DB, revocation, URL safety')
