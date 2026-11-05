@@ -2,10 +2,8 @@ html[dir='rtl'] body {
   direction: rtl;
 }
 
-html[dir='rtl'] .sidebar {
-  border-right: 0;
-  border-left: 1px solid var(--border);
-}
+/* Sidebar borders and active markers use logical properties in AppShell.
+   Avoid physical left/right overrides: they hide compact RTL navigation markers. */
 
 html[dir='rtl'] .sidebar nav button,
 html[dir='rtl'] .creator-row,
@@ -15,22 +13,7 @@ html[dir='rtl'] .search-results button {
   text-align: right;
 }
 
-html[dir='rtl'] .sidebar nav button.active::before {
-  left: auto;
-  right: -13px;
-}
-
-html[dir='rtl'] .activity-count {
-  right: auto;
-  left: 42px;
-}
-
-html[dir='rtl'] .shell-v2 .activity-count {
-  right: auto;
-  left: auto;
-}
-
-html[dir='rtl'] .pulse-dot {
+ html[dir='rtl'] .pulse-dot {
   margin-right: 0;
   margin-left: 7px;
 }
