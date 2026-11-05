@@ -91,6 +91,7 @@ class EngineSupervisor:
                 text=True,
                 bufsize=1,
                 start_new_session=(os.name == "posix"),
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
                 env=self._child_env(),
             )
             threading.Thread(target=self._read_stdout, args=(self.proc,), daemon=True).start()
@@ -249,6 +250,19 @@ class EngineSupervisor:
         try:
             if os.name == "posix":
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            elif os.name == "nt":
+                # terminate() only stops the worker, leaving child FFmpeg/yt-dlp
+                # processes running. taskkill /T terminates its descendant tree.
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                        check=True,
+                    )
+                except (OSError, subprocess.SubprocessError):
+                    proc.terminate()
             else:
                 proc.terminate()
         except ProcessLookupError:
