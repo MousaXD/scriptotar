@@ -7,7 +7,7 @@ use scriptotar_jobs::JobService;
 use tempfile::TempDir;
 
 #[test]
-fn concurrent_job_transitions_cannot_both_advance_a_queued_job() {
+fn duplicate_concurrent_job_claims_allow_only_one_preparing_transition() {
     let temp = TempDir::new().unwrap();
     let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
     let project = Project::new("Concurrent job transitions");
@@ -29,27 +29,20 @@ fn concurrent_job_transitions_cannot_both_advance_a_queued_job() {
         prepare_service.advance(job_id, JobState::Preparing).is_ok()
     });
 
-    let cancel_service = service.clone();
-    let cancel_barrier = barrier.clone();
-    let cancel = thread::spawn(move || {
-        cancel_barrier.wait();
-        cancel_service.cancel(job_id).is_ok()
+    let duplicate_service = service.clone();
+    let duplicate_barrier = barrier.clone();
+    let duplicate = thread::spawn(move || {
+        duplicate_barrier.wait();
+        duplicate_service.advance(job_id, JobState::Preparing).is_ok()
     });
 
     barrier.wait();
-    let prepared = prepare.join().unwrap();
-    let cancelled = cancel.join().unwrap();
-    assert_ne!(prepared, cancelled, "exactly one transition must win");
+    let first_claim = prepare.join().unwrap();
+    let second_claim = duplicate.join().unwrap();
+    assert_ne!(first_claim, second_claim, "exactly one transition must win");
 
     let persisted = store.get_job(job.id).unwrap();
-    assert_eq!(
-        persisted.state,
-        if prepared {
-            JobState::Preparing
-        } else {
-            JobState::Cancelled
-        }
-    );
+    assert_eq!(persisted.state, JobState::Preparing);
     drop(store);
 
     let reopened = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
