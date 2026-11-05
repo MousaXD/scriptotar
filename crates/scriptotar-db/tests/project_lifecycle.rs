@@ -335,6 +335,19 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
         params![source_peer.to_string(), media_a.to_string()],
     )
     .unwrap();
+    let media_peer = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO media(id, source_id, local_path, created_at)
+         VALUES(?1, ?2, '/tmp/peer.mp4', ?3)",
+        params![media_peer.to_string(), source_a.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE transcripts SET media_id = ?1 WHERE id = ?2",
+        params![media_peer.to_string(), transcript_a.to_string()],
+    )
+    .unwrap();
+    // An unlinked transcript can move independently without invalidating a child link.
     conn.execute(
         "UPDATE transcripts SET media_id = ?1 WHERE id = ?2",
         params![media_a.to_string(), transcript_b.to_string()],
@@ -384,4 +397,60 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
             .get(&job.id),
         Some(&transcript_a)
     );
+}
+
+#[test]
+fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("historical-v4.sqlite3");
+    let store = SqliteStore::open(&path).unwrap();
+    store.run_integration_migrations().unwrap();
+    let project = Project::new("Before upgrade");
+    store.create_project(&project).unwrap();
+    let job = Job::new(project.id, JobInput::LocalFile("/tmp/keep-v4.mp4".to_owned()));
+    store.insert_job(&job).unwrap();
+    let mut settings = store.load_settings().unwrap();
+    settings.active_project_id = Some(project.id);
+    store.save_settings(&settings).unwrap();
+
+    // Reconstruct the exact v4 schema shape from v5 by undoing only v5's
+    // additive triggers and ledger rows. Existing project/job data remains untouched.
+    let connection = Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TRIGGER creators_project_reassignment_guard;
+             DROP TRIGGER sources_project_reassignment_guard;
+             DROP TRIGGER media_source_reassignment_guard;
+             DROP TRIGGER transcripts_media_reassignment_guard;
+             DROP TRIGGER jobs_project_lineage_reassignment_guard;
+             DROP TRIGGER sources_project_lineage_reassignment_guard;
+             DROP TRIGGER media_source_lineage_reassignment_guard;
+             DROP TRIGGER transcripts_media_lineage_reassignment_guard;
+             DELETE FROM schema_migrations WHERE version = 5;
+             DELETE FROM integration_schema_migrations WHERE version = 5;
+             PRAGMA user_version = 4;",
+        )
+        .unwrap();
+    drop(connection);
+    drop(store);
+
+    let upgraded = SqliteStore::open(&path).unwrap();
+    upgraded.run_integration_migrations().unwrap();
+    upgraded.run_integration_migrations().unwrap();
+    assert_eq!(upgraded.schema_version().unwrap(), 5);
+    assert_eq!(upgraded.get_project(project.id).unwrap(), project);
+    assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
+    assert_eq!(
+        upgraded.load_settings().unwrap().active_project_id,
+        Some(project.id)
+    );
+    let connection = Connection::open(&path).unwrap();
+    let count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM integration_schema_migrations WHERE version = 5",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 1);
 }
