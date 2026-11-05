@@ -409,7 +409,9 @@ fn youtube_fallback(raw: &Value) -> Option<String> {
     let id = raw.get("id")?.as_str()?.trim();
     if id.is_empty()
         || id.len() > 128
-        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
         return None;
     }
