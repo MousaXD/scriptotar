@@ -250,6 +250,8 @@
   }
 
   function keyNav(event: KeyboardEvent) {
+    // Modal dialogs must own keyboard input; workspace shortcuts must not navigate behind them.
+    if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
     if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
