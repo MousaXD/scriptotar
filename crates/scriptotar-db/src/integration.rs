@@ -69,6 +69,30 @@ impl SqliteStore {
                 "integration schema migration ledger has gaps: highest version {current}, count {recorded_count}; refusing to modify existing data"
             )));
         }
+        {
+            const EXPECTED: &[(u32, &str)] = &[
+                (1, "legacy_import_support"),
+                (2, "job_transcript_lineage"),
+                (3, "safe_job_transcript_backfill"),
+                (4, "job_transcript_project_guard"),
+            ];
+            let mut statement = connection
+                .prepare("SELECT version, name FROM integration_schema_migrations ORDER BY version")
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(storage_error)?;
+            for (index, row) in rows.enumerate() {
+                let (version, name) = row.map_err(storage_error)?;
+                if EXPECTED.get(index).copied() != Some((version, name.as_str())) {
+                    return Err(RepositoryError::Storage(format!(
+                        "integration migration ledger has unexpected version {version} or name {name:?}; refusing to modify existing data"
+                    )));
+                }
+            }
+        }
         if current < 1 {
             let tx = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
