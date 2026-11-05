@@ -73,6 +73,61 @@ class EngineTerminalRaceTests(unittest.TestCase):
             lambda supervisor, proc: supervisor._abort_engine_protocol(proc, "bad JSON")
         )
 
+    def test_cancelled_acknowledgement_precedes_new_job_acceptance(self):
+        supervisor, output = self.supervisor()
+        proc = FakeProcess([])
+        supervisor.proc = proc
+        supervisor.active_job_id = "job-1"
+        supervisor._engine_job_started = True
+        supervisor._terminate_process_group = lambda _proc: None
+        original_emit = supervisor.writer.emit
+        observed = []
+
+        def assert_serialized_emit(event_type, **payload):
+            # Probe from a different thread: the main thread uses RLock and
+            # could otherwise reacquire it even if the event is unprotected.
+            attempts = []
+
+            def probe():
+                locked = supervisor._lock.acquire(blocking=False)
+                attempts.append(locked)
+                if locked:
+                    supervisor._lock.release()
+
+            other = threading.Thread(target=probe)
+            other.start()
+            other.join(timeout=2)
+            self.assertFalse(other.is_alive())
+            self.assertEqual(len(attempts), 1)
+            observed.append((event_type, attempts[0]))
+            original_emit(event_type, **payload)
+
+        supervisor.writer.emit = assert_serialized_emit
+        supervisor.cancel("job-1")
+
+        self.assertEqual(observed, [("cancelled", False)])
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "cancelled")
+        self.assertEqual(events[0]["job_id"], "job-1")
+        self.assertIsNone(supervisor.active_job_id)
+        self.assertFalse(supervisor._cancel_in_progress)
+
+    def test_cancel_does_not_acknowledge_termination_failure(self):
+        supervisor, output = self.supervisor()
+        supervisor.proc = FakeProcess([])
+        supervisor.active_job_id = "job-1"
+
+        def fail_termination(_proc):
+            raise RuntimeError("termination failed")
+
+        supervisor._terminate_process_group = fail_termination
+        with self.assertRaisesRegex(RuntimeError, "termination failed"):
+            supervisor.cancel("job-1")
+        self.assertIsNone(supervisor.active_job_id)
+        self.assertFalse(supervisor._cancel_in_progress)
+        self.assertEqual(output.getvalue(), "", "failed termination must not be acknowledged as cancelled")
+
     def test_cancel_requested_blocks_in_flight_result(self):
         supervisor, output = self.supervisor()
         proc = FakeProcess([
