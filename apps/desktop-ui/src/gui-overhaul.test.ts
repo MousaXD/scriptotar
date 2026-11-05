@@ -202,4 +202,32 @@ describe('Creator Control Room GUI', () => {
     expect(content.textContent).toBe(before);
   });
 
+  it('persists original setting values when visible option labels use Arabic', async () => {
+    const api = createMockClient();
+    const saveSettings = vi.spyOn(api, 'saveSettings');
+    await readyWithApi(api);
+    await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+
+    expect(await screen.findByRole('heading', { name: 'الإعدادات' })).toBeInTheDocument();
+    const theme = screen.getByRole('combobox', { name: 'السمة' });
+    await fireEvent.change(theme, { target: { value: 'system' } });
+    expect(theme).toHaveValue('system');
+    expect(screen.getByRole('option', { name: 'النظام' })).toHaveValue('system');
+
+    const qualityLabel = screen.getByText('الجودة').closest('label');
+    const quality = qualityLabel?.querySelector('select');
+    expect(quality).not.toBeNull();
+    await fireEvent.change(quality!, { target: { value: 'Best' } });
+    expect(quality).toHaveValue('Best');
+    expect(screen.getByRole('option', { name: 'أفضل جودة' })).toHaveValue('Best');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'حفظ التغييرات' }));
+    await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      appearance: 'system',
+      quality: 'Best'
+    })));
+    expect(await screen.findByText('تم حفظ الإعدادات. ستستخدم المهام الجديدة وتحديثات قوائم المتابعة هذه التفضيلات.')).toBeInTheDocument();
+  });
+
 });
