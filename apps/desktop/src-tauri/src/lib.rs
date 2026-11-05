@@ -23,7 +23,7 @@ use dto::{
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
-use scriptotar_mcp::{load_permissions, save_permissions, McpPermissions};
+use scriptotar_mcp::{load_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -674,7 +674,7 @@ fn get_mcp_permissions(
 
 #[tauri::command]
 fn save_mcp_permissions(
-    mut permissions: McpPermissions,
+    permissions: McpPermissions,
     acknowledge_sensitive_access: bool,
     state: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,

@@ -862,6 +862,62 @@ mod tests {
     }
 
     #[test]
+    fn stale_settings_save_never_restores_rotated_public_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let state = McpConnectionState::default();
+        let gateway = McpGatewayState::default();
+        let mut stale = initial.clone();
+        stale.read_data = true;
+        state.stop(dir.path(), &gateway).unwrap();
+        let rotated = load_permissions(dir.path()).unwrap();
+        assert_ne!(initial.url_token, rotated.url_token);
+        let saved = state
+            .save_app_permissions(dir.path(), &gateway, stale)
+            .unwrap();
+        assert_eq!(saved.url_token, rotated.url_token);
+        assert!(saved.read_data);
+        assert_eq!(load_permissions(dir.path()).unwrap(), saved);
+    }
+
+    #[test]
+    fn disabling_policy_rotates_public_token_and_returns_current_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let state = McpConnectionState::default();
+        let gateway = McpGatewayState::default();
+        let saved = state
+            .save_app_permissions(
+                dir.path(),
+                &gateway,
+                McpPermissions {
+                    enabled: false,
+                    ..initial.clone()
+                },
+            )
+            .unwrap();
+        assert!(!saved.enabled);
+        assert_ne!(saved.url_token, initial.url_token);
+        assert_eq!(saved, load_permissions(dir.path()).unwrap());
+    }
+
+    #[test]
     fn openai_tunnel_id_is_strict() {
         assert!(valid_tunnel_id(&format!("tunnel_{}", "a".repeat(32))));
         assert!(!valid_tunnel_id("tunnel_BAD"));
