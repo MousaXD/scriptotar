@@ -425,7 +425,9 @@ fn block_active_db_file(db_path: &Path, path: &Path) -> Result<(), String> {
                 for protected_path in &protected {
                     if let Ok(secret) = fs::metadata(protected_path) {
                         if candidate.dev() == secret.dev() && candidate.ino() == secret.ino() {
-                            return Err("MCP cannot access its active SQLite database or journal".into());
+                            return Err(
+                                "MCP cannot access its active SQLite database or journal".into()
+                            );
                         }
                     }
                 }
