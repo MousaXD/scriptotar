@@ -56,6 +56,9 @@
   function invalidatePrompt() {
     promptGeneration += 1;
     runGeneration += 1;
+    // Prompt construction is local and safe to retry with newer inputs even if an old call stalls.
+    // The generation guard prevents either response from overwriting the other.
+    building = false;
     prompt = '';
     builtPrompt = '';
     result = '';
@@ -135,7 +138,7 @@
         status = `Could not build prompt: ${error instanceof Error ? error.message : 'Unknown error'}`;
       }
     } finally {
-      building = false;
+      if (generation === promptGeneration) building = false;
     }
   }
   async function copyText(value: string, label: string) {

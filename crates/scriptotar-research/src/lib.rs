@@ -222,13 +222,9 @@ impl ResearchProvider for YtDlpProvider {
             .stderr
             .take()
             .ok_or_else(|| ResearchError::Provider("yt-dlp stderr was unavailable".to_owned()))?;
-        let stderr_reader = thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stderr
-                .take(MAX_PROVIDER_ERROR_BYTES)
-                .read_to_end(&mut bytes);
-            String::from_utf8_lossy(&bytes).trim().to_owned()
-        });
+        // Keep draining stderr even after the diagnostic cap; otherwise yt-dlp can block
+        // forever on a full stderr pipe while we wait for its next stdout JSON line.
+        let stderr_reader = thread::spawn(move || capture_provider_stderr(stderr));
 
         let mut observations = Vec::new();
         let mut invalid_lines = 0_usize;
@@ -288,6 +284,25 @@ impl ResearchProvider for YtDlpProvider {
         }
         Ok(observations)
     }
+}
+
+// Collect only bounded diagnostic text while always draining the pipe to EOF.
+// A bounded Read::take would stop consuming stderr once it reached the cap, risking deadlock.
+fn capture_provider_stderr(mut stderr: impl Read) -> String {
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                let remaining = (MAX_PROVIDER_ERROR_BYTES as usize).saturating_sub(bytes.len());
+                bytes.extend_from_slice(&chunk[..read.min(remaining)]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&bytes).trim().to_owned()
 }
 
 // BufRead::read_until alone can allocate an unbounded line before the size check.
@@ -557,6 +572,30 @@ mod tests {
                 .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn provider_stderr_is_fully_drained_but_diagnostics_remain_bounded() {
+        let source = vec![b'e'; MAX_PROVIDER_ERROR_BYTES as usize + 128 * 1024];
+        let mut reader = std::io::Cursor::new(source.as_slice());
+        let diagnostic = capture_provider_stderr(&mut reader);
+        assert_eq!(reader.position(), source.len() as u64);
+        assert_eq!(diagnostic.len(), MAX_PROVIDER_ERROR_BYTES as usize);
+        assert!(diagnostic.bytes().all(|byte| byte == b'e'));
+    }
+
+    #[test]
+    fn bounded_line_reader_keeps_later_provider_records_intact() {
+        let source = b\"first\\nsecond\\n\";
+        let mut reader = BufReader::new(source.as_slice());
+        let mut line = Vec::new();
+        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 6);
+        assert_eq!(line, b\"first\\n\");
+        line.clear();
+        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 7);
+        assert_eq!(line, b\"second\\n\");
+        line.clear();
+        assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 0);
     }
 
     #[test]

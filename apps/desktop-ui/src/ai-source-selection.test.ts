@@ -187,4 +187,40 @@ describe('AI source selection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
     expect(screen.getByRole('button', { name: 'Build prompt' })).toBeDisabled();
   });
+
+  it('allows a fresh prompt after editing while an earlier prompt never completes promptly', async () => {
+    const api = createMockClient();
+    const oldPrompt = deferred<string>();
+    const newPrompt = deferred<string>();
+    let calls = 0;
+    api.buildAiPrompt = () => (++calls === 1 ? oldPrompt.promise : newPrompt.promise);
+    await ready(api);
+
+    const source = screen.getByPlaceholderText('Paste or load transcript/research text…');
+    const preview = screen.getByPlaceholderText('Build a prompt to preview it here…');
+    const build = screen.getByRole('button', { name: 'Build prompt' });
+    await fireEvent.input(source, { target: { value: 'Old brief' } });
+    await fireEvent.click(build);
+    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled();
+
+    await fireEvent.input(source, { target: { value: 'New brief' } });
+    expect(build).toBeEnabled();
+    await fireEvent.click(build);
+    expect(calls).toBe(2);
+    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled();
+
+    await act(async () => {
+      oldPrompt.resolve('OUTDATED_PROMPT');
+      await oldPrompt.promise;
+    });
+    expect(preview).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled();
+
+    await act(async () => {
+      newPrompt.resolve('New brief prompt');
+      await newPrompt.promise;
+    });
+    await waitFor(() => expect(preview).toHaveValue('New brief prompt'));
+    expect(screen.getByRole('button', { name: 'Build prompt' })).toBeEnabled();
+  });
 });
