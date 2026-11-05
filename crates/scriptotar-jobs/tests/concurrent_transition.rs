@@ -33,7 +33,9 @@ fn duplicate_concurrent_job_claims_allow_only_one_preparing_transition() {
     let duplicate_barrier = barrier.clone();
     let duplicate = thread::spawn(move || {
         duplicate_barrier.wait();
-        duplicate_service.advance(job_id, JobState::Preparing).is_ok()
+        duplicate_service
+            .advance(job_id, JobState::Preparing)
+            .is_ok()
     });
 
     barrier.wait();
