@@ -211,7 +211,7 @@ impl ResearchProvider for YtDlpProvider {
         let mut child = command.spawn().map_err(|error| {
             ResearchError::Provider(format!(
                 "could not start yt-dlp runtime: {}",
-                provider_io_message(&error)
+                provider_spawn_message(&error)
             ))
         })?;
         let stdout = child
@@ -332,6 +332,16 @@ fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, Research
         ));
     }
     Ok(Some(value.to_owned()))
+}
+
+// Preserve the underlying errno for support/CI triage without exposing file paths,
+// process arguments, cookie material, or untrusted OS error text.
+fn provider_spawn_message(error: &std::io::Error) -> String {
+    let classification = provider_io_message(error);
+    match error.raw_os_error() {
+        Some(code) => format!("{classification} (OS error {code})"),
+        None => classification,
+    }
 }
 
 fn provider_io_message(error: &std::io::Error) -> String {
@@ -572,6 +582,17 @@ mod tests {
                 .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn spawn_error_reports_errno_without_exposing_underlying_error_text() {
+        let coded = provider_spawn_message(&std::io::Error::from_raw_os_error(42));
+        assert!(coded.contains("OS error 42"));
+        let sensitive = std::io::Error::other("secret-cookie /private/path");
+        let public = provider_spawn_message(&sensitive);
+        assert_eq!(public, "local provider process I/O failed");
+        assert!(!public.contains("secret-cookie"));
+        assert!(!public.contains("/private/path"));
     }
 
     #[test]
