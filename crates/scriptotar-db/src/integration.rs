@@ -1,13 +1,8 @@
-use std::{
-    collections::HashMap,
-    fs,
-    io::Read,
-    path::Path,
-    str::FromStr,
-    time::Duration,
-};
+use std::{collections::HashMap, fs, io::Read, path::Path, str::FromStr, time::Duration};
 
-use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+};
 use scriptotar_core::{
     now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository, JobState,
     LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType, Transcript,
@@ -359,9 +354,8 @@ impl SqliteStore {
                 return Err(error);
             }
         };
-        let backup_path = legacy_path.with_file_name(format!(
-            "{file_name}.scriptotar-next-{fingerprint}.bak"
-        ));
+        let backup_path =
+            legacy_path.with_file_name(format!("{file_name}.scriptotar-next-{fingerprint}.bak"));
         if backup_path.exists() {
             if snapshot_fingerprint(&backup_path)? != fingerprint {
                 let _ = fs::remove_file(&snapshot_path);
@@ -1084,8 +1078,8 @@ fn create_legacy_snapshot(source_path: &Path, snapshot_path: &Path) -> Repositor
         .map_err(storage_error)?;
     let mut snapshot = Connection::open(snapshot_path).map_err(storage_error)?;
     {
-        let backup = rusqlite::backup::Backup::new(&source, &mut snapshot)
-            .map_err(storage_error)?;
+        let backup =
+            rusqlite::backup::Backup::new(&source, &mut snapshot).map_err(storage_error)?;
         backup
             .run_to_completion(128, Duration::from_millis(10), None)
             .map_err(storage_error)?;
@@ -1223,8 +1217,8 @@ fn legacy_job_state(status: &str) -> RepositoryResult<JobState> {
         "done" | "completed" => Ok(JobState::Completed),
         "failed" => Ok(JobState::Failed),
         "canceled" | "cancelled" => Ok(JobState::Cancelled),
-        "starting" | "running" | "finishing" | "preparing" | "downloading"
-        | "transcribing" | "processing" | "interrupted" => Ok(JobState::Interrupted),
+        "starting" | "running" | "finishing" | "preparing" | "downloading" | "transcribing"
+        | "processing" | "interrupted" => Ok(JobState::Interrupted),
         other => Err(RepositoryError::Validation(format!(
             "unsupported legacy job status {other:?}; refusing to guess"
         ))),
