@@ -151,36 +151,39 @@ class EngineSupervisor:
             if not isinstance(job_id, str):
                 self._abort_engine_protocol(proc, f"event {event_type!r} is missing a job_id")
                 break
+            # Validate, publish and finalize each event under the same lock
+            # used by cancel(). Otherwise a terminal result can be emitted
+            # after cancellation has been acknowledged, or a defunct worker
+            # can publish into a newly started job's event stream.
             with self._lock:
+                if proc is not self.proc or self._cancel_in_progress or self._closing:
+                    continue
                 active_job_id = self.active_job_id
                 job_started = self._engine_job_started
-            if active_job_id is None:
-                self._abort_engine_protocol(proc, f"stale event for inactive job {job_id!r}")
-                break
-            if job_id != active_job_id:
-                self._abort_engine_protocol(
-                    proc,
-                    f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
-                )
-                break
-            if event_type == "job_started":
-                if job_started:
-                    self._abort_engine_protocol(proc, f"duplicate job_started for {job_id!r}")
+                if active_job_id is None:
+                    self._abort_engine_protocol(proc, f"stale event for inactive job {job_id!r}")
                     break
-                with self._lock:
+                if job_id != active_job_id:
+                    self._abort_engine_protocol(
+                        proc,
+                        f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
+                    )
+                    break
+                if event_type == "job_started":
+                    if job_started:
+                        self._abort_engine_protocol(proc, f"duplicate job_started for {job_id!r}")
+                        break
                     self._engine_job_started = True
-            elif not job_started:
-                self._abort_engine_protocol(
-                    proc,
-                    f"event {event_type!r} arrived before job_started for {job_id!r}",
-                )
-                break
-            if event_type in {"result", "error"}:
-                with self._lock:
-                    if self.active_job_id == job_id:
-                        self.active_job_id = None
-                        self._engine_job_started = False
-            self.writer.emit(event_type, **event)
+                elif not job_started:
+                    self._abort_engine_protocol(
+                        proc,
+                        f"event {event_type!r} arrived before job_started for {job_id!r}",
+                    )
+                    break
+                self.writer.emit(event_type, **event)
+                if event_type in {"result", "error"}:
+                    self.active_job_id = None
+                    self._engine_job_started = False
 
         rc = proc.wait()
         with self._lock:
