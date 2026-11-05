@@ -35,6 +35,8 @@
 
   async function loadSelected(id: string) {
     selectedLoadId = id;
+    // Never display content from a previously selected transcript while a new one loads.
+    selected = undefined;
     selectedLoading = true;
     selectedLoadError = '';
     const generation = ++selectedGeneration;
@@ -182,9 +184,18 @@
 {#if transcripts.length === 0}
   <EmptyState title="No transcripts yet" message="Complete a transcription job and it will appear here." />
 {:else if !selected}
-  <section class="panel transcript-loading" aria-busy={selectedLoading}>
-    <strong>{selectedLoading ? 'Loading transcript…' : 'Transcript unavailable'}</strong>
-    {#if selectedLoadError}<p role="alert">{selectedLoadError}</p>{/if}
+  <section class="panel transcript-loading" aria-busy={selectedLoading} data-i18n-ignore>
+    <strong role="status">{$translator(selectedLoading ? 'transcript.loading' : 'transcript.unavailable')}</strong>
+    {#if selectedLoadError}
+      <p role="alert">{selectedLoadError}</p>
+      <button class="button secondary" type="button" on:click={() => loadSelected(selectedId)}>{$translator('transcript.retryLoading')}</button>
+    {/if}
+    <label class="transcript-fallback-select">
+      <span>{$translator('transcript.choose')}</span>
+      <select value={selectedId} on:change={(event) => selectTranscript(event.currentTarget.value)} aria-label={$translator('transcript.choose')}>
+        {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
+      </select>
+    </label>
   </section>
 {:else}
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">
@@ -259,6 +270,7 @@
 {/if}
 
 <style>
+  .transcript-fallback-select { display: grid; max-width: 400px; gap: 6px; margin-top: var(--space-3); }
   .transcript-shell-v2 { display: grid; grid-template-columns: 220px minmax(0, 1fr) 210px; gap: 12px; align-items: start; }
   .transcript-shell-v2.list-hidden { grid-template-columns: minmax(0, 1fr) 210px; }
   .transcript-shell-v2.details-hidden { grid-template-columns: 220px minmax(0, 1fr); }
