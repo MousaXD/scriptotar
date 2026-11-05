@@ -46,6 +46,20 @@ describe('AI source selection', () => {
     expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue('');
   });
 
+  it('refuses a transcript whose returned ID does not match the selected source', async () => {
+    const api = createMockClient();
+    api.getTranscript = async () => ({ ...mockBootstrap.transcripts[0], id: 'unrelated-id' });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+
+    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: 't-ar' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
+    expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Source unavailable');
+    expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Build prompt' })).toBeDisabled();
+  });
+
   it('marks an edited excerpt as modified instead of claiming it is an exact copy', async () => {
     await ready();
     await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: 't-ar' } });

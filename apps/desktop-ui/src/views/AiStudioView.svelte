@@ -80,7 +80,12 @@
     sourceLoading = true;
     sourceText = '';
     try {
+      const expected = transcripts.find((transcript) => transcript.id === id);
+      if (!expected) throw new Error('The selected transcript is no longer in this project.');
       const transcript = await api.getTranscript(id);
+      if (transcript.id !== id || transcript.projectId !== expected.projectId) {
+        throw new Error('Loaded transcript did not match the selected project and source ID.');
+      }
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) sourceText = transcript.text;
     } catch (cause) {
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
@@ -206,7 +211,7 @@
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
-        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
+        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
       </div>
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
@@ -216,7 +221,7 @@
       <p class="status-copy" role="alert">{sourceError}</p>
       <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>Retry transcript load</button>
     {/if}
-    <textarea bind:value={sourceText} on:input={sourceInputChanged} placeholder="Paste or load transcript/research text…"></textarea>
+    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
   <section class="panel brief-panel">
