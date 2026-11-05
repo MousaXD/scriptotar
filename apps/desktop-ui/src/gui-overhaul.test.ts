@@ -222,10 +222,22 @@ describe('Creator Control Room GUI', () => {
     expect(quality).toHaveValue('Best');
     expect(screen.getByRole('option', { name: 'أفضل جودة' })).toHaveValue('Best');
 
+    const language = screen.getByText('اللغة').closest('label')?.querySelector('select');
+    expect(language).not.toBeNull();
+    await fireEvent.change(language!, { target: { value: 'Arabic' } });
+    expect(within(language!).getByRole('option', { name: 'العربية' })).toHaveValue('Arabic');
+
+    const duration = screen.getByText('حد المدة الآمن').closest('label')?.querySelector('select');
+    expect(duration).not.toBeNull();
+    await fireEvent.change(duration!, { target: { value: '2 hours' } });
+    expect(within(duration!).getByRole('option', { name: 'ساعتان' })).toHaveValue('2 hours');
+
     await fireEvent.click(screen.getByRole('button', { name: 'حفظ التغييرات' }));
     await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({
       appearance: 'system',
-      quality: 'Best'
+      quality: 'Best',
+      language: 'Arabic',
+      maxDuration: '2 hours'
     })));
     expect(await screen.findByText('تم حفظ الإعدادات. ستستخدم المهام الجديدة وتحديثات قوائم المتابعة هذه التفضيلات.')).toBeInTheDocument();
   });
