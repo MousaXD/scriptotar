@@ -362,18 +362,30 @@ impl SqliteStore {
         };
         let backup_path =
             legacy_path.with_file_name(format!("{file_name}.scriptotar-next-{fingerprint}.bak"));
-        if backup_path.exists() {
-            if snapshot_fingerprint(&backup_path)? != fingerprint {
-                let _ = fs::remove_file(&snapshot_path);
-                return Err(RepositoryError::Conflict(format!(
-                    "existing legacy backup {} does not match its fingerprint",
-                    backup_path.display()
-                )));
+        // Atomically publish a complete backup without replacing a pre-existing path.
+        // The temporary snapshot and destination share a directory/filesystem.
+        // Unlike rename, hard_link fails even if the destination is a dangling symlink.
+        let publish_result = (|| -> RepositoryResult<()> {
+            match fs::hard_link(&snapshot_path, &backup_path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(&backup_path).map_err(io_error)?;
+                    if !metadata.file_type().is_file()
+                        || snapshot_fingerprint(&backup_path)? != fingerprint
+                    {
+                        return Err(RepositoryError::Conflict(format!(
+                            "existing legacy backup {} is not a regular matching snapshot; refusing to replace it",
+                            backup_path.display()
+                        )));
+                    }
+                    Ok(())
+                }
+                Err(error) => Err(io_error(error)),
             }
-            fs::remove_file(&snapshot_path).map_err(io_error)?;
-        } else {
-            fs::rename(&snapshot_path, &backup_path).map_err(io_error)?;
-        }
+        })();
+        let cleanup_result = fs::remove_file(&snapshot_path);
+        publish_result?;
+        cleanup_result.map_err(io_error)?;
 
         // Import exclusively from the consistent snapshot, never from a live WAL database.
         let legacy = Connection::open_with_flags(&backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
