@@ -223,4 +223,23 @@ describe('AI source selection', () => {
     await waitFor(() => expect(preview).toHaveValue('New brief prompt'));
     expect(screen.getByRole('button', { name: 'Build prompt' })).toBeEnabled();
   });
+
+  it('never sends BYOK credentials or provider URL to local prompt construction', async () => {
+    const api = createMockClient();
+    const original = api.buildAiPrompt;
+    const inputs: Array<{ apiKey?: string; baseUrl?: string }> = [];
+    api.buildAiPrompt = async (input) => {
+      inputs.push({ apiKey: input.apiKey, baseUrl: input.baseUrl });
+      return original(input);
+    };
+    await ready(api);
+
+    await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
+    await fireEvent.change(screen.getByLabelText('AI provider'), { target: { value: 'OpenAI-compatible' } });
+    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'do-not-forward-secret' } });
+    await fireEvent.input(screen.getByPlaceholderText('https://…'), { target: { value: 'https://example.com/v1' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Prompt built locally'));
+    expect(inputs).toEqual([{ apiKey: undefined, baseUrl: undefined }]);
+  });
 });

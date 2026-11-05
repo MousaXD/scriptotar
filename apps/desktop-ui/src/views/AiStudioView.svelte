@@ -127,7 +127,8 @@
     const generation = ++promptGeneration;
     building = true;
     try {
-      const next = await api.buildAiPrompt(payload());
+      // Prompt construction needs creative fields, never provider credentials or endpoint URLs.
+      const next = await api.buildAiPrompt({ ...payload(), apiKey: undefined, baseUrl: undefined });
       if (generation === promptGeneration) {
         prompt = next;
         builtPrompt = next;
