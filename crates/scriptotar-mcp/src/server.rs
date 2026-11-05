@@ -34,6 +34,7 @@ const COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct Server {
     store: SqliteStore,
     pub(crate) data_dir: PathBuf,
+    db_path: PathBuf,
     orchestrator: JobOrchestrator<SqliteStore>,
 }
 
@@ -52,6 +53,8 @@ impl Server {
         store
             .run_integration_migrations()
             .map_err(|e| e.to_string())?;
+        let db_path = fs::canonicalize(db_path)
+            .map_err(|_| "could not canonicalize Scriptotar database file")?;
         let python = std::env::var_os("SCRIPTOTAR_SIDECAR_PYTHON")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
@@ -66,6 +69,7 @@ impl Server {
         Ok(Self {
             store,
             data_dir,
+            db_path,
             orchestrator,
         })
     }
@@ -234,6 +238,7 @@ impl Server {
                 keys(args, &["path"], &[])?;
                 let path =
                     authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
+                block_active_db_file(&self.db_path, &path)?;
                 // Enforce the byte cap while reading, not just with a pre-read
                 // metadata check: a file can grow after metadata is checked.
                 let file = fs::File::open(&path).map_err(|_| "cannot open file")?;
@@ -260,6 +265,7 @@ impl Server {
                     string_arg(args, "path", 4096)?,
                     overwrite,
                 )?;
+                block_active_db_file(&self.db_path, &path)?;
                 let content = string_arg(args, "content", MAX_WRITE)?;
                 let mut tmp = tempfile::NamedTempFile::new_in(
                     path.parent().ok_or("invalid output directory")?,
@@ -396,6 +402,37 @@ impl Server {
             _ => Err("unknown tool".into()),
         }
     }
+}
+
+fn block_active_db_file(db_path: &Path, path: &Path) -> Result<(), String> {
+    // SCRIPTOTAR_DB_PATH is allowed to name a non-default SQLite database.
+    // Never rely only on the conventional scriptotar.sqlite3 filename.
+    let protected = ["", "-wal", "-shm", "-journal"].map(|suffix| {
+        let mut name = db_path.as_os_str().to_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    });
+    if protected.iter().any(|protected_path| protected_path == path) {
+        return Err("MCP cannot access its active SQLite database or journal".into());
+    }
+    // A hard link outside the app data directory does not canonicalize back
+    // to the original path. Check identities on Unix just as for policy files.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(candidate) = fs::metadata(path) {
+            if candidate.nlink() > 1 {
+                for protected_path in &protected {
+                    if let Ok(secret) = fs::metadata(protected_path) {
+                        if candidate.dev() == secret.dev() && candidate.ino() == secret.ino() {
+                            return Err("MCP cannot access its active SQLite database or journal".into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn keys(args: &Map<String, Value>, required: &[&str], optional: &[&str]) -> Result<(), String> {
@@ -681,6 +718,28 @@ pub fn run_http_from_env() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn custom_named_database_and_journals_are_protected() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = temp.path().join("private-research-data.db");
+        fs::write(&db, "private database").unwrap();
+        for suffix in ["", "-wal", "-shm", "-journal"] {
+            let mut name = db.as_os_str().to_os_string();
+            name.push(suffix);
+            let path = PathBuf::from(name);
+            assert!(block_active_db_file(&db, &path).is_err(), "suffix {suffix}");
+        }
+        let other = temp.path().join("notes.txt");
+        fs::write(&other, "ordinary approved file").unwrap();
+        assert!(block_active_db_file(&db, &other).is_ok());
+        #[cfg(unix)]
+        {
+            let alias = temp.path().join("custom-db-hardlink.txt");
+            fs::hard_link(&db, &alias).unwrap();
+            assert!(block_active_db_file(&db, &alias).is_err());
+        }
+    }
+
     #[test]
     fn jsonrpc_errors_have_correct_codes() {
         let e = rpc_error(&json!(4), -32601, "missing");

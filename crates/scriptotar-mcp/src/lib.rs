@@ -288,7 +288,11 @@ fn protected_app_name(name: &str) -> bool {
             | "scriptotar.sqlite3"
             | "scriptotar.sqlite3-wal"
             | "scriptotar.sqlite3-shm"
+            | "scriptotar.sqlite3-journal"
             | "history.sqlite3"
+            | "history.sqlite3-wal"
+            | "history.sqlite3-shm"
+            | "history.sqlite3-journal"
             | ".history.sqlite3.pending-import"
     ) || (name.starts_with(".mcp-permissions-") && name.ends_with(".tmp"))
         || name.starts_with(".history.sqlite3.importing-")
