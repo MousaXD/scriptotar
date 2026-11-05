@@ -15,7 +15,7 @@
 | Medium | Legacy imports treated every unknown input type as a local file and every unrecognized AI mode as BYOK; unexpected statuses became interrupted. | Accept historical Classic values explicitly and reject unknown values transactionally. |
 | Medium | Legacy source main-file size and whole-second mtime were used as an import fingerprint. WAL-only updates could be ignored. | Stream a deterministic content fingerprint over the complete online snapshot, including committed WAL data. |
 | High | Publishing a legacy backup with `rename` could replace a pre-existing path after an existence-check race, including a dangling symlink on Unix. | Atomically publish the verified snapshot with an exclusive hard link; reject existing symlink/nonregular or mismatched backups, always clean up the temporary snapshot. |
-| Medium | An inconsistent core migration ledger and SQLite `user_version` could be silently processed as an ordinary upgrade. | Fail closed before running migrations; require matching latest version **and contiguous version count**. Apply the same gap check to integration migrations. |
+| Medium | An inconsistent core or integration migration ledger could pass a MAX/COUNT-only check after a version is replaced with zero or a recorded migration name is modified. | Fail closed before running migrations; validate every ordered version/name entry against the recognized migration history. Reject gaps, malformed IDs, and unknown names before touching user data. |
 | Medium | Retried jobs retained prior-run progress, so a new queued attempt could display nearly completed status. | Clear progress only on explicit requeue; retain last failure details until a successful completion. |
 | Medium | Foreign keys did not enforce that creator, analysis, job and transcript links stayed within one project. | Add insert/update triggers for relevant project ownership relationships; add negative transaction tests. |
 | Feature gap | Project rename, archive and restore were unavailable as database operations. | Add project rename and reversible `archived_at` migration, plus active/archived project listing methods. No destructive deletion added. |
@@ -34,7 +34,7 @@
 
 ## Regressions added
 
-- Core/integration migration-ledger gap detection, pre-existing record preservation and forced failed-migration rollback.
+- Core/integration migration-ledger gap detection, unexpected version-zero and renamed-ledger rejection, pre-existing record preservation and forced failed-migration rollback.
 - Explicit retry progress reset, historical error retention, and success clearing.
 - Consistent WAL snapshot, repeat import, changed-content rejection, immutable backup and dangling-symlink protection.
 - Distinct legacy databases reusing IDs; unknown input-type rollback; native project-name collision.
