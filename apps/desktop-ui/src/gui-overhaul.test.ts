@@ -44,6 +44,24 @@ describe('Creator Control Room GUI', () => {
     expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
   });
 
+  it('prevents page navigation shortcuts while a modal command palette is active', async () => {
+    await ready();
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const dialog = screen.getByRole('dialog', { name: 'Command palette' });
+    const command = within(dialog).getAllByRole('button')[0];
+    command.focus();
+
+    // A shortcut keystroke on a focused palette command must not switch the page behind it.
+    await fireEvent.keyDown(command, { key: 'j' });
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Jobs' })).not.toBeInTheDocument();
+
+    await fireEvent.keyDown(command, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument());
+    await fireEvent.keyDown(window, { key: 'j' });
+    expect(await screen.findByRole('heading', { name: 'Jobs' })).toBeInTheDocument();
+  });
+
   it('persists transcript rail visibility without changing transcript content', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Transcript/ }));
