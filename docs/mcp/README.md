@@ -66,8 +66,8 @@ client; `tunnel-client` is not needed if the client supports native local MCP.
   access immediately; disabling MCP also stops the active app connection.
 - The wizard's API key input is cleared after the connection request. The
   restricted runtime key is passed to `tunnel-client` via an environment
-  variable and never as a command-line argument. Only an explicit **Remember**
-  choice stores it in the operating system's secure keyring. If the keyring
+  variable and never as a command-line argument. **Remember key starts unchecked**;
+  only an explicit opt-in stores it in the operating system's secure keyring. If the keyring
   cannot be opened, uncheck Remember and connect for the current session.
 - Automatic reconnection across application restarts is not guaranteed: the
   wizard keeps the tunnel running while Scriptotar is open. Quick Tunnel URLs

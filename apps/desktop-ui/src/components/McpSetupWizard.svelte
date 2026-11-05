@@ -18,7 +18,7 @@
   let approvedPrograms = '';
   let tunnelId = '';
   let apiKey = '';
-  let rememberKey = true;
+  let rememberKey = false;
   let customHostname = '';
   let advanced = false;
   let copyStatus = '';

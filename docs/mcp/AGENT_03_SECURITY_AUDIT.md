@@ -15,6 +15,7 @@
 | Medium | Allowlisted executable commands inherited arbitrary parent environment variables, including possible credentials. | Explicitly allow only common OS execution variables; deny inherited application/CI secrets. Black-box Python subprocess test. |
 | Medium | Permission or executable grant revocation was checked only at the start of a command, so a long-running child continued for up to 15 seconds after revocation. | Re-read app policy and revalidate executable and cwd grants while command runs; terminate the direct child on revocation. |
 | Low | HTTP accepted misleading media types beginning with `application/json`, such as `application/jsonp`. | Require JSON MIME type prior to optional parameters. |
+| Medium | The wizard's OS-keyring credential persistence option started checked, which conflicts with the documented explicit-remember security boundary. | Default the Remember checkbox to off and add a frontend test that selects it deliberately. |
 | Medium | Unexpected managed tunnel process exit was only reported by status polling, without gateway cleanup or URL-secret revocation. | On status detection, clear managed state, stop local gateway and rotate the URL secret; add revocation regression test. |
 
 ## Protected functionality
