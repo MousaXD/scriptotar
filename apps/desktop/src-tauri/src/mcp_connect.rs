@@ -36,6 +36,9 @@ pub(crate) fn preserve_authentication_secrets(next: &mut McpPermissions, current
 #[derive(Default)]
 pub(crate) struct McpConnectionState {
     active: Mutex<Option<ManagedConnection>>,
+    // A connection transition spans URL rotation, child spawn and activation.
+    // Serializing only the active-state assignment can orphan a tunnel.
+    transition: Mutex<()>,
 }
 
 struct ManagedConnection {
@@ -377,6 +380,15 @@ fn revoke_public_gateway(data_dir: &Path, gateway: &McpGatewayState) -> Result<(
 
 impl McpConnectionState {
     pub(crate) fn stop(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
+        self.stop_inner(data_dir, gateway)
+    }
+
+    // The caller holds the transition lock, so it cannot recurse into stop().
+    fn stop_inner(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
         let mut active = self
             .active
             .lock()
@@ -390,6 +402,29 @@ impl McpConnectionState {
         // Rotate even if stopping the gateway reported an error. A live old
         // URL must never survive a partially failed disconnect attempt.
         revoke_public_gateway(data_dir, gateway)
+    }
+
+    fn activate_connection(
+        &self,
+        data_dir: &Path,
+        gateway: &McpGatewayState,
+        mut connection: ManagedConnection,
+    ) -> Result<(), String> {
+        match self.active.lock() {
+            Ok(mut active) => {
+                *active = Some(connection);
+                Ok(())
+            }
+            Err(_) => {
+                // Do not silently detach an owned process on a poisoned mutex.
+                if let Some(child) = connection.child.as_mut() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                let _ = revoke_public_gateway(data_dir, gateway);
+                Err("MCP connection state unavailable; tunnel was stopped".into())
+            }
+        }
     }
 
     pub(crate) fn status(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
@@ -485,7 +520,7 @@ impl McpConnectionState {
     }
 
     fn begin(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<String, String> {
-        self.stop(data_dir, gateway)?;
+        self.stop_inner(data_dir, gateway)?;
         let mut policy = load_permissions(data_dir)?;
         if !policy.enabled {
             return Err("First enable MCP in Scriptotar Settings and save your permissions".into());
@@ -502,6 +537,10 @@ impl McpConnectionState {
         data_dir: &Path,
         gateway: &McpGatewayState,
     ) -> Result<McpConnectionStatus, String> {
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
         let binary = built_in_executable(app, "cloudflared")
             .ok_or("Cloudflare is not bundled. Install the verified cloudflared binary to use this option.")?;
         let local_url = self.begin(data_dir, gateway)?;
@@ -512,14 +551,11 @@ impl McpConnectionState {
         let child = match launch_cloudflared(&binary, Arc::clone(&report), &local_url) {
             Ok(child) => child,
             Err(e) => {
-                let _ = self.stop(data_dir, gateway);
+                let _ = self.stop_inner(data_dir, gateway);
                 return Err(e);
             }
         };
-        *self
-            .active
-            .lock()
-            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        self.activate_connection(data_dir, gateway, ManagedConnection {
             mode: "cloudflare",
             started: Instant::now(),
             child: Some(child),
@@ -527,7 +563,7 @@ impl McpConnectionState {
             local_url,
             tunnel_id: None,
             _temp: None,
-        });
+        })?;
         Ok(self.status(app))
     }
 
@@ -539,6 +575,10 @@ impl McpConnectionState {
         origin: &str,
     ) -> Result<McpConnectionStatus, String> {
         let hostname = validated_origin(origin)?;
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
         let local_url = self.begin(data_dir, gateway)?;
         let suffix = local_url.strip_prefix(LOCAL_ROOT).unwrap_or_default();
         let report = Arc::new(Mutex::new(ConnectionReport {
@@ -546,10 +586,7 @@ impl McpConnectionState {
             detail: "Point your Cloudflare named tunnel at 127.0.0.1:39761, then add the HTTPS URL in ChatGPT.".into(),
             ..Default::default()
         }));
-        *self
-            .active
-            .lock()
-            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        self.activate_connection(data_dir, gateway, ManagedConnection {
             mode: "manual",
             started: Instant::now(),
             child: None,
@@ -557,7 +594,7 @@ impl McpConnectionState {
             local_url,
             tunnel_id: None,
             _temp: None,
-        });
+        })?;
         Ok(self.status(app))
     }
 
@@ -575,13 +612,22 @@ impl McpConnectionState {
                 "Enter a tunnel ID like tunnel_ followed by 32 lowercase hex characters".into(),
             );
         }
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
         let binary = built_in_executable(app, "tunnel-client").ok_or(
             "OpenAI tunnel-client is not bundled. Install the verified client to use this option.",
         )?;
         let secret = tunnel_key(api_key, remember)?;
         let local_url = self.begin(data_dir, gateway)?;
-        let temp = tempfile::tempdir_in(data_dir)
-            .map_err(|_| "Could not create a private tunnel working directory")?;
+        let temp = match tempfile::tempdir_in(data_dir) {
+            Ok(temp) => temp,
+            Err(_) => {
+                let _ = self.stop_inner(data_dir, gateway);
+                return Err("Could not create a private tunnel working directory".into());
+            }
+        };
         let health_file = temp.path().join("health.url");
         let mut command = Command::new(binary);
         command
@@ -608,7 +654,7 @@ impl McpConnectionState {
         {
             Ok(child) => child,
             Err(_) => {
-                let _ = self.stop(data_dir, gateway);
+                let _ = self.stop_inner(data_dir, gateway);
                 return Err("OpenAI tunnel-client could not start".into());
             }
         };
@@ -619,10 +665,7 @@ impl McpConnectionState {
                     .into(),
             ..Default::default()
         }));
-        *self
-            .active
-            .lock()
-            .map_err(|_| "MCP connection state unavailable")? = Some(ManagedConnection {
+        self.activate_connection(data_dir, gateway, ManagedConnection {
             mode: "openai",
             started: Instant::now(),
             child: Some(child),
@@ -630,7 +673,7 @@ impl McpConnectionState {
             local_url,
             tunnel_id: Some(id.into()),
             _temp: Some(temp),
-        });
+        })?;
         Ok(self.status(app))
     }
 }
