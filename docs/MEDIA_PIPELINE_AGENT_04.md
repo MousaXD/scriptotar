@@ -52,6 +52,18 @@ No public protocol version, supported provider/domain, model choice (`small`, `m
 
 The narrowly scoped CPython 3.12.16 review and regression test are committed on the Agent 04 branch, without changing upstream license content, legal bundle files, runtime validation, allowed algorithms, or trusted hashes. Subsequent release packaging must prove the legal bundle is generated and validated successfully. Agents 01/07 own the cross-branch Rust dependency advisory and release gate, respectively. No performance or GPU benchmark was measured.
 
+## Latest exact-HEAD certification check (2026-11-05, `2e0bb15882dd24ee4421a995a9de5f5ea507c210`)
+
+- [Python Transcription Sidecar](https://github.com/MousaXD/scriptotar/actions/runs/42088502570): **SUCCESS** (sidecar tests and pinned dependency checks; mocks in unit tests are not hardware inference).
+- [CI](https://github.com/MousaXD/scriptotar/actions/runs/42088502251): job `test` **SUCCESS**; workflow was still finalizing when checked.
+- [Linux Tauri Package](https://github.com/MousaXD/scriptotar/actions/runs/42088502477): **SUCCESS**, including the installed runtime/compliance validation. This confirms the narrow reviewed CPython 3.12.16 license fix resolved the prior packaging failure.
+- [Windows Tauri Installer](https://github.com/MousaXD/scriptotar/actions/runs/42088502232): **SUCCESS**, but does not certify native Windows descendant termination.
+- [Security hygiene](https://github.com/MousaXD/scriptotar/actions/runs/42088502383) and [MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/42088502220): **SUCCESS**.
+- [Tauri migration integration](https://github.com/MousaXD/scriptotar/actions/runs/42088502418): Rust workspace, Svelte, Python sidecar and Rust↔sidecar integration jobs **SUCCESS**; integrated Tauri build still **IN PROGRESS**; Rust advisories job **FAILED** on `RUSTSEC-2026-0381` (`webpki-roots 1.0.9`), a Rust dependency issue already escalated to Agent 01 and Agent 07. No suppression permitted.
+- [Live platform E2E](https://github.com/MousaXD/scriptotar/actions/runs/42088502215): **FAILED BEFORE PROVIDER TESTS**, during Ubuntu `apt-get install ffmpeg`: both bounded install/update attempts exhausted their 180-second limits, ending with exit code 124 ([job 127459982490](https://github.com/MousaXD/scriptotar/actions/runs/42088502215/job/127459982490)). **No live provider or model inference result from this run.** Earlier `eccf55561d` run observed real Instagram/TikTok inference success and YouTube bot challenge; do not extrapolate those observations to this SHA.
+
+**Status:** IN PROGRESS. Exact HEAD has not passed every required gate. No hardware throughput benchmark, GPU inference, multilingual accuracy measurement, or native Windows process-tree termination test was performed. Keep PR #75 draft, do not merge.
+
 ## Performance tradeoffs / open questions
 
 - Recovery integrity intentionally reads the completed media file once to hash it and once upon attempted restart reuse. This is bounded-memory O(media size) I/O; no throughput benchmark has been measured. Avoid claiming performance gains without measurements.
