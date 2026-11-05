@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use rusqlite::{params, Connection};
-use scriptotar_core::{Project, ProjectRepository, RepositoryError};
+use scriptotar_core::{ContentRepository, Project, ProjectRepository, RepositoryError};
 use scriptotar_db::SqliteStore;
 use tempfile::TempDir;
 
