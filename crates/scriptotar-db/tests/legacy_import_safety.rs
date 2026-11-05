@@ -134,3 +134,40 @@ fn legacy_project_name_collision_does_not_join_unrelated_user_data() {
     assert_eq!(store.list_projects().unwrap(), vec![native]);
     assert!(store.list_transcripts(None).unwrap().is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn dangling_symlink_backup_is_never_replaced_by_snapshot_publish() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let legacy_path = temp.path().join("history.sqlite3");
+    let _legacy = classic_database(&legacy_path, "must stay intact", "file");
+    let store = SqliteStore::open(temp.path().join("modern.sqlite3")).unwrap();
+
+    let report = store.import_legacy_database(&legacy_path).unwrap();
+    let backup_path = std::path::PathBuf::from(report.backup_path.unwrap());
+    let retained_copy = temp.path().join("retained-original-snapshot.sqlite3");
+    fs::rename(&backup_path, &retained_copy).unwrap();
+    let nonexistent_target = temp.path().join("nonexistent-target.sqlite3");
+    symlink(&nonexistent_target, &backup_path).unwrap();
+    assert!(!backup_path.exists());
+    assert!(fs::symlink_metadata(&backup_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+
+    let result = store.import_legacy_database(&legacy_path);
+    assert!(matches!(result, Err(RepositoryError::Conflict(_))));
+    assert!(fs::symlink_metadata(&backup_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(!nonexistent_target.exists());
+    assert!(retained_copy.exists());
+    assert_eq!(
+        store.list_transcripts(None).unwrap()[0].transcript.text,
+        "must stay intact"
+    );
+}
