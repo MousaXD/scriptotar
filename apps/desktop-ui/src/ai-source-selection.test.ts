@@ -82,7 +82,7 @@ describe('AI source selection', () => {
 
     await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), { target: { value: 'Manual source' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
-    await waitFor(() => expect(screen.getByPlaceholderText('Build a prompt to preview it here…')).toHaveValue(expect.stringContaining('Manual source')));
+    await waitFor(() => expect((screen.getByPlaceholderText('Build a prompt to preview it here…') as HTMLTextAreaElement).value).toContain('Manual source'));
     expect(runCalls).toHaveLength(0);
 
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
