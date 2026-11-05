@@ -110,8 +110,9 @@ fn mcp_gateway_status(
 fn start_mcp_gateway(
     operational: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
 ) -> Result<McpGatewayStatus, String> {
-    start_gateway_for_data(&operational.data_dir, &gateway)
+    manager.start_local_gateway(&operational.data_dir, &gateway)
 }
 
 fn start_gateway_for_data(
@@ -154,9 +155,13 @@ fn start_gateway_for_data(
 
 #[tauri::command]
 fn stop_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
 ) -> Result<McpGatewayStatus, String> {
-    stop_gateway(&gateway)?;
+    // Stopping the local gateway is also a public-URL revocation action.
+    // Do not leave a previously shared tunnel secret reusable if it restarts.
+    manager.stop(&operational.data_dir, &gateway)?;
     gateway_status(&gateway)
 }
 
@@ -681,13 +686,7 @@ fn save_mcp_permissions(
     {
         return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
     }
-    let current = load_permissions(&state.data_dir)?;
-    mcp_connect::preserve_authentication_secrets(&mut permissions, &current);
-    let policy = save_permissions(&state.data_dir, permissions)?;
-    if !policy.enabled {
-        manager.stop(&state.data_dir, &gateway)?;
-    }
-    Ok(policy)
+    manager.save_app_permissions(&state.data_dir, &gateway, permissions)
 }
 
 #[tauri::command]

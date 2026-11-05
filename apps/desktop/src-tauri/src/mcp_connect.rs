@@ -379,6 +379,41 @@ fn revoke_public_gateway(data_dir: &Path, gateway: &McpGatewayState) -> Result<(
 }
 
 impl McpConnectionState {
+    pub(crate) fn save_app_permissions(
+        &self,
+        data_dir: &Path,
+        gateway: &McpGatewayState,
+        mut permissions: McpPermissions,
+    ) -> Result<McpPermissions, String> {
+        // Read and persist the live authentication secrets atomically with
+        // managed Connect/Disconnect. A stale settings form must not restore a
+        // URL secret after a concurrent disconnect revokes it.
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
+        let current = load_permissions(data_dir)?;
+        preserve_authentication_secrets(&mut permissions, &current);
+        let saved = save_permissions(data_dir, permissions)?;
+        if !saved.enabled {
+            self.stop_inner(data_dir, gateway)?;
+            return load_permissions(data_dir);
+        }
+        Ok(saved)
+    }
+
+    pub(crate) fn start_local_gateway(
+        &self,
+        data_dir: &Path,
+        gateway: &McpGatewayState,
+    ) -> Result<super::McpGatewayStatus, String> {
+        let _transition = self
+            .transition
+            .lock()
+            .map_err(|_| "MCP connection transition unavailable")?;
+        start_gateway_for_data(data_dir, gateway)
+    }
+
     pub(crate) fn stop(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
         let _transition = self
             .transition
