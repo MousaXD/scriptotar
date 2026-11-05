@@ -134,6 +134,14 @@ def probe_duration(path: Path) -> float | None:
         return None
 
 
+def _check_duration_limit(duration: float | None, maximum: int) -> None:
+    if duration is not None and duration > 0 and maximum > 0 and duration > maximum:
+        raise SidecarError(
+            "DURATION_LIMIT",
+            f"Media duration {human_time(duration)} exceeds the configured {human_time(maximum)} limit.",
+        )
+
+
 def _quality_format(quality: str) -> tuple[str, str | None, list[str]]:
     if quality == "audio-only":
         return "ba/b", None, []
@@ -180,11 +188,7 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     metadata = _limited_metadata(info, url)
     duration = metadata["duration_seconds"]
     max_seconds = int(job.get("max_duration_seconds") or 0)
-    if duration and max_seconds and duration > max_seconds:
-        raise SidecarError(
-            "DURATION_LIMIT",
-            f"Media duration {human_time(duration)} exceeds the configured {human_time(max_seconds)} limit.",
-        )
+    _check_duration_limit(duration, max_seconds)
 
     quality = job.get("quality", "720p")
     format_selector, merge, sort_fields = _quality_format(quality)
@@ -229,12 +233,17 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
         if path.is_file()
         and path.name not in {"checkpoint.json", "job.json", "error.json"}
         and path.suffix.lower() not in {".part", ".ytdl", ".json"}
+        and path.stat().st_size > 0
     ]
     if not candidates:
-        raise SidecarError("DOWNLOAD_OUTPUT_MISSING", "Download completed but no media file was produced.", retryable=True)
+        raise SidecarError("DOWNLOAD_OUTPUT_MISSING", "Download completed but no nonempty media file was produced.", retryable=True)
     media = max(candidates, key=lambda item: item.stat().st_size)
-    if metadata["duration_seconds"] is None:
-        metadata["duration_seconds"] = probe_duration(media)
+    # Metadata may omit or misreport duration. Check the actual downloaded
+    # artifact before the expensive Whisper step when ffprobe is available.
+    measured = probe_duration(media)
+    if measured is not None:
+        metadata["duration_seconds"] = measured
+    _check_duration_limit(metadata["duration_seconds"], max_seconds)
     return media, metadata
 
 
@@ -242,11 +251,7 @@ def prepare_local(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[
     source = Path(job["source"])
     duration = probe_duration(source)
     max_seconds = int(job.get("max_duration_seconds") or 0)
-    if duration and max_seconds and duration > max_seconds:
-        raise SidecarError(
-            "DURATION_LIMIT",
-            f"Media duration {human_time(duration)} exceeds the configured {human_time(max_seconds)} limit.",
-        )
+    _check_duration_limit(duration, max_seconds)
     if job.get("copy_source", True):
         destination = partial / f"video{source.suffix.lower()}"
         shutil.copy2(source, destination)
