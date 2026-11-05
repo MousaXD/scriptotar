@@ -586,14 +586,14 @@ mod tests {
 
     #[test]
     fn bounded_line_reader_keeps_later_provider_records_intact() {
-        let source = b\"first\\nsecond\\n\";
+        let source = b"first\\nsecond\\n\";
         let mut reader = BufReader::new(source.as_slice());
         let mut line = Vec::new();
         assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 6);
-        assert_eq!(line, b\"first\\n\");
+        assert_eq!(line, b"first\\n");
         line.clear();
         assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 7);
-        assert_eq!(line, b\"second\\n\");
+        assert_eq!(line, b"second\\n");
         line.clear();
         assert_eq!(read_bounded_provider_line(&mut reader, &mut line).unwrap(), 0);
     }
@@ -795,7 +795,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn yt_dlp_result_count_is_bounded() {
-        let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
+        let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
         let (_temp, fixture) = fixture_script(body);
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
         let validated = NetworkPolicy
