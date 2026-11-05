@@ -171,3 +171,53 @@ fn dangling_symlink_backup_is_never_replaced_by_snapshot_publish() {
         "must stay intact"
     );
 }
+
+#[test]
+fn existing_backup_with_different_contents_is_never_overwritten() {
+    let temp = TempDir::new().unwrap();
+    let legacy_path = temp.path().join("history.sqlite3");
+    let _legacy = classic_database(&legacy_path, "preserve imported transcript", "file");
+    let store = SqliteStore::open(temp.path().join("modern.sqlite3")).unwrap();
+
+    let report = store.import_legacy_database(&legacy_path).unwrap();
+    let backup_path = report.backup_path.unwrap();
+    std::fs::write(&backup_path, b"do not overwrite").unwrap();
+
+    let result = store.import_legacy_database(&legacy_path);
+    assert!(matches!(result, Err(RepositoryError::Conflict(_))));
+    assert_eq!(std::fs::read(&backup_path).unwrap(), b"do not overwrite");
+    assert_eq!(
+        store.list_transcripts(None).unwrap()[0].transcript.text,
+        "preserve imported transcript"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_to_identical_backup_is_rejected_without_following_it() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    let temp = TempDir::new().unwrap();
+    let legacy_path = temp.path().join("history.sqlite3");
+    let _legacy = classic_database(&legacy_path, "keep original data", "file");
+    let store = SqliteStore::open(temp.path().join("modern.sqlite3")).unwrap();
+
+    let report = store.import_legacy_database(&legacy_path).unwrap();
+    let backup_path = std::path::PathBuf::from(report.backup_path.unwrap());
+    let retained_copy = temp.path().join("original-backup.sqlite3");
+    fs::rename(&backup_path, &retained_copy).unwrap();
+    symlink(&retained_copy, &backup_path).unwrap();
+
+    let result = store.import_legacy_database(&legacy_path);
+    assert!(matches!(result, Err(RepositoryError::Conflict(_))));
+    assert!(fs::symlink_metadata(&backup_path)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert!(retained_copy.is_file());
+    assert_eq!(
+        store.list_transcripts(None).unwrap()[0].transcript.text,
+        "keep original data"
+    );
+}
