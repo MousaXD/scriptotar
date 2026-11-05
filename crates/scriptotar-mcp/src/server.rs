@@ -412,7 +412,10 @@ fn block_active_db_file(db_path: &Path, path: &Path) -> Result<(), String> {
         name.push(suffix);
         PathBuf::from(name)
     });
-    if protected.iter().any(|protected_path| protected_path == path) {
+    if protected
+        .iter()
+        .any(|protected_path| protected_path == path)
+    {
         return Err("MCP cannot access its active SQLite database or journal".into());
     }
     // A hard link outside the app data directory does not canonicalize back
