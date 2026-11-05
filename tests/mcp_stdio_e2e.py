@@ -238,8 +238,8 @@ with tempfile.TemporaryDirectory() as directory:
             assert result['id'] == 1, result
             return result
 
-        assert custom_db.exists(), 'MCP must create and migrate the custom SQLite DB'
         reply = custom_call('read_file', path=str(custom_db))
+        assert custom_db.exists(), 'MCP must create and migrate the custom SQLite DB'
         assert reply['result']['isError'] is True, reply
         for suffix in ('', '-wal', '-shm', '-journal'):
             reply = custom_call('write_file', path=str(custom_db) + suffix,
