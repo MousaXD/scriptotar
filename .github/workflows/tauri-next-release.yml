@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/tauri-next-release.yml'
       - '.github/workflows/integration.yml'
+      - '.github/workflows/mcp-e2e.yml'
       - '.github/workflows/security-hygiene.yml'
       - '.github/workflows/windows-tauri.yml'
       - '.github/workflows/linux-tauri.yml'
@@ -137,7 +138,7 @@ jobs:
           - Windows asset: Scriptotar-Next-latest-x64-setup.exe
           - Linux asset: Scriptotar-Next-latest-amd64.deb
 
-          Required release gates: Tauri migration integration, Security hygiene, Windows Tauri Installer, and Linux Tauri Package. Every gate and its mandatory jobs must complete successfully for this exact commit.
+          Required release gates: Tauri migration integration, Scriptotar MCP E2E, Security hygiene, Windows Tauri Installer, and Linux Tauri Package. Every gate and its mandatory jobs must complete successfully for this exact commit.
 
           Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
 
@@ -278,7 +279,7 @@ jobs:
             echo
             echo "- Commit: $SOURCE_SHA"
             echo "- Release: $RELEASE_URL"
-            echo '- Exact-SHA integration, security, Windows, and Linux gates passed.'
+            echo '- Exact-SHA integration, MCP E2E, security, Windows, and Linux gates passed.'
             echo '- Windows NSIS and Linux Debian assets verified.'
           } >> "$GITHUB_STEP_SUMMARY"
 
