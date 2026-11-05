@@ -300,9 +300,11 @@ class EngineSupervisor:
                 )
             proc = self.proc
             self._cancel_in_progress = True
+        completed_termination = False
         try:
             if proc is not None:
                 self._terminate_process_group(proc)
+            completed_termination = True
         finally:
             with self._lock:
                 if self.proc is proc:
@@ -310,7 +312,11 @@ class EngineSupervisor:
                 self.active_job_id = None
                 self._engine_job_started = False
                 self._cancel_in_progress = False
-        self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
+                # A successor must not be accepted ahead of the cancellation
+                # event. Preserve the prior contract: if termination raised,
+                # do not report a successfully completed cancellation.
+                if completed_termination:
+                    self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
 
     def shutdown(self) -> None:
         with self._lock:
