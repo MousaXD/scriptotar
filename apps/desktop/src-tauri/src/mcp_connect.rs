@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::Manager;
 use url::Url;
 
-use super::{start_gateway_for_data, stop_gateway, McpGatewayState, MCP_HTTP_PORT};
+use super::{start_gateway_for_data, stop_gateway, McpGatewayState, OperationalState, MCP_HTTP_PORT};
 use scriptotar_mcp::{load_permissions, new_token, save_permissions, McpPermissions};
 
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -356,6 +356,18 @@ fn http_health_ready(file: &Path) -> bool {
     }
 }
 
+/// A failed or disconnected managed tunnel must not leave a live URL
+/// credential or HTTP gateway behind.
+fn revoke_public_gateway(data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
+    let stop_result = stop_gateway(gateway);
+    let mut policy = load_permissions(data_dir)?;
+    if !policy.url_token.is_empty() {
+        policy.url_token = new_token();
+        save_permissions(data_dir, policy)?;
+    }
+    stop_result
+}
+
 impl McpConnectionState {
     pub(crate) fn stop(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
         let mut active = self
@@ -368,14 +380,9 @@ impl McpConnectionState {
                 let _ = child.wait();
             }
         }
-        stop_gateway(gateway)?;
-        // Stopping a shared HTTPS tunnel revokes its old URL secret immediately.
-        let mut policy = load_permissions(data_dir)?;
-        if !policy.url_token.is_empty() {
-            policy.url_token = new_token();
-            save_permissions(data_dir, policy)?;
-        }
-        Ok(())
+        // Rotate even if stopping the gateway reported an error. A live old
+        // URL must never survive a partially failed disconnect attempt.
+        revoke_public_gateway(data_dir, gateway)
     }
 
     pub(crate) fn status(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
@@ -398,25 +405,35 @@ impl McpConnectionState {
             return result();
         };
         if let Some(child) = connection.child.as_mut() {
-            match child.try_wait() {
-                Ok(Some(_)) => {
-                    let mode = connection.mode;
-                    *state = None;
-                    return McpConnectionStatus {
-                        mode: mode.into(),
-                        state: "error".into(),
-                        detail: "The tunnel process exited. Reconnect from Scriptotar.".into(),
-                        ..result()
-                    };
-                }
-                Err(_) => {
-                    return McpConnectionStatus {
-                        state: "error".into(),
-                        detail: "Unable to inspect the tunnel process.".into(),
-                        ..result()
+            let failed = match child.try_wait() {
+                Ok(Some(_)) => Some("The tunnel process exited."),
+                Err(_) => Some("Unable to inspect the tunnel process."),
+                Ok(None) => None,
+            };
+            if let Some(reason) = failed {
+                let mode = connection.mode;
+                *state = None;
+                // Hold the connection-state lock while revoking to prevent a
+                // competing Connect from racing a delayed stale cleanup.
+                let revoked = match (
+                    app.try_state::<OperationalState>(),
+                    app.try_state::<McpGatewayState>(),
+                ) {
+                    (Some(operational), Some(gateway)) => {
+                        revoke_public_gateway(&operational.data_dir, &gateway)
                     }
-                }
-                _ => {}
+                    _ => Err("MCP gateway state unavailable".into()),
+                };
+                return McpConnectionStatus {
+                    mode: mode.into(),
+                    state: "error".into(),
+                    detail: if revoked.is_ok() {
+                        format!("{reason} Local gateway stopped and URL revoked; reconnect from Scriptotar.")
+                    } else {
+                        format!("{reason} Automatic revocation failed; disable MCP permissions immediately.")
+                    },
+                    ..result()
+                };
             }
         }
         let report = connection.report.lock().ok();
@@ -692,6 +709,25 @@ mod tests {
         assert!(quick_tunnel_host("ERR https://evil.com.trycloudflare.com.evil.test").is_none());
         assert!(quick_tunnel_host("ERR https://evil.example.com").is_none());
     }
+    #[test]
+    fn unexpected_tunnel_exit_revokes_path_token_and_stops_gateway() {
+        let dir = tempfile::tempdir().unwrap();
+        let initial = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let gateway = McpGatewayState::default();
+        revoke_public_gateway(dir.path(), &gateway).unwrap();
+        let current = load_permissions(dir.path()).unwrap();
+        assert_ne!(initial.url_token, current.url_token);
+        assert!(!current.url_token.is_empty());
+    }
+
     #[test]
     fn openai_tunnel_id_is_strict() {
         assert!(valid_tunnel_id(&format!("tunnel_{}", "a".repeat(32))));
