@@ -795,7 +795,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn yt_dlp_result_count_is_bounded() {
-        let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
+        let body = r#"printf '%s\n' '{"id":"a","extractor_key":"Youtube"}' '{"id":"b","extractor_key":"Youtube"}' '{"id":"c","extractor_key":"Youtube"}'"#;
         let (_temp, fixture) = fixture_script(body);
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
         let validated = NetworkPolicy
