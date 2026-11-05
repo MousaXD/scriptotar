@@ -67,10 +67,17 @@ handlers.
   without reducing the expected number of commands.
 - A Rust regression test checks off-caller-thread execution and correct
   success/error propagation.
+- A service-level concurrency regression test starts three threads together
+  against cloned `AppServices`: repeated selections, a concurrent project
+  creation, and watchlist saves plus local Copy Prompt AI runs. It asserts
+  valid project ownership for all watchlists/AI runs, matching persisted and
+  in-memory active project after completion, stable response project IDs and
+  no API-key leakage into saved prompts. This is deterministic local fixture
+  coverage, not a network/provider or measured performance benchmark.
 - Async scheduling **does not** change SQL access patterns or confer
-  cancellation on running provider/subprocess tasks. Concurrent invocation
-  behavior (particularly overlapping project selection and watchlist work)
-  merits explicit end-to-end stress tests before expanding the offload scope.
+  cancellation on running provider/subprocess tasks. Concurrent third-party
+  AI calls and live research subprocesses remain outside this deterministic
+  test and need further owner-specific stress/timeout/cancellation coverage.
 
 ## Future typed queries / pagination — coordination contract
 
@@ -104,3 +111,30 @@ check, strict Clippy, workspace tests) and the repository **CI** workflow
 including frontend API contracts. Agent 01 must inspect the final-commit
 GitHub Actions job results before reporting DONE. The current implementation
 does not require a migration or dependency/lockfile change.
+
+## External CI blockers observed on 2026-11-05
+
+The original exact-head checks on `e34ce42750f224b0ead62be5cea40a61efc23174`
+passed Rust foundation (fmt, check, strict Clippy, tests), full CI/API
+contracts, MCP E2E, security hygiene and the Windows installer. A successful
+old-head run does **not** certify subsequent commits.
+
+Two failures are outside Agent 01's service/IPC ownership and must remain
+fail-closed until their respective owners remediate and revalidate:
+
+- **Linux Tauri package**: `42083551028` failed in the Python runtime
+  legal-bundle step. CPython 3.12.16 was outside the reviewed fallback
+  runtime-license version list. Media/packaging owner must verify the
+  exact license provenance and include it; never simply ignore the check.
+- **Integration Supply chain**: `42083550770` failed `cargo audit` on
+  `RUSTSEC-2026-0381`, identifying `webpki-roots 1.0.9` (bundled
+  distrusted root intermediate). The advisory specifies `>=1.0.10`.
+  This exact 1.0.9 version was already present in the baseline
+  `517877b26df9028cdd32af69f6f5a88a68b948e9` `Cargo.lock`.
+  A dependency/lockfile owner must update and verify affected dependency
+  chains without ignoring the advisory, then run the full exact-SHA gates.
+
+Integrated Tauri compilation was still in progress at inspection time.
+Agent 01 does **not** change the global lockfile or Python sidecar to mask
+these failures. This PR remains unmerged and blocked until the current HEAD
+passes required checks and independent QA provides review.
