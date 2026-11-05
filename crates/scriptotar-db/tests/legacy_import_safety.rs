@@ -7,7 +7,9 @@ use tempfile::TempDir;
 
 fn classic_database(path: &Path, transcript: &str, input_type: &str) -> Connection {
     let connection = Connection::open(path).unwrap();
-    connection.pragma_update(None, "journal_mode", "WAL").unwrap();
+    connection
+        .pragma_update(None, "journal_mode", "WAL")
+        .unwrap();
     connection
         .execute_batch(
             "CREATE TABLE projects(name TEXT PRIMARY KEY, created_at TEXT NOT NULL);
@@ -54,7 +56,10 @@ fn live_wal_import_reads_consistent_backup_and_detects_changed_content() {
         .unwrap();
     assert_eq!(original_snapshot, "original transcript");
     assert_eq!(store.list_projects().unwrap().len(), 1);
-    assert_eq!(store.list_transcripts(None).unwrap()[0].transcript.text, "original transcript");
+    assert_eq!(
+        store.list_transcripts(None).unwrap()[0].transcript.text,
+        "original transcript"
+    );
 
     let repeated = store.import_legacy_database(&legacy_path).unwrap();
     assert!(repeated.skipped);
@@ -68,7 +73,10 @@ fn live_wal_import_reads_consistent_backup_and_detects_changed_content() {
         .unwrap();
     let conflict = store.import_legacy_database(&legacy_path).unwrap_err();
     assert!(matches!(conflict, RepositoryError::Conflict(_)));
-    assert_eq!(store.list_transcripts(None).unwrap()[0].transcript.text, "original transcript");
+    assert_eq!(
+        store.list_transcripts(None).unwrap()[0].transcript.text,
+        "original transcript"
+    );
     assert_eq!(store.list_transcripts(None).unwrap().len(), 1);
 
     // The first backup is immutable even after the legacy database changes.
