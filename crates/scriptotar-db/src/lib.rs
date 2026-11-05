@@ -163,6 +163,27 @@ fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
             "database schema version {current} does not match migration ledger (highest {recorded_version}, count {recorded_count}); refusing to modify existing data"
         )));
     }
+    {
+        let mut statement = connection
+            .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(storage_error)?;
+        for (index, row) in rows.enumerate() {
+            let (version, name) = row.map_err(storage_error)?;
+            let expected = MIGRATIONS
+                .get(index)
+                .map(|migration| (migration.version, migration.name));
+            if expected != Some((version, name.as_str())) {
+                return Err(RepositoryError::Storage(format!(
+                    "database migration ledger has unexpected version {version} or name {name:?}; refusing to modify existing data"
+                )));
+            }
+        }
+    }
 
     for migration in MIGRATIONS {
         if migration.version <= current {
