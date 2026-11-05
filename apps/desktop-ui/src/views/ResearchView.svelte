@@ -2,6 +2,7 @@
   import { locale } from '../i18n';
   import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
   import EmptyState from '../components/EmptyState.svelte';
+  import { observedInteractionRate } from '../utils/researchMetrics';
   export let items: ResearchItem[];
   export let watchlistStatuses: WatchlistStatus[] = [];
   export let onQueue: (ids: string[]) => Promise<void> | void;
@@ -10,7 +11,7 @@
 
   let query = '';
   let platform = 'All';
-  let sort: 'views' | 'likes' | 'comments' | 'date' = 'views';
+  let sort: 'views' | 'likes' | 'comments' | 'date' | 'rate' = 'views';
   let selected = new Set<string>();
   let profileUrl = '';
   let limit = 25;
@@ -28,12 +29,14 @@
 
   $: numberLocale = $locale === 'ar' ? 'ar' : 'en';
   $: compactNumber = new Intl.NumberFormat(numberLocale, { notation: 'compact' });
+  $: selectedCount = items.filter((item) => selected.has(item.id)).length;
   $: filtered = items
     .filter((item) => platform === 'All' || item.platform === platform)
     .filter((item) => `${item.creator} ${item.title}`.toLowerCase().includes(query.toLowerCase()))
     .sort((a, b) => {
       if (sort === 'date') return (b.publishedAt || '').localeCompare(a.publishedAt || '');
-      return (b[sort] || 0) - (a[sort] || 0);
+      if (sort === 'rate') return (observedInteractionRate(b) ?? -1) - (observedInteractionRate(a) ?? -1);
+      return (b[sort] ?? -1) - (a[sort] ?? -1);
     });
 
   function displayTime(value?: string) {
@@ -43,7 +46,12 @@
   }
 
   function metric(value?: number) {
-    return value ? compactNumber.format(value) : '—';
+    return typeof value === 'number' && Number.isFinite(value) ? compactNumber.format(value) : '—';
+  }
+
+  function rateLabel(item: ResearchItem) {
+    const rate = observedInteractionRate(item);
+    return rate === null ? '—' : new Intl.NumberFormat(numberLocale, { style: 'percent', maximumFractionDigits: 1 }).format(rate);
   }
 
   function toggle(id: string) {
@@ -67,8 +75,10 @@
     finally { saving = false; }
   }
   async function queueSelected() {
+    const ids = items.filter((item) => selected.has(item.id)).map((item) => item.id);
+    if (ids.length === 0) return;
     status = '';
-    try { await onQueue([...selected]); status = 'Selected media queued.'; }
+    try { await onQueue(ids); selected = new Set(); status = 'Selected media queued.'; }
     catch (error) { status = `Queue unavailable: ${error instanceof Error ? error.message : String(error)}`; }
   }
 </script>
@@ -119,8 +129,8 @@
   <div class="filter-bar">
     <label class="search-field"><span>⌕</span><input aria-label="Filter research" bind:value={query} placeholder="Filter title or creator…" /></label>
     <select aria-label="Platform filter" bind:value={platform}><option>All</option><option>TikTok</option><option>YouTube</option><option>Instagram</option></select>
-    <label class="sort-control">Sort <select aria-label="Research sort" bind:value={sort}><option value="views">Views</option><option value="likes">Likes</option><option value="comments">Comments</option><option value="date">Newest</option></select></label>
-    <button class:has-selection={selected.size > 0} class="button secondary selection-action" disabled={selected.size === 0} on:click={queueSelected}>Queue selected ({selected.size})</button>
+    <label class="sort-control">Sort <select aria-label="Research sort" bind:value={sort}><option value="views">Views</option><option value="likes">Likes</option><option value="comments">Comments</option><option value="date">Newest</option><option value="rate">Interactions / views</option></select></label>
+    <button class:has-selection={selected.size > 0} class="button secondary selection-action" disabled={selectedCount === 0} on:click={queueSelected}>Queue selected ({selectedCount})</button>
   </div>
   {#if filtered.length === 0}
     <EmptyState title="No matching research" message="Change the filters or scan another creator profile." />
@@ -132,13 +142,13 @@
           <label class="check-only"><input type="checkbox" checked={selected.has(item.id)} on:change={() => toggle(item.id)} aria-label={`Select ${item.title}`} /></label>
           <div class="media-cell">
             {#if item.thumbnail}<img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" />{:else}<div class="thumbnail-placeholder">{item.platform.slice(0,1)}</div>{/if}
-            <div><strong>{item.title}</strong><small>{item.creator} · {item.platform}</small></div>
+            <div><strong>{item.title}</strong><small>{item.creator} · {item.platform}</small>{#if observedInteractionRate(item) !== null}<small class="derived-metric" title="Likes plus comments divided by observed views; not unique people or causal performance">Interactions / views: {rateLabel(item)}</small>{/if}</div>
           </div>
           <strong class="metric metric-views"><span class="mobile-metric-label">Views</span>{metric(item.views)}</strong>
           <span class="metric metric-likes"><span class="mobile-metric-label">Likes</span>{metric(item.likes)}</span>
           <span class="metric metric-comments"><span class="mobile-metric-label">Comments</span>{metric(item.comments)}</span>
           <span class="metric metric-date"><span class="mobile-metric-label">Date</span>{item.publishedAt || '—'}</span>
-          <span class="metric metric-duration"><span class="mobile-metric-label">Duration</span>{item.durationSeconds ? `${item.durationSeconds}s` : '—'}</span>
+          <span class="metric metric-duration"><span class="mobile-metric-label">Duration</span>{item.durationSeconds != null ? `${item.durationSeconds}s` : '—'}</span>
         </div>
       {/each}
     </div>
@@ -165,6 +175,7 @@
   .watch-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
   .research-thumbnail { flex: 0 0 auto; width: 54px; height: 38px; border-radius: 7px; object-fit: cover; background: var(--surface-2); }
   .selection-action.has-selection { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border)); color: var(--text); }
+  .derived-metric { color: var(--muted); font-variant-numeric: tabular-nums; }
   .mobile-metric-label { display: none; }
 
   @media (max-width: 920px) {

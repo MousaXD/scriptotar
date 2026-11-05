@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { translator } from '../i18n/translate';
   import type { AiMode, AiProvider, Transcript } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -12,9 +11,15 @@
   let model = 'gpt-5.2';
   let task = 'Viral breakdown';
   let pace: 'slow' | 'normal' | 'fast' = 'normal';
-  let selectedTranscriptId = transcripts[0]?.id || 'manual';
+  // An explicit choice prevents accidentally treating the first workspace transcript as the source.
+  let selectedTranscriptId = 'manual';
+  let sourceEdited = false;
   let sourceText = '';
   let sourceLoadGeneration = 0;
+  let promptGeneration = 0;
+  let runGeneration = 0;
+  let building = false;
+  let builtPrompt = '';
   let sourceLoading = false;
   let sourceError = '';
   let topic = '';
@@ -48,7 +53,22 @@
     return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
   }
 
+  function invalidatePrompt() {
+    promptGeneration += 1;
+    runGeneration += 1;
+    prompt = '';
+    builtPrompt = '';
+    result = '';
+  }
+
+  function sourceInputChanged() {
+    if (selectedTranscriptId !== 'manual') sourceEdited = true;
+    invalidatePrompt();
+  }
+
   async function loadSource(id: string) {
+    invalidatePrompt();
+    sourceEdited = false;
     selectedTranscriptId = id;
     sourceError = '';
     const generation = ++sourceLoadGeneration;
@@ -75,13 +95,24 @@
     void loadSource((event.currentTarget as HTMLSelectElement).value);
   }
 
-  onMount(() => {
-    if (selectedTranscriptId !== 'manual') void loadSource(selectedTranscriptId);
-  });
-
   async function buildPrompt() {
-    prompt = await api.buildAiPrompt(payload());
-    status = 'Prompt built locally. Nothing has been sent to an AI provider.';
+    if (sourceLoading || sourceError || building) return;
+    const generation = ++promptGeneration;
+    building = true;
+    try {
+      const next = await api.buildAiPrompt(payload());
+      if (generation === promptGeneration) {
+        prompt = next;
+        builtPrompt = next;
+        status = 'Prompt built locally. Nothing has been sent to an AI provider.';
+      }
+    } catch (error) {
+      if (generation === promptGeneration) {
+        status = `Could not build prompt: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      }
+    } finally {
+      building = false;
+    }
   }
   async function copyText(value: string, label: string) {
     if (!value) return;
@@ -97,12 +128,29 @@
     }
   }
   async function runAi() {
-    if (mode === 'copy') { await buildPrompt(); status = 'Copy Prompt mode is ready for manual use elsewhere.'; return; }
+    if (busy || building || sourceLoading || sourceError) return;
+    if (mode === 'copy') {
+      await buildPrompt();
+      if (prompt) status = 'Copy Prompt mode is ready for manual use elsewhere.';
+      return;
+    }
+    if (provider === 'Local (coming later)') { status = 'Local provider execution is not available yet.'; return; }
+    if (!model.trim()) { status = 'Enter a model for the selected provider.'; return; }
     if (!apiKey.trim()) { status = 'Enter an API key for this session, or switch to Copy Prompt.'; return; }
+    if (prompt && prompt !== builtPrompt) {
+      status = 'The edited prompt preview is for copying only. Build the prompt again before running with API.';
+      return;
+    }
+    const generation = ++runGeneration;
     busy = true;
-    try { result = await api.runAi(payload()); status = `Finished with ${provider}.`; }
-    catch (error) { status = `AI request failed: ${error instanceof Error ? error.message : 'Unknown error'}`; }
-    finally { busy = false; }
+    try {
+      const output = await api.runAi(payload());
+      if (generation === runGeneration) { result = output; status = `Finished with ${provider}.`; }
+    } catch (error) {
+      if (generation === runGeneration) {
+        status = `AI request failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      }
+    } finally { busy = false; }
   }
 </script>
 
@@ -117,10 +165,10 @@
 <section class="panel ai-setup">
   <div class="setup-heading"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.configure')}</span><h2>Prompt setup</h2></div><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
   <div class="ai-config-grid">
-    <label><span>Task</span><select bind:value={task}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
+    <label><span>Task</span><select bind:value={task} on:change={invalidatePrompt}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
     <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" bind:value={provider} disabled={mode === 'copy'}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} /></label>
+    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" bind:value={provider} disabled={mode === 'copy'} on:change={() => { model = provider === 'OpenAI' ? 'gpt-5.2' : ''; invalidatePrompt(); }}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
+    <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} on:input={invalidatePrompt} /></label>
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
@@ -151,29 +199,34 @@
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
+        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
       </div>
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
     {/if}
     {#if sourceLoading}<p class="status-copy" aria-live="polite">Loading transcript source…</p>{/if}
-    {#if sourceError}<p class="status-copy" role="alert">{sourceError}</p>{/if}
-    <textarea bind:value={sourceText} placeholder="Paste or load transcript/research text…"></textarea>
+    {#if sourceError}
+      <p class="status-copy" role="alert">{sourceError}</p>
+      <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>Retry transcript load</button>
+    {/if}
+    <textarea bind:value={sourceText} on:input={sourceInputChanged} placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
   <section class="panel brief-panel">
     <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.direction')}</span><h2>Creative brief</h2></div><span class="brief-count" data-i18n-ignore>{$translator('ai.briefFilled', { count: briefFields })}</span></div>
     <div class="ai-brief-grid">
-      <label><span>Topic / goal</span><input bind:value={topic} /></label>
-      <label><span>Audience</span><input bind:value={audience} /></label>
-      <label><span>Target duration</span><input bind:value={duration} /></label>
-      <label><span>CTA</span><input bind:value={cta} /></label>
-      <label class="wide"><span>Voice / style instructions</span><input bind:value={voice} /></label>
+      <label><span>Topic / goal</span><input bind:value={topic} on:input={invalidatePrompt} /></label>
+      <label><span>Audience</span><input bind:value={audience} on:input={invalidatePrompt} /></label>
+      <label><span>Target duration</span><input bind:value={duration} on:input={invalidatePrompt} /></label>
+      <label><span>CTA</span><input bind:value={cta} on:input={invalidatePrompt} /></label>
+      <label class="wide"><span>Voice / style instructions</span><input bind:value={voice} on:input={invalidatePrompt} /></label>
     </div>
   </section>
 
   <section class="panel ai-prompt">
     <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
     <textarea bind:value={prompt} placeholder="Build a prompt to preview it here…"></textarea>
+    {#if mode === 'byok'}<p class="prompt-note">Edits here are available for copying, but BYOK builds its request from the source and brief fields above.</p>{/if}
   </section>
 </div>
 
@@ -181,8 +234,8 @@
   <span class="status-copy" aria-live="polite">{status}</span>
   <div class="ai-actions">
     <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
-    <button class="button primary" on:click={buildPrompt}>Build prompt</button>
-    <button class="button secondary run-button" disabled={busy || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button>
+    <button class="button primary" disabled={building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
+    <button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button>
   </div>
 </div>
 
@@ -242,6 +295,8 @@
   .ai-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 0 0 auto; }
   .status-copy { margin: 0; min-width: 0; }
   .run-button { border-color: color-mix(in srgb, var(--info) 25%, var(--border)); }
+  .prompt-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
+  .source-lineage code { overflow-wrap: anywhere; }
   .result-card { padding: 15px; }
   .result-copy { margin-top: 12px; white-space: pre-wrap; color: var(--text); line-height: 1.65; }
 
