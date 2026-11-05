@@ -93,8 +93,10 @@ class WhisperCache:
         emit("progress", {"stage": "transcribing", "message": f"Loading Whisper model {model_name}."})
         try:
             model = WhisperModel(model_name, device=device, compute_type=compute)
-        except Exception:
-            if requested_device != "auto" or device != "cuda":
+        except Exception as exc:
+            # Network/cache/model failures are not GPU runtime failures. Do
+            # not disguise them as CUDA errors or repeat them on CPU.
+            if requested_device != "auto" or device != "cuda" or not _is_cuda_runtime_failure(exc):
                 raise
             self.disable_auto_cuda()
             device, compute = "cpu", "int8"
