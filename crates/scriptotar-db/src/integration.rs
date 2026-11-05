@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 4;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 5;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -75,6 +75,7 @@ impl SqliteStore {
                 (2, "job_transcript_lineage"),
                 (3, "safe_job_transcript_backfill"),
                 (4, "job_transcript_project_guard"),
+                (5, "parent_lineage_reassignment_guards"),
             ];
             let mut statement = connection
                 .prepare("SELECT version, name FROM integration_schema_migrations ORDER BY version")
@@ -234,6 +235,69 @@ impl SqliteStore {
             tx.execute(
                 "INSERT INTO integration_schema_migrations(version, name, applied_at)
                  VALUES(4, 'job_transcript_project_guard', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
+        if current < 5 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TRIGGER jobs_project_lineage_reassignment_guard
+                 BEFORE UPDATE OF project_id ON jobs
+                 WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE l.job_id = OLD.id AND s.project_id <> NEW.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving job would invalidate transcript lineage');
+                 END;
+                 CREATE TRIGGER sources_project_lineage_reassignment_guard
+                 BEFORE UPDATE OF project_id ON sources
+                 WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     WHERE m.source_id = OLD.id AND j.project_id <> NEW.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving source would invalidate job lineage');
+                 END;
+                 CREATE TRIGGER media_source_lineage_reassignment_guard
+                 BEFORE UPDATE OF source_id ON media
+                 WHEN NEW.source_id <> OLD.source_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN sources target ON target.id = NEW.source_id
+                     WHERE t.media_id = OLD.id AND j.project_id <> target.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving media would invalidate job lineage');
+                 END;
+                 CREATE TRIGGER transcripts_media_lineage_reassignment_guard
+                 BEFORE UPDATE OF media_id ON transcripts
+                 WHEN NEW.media_id <> OLD.media_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN media target_media ON target_media.id = NEW.media_id
+                     JOIN sources target_source ON target_source.id = target_media.source_id
+                     WHERE l.transcript_id = OLD.id AND j.project_id <> target_source.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving transcript would invalidate job lineage');
+                 END;",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(5, 'parent_lineage_reassignment_guards', ?1)",
                 params![now_rfc3339()],
             )
             .map_err(storage_error)?;
