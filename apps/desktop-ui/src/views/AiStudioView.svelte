@@ -95,6 +95,13 @@
     void loadSource((event.currentTarget as HTMLSelectElement).value);
   }
 
+  function chooseProvider(event: Event) {
+    provider = (event.currentTarget as HTMLSelectElement).value as AiProvider;
+    // A model name for one provider must not be silently sent to another.
+    model = provider === 'OpenAI' ? 'gpt-5.2' : '';
+    invalidatePrompt();
+  }
+
   async function buildPrompt() {
     if (sourceLoading || sourceError || building) return;
     const generation = ++promptGeneration;
@@ -167,7 +174,7 @@
   <div class="ai-config-grid">
     <label><span>Task</span><select bind:value={task} on:change={invalidatePrompt}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
     <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" bind:value={provider} disabled={mode === 'copy'} on:change={() => { model = provider === 'OpenAI' ? 'gpt-5.2' : ''; invalidatePrompt(); }}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
+    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" value={provider} disabled={mode === 'copy'} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
     <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} on:input={invalidatePrompt} /></label>
   </div>
   {#if mode === 'byok'}
