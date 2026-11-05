@@ -287,8 +287,18 @@ class EngineSupervisor:
                 proc.kill()
         try:
             proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            pass
+        except subprocess.TimeoutExpired as exc:
+            raise SidecarError(
+                "ENGINE_TERMINATION_FAILED",
+                "Transcription engine did not stop after cancellation; the job remains blocked.",
+                retryable=True,
+            ) from exc
+        if proc.poll() is None:
+            raise SidecarError(
+                "ENGINE_TERMINATION_FAILED",
+                "Transcription engine termination could not be confirmed; the job remains blocked.",
+                retryable=True,
+            )
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
@@ -300,23 +310,30 @@ class EngineSupervisor:
                 )
             proc = self.proc
             self._cancel_in_progress = True
-        completed_termination = False
         try:
             if proc is not None:
                 self._terminate_process_group(proc)
-            completed_termination = True
-        finally:
+                if proc.poll() is None:
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Transcription engine is still running; cancellation was not confirmed.",
+                        retryable=True,
+                    )
+        except Exception:
+            # The worker may still be producing FFmpeg/Whisper output. Keep
+            # the job reserved and suppress its late events until a retry or
+            # shutdown actually confirms that the worker has exited.
+            # Never orphan a live process by clearing self.proc here.
+            raise
+        else:
             with self._lock:
                 if self.proc is proc:
                     self.proc = None
                 self.active_job_id = None
                 self._engine_job_started = False
                 self._cancel_in_progress = False
-                # A successor must not be accepted ahead of the cancellation
-                # event. Preserve the prior contract: if termination raised,
-                # do not report a successfully completed cancellation.
-                if completed_termination:
-                    self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
+                # Serialize the ACK with a potential successor start_job.
+                self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
 
     def shutdown(self) -> None:
         with self._lock:
