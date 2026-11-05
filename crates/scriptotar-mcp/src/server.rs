@@ -410,11 +410,7 @@ impl Server {
     }
 }
 
-fn block_active_db_file(
-    db_path: &Path,
-    opened_db_path: &Path,
-    path: &Path,
-) -> Result<(), String> {
+fn block_active_db_file(db_path: &Path, opened_db_path: &Path, path: &Path) -> Result<(), String> {
     // SCRIPTOTAR_DB_PATH can refer to a custom-named or symlinked database.
     // SQLite journal paths may use the open-time alias, not the realpath.
     let protected = [db_path, opened_db_path]
