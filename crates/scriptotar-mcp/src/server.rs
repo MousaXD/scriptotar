@@ -35,6 +35,7 @@ pub(crate) struct Server {
     store: SqliteStore,
     pub(crate) data_dir: PathBuf,
     db_path: PathBuf,
+    opened_db_path: PathBuf,
     orchestrator: JobOrchestrator<SqliteStore>,
 }
 
@@ -53,6 +54,10 @@ impl Server {
         store
             .run_integration_migrations()
             .map_err(|e| e.to_string())?;
+        // SQLite may create journals relative to the path used to open a DB,
+        // rather than its symlink-resolved target. Protect both spellings.
+        let opened_db_path =
+            data_dir.join(db_path.file_name().ok_or("database file name required")?);
         let db_path = fs::canonicalize(db_path)
             .map_err(|_| "could not canonicalize Scriptotar database file")?;
         let python = std::env::var_os("SCRIPTOTAR_SIDECAR_PYTHON")
@@ -70,6 +75,7 @@ impl Server {
             store,
             data_dir,
             db_path,
+            opened_db_path,
             orchestrator,
         })
     }
@@ -238,7 +244,7 @@ impl Server {
                 keys(args, &["path"], &[])?;
                 let path =
                     authorized_read(policy, &self.data_dir, string_arg(args, "path", 4096)?)?;
-                block_active_db_file(&self.db_path, &path)?;
+                block_active_db_file(&self.db_path, &self.opened_db_path, &path)?;
                 // Enforce the byte cap while reading, not just with a pre-read
                 // metadata check: a file can grow after metadata is checked.
                 let file = fs::File::open(&path).map_err(|_| "cannot open file")?;
@@ -265,7 +271,7 @@ impl Server {
                     string_arg(args, "path", 4096)?,
                     overwrite,
                 )?;
-                block_active_db_file(&self.db_path, &path)?;
+                block_active_db_file(&self.db_path, &self.opened_db_path, &path)?;
                 let content = string_arg(args, "content", MAX_WRITE)?;
                 let mut tmp = tempfile::NamedTempFile::new_in(
                     path.parent().ok_or("invalid output directory")?,
@@ -404,14 +410,23 @@ impl Server {
     }
 }
 
-fn block_active_db_file(db_path: &Path, path: &Path) -> Result<(), String> {
-    // SCRIPTOTAR_DB_PATH is allowed to name a non-default SQLite database.
-    // Never rely only on the conventional scriptotar.sqlite3 filename.
-    let protected = ["", "-wal", "-shm", "-journal"].map(|suffix| {
-        let mut name = db_path.as_os_str().to_os_string();
-        name.push(suffix);
-        PathBuf::from(name)
-    });
+fn block_active_db_file(
+    db_path: &Path,
+    opened_db_path: &Path,
+    path: &Path,
+) -> Result<(), String> {
+    // SCRIPTOTAR_DB_PATH can refer to a custom-named or symlinked database.
+    // SQLite journal paths may use the open-time alias, not the realpath.
+    let protected = [db_path, opened_db_path]
+        .into_iter()
+        .flat_map(|base| {
+            ["", "-wal", "-shm", "-journal"].map(|suffix| {
+                let mut name = base.as_os_str().to_os_string();
+                name.push(suffix);
+                PathBuf::from(name)
+            })
+        })
+        .collect::<Vec<_>>();
     if protected
         .iter()
         .any(|protected_path| protected_path == path)
@@ -732,16 +747,28 @@ mod tests {
             let mut name = db.as_os_str().to_os_string();
             name.push(suffix);
             let path = PathBuf::from(name);
-            assert!(block_active_db_file(&db, &path).is_err(), "suffix {suffix}");
+            assert!(block_active_db_file(&db, &db, &path).is_err(), "suffix {suffix}");
+        }
+        let symlink_db_alias = temp.path().join("opened-by-alias.sqlite3");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&db, &symlink_db_alias).unwrap();
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let mut name = symlink_db_alias.as_os_str().to_os_string();
+            name.push(suffix);
+            let path = PathBuf::from(name);
+            assert!(
+                block_active_db_file(&db, &symlink_db_alias, &path).is_err(),
+                "symlinked SQLite alias sidecar {suffix} must be protected"
+            );
         }
         let other = temp.path().join("notes.txt");
         fs::write(&other, "ordinary approved file").unwrap();
-        assert!(block_active_db_file(&db, &other).is_ok());
+        assert!(block_active_db_file(&db, &db, &other).is_ok());
         #[cfg(unix)]
         {
             let alias = temp.path().join("custom-db-hardlink.txt");
             fs::hard_link(&db, &alias).unwrap();
-            assert!(block_active_db_file(&db, &alias).is_err());
+            assert!(block_active_db_file(&db, &db, &alias).is_err());
         }
     }
 
