@@ -228,7 +228,12 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
         "INSERT INTO research_items(
              id, project_id, creator_id, source_url, platform, scanned_at
          ) VALUES(?1, ?2, ?3, 'https://example.invalid/owner/video', 'youtube', ?4)",
-        params![Uuid::new_v4().to_string(), a.id.to_string(), creator.to_string(), now],
+        params![
+            Uuid::new_v4().to_string(),
+            a.id.to_string(),
+            creator.to_string(),
+            now
+        ],
     )
     .unwrap();
     for (id, project_id, locator) in [
@@ -262,7 +267,12 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
     conn.execute(
         "INSERT INTO analyses(id, project_id, transcript_id, kind, content, created_at)
          VALUES(?1, ?2, ?3, 'summary', 'keep same project', ?4)",
-        params![Uuid::new_v4().to_string(), a.id.to_string(), transcript_a.to_string(), now],
+        params![
+            Uuid::new_v4().to_string(),
+            a.id.to_string(),
+            transcript_a.to_string(),
+            now
+        ],
     )
     .unwrap();
     conn.execute(
@@ -273,11 +283,31 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
     .unwrap();
 
     for (sql, row_id, new_value) in [
-        ("UPDATE creators SET project_id = ?1 WHERE id = ?2", creator, b.id),
-        ("UPDATE sources SET project_id = ?1 WHERE id = ?2", source_a, b.id),
-        ("UPDATE media SET source_id = ?1 WHERE id = ?2", media_a, source_b),
-        ("UPDATE transcripts SET media_id = ?1 WHERE id = ?2", transcript_a, media_b),
-        ("UPDATE jobs SET project_id = ?1 WHERE id = ?2", job.id, b.id),
+        (
+            "UPDATE creators SET project_id = ?1 WHERE id = ?2",
+            creator,
+            b.id,
+        ),
+        (
+            "UPDATE sources SET project_id = ?1 WHERE id = ?2",
+            source_a,
+            b.id,
+        ),
+        (
+            "UPDATE media SET source_id = ?1 WHERE id = ?2",
+            media_a,
+            source_b,
+        ),
+        (
+            "UPDATE transcripts SET media_id = ?1 WHERE id = ?2",
+            transcript_a,
+            media_b,
+        ),
+        (
+            "UPDATE jobs SET project_id = ?1 WHERE id = ?2",
+            job.id,
+            b.id,
+        ),
     ] {
         assert!(
             conn.execute(sql, params![new_value.to_string(), row_id.to_string()])
