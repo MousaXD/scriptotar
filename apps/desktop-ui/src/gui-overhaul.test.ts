@@ -79,7 +79,7 @@ describe('Creator Control Room GUI', () => {
     await waitFor(() => expect(document.documentElement.dir).toBe('rtl'));
     expect(window.localStorage.getItem('scriptotar.uiLanguage')).toBe('ar');
     expect(screen.getByText('التفضيلات')).toBeInTheDocument();
-    expect(screen.getByText('ترحيل البيانات القديمة')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'ترحيل البيانات القديمة' })).toHaveAttribute('href', '#settings-migration');
   });
   it('keeps utility navigation available to keyboard and assistive technology', async () => {
     await ready();
