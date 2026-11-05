@@ -288,19 +288,34 @@ fn block_policy_file(data_dir: &Path, path: &Path) -> Result<(), String> {
         "scriptotar.sqlite3-wal",
         "scriptotar.sqlite3-shm",
     ];
-    if path.parent() == Some(data_dir)
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| protected.contains(&name))
-    {
-        Err(
-            "MCP cannot access its permissions or Scriptotar SQLite database through file tools"
-                .into(),
-        )
-    } else {
-        Ok(())
+    let name_is_protected = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            protected.contains(&name)
+                || (name.starts_with(".mcp-permissions-") && name.ends_with(".tmp"))
+        });
+    if path.parent() == Some(data_dir) && name_is_protected {
+        return Err("MCP cannot access internal permissions or SQLite files".into());
     }
+
+    // Canonicalization does not resolve hard links. A hard link inside an
+    // approved directory can otherwise expose the same inode as a protected
+    // application file under an innocuous name.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(candidate) = fs::metadata(path) {
+            for name in protected {
+                if let Ok(secret) = fs::metadata(data_dir.join(name)) {
+                    if candidate.dev() == secret.dev() && candidate.ino() == secret.ino() {
+                        return Err("MCP cannot access internal permissions or SQLite files".into());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -348,6 +363,41 @@ mod tests {
         )
         .is_err());
     }
+    #[cfg(unix)]
+    #[test]
+    fn protected_files_cannot_be_accessed_through_hard_links_or_policy_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let approved = dir.path().join("approved");
+        fs::create_dir(&approved).unwrap();
+        let policy = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                read_files: true,
+                write_files: true,
+                overwrite_files: true,
+                allowed_paths: vec![dir.path().to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let alias = approved.join("innocent.txt");
+        fs::hard_link(permissions_path(dir.path()), &alias).unwrap();
+        assert!(authorized_read(&policy, dir.path(), alias.to_str().unwrap()).is_err());
+        assert!(authorized_write(&policy, dir.path(), alias.to_str().unwrap(), true).is_err());
+
+        let database = dir.path().join("scriptotar.sqlite3");
+        fs::write(&database, "sensitive data").unwrap();
+        let database_alias = approved.join("database-alias.txt");
+        fs::hard_link(&database, &database_alias).unwrap();
+        assert!(authorized_read(&policy, dir.path(), database_alias.to_str().unwrap()).is_err());
+
+        let staging = dir.path().join(".mcp-permissions-example.tmp");
+        fs::write(&staging, "temporary credentials").unwrap();
+        assert!(authorized_read(&policy, dir.path(), staging.to_str().unwrap()).is_err());
+        assert!(authorized_write(&policy, dir.path(), staging.to_str().unwrap(), true).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlink_and_public_policy_are_rejected() {

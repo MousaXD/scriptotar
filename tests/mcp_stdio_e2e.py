@@ -35,7 +35,8 @@ with tempfile.TemporaryDirectory() as directory:
             os.fsync(stream.fileno())
         os.replace(staging, policy_file)
 
-    env = {**os.environ, 'SCRIPTOTAR_DB_PATH': str(data / 'scriptotar.sqlite3')}
+    env = {**os.environ, 'SCRIPTOTAR_DB_PATH': str(data / 'scriptotar.sqlite3'),
+           'SCRIPTOTAR_MCP_SECRET_SENTINEL': 'must-not-inherit'}
     with subprocess.Popen([str(BIN)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, text=True, env=env) as process:
         request_id = 0
@@ -126,6 +127,16 @@ with tempfile.TemporaryDirectory() as directory:
         denied(call('read_file', path=str(policy_file)))
         denied(call('read_file', path=str(data / 'scriptotar.sqlite3')))
         denied(call('write_file', path=str(data / 'scriptotar.sqlite3'), content='replace database', overwrite=True))
+        staging = data / '.mcp-permissions-synthetic.tmp'
+        staging.write_text('secret fixture')
+        denied(call('read_file', path=str(staging)))
+        denied(call('write_file', path=str(staging), content='x', overwrite=True))
+        if os.name == 'posix':
+            alias = allowed / 'policy-hardlink.txt'
+            os.link(policy_file, alias)
+            denied(call('read_file', path=str(alias)))
+            denied(call('write_file', path=str(alias), content='x', overwrite=True))
+            alias.unlink()
         grant(enabled=True, readFiles=True, writeFiles=True, overwriteFiles=True,
               allowedPaths=[str(allowed)])
         assert content(call('write_file', path=str(created), content='updated', overwrite=True))['bytes'] == 7
@@ -146,6 +157,27 @@ with tempfile.TemporaryDirectory() as directory:
                                  args=['-c', 'print("x" * 1000000)'], cwd=str(allowed)))
         assert oversized['exit_code'] == 0 and oversized['output_truncated']
         assert len(oversized['stdout']) <= 65536, oversized.keys()
+        inherited = content(call('execute_command', program=str(pathlib.Path(sys.executable).resolve()),
+                                 args=['-c', 'import os; print(os.getenv("SCRIPTOTAR_MCP_SECRET_SENTINEL", "hidden"))'],
+                                 cwd=str(allowed)))
+        assert inherited['stdout'].strip() == 'hidden', inherited
+        # Disable execution while a real subprocess is still running.
+        # The server must terminate the child, not merely reject later calls.
+        import time
+        started = time.monotonic()
+        request_id += 1
+        process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': request_id, 'method': 'tools/call',
+            'params': {'name': 'execute_command', 'arguments': {
+                'program': str(pathlib.Path(sys.executable).resolve()),
+                'args': ['-c', 'import time; time.sleep(8)'], 'cwd': str(allowed)}}}) + '\n')
+        process.stdin.flush()
+        time.sleep(0.4)
+        grant(enabled=False, executeCommands=True, allowedPaths=[str(allowed)],
+              allowedPrograms=[str(pathlib.Path(sys.executable).resolve())])
+        revoked_reply = json.loads(process.stdout.readline())
+        assert revoked_reply['id'] == request_id and revoked_reply['result']['isError'] is True, revoked_reply
+        assert 'revoked' in revoked_reply['result']['content'][0]['text'].lower(), revoked_reply
+        assert time.monotonic() - started < 4, 'running command ignored revocation'
 
         # Network-capable tools reject disallowed URL hosts before accessing the network.
         grant(enabled=True, searchCreators=True, downloadVideos=True)

@@ -305,7 +305,13 @@ impl Server {
                             program.parent().unwrap_or(Path::new("/")).to_path_buf()
                         }),
                 };
-                run_command(&program, &cli_args, &cwd)
+                run_command(
+                    &program,
+                    &cli_args,
+                    &cwd,
+                    &self.data_dir,
+                    args.contains_key("cwd") || !policy.allowed_paths.is_empty(),
+                )
             }
             "search_creator" => {
                 keys(args, &["project_id", "profile_url"], &["limit"])?;
@@ -500,19 +506,53 @@ fn bounded_process_output<R: Read + Send + 'static>(
     rx
 }
 
-fn run_command(program: &Path, args: &[String], cwd: &Path) -> Result<Value, String> {
-    let mut child = Command::new(program)
+fn run_command(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    data_dir: &Path,
+    require_cwd_scope: bool,
+) -> Result<Value, String> {
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    // No parent-process API keys, tunnel credentials, Python injection
+    // settings or CI secrets should be inherited by an approved executable.
+    // An approved executable is NOT an OS sandbox and still has user privileges.
+    command.env_clear();
+    for key in [
+        "PATH", "HOME", "USER", "USERPROFILE", "SYSTEMROOT", "WINDIR",
+        "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "APPDATA",
+        "LOCALAPPDATA", "XDG_RUNTIME_DIR",
+    ] {
+        if let Some(value) = std::env::var_os(key) {
+            command.env(key, value);
+        }
+    }
+    let mut child = command
         .spawn()
         .map_err(|_| "approved command could not start")?;
     let out_rx = bounded_process_output(child.stdout.take().ok_or("could not capture stdout")?);
     let err_rx = bounded_process_output(child.stderr.take().ok_or("could not capture stderr")?);
     let deadline = Instant::now() + COMMAND_TIMEOUT;
     let status = loop {
+        // Recheck the app-owned policy while the process is running. Removing
+        // the program, removing its cwd root or disabling MCP kills this child.
+        let current = load_permissions(data_dir);
+        let still_allowed = current.as_ref().is_ok_and(|policy| {
+            authorized_program(policy, &program.to_string_lossy()).is_ok()
+                && (!require_cwd_scope
+                    || authorized_directory(policy, &cwd.to_string_lossy()).is_ok())
+        });
+        if !still_allowed {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("command permission was revoked while running".into());
+        }
         match child.try_wait().map_err(|_| "command wait failed")? {
             Some(status) => break status,
             None if Instant::now() >= deadline => {

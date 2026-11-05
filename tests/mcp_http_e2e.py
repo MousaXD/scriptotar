@@ -73,6 +73,8 @@ with tempfile.TemporaryDirectory() as work:
         assert request(port, path='/not-mcp')[0] == 404
         assert request(port, method='GET')[0] == 405
         assert request(port, content_type='text/plain')[0] == 415
+        assert request(port, content_type='application/jsonp')[0] == 415
+        assert request(port, body='x' * (1024 * 1024 + 50))[0] == 413
         assert request(port, accept='text/plain')[0] == 406
         status, result = request(port)
         assert status == 200, result
@@ -90,7 +92,25 @@ with tempfile.TemporaryDirectory() as work:
                                                   'params':{'name':'list_projects','arguments':{}}}))
         assert status == 200 and not result['result'].get('isError', False), result
         assert json.loads(result['result']['content'][0]['text']) == []
-        policy(read_data=True, bearer=other_token, path_token='d' * 64)
+        # Authenticate before the complete body arrives, rotate BOTH credentials,
+        # then finish the old request. It must not dispatch on stale credentials.
+        payload = json.dumps({'jsonrpc':'2.0','id':87,'method':'tools/call',
+                              'params':{'name':'list_projects','arguments':{}}})
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=8)
+        try:
+            connection.putrequest('POST', '/mcp')
+            connection.putheader('Authorization', 'Bearer ' + token)
+            connection.putheader('Accept', 'application/json')
+            connection.putheader('Content-Type', 'application/json')
+            connection.putheader('Content-Length', str(len(payload)))
+            connection.endheaders()
+            connection.send(payload[:12].encode())
+            time.sleep(0.1)
+            policy(read_data=True, bearer=other_token, path_token='d' * 64)
+            connection.send(payload[12:].encode())
+            assert connection.getresponse().status == 401
+        finally:
+            connection.close()
         assert request(port, path='/mcp/p/' + 'c' * 64, auth=None)[0] == 401
         assert request(port, path='/mcp/p/' + 'd' * 64, auth=None)[0] == 200
         assert request(port, auth=token)[0] == 401
