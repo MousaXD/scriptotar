@@ -164,4 +164,16 @@ describe('Creator Control Room GUI', () => {
     expect(screen.getByTestId('transcript-content')).toHaveTextContent('The caption is doing two jobs');
   });
 
+  it('localizes the dashboard while preserving the current project name', async () => {
+    await ready();
+    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+
+    expect(await screen.findByText('المهام الحالية')).toBeInTheDocument();
+    expect(screen.getByText('أحدث النصوص المفرغة')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'فتح الطابور ←' }));
+    expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
+  });
+
 });
