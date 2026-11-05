@@ -1508,7 +1508,11 @@ mod tests {
                 .execute_batch(
                     "DROP TRIGGER job_transcript_project_insert;
                      DROP TRIGGER job_transcript_project_update;
-                     DELETE FROM integration_schema_migrations WHERE version IN (3, 4);",
+                     DROP TRIGGER jobs_project_lineage_reassignment_guard;
+                     DROP TRIGGER sources_project_lineage_reassignment_guard;
+                     DROP TRIGGER media_source_lineage_reassignment_guard;
+                     DROP TRIGGER transcripts_media_lineage_reassignment_guard;
+                     DELETE FROM integration_schema_migrations WHERE version IN (3, 4, 5);",
                 )
                 .unwrap();
         }
@@ -1573,7 +1577,11 @@ mod tests {
             .execute_batch(
                 "DROP TRIGGER job_transcript_project_insert;
                  DROP TRIGGER job_transcript_project_update;
-                 DELETE FROM integration_schema_migrations WHERE version IN (3, 4);",
+                 DROP TRIGGER jobs_project_lineage_reassignment_guard;
+                 DROP TRIGGER sources_project_lineage_reassignment_guard;
+                 DROP TRIGGER media_source_lineage_reassignment_guard;
+                 DROP TRIGGER transcripts_media_lineage_reassignment_guard;
+                 DELETE FROM integration_schema_migrations WHERE version IN (3, 4, 5);",
             )
             .unwrap();
         drop(connection);
