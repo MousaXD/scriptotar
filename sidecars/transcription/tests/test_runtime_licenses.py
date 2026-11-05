@@ -4,10 +4,25 @@ import ast
 import unittest
 from pathlib import Path
 
-from runtime_licenses import LICENSE_METADATA_FALLBACKS, classify_ffmpeg_license, parse_pyav_ffmpeg_report
+from runtime_licenses import (
+    CPYTHON_3_12_LICENSE_SHA256,
+    CPYTHON_REVIEWED_3_12_VERSIONS,
+    LICENSE_METADATA_FALLBACKS,
+    classify_ffmpeg_license,
+    parse_pyav_ffmpeg_report,
+)
 
 
 class RuntimeLicenseTests(unittest.TestCase):
+    def test_reviewed_python_runtime_patches_stay_narrowly_pinned(self) -> None:
+        # The 3.12.16 source license is identical to the pinned 3.12.14 text.
+        # Unknown future runtimes must still fail closed and require review.
+        self.assertIn("3.12.16", CPYTHON_REVIEWED_3_12_VERSIONS)
+        self.assertNotIn("3.12.17", CPYTHON_REVIEWED_3_12_VERSIONS)
+        self.assertEqual(len(CPYTHON_3_12_LICENSE_SHA256), 64)
+        self.assertTrue(all(char in "0123456789abcdef" for char in CPYTHON_3_12_LICENSE_SHA256))
+
+
     def test_curl_cffi_native_wheel_matches_reviewed_recipe(self) -> None:
         root = Path(__file__).resolve().parents[1]
         requirements = root / "requirements-engine.txt"
