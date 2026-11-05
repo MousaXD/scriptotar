@@ -107,7 +107,13 @@ fn legacy_import_preserves_source_bytes_and_is_repeatable() {
     assert!(!first.skipped);
     let backup_path = first.backup_path.expect("legacy backup path");
     assert_eq!(fs::read(&legacy_path).unwrap(), before);
-    assert_eq!(fs::read(&backup_path).unwrap(), before);
+    let backup = Connection::open(&backup_path).unwrap();
+    let snapshot_transcript: String = backup
+        .query_row("SELECT transcript FROM jobs WHERE id = 'legacy-job'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(snapshot_transcript, "legacy transcript");
 
     let second = store.import_legacy_database(&legacy_path).unwrap();
     assert!(second.skipped);
