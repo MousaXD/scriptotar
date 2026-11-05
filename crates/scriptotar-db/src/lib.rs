@@ -972,7 +972,7 @@ mod tests {
             tx.commit().unwrap();
         }
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         let connection = db.connection().unwrap();
         let count: u32 = connection
             .query_row(
@@ -1058,7 +1058,7 @@ mod tests {
         }
 
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 4);
+        assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         assert_eq!(
             db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(),
             vec![transcript_id]
