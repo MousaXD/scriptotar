@@ -13,13 +13,15 @@
 
   const kinds: Array<'All' | LibraryKind> = ['All', 'Transcript', 'Research', 'AI run', 'Project', 'Creator'];
 
+  // Preserve the backend's newest-first order without quadratic indexOf lookups during filtering.
+  $: newestOrder = new Map(items.map((item, index) => [item, index]));
   $: filtered = items
     .filter((item) => kind === 'All' || item.kind === kind)
     .filter((item) => `${item.title} ${item.subtitle} ${item.platform || ''} ${item.metric || ''}`.toLowerCase().includes(query.trim().toLowerCase()));
   $: visible = [...filtered].sort((a, b) => {
     if (sort === 'title') return a.title.localeCompare(b.title);
     if (sort === 'type') return a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title);
-    return items.indexOf(a) - items.indexOf(b);
+    return (newestOrder.get(a) ?? 0) - (newestOrder.get(b) ?? 0);
   });
   $: counts = kinds.reduce((result, current) => {
     result[current] = current === 'All' ? items.length : items.filter((item) => item.kind === current).length;
