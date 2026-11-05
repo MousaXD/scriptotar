@@ -710,7 +710,7 @@ mod tests {
         assert!(quick_tunnel_host("ERR https://evil.example.com").is_none());
     }
     #[test]
-    fn unexpected_tunnel_exit_revokes_path_token_and_stops_gateway() {
+    fn public_gateway_revocation_rotates_path_token_even_if_no_child_is_running() {
         let dir = tempfile::tempdir().unwrap();
         let initial = save_permissions(
             dir.path(),

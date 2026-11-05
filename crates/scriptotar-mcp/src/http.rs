@@ -114,7 +114,6 @@ async fn handle(
         .split(';')
         .next()
         .is_some_and(|value| value.trim() == "application/json")
-        == false
     {
         return Ok(reply(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,

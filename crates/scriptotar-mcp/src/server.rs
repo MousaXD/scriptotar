@@ -525,9 +525,20 @@ fn run_command(
     // An approved executable is NOT an OS sandbox and still has user privileges.
     command.env_clear();
     for key in [
-        "PATH", "HOME", "USER", "USERPROFILE", "SYSTEMROOT", "WINDIR",
-        "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "APPDATA",
-        "LOCALAPPDATA", "XDG_RUNTIME_DIR",
+        "PATH",
+        "HOME",
+        "USER",
+        "USERPROFILE",
+        "SYSTEMROOT",
+        "WINDIR",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "XDG_RUNTIME_DIR",
     ] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);

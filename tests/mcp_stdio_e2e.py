@@ -165,13 +165,20 @@ with tempfile.TemporaryDirectory() as directory:
         # The server must terminate the child, not merely reject later calls.
         import time
         started = time.monotonic()
+        marker = allowed / 'child-has-started'
+        child_script = 'import pathlib,time;pathlib.Path(' + repr(str(marker)) + ').write_text("ready");time.sleep(8)'
         request_id += 1
         process.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': request_id, 'method': 'tools/call',
             'params': {'name': 'execute_command', 'arguments': {
                 'program': str(pathlib.Path(sys.executable).resolve()),
-                'args': ['-c', 'import time; time.sleep(8)'], 'cwd': str(allowed)}}}) + '\n')
+                'args': ['-c', child_script], 'cwd': str(allowed)}}}) + '\n')
         process.stdin.flush()
-        time.sleep(0.4)
+        for _ in range(100):
+            if marker.exists():
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError('the approved child did not start')
         grant(enabled=False, executeCommands=True, allowedPaths=[str(allowed)],
               allowedPrograms=[str(pathlib.Path(sys.executable).resolve())])
         revoked_reply = json.loads(process.stdout.readline())
