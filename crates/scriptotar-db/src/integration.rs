@@ -51,16 +51,22 @@ impl SqliteStore {
                 );",
             )
             .map_err(storage_error)?;
-        let current: u32 = connection
+        let (current, recorded_count): (u32, u32) = connection
             .query_row(
-                "SELECT COALESCE(MAX(version), 0) FROM integration_schema_migrations",
+                "SELECT COALESCE(MAX(version), 0), COUNT(*)
+                 FROM integration_schema_migrations",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(storage_error)?;
         if current > LATEST_INTEGRATION_SCHEMA_VERSION {
             return Err(RepositoryError::Storage(format!(
                 "unsupported integration schema version {current}; expected at most {LATEST_INTEGRATION_SCHEMA_VERSION}"
+            )));
+        }
+        if current != recorded_count {
+            return Err(RepositoryError::Storage(format!(
+                "integration schema migration ledger has gaps: highest version {current}, count {recorded_count}; refusing to modify existing data"
             )));
         }
         if current < 1 {
@@ -1358,9 +1364,10 @@ mod tests {
                 )
                 .unwrap();
             connection
-                .execute(
-                    "DELETE FROM integration_schema_migrations WHERE version = 3",
-                    [],
+                .execute_batch(
+                    "DROP TRIGGER job_transcript_project_insert;
+                     DROP TRIGGER job_transcript_project_update;
+                     DELETE FROM integration_schema_migrations WHERE version IN (3, 4);",
                 )
                 .unwrap();
         }
@@ -1422,9 +1429,10 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute(
-                "DELETE FROM integration_schema_migrations WHERE version = 3",
-                [],
+            .execute_batch(
+                "DROP TRIGGER job_transcript_project_insert;
+                 DROP TRIGGER job_transcript_project_update;
+                 DELETE FROM integration_schema_migrations WHERE version IN (3, 4);",
             )
             .unwrap();
         drop(connection);
