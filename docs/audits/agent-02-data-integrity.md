@@ -3,7 +3,7 @@
 **Branch:** `agent-02/database-recovery-overhaul`  
 **Target:** `feature/chatgpt-mcp-ci-20261026`  
 **PR:** https://github.com/MousaXD/scriptotar/pull/74  
-**Status:** Validation pending; do not merge until exact-head CI passes.
+**Status:** Validation pending on current exact HEAD; never merge until Agent 00 accepts integrated CI and release gates.
 
 ## Safety findings and remediations
 
@@ -18,12 +18,13 @@
 | Medium | An inconsistent core or integration migration ledger could pass a MAX/COUNT-only check after a version is replaced with zero or a recorded migration name is modified. | Fail closed before running migrations; validate every ordered version/name entry against the recognized migration history. Reject gaps, malformed IDs, and unknown names before touching user data. |
 | Medium | Retried jobs retained prior-run progress, so a new queued attempt could display nearly completed status. | Clear progress only on explicit requeue; retain last failure details until a successful completion. |
 | Medium | Foreign keys did not enforce that creator, analysis, job and transcript links stayed within one project. | Add insert/update triggers for relevant project ownership relationships; add negative transaction tests. |
+| High | Moving parent records (`creators.project_id`, `sources.project_id`, `media.source_id`, `transcripts.media_id`, or `jobs.project_id`) could silently invalidate previously valid child links without touching the guarded child fields. | Core and integration schema v5 add reverse-reassignment guards, tested across source/analysis, creator/research and job/transcript lineage. No old links are changed. |
 | Feature gap | Project rename, archive and restore were unavailable as database operations. | Add project rename and reversible `archived_at` migration, plus active/archived project listing methods. No destructive deletion added. |
 
 ## Compatibility and data preservation
 
 - **Production data:** No live user databases were opened or mutated; testing uses disposable fixtures.
-- **Existing schema:** Core migration v4 only adds a nullable `projects.archived_at` column, an index and ownership triggers. Integration migration v4 only adds lineage triggers. No tables or rows are dropped.
+- **Existing schema:** Core v4 adds a nullable `projects.archived_at` column, an index and ownership triggers; core v5 adds parent-reassignment guards. Integration v4 adds lineage triggers and v5 adds reverse lineage guards. All migrations are additive and transactional. No tables or rows are dropped.
 - **Legacy snapshots:** A new backup is created in the legacy file's directory using a unique temporary filename and a content-derived immutable backup name. An atomic same-filesystem hard link publishes without overwriting an existing path; this requires filesystem hard-link support. Source database is opened read-only. Failed imports may retain the safely captured backup to support manual recovery.
 - **Project lifecycle:** IDs, creation timestamps, settings' active project ID, jobs, media and transcripts remain unchanged on rename/archive/restore. Existing `list_projects` behavior remains backward-compatible, including archived projects; new list methods allow the UI to filter them intentionally.
 - **Collision policy:** Updated legacy files that reuse an imported ID are **rejected rather than merged**. A manual reconciliation/import policy is required for incremental source updates; user data is never overwritten to make an import pass.
@@ -39,7 +40,7 @@
 - Consistent WAL snapshot, repeat import, changed-content rejection, immutable backup and dangling-symlink protection.
 - Distinct legacy databases reusing IDs; unknown input-type rollback; native project-name collision.
 - Project rename/archive/restore including reopen and settings preservation.
-- Database-enforced creator/research/analysis and job-transcript project isolation.
+- Database-enforced creator/research/analysis and job-transcript project isolation, including attempts to reassign referenced creators, sources, media, transcripts, and jobs to other projects.
 - Simultaneous job-claim and crash-recovery contention tests, validating one successful claim and idempotent restart recovery.
 
 ## Open integration / architecture issues for Agent 00
