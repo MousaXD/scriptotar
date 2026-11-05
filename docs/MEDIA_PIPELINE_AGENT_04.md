@@ -4,7 +4,7 @@
 **Base:** `feature/chatgpt-mcp-ci-20261026` at `517877b26df9028cdd32af69f6f5a88a68b948e9`
 **Working branch:** `agent-04/media-engine-overhaul`
 **PR:** [#75](https://github.com/MousaXD/scriptotar/pull/75)
-**Status:** IN PROGRESS — CI and installed-runtime evidence pending
+**Status:** IN PROGRESS — current licensing-integrity and Windows descendant-test changes require exact-HEAD CI; Rust security advisory and live YouTube access remain unresolved
 
 ## Scope inspected
 
@@ -28,7 +28,7 @@
 
 ## Compatibility contract
 
-No public protocol version, supported provider/domain, model choice (`small`, `medium`, `turbo`, `large-v3`), output format (text, cleaned text, timestamped text, SRT, VTT, JSON), language option, quality option, cookie source option or device setting has been removed. GPU/CPU execution is deliberately still serial: uncontrolled multi-model concurrency could exhaust RAM/VRAM. Rust still owns durable job state and installed-runtime licensing checks have not been altered. No MCP or general desktop UI files are touched.
+No public protocol version, supported provider/domain, model choice (`small`, `medium`, `turbo`, `large-v3`), output format (text, cleaned text, timestamped text, SRT, VTT, JSON), language option, quality option, cookie source option or device setting has been removed. GPU/CPU execution is deliberately still serial: uncontrolled multi-model concurrency could exhaust RAM/VRAM. Rust still owns durable job state and installed-runtime license validation has been strengthened with a copied-file SHA-256 check. No MCP or general desktop UI files are touched.
 
 ## Tests and evidence boundaries
 
@@ -52,7 +52,7 @@ No public protocol version, supported provider/domain, model choice (`small`, `m
 
 The narrowly scoped CPython 3.12.16 review and regression test are committed on the Agent 04 branch, without changing upstream license content, legal bundle files, runtime validation, allowed algorithms, or trusted hashes. Subsequent release packaging must prove the legal bundle is generated and validated successfully. Agents 01/07 own the cross-branch Rust dependency advisory and release gate, respectively. No performance or GPU benchmark was measured.
 
-## Latest exact-HEAD certification check (2026-11-05, `2e0bb15882dd24ee4421a995a9de5f5ea507c210`)
+## Prior fully observed media-code CI (`2e0bb15882dd24ee4421a995a9de5f5ea507c210`)
 
 - [Python Transcription Sidecar](https://github.com/MousaXD/scriptotar/actions/runs/42088502570): **SUCCESS** (sidecar tests and pinned dependency checks; mocks in unit tests are not hardware inference).
 - [CI](https://github.com/MousaXD/scriptotar/actions/runs/42088502251): job `test` **SUCCESS**; workflow was still finalizing when checked.
@@ -63,6 +63,34 @@ The narrowly scoped CPython 3.12.16 review and regression test are committed on 
 - [Live platform E2E](https://github.com/MousaXD/scriptotar/actions/runs/42088502215): **FAILED BEFORE PROVIDER TESTS**, during Ubuntu `apt-get install ffmpeg`: both bounded install/update attempts exhausted their 180-second limits, ending with exit code 124 ([job 127459982490](https://github.com/MousaXD/scriptotar/actions/runs/42088502215/job/127459982490)). **No live provider or model inference result from this run.** Earlier `eccf55561d` run observed real Instagram/TikTok inference success and YouTube bot challenge; do not extrapolate those observations to this SHA.
 
 **Status:** IN PROGRESS. Exact HEAD has not passed every required gate. No hardware throughput benchmark, GPU inference, multilingual accuracy measurement, or native Windows process-tree termination test was performed. Keep PR #75 draft, do not merge.
+
+## New certification evidence and follow-up changes (2026-11-05)
+
+### Exact pre-follow-up HEAD: `51988102acc26af58a0a141f520cfa7e96271b65`
+
+All eight GitHub Actions runs for this 40-character SHA have completed. Results:
+
+| Required check | Evidence | Result |
+| --- | --- | --- |
+| CI | [42093221109](https://github.com/MousaXD/scriptotar/actions/runs/42093221109) | **SUCCESS** |
+| Python Transcription Sidecar | [42093221115](https://github.com/MousaXD/scriptotar/actions/runs/42093221115) | **SUCCESS**, including protocol/unit tests and pinned dependency imports |
+| Rust workspace and Rust ↔ sidecar integration | [42093221235](https://github.com/MousaXD/scriptotar/actions/runs/42093221235) | **SUCCESS** individual jobs |
+| Integrated Tauri build | [42093221235](https://github.com/MousaXD/scriptotar/actions/runs/42093221235) | **SUCCESS** individual job |
+| Linux .deb and installed-runtime legal/compliance checks | [42093221077](https://github.com/MousaXD/scriptotar/actions/runs/42093221077) | **SUCCESS** |
+| Windows NSIS installer and packaged-runtime smoke | [42093220994](https://github.com/MousaXD/scriptotar/actions/runs/42093220994) | **SUCCESS**; native Windows descendant termination not exercised |
+| MCP E2E and security hygiene | [42093220983](https://github.com/MousaXD/scriptotar/actions/runs/42093220983), [42093221015](https://github.com/MousaXD/scriptotar/actions/runs/42093221015) | **SUCCESS** |
+| Rust advisories | [42093221235, job 127477063329](https://github.com/MousaXD/scriptotar/actions/runs/42093221235/job/127477063329) | **FAILED**: `webpki-roots 1.0.9` has `RUSTSEC-2026-0381`, fixed in >=1.0.10. Agent 01 owns dependency remediation; do not suppress |
+| Live YouTube / Instagram / TikTok | [42093220987, job 127476426666](https://github.com/MousaXD/scriptotar/actions/runs/42093220987/job/127476426666) | **FAILED overall**: YouTube bot-sign-in challenge. Instagram **real download + 15-second Whisper inference passed** (3 segments). TikTok **real download + inference passed** (0 speech segments). No authentication bypass, no mocks or alternate provider URL used |
+
+### Additional changes after this verified HEAD
+
+1. `runtime_licenses.py` records the SHA-256 of the **copied Python runtime license bytes** in `RUNTIME-LICENSES.json` as `python_runtime.license_sha256`.
+2. `validate_runtime.py` fails closed if an installed runtime lacks the checksum or if the shipped Python license file does not match it. `test_runtime_licenses.py` uses deterministic offline fixtures to test correct bytes, mutated bytes and missing digest. The reviewed CPython 3.12.16 provenance/version fallback and its pinned upstream hash remain in force.
+3. `test_subprocess.py` adds a Windows-only **real child-process** cancellation test. It obtains an OS process handle before termination, waits for the descendant to exit, and verifies the next job works. This is **not** a mock, but **still requires an actual Windows CI runner** to execute; the Linux sidecar test workflow skips Windows-only tests. Agents 01 and 07 were notified through PR #73 and PR #76 respectively to coordinate runner coverage.
+
+A subsequent CI run on the **new final HEAD** must certify these changes, including installed Linux and Windows runtime licensing. An integrated release candidate must additionally resolve or explicitly block on the Rust advisory and live YouTube provider test. Do not mistake real Instagram/TikTok inference for Arabic/English/mixed-language accuracy validation or CUDA inference.
+
+**Benchmarks:** No CPU/GPU speed, memory, throughput, or checkpoint-hashing runtime benchmark has been measured. The recovery integrity check adds bounded 1 MiB streaming I/O and no uncontrolled inference concurrency.
 
 ## Performance tradeoffs / open questions
 
