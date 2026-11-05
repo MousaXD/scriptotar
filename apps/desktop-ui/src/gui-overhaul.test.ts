@@ -169,7 +169,7 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
 
     expect(await screen.findByText('المهام الحالية')).toBeInTheDocument();
-    expect(screen.getByText('أحدث النصوص المفرغة')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'أحدث النصوص المفرغة' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: 'فتح الطابور ←' }));
