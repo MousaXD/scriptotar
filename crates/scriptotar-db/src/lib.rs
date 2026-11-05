@@ -12,7 +12,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 4;
+pub const LATEST_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -238,6 +238,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         name: "project_archival_and_relationship_guards",
         apply: migration_4,
+    },
+    Migration {
+        version: 5,
+        name: "parent_relationship_reassignment_guards",
+        apply: migration_5,
     },
 ];
 
@@ -465,6 +470,59 @@ fn migration_4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
          )
          BEGIN
              SELECT RAISE(ABORT, 'analysis transcript must belong to the same project');
+         END;",
+    )
+}
+
+fn migration_5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE TRIGGER creators_project_reassignment_guard
+         BEFORE UPDATE OF project_id ON creators
+         WHEN NEW.project_id <> OLD.project_id AND (
+             EXISTS (
+                 SELECT 1 FROM sources s
+                 WHERE s.creator_id = OLD.id AND s.project_id <> NEW.project_id
+             )
+             OR EXISTS (
+                 SELECT 1 FROM research_items r
+                 WHERE r.creator_id = OLD.id AND r.project_id <> NEW.project_id
+             )
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving creator would invalidate project relationships');
+         END;
+         CREATE TRIGGER sources_project_reassignment_guard
+         BEFORE UPDATE OF project_id ON sources
+         WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN transcripts t ON t.id = a.transcript_id
+             JOIN media m ON m.id = t.media_id
+             WHERE m.source_id = OLD.id AND a.project_id <> NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving source would invalidate analysis relationships');
+         END;
+         CREATE TRIGGER media_source_reassignment_guard
+         BEFORE UPDATE OF source_id ON media
+         WHEN NEW.source_id <> OLD.source_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN transcripts t ON t.id = a.transcript_id
+             JOIN sources target ON target.id = NEW.source_id
+             WHERE t.media_id = OLD.id AND a.project_id <> target.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving media would invalidate analysis relationships');
+         END;
+         CREATE TRIGGER transcripts_media_reassignment_guard
+         BEFORE UPDATE OF media_id ON transcripts
+         WHEN NEW.media_id <> OLD.media_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN media target_media ON target_media.id = NEW.media_id
+             JOIN sources target_source ON target_source.id = target_media.source_id
+             WHERE a.transcript_id = OLD.id AND a.project_id <> target_source.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving transcript would invalidate analysis relationships');
          END;",
     )
 }
