@@ -133,6 +133,15 @@ fn configure_connection(connection: &Connection) -> RepositoryResult<()> {
 }
 
 fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
+    let mut current = connection
+        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+        .map_err(storage_error)?;
+    if current > LATEST_SCHEMA_VERSION {
+        return Err(RepositoryError::Storage(format!(
+            "unsupported database schema version {current}; expected at most {LATEST_SCHEMA_VERSION}"
+        )));
+    }
+
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -142,10 +151,18 @@ fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
             );",
         )
         .map_err(storage_error)?;
-
-    let mut current = connection
-        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+    let recorded_version: u32 = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )
         .map_err(storage_error)?;
+    if current != recorded_version {
+        return Err(RepositoryError::Storage(format!(
+            "database schema version {current} does not match migration ledger {recorded_version}; refusing to modify existing data"
+        )));
+    }
 
     for migration in MIGRATIONS {
         if migration.version <= current {
@@ -549,19 +566,26 @@ impl JobRepository for SqliteStore {
             .map_err(storage_error)?
             .ok_or_else(|| RepositoryError::NotFound(format!("job {id}")))?;
         current.state.validate_transition(next)?;
-        let progress = if next == JobState::Completed {
-            Some(1.0_f32)
+        let progress = match next {
+            JobState::Queued => None,
+            JobState::Completed => Some(1.0_f32),
+            _ => current.progress,
+        };
+        // Retain the previous error for diagnosis until a successful completion.
+        let last_error = if next == JobState::Completed {
+            None
         } else {
-            current.progress
+            current.last_error
         };
         let updated_at = now_rfc3339();
         let changed = tx
             .execute(
-                "UPDATE jobs SET state = ?1, progress = ?2, updated_at = ?3
-                 WHERE id = ?4 AND state = ?5",
+                "UPDATE jobs SET state = ?1, progress = ?2, last_error = ?3, updated_at = ?4
+                 WHERE id = ?5 AND state = ?6",
                 params![
                     next.as_str(),
                     progress,
+                    last_error,
                     updated_at,
                     id.to_string(),
                     current.state.as_str(),
@@ -907,6 +931,71 @@ mod tests {
 
         assert_eq!(db.mark_active_jobs_interrupted().unwrap(), 1);
         assert_eq!(db.get_job(job.id).unwrap().state, JobState::Interrupted);
+    }
+
+    #[test]
+    fn retry_resets_progress_and_success_clears_previous_error() {
+        let (_temp, db) = store();
+        let project = project(&db, "Retry preservation");
+        let job = Job::new(project.id, JobInput::LocalFile("/tmp/retry.mp4".to_owned()));
+        db.insert_job(&job).unwrap();
+        db.transition_job(job.id, JobState::Preparing).unwrap();
+
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE jobs SET progress = 0.8, last_error = 'original failure' WHERE id = ?1",
+                params![job.id.to_string()],
+            )
+            .unwrap();
+        db.transition_job(job.id, JobState::Failed).unwrap();
+
+        let retried = db.transition_job(job.id, JobState::Queued).unwrap();
+        assert_eq!(retried.progress, None);
+        assert_eq!(retried.last_error.as_deref(), Some("original failure"));
+
+        for state in [
+            JobState::Preparing,
+            JobState::Transcribing,
+            JobState::Processing,
+            JobState::Completed,
+        ] {
+            db.transition_job(job.id, state).unwrap();
+        }
+        let completed = db.get_job(job.id).unwrap();
+        assert_eq!(completed.progress, Some(1.0));
+        assert_eq!(completed.last_error, None);
+    }
+
+    #[test]
+    fn inconsistent_schema_ledger_is_rejected_without_changing_project_data() {
+        let (temp, db) = store();
+        let project = project(&db, "Keep me");
+        let connection = db.connection().unwrap();
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version = 3", [])
+            .unwrap();
+        drop(connection);
+        drop(db);
+
+        let error =
+            SqliteStore::open(temp.path().join("private").join("scriptotar.sqlite3")).unwrap_err();
+        assert!(matches!(error, RepositoryError::Storage(_)));
+
+        let connection =
+            Connection::open(temp.path().join("private").join("scriptotar.sqlite3")).unwrap();
+        let recorded_version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let retained_project: String = connection
+            .query_row(
+                "SELECT name FROM projects WHERE id = ?1",
+                params![project.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(recorded_version, LATEST_SCHEMA_VERSION);
+        assert_eq!(retained_project, "Keep me");
     }
 
     #[test]
