@@ -1635,7 +1635,10 @@ mod tests {
         });
 
         let projects = services.store.list_projects().unwrap();
-        let project_ids = projects.iter().map(|project| project.id).collect::<HashSet<_>>();
+        let project_ids = projects
+            .iter()
+            .map(|project| project.id)
+            .collect::<HashSet<_>>();
         assert!(project_ids.contains(&inbox));
         assert!(project_ids.contains(&second));
         assert!(project_ids.contains(&created_project));
