@@ -236,7 +236,7 @@ impl ResearchProvider for YtDlpProvider {
         let mut line = Vec::new();
         loop {
             line.clear();
-            let read = match reader.read_until(b'\n', &mut line) {
+            let read = match read_bounded_provider_line(&mut reader, &mut line) {
                 Ok(read) => read,
                 Err(error) => {
                     let _ = child.kill();
@@ -288,6 +288,16 @@ impl ResearchProvider for YtDlpProvider {
         }
         Ok(observations)
     }
+}
+
+// BufRead::read_until alone can allocate an unbounded line before the size check.
+fn read_bounded_provider_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> std::io::Result<usize> {
+    reader
+        .take(MAX_PROVIDER_LINE_BYTES as u64 + 1)
+        .read_until(b'\n', line)
 }
 
 fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, ResearchError> {
@@ -362,7 +372,10 @@ fn normalize_research_item(
         like_count: integer_metric(raw.get("like_count")),
         comment_count: integer_metric(raw.get("comment_count")),
         published_at,
-        duration_seconds: raw.get("duration").and_then(Value::as_f64),
+        duration_seconds: raw
+            .get("duration")
+            .and_then(Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0),
         raw_json,
     }))
 }
@@ -373,11 +386,13 @@ fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 }
 
 fn integer_metric(value: Option<&Value>) -> Option<i64> {
-    value.and_then(|value| {
-        value
-            .as_i64()
-            .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
-    })
+    value
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+        })
+        .filter(|value| *value >= 0)
 }
 
 fn is_absolute_http_url(raw: &str) -> bool {
@@ -392,7 +407,10 @@ fn youtube_fallback(raw: &Value) -> Option<String> {
         return None;
     }
     let id = raw.get("id")?.as_str()?.trim();
-    if id.is_empty() || id.chars().count() > 128 {
+    if id.is_empty()
+        || id.len() > 128
+        || !id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
         return None;
     }
     Some(format!("https://www.youtube.com/watch?v={id}"))
@@ -537,6 +555,47 @@ mod tests {
                 .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn provider_line_read_stops_at_the_limit_even_without_newline() {
+        let oversized = vec![b'x'; MAX_PROVIDER_LINE_BYTES + 128];
+        let mut reader = BufReader::new(oversized.as_slice());
+        let mut line = Vec::new();
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            MAX_PROVIDER_LINE_BYTES + 1
+        );
+        assert_eq!(line.len(), MAX_PROVIDER_LINE_BYTES + 1);
+    }
+
+    #[test]
+    fn rejects_corrupt_metrics_and_untrusted_youtube_fallback_ids() {
+        let profile = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
+        let item = normalize_research_item(
+            &json!({
+                "webpage_url": "https://www.youtube.com/watch?v=safe",
+                "view_count": -17,
+                "like_count": 0,
+                "comment_count": 3,
+                "duration": -1.5
+            }),
+            profile.as_url(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(item.view_count, None);
+        assert_eq!(item.like_count, Some(0));
+        assert_eq!(item.comment_count, Some(3));
+        assert_eq!(item.duration_seconds, None);
+        assert!(normalize_research_item(
+            &json!({"extractor_key": "Youtube", "id": "safe&list=attacker"}),
+            profile.as_url()
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
