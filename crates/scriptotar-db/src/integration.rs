@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
     fs,
+    io::Read,
     path::Path,
     str::FromStr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior};
 use scriptotar_core::{
     now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository, JobState,
     LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType, Transcript,
@@ -285,28 +286,59 @@ impl SqliteStore {
             ));
         }
 
-        let metadata = fs::metadata(legacy_path).map_err(io_error)?;
-        let modified = metadata
-            .modified()
-            .unwrap_or(SystemTime::UNIX_EPOCH)
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
         let canonical = fs::canonicalize(legacy_path).map_err(io_error)?;
-        let fingerprint = format!("{}:{}:{}", canonical.display(), metadata.len(), modified);
+        if canonical == fs::canonicalize(self.path()).map_err(io_error)? {
+            return Err(RepositoryError::Validation(
+                "legacy database must be different from the Scriptotar Next database".to_owned(),
+            ));
+        }
+
         let file_name = legacy_path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("history.sqlite3");
-        let backup_path = legacy_path.with_file_name(format!(
-            "{file_name}.scriptotar-next-{modified}-{}.bak",
-            metadata.len()
+        let snapshot_path = legacy_path.with_file_name(format!(
+            ".{file_name}.scriptotar-next-{}.partial",
+            Uuid::new_v4()
         ));
-        if !backup_path.exists() {
-            fs::copy(legacy_path, &backup_path).map_err(io_error)?;
+        let snapshot_result = (|| -> RepositoryResult<String> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            drop(options.open(&snapshot_path).map_err(io_error)?);
+            create_legacy_snapshot(legacy_path, &snapshot_path)?;
+            snapshot_fingerprint(&snapshot_path)
+        })();
+        let fingerprint = match snapshot_result {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                let _ = fs::remove_file(&snapshot_path);
+                return Err(error);
+            }
+        };
+        let backup_path = legacy_path.with_file_name(format!(
+            "{file_name}.scriptotar-next-{fingerprint}.bak"
+        ));
+        if backup_path.exists() {
+            if snapshot_fingerprint(&backup_path)? != fingerprint {
+                let _ = fs::remove_file(&snapshot_path);
+                return Err(RepositoryError::Conflict(format!(
+                    "existing legacy backup {} does not match its fingerprint",
+                    backup_path.display()
+                )));
+            }
+            fs::remove_file(&snapshot_path).map_err(io_error)?;
+        } else {
+            fs::rename(&snapshot_path, &backup_path).map_err(io_error)?;
         }
 
-        let legacy = Connection::open(legacy_path).map_err(storage_error)?;
+        // Import exclusively from the consistent snapshot, never from a live WAL database.
+        let legacy = Connection::open_with_flags(&backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(storage_error)?;
         let mut destination = connection(self)?;
         let already_imported: bool = destination
             .query_row(
@@ -348,8 +380,7 @@ impl SqliteStore {
                 report.projects += 1;
             }
         }
-        let inbox_id = ensure_project(&tx, "Inbox", &now_rfc3339())?;
-        projects.entry("Inbox".to_owned()).or_insert(inbox_id);
+        // Missing legacy projects are resolved lazily by project_id_for.
 
         if table_exists(&legacy, "jobs")? {
             let mut statement = legacy
@@ -379,12 +410,18 @@ impl SqliteStore {
                 let row = row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &row.project)?;
                 let job_id = legacy_uuid("job", &row.id);
-                let input_kind = if row.input_type.eq_ignore_ascii_case("url") {
-                    "url"
-                } else {
-                    "local_file"
+                let input_kind = match row.input_type.trim().to_ascii_lowercase().as_str() {
+                    "url" => "url",
+                    "file" | "local_file" => "local_file",
+                    other => {
+                        return Err(RepositoryError::Validation(format!(
+                            "unsupported legacy input type {other:?} for job {:?}",
+                            row.id
+                        )));
+                    }
                 };
-                let state = legacy_job_state(&row.status);
+                let state = legacy_job_state(&row.status)?;
+                reject_legacy_id_collision(&tx, "jobs", job_id)?;
                 let progress = if state == JobState::Completed {
                     Some(1.0_f32)
                 } else {
@@ -425,6 +462,10 @@ impl SqliteStore {
                     let source_id = legacy_uuid("source", &row.id);
                     let media_id = legacy_uuid("media", &row.id);
                     let transcript_id = legacy_uuid("transcript", &row.id);
+                    reject_legacy_id_collision(&tx, "sources", source_id)?;
+                    reject_legacy_id_collision(&tx, "media", media_id)?;
+                    reject_legacy_id_collision(&tx, "transcripts", transcript_id)?;
+                    reject_legacy_link_collision(&tx, job_id)?;
                     let source_type = if input_kind == "url" {
                         "url"
                     } else {
@@ -532,6 +573,7 @@ impl SqliteStore {
                     Some(id)
                 };
                 let item_id = legacy_uuid("research", &row.storage_id);
+                reject_legacy_id_collision(&tx, "research_items", item_id)?;
                 let source_url = row.source_url.as_deref().unwrap_or(&row.creator_url);
                 tx.execute(
                     "INSERT INTO research_items(
@@ -594,6 +636,7 @@ impl SqliteStore {
                     row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &project)?;
                 let id = legacy_uuid("watchlist", &legacy_id.to_string());
+                reject_legacy_id_collision(&tx, "watchlists", id)?;
                 tx.execute(
                     "INSERT INTO watchlists(id, project_id, label, profile_url, limit_count, last_scan_at)
                      VALUES(?1, ?2, ?3, ?4, ?5, ?6)
@@ -654,10 +697,15 @@ impl SqliteStore {
                 ) = row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &project)?;
                 let id = legacy_uuid("ai-run", &legacy_id);
-                let mode = if mode.to_ascii_lowercase().contains("copy") {
-                    AiRunMode::CopyPrompt
-                } else {
-                    AiRunMode::Byok
+                reject_legacy_id_collision(&tx, "ai_runs", id)?;
+                let mode = match mode.trim().to_ascii_lowercase().as_str() {
+                    "copy" | "copy_prompt" | "copy prompt only" => AiRunMode::CopyPrompt,
+                    "api" | "byok" | "use api key" => AiRunMode::Byok,
+                    other => {
+                        return Err(RepositoryError::Validation(format!(
+                            "unsupported legacy AI mode {other:?}; refusing to guess"
+                        )));
+                    }
                 };
                 let mode = match mode {
                     AiRunMode::CopyPrompt => "copy_prompt",
@@ -992,6 +1040,83 @@ fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {
     })
 }
 
+fn create_legacy_snapshot(source_path: &Path, snapshot_path: &Path) -> RepositoryResult<()> {
+    let source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(storage_error)?;
+    let mut snapshot = Connection::open(snapshot_path).map_err(storage_error)?;
+    {
+        let backup = rusqlite::backup::Backup::new(&source, &mut snapshot)
+            .map_err(storage_error)?;
+        backup
+            .run_to_completion(128, Duration::from_millis(10), None)
+            .map_err(storage_error)?;
+    }
+    let integrity: String = snapshot
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(storage_error)?;
+    if integrity != "ok" {
+        return Err(RepositoryError::Storage(format!(
+            "legacy snapshot integrity check failed: {integrity}"
+        )));
+    }
+    Ok(())
+}
+
+// Stable, streaming fingerprint of the complete database snapshot (including WAL changes).
+// It is used to detect content changes, not as a security signature.
+fn snapshot_fingerprint(path: &Path) -> RepositoryResult<String> {
+    let mut file = fs::File::open(path).map_err(io_error)?;
+    let mut bytes = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    let mut hash = 0xcbf29ce484222325_u64;
+    loop {
+        let read = file.read(&mut bytes).map_err(io_error)?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        for byte in &bytes[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("{total:016x}-{hash:016x}"))
+}
+
+fn reject_legacy_id_collision(
+    tx: &Transaction<'_>,
+    table: &'static str,
+    id: Uuid,
+) -> RepositoryResult<()> {
+    // Table names are fixed compile-time call sites, never imported user data.
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)");
+    let exists: bool = tx
+        .query_row(&sql, params![id.to_string()], |row| row.get(0))
+        .map_err(storage_error)?;
+    if exists {
+        return Err(RepositoryError::Conflict(format!(
+            "legacy {table} ID {id} already exists; refusing to overwrite or reassign user data"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_legacy_link_collision(tx: &Transaction<'_>, job_id: Uuid) -> RepositoryResult<()> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM job_transcript_links WHERE job_id = ?1)",
+            params![job_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    if exists {
+        return Err(RepositoryError::Conflict(format!(
+            "legacy job {job_id} already has a transcript link; refusing to reassign it"
+        )));
+    }
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> RepositoryResult<bool> {
     connection
         .query_row(
@@ -1015,7 +1140,8 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
     } else {
         name.trim()
     };
-    if let Some(id) = tx
+    let id = legacy_uuid("project", &normalized.to_ascii_lowercase());
+    if let Some(existing_id) = tx
         .query_row(
             "SELECT id FROM projects WHERE name = ?1 COLLATE NOCASE",
             params![normalized],
@@ -1024,9 +1150,13 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
         .optional()
         .map_err(storage_error)?
     {
-        return Uuid::parse_str(&id).map_err(|error| RepositoryError::Storage(error.to_string()));
+        if existing_id != id.to_string() {
+            return Err(RepositoryError::Conflict(format!(
+                "legacy project {normalized:?} conflicts with an existing project; refusing to merge unrelated data"
+            )));
+        }
+        return Ok(id);
     }
-    let id = legacy_uuid("project", &normalized.to_ascii_lowercase());
     tx.execute(
         "INSERT INTO projects(id, name, created_at) VALUES(?1, ?2, ?3)",
         params![id.to_string(), normalized, created_at],
@@ -1048,13 +1178,17 @@ fn project_id_for(
     Ok(id)
 }
 
-fn legacy_job_state(status: &str) -> JobState {
+fn legacy_job_state(status: &str) -> RepositoryResult<JobState> {
     match status.trim().to_ascii_lowercase().as_str() {
-        "queued" => JobState::Queued,
-        "done" | "completed" => JobState::Completed,
-        "failed" => JobState::Failed,
-        "canceled" | "cancelled" => JobState::Cancelled,
-        _ => JobState::Interrupted,
+        "queued" => Ok(JobState::Queued),
+        "done" | "completed" => Ok(JobState::Completed),
+        "failed" => Ok(JobState::Failed),
+        "canceled" | "cancelled" => Ok(JobState::Cancelled),
+        "starting" | "running" | "finishing" | "preparing" | "downloading"
+        | "transcribing" | "processing" | "interrupted" => Ok(JobState::Interrupted),
+        other => Err(RepositoryError::Validation(format!(
+            "unsupported legacy job status {other:?}; refusing to guess"
+        ))),
     }
 }
 
