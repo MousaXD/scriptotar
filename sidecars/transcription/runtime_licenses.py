@@ -22,7 +22,10 @@ FFMPEG_GPL3_SHA256 = "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb
 FFMPEG_LGPL3_URL = "https://raw.githubusercontent.com/FFmpeg/FFmpeg/master/COPYING.LGPLv3"
 FFMPEG_LGPL3_SHA256 = "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768"
 CPYTHON_3_12_LICENSE_SHA256 = "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
-CPYTHON_REVIEWED_3_12_VERSIONS = {f"3.12.{patch}" for patch in range(0, 16)}
+# CPython 3.12.16's upstream LICENSE is byte-identical to the previously
+# reviewed 3.12.14 text at the hash below (verified 2026-11-05).
+# Only extend the exact reviewed patch set; keep hash verification fail-closed.
+CPYTHON_REVIEWED_3_12_VERSIONS = {f"3.12.{patch}" for patch in range(0, 17)}
 CPYTHON_LICENSE_VERSION = "3.12.14"
 CPYTHON_LICENSE_URL = "https://raw.githubusercontent.com/python/cpython/v3.12.14/LICENSE"
 CPYTHON_LICENSE_SHA256 = CPYTHON_3_12_LICENSE_SHA256
