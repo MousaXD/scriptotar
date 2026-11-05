@@ -110,7 +110,8 @@ invalid UUIDs and oversized text inputs are rejected.
   scope of access, and do not use Scriptotar MCP as an OS security sandbox.
 - Files are limited to approved directories with normalized absolute paths,
   canonicalized path checks, and atomic writes. Protected policy/SQLite files,
-  their hard-link aliases on Unix, and permission staging files are denied. A separate OS account/sandbox
+  migration snapshots, their hard-link aliases on Unix, and permission staging
+  files are denied. A separate OS account/sandbox
   is necessary for an adversarial local process that can race filesystem path
   changes. The MCP process itself runs as the same OS user as Scriptotar.
 - `write_file` handles UTF-8 files (up to 256 KiB); `read_file` returns up to

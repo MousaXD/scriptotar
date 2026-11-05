@@ -131,6 +131,12 @@ with tempfile.TemporaryDirectory() as directory:
         staging.write_text('secret fixture')
         denied(call('read_file', path=str(staging)))
         denied(call('write_file', path=str(staging), content='x', overwrite=True))
+        for snapshot_name in ['history.sqlite3', '.history.sqlite3.pending-import',
+                              '.history.sqlite3.importing-test', '.history.sqlite3.rejected-test']:
+            snapshot = data / snapshot_name
+            snapshot.write_text('private migration data')
+            denied(call('read_file', path=str(snapshot)))
+            denied(call('write_file', path=str(snapshot), content='x', overwrite=True))
         if os.name == 'posix':
             alias = allowed / 'policy-hardlink.txt'
             os.link(policy_file, alias)
