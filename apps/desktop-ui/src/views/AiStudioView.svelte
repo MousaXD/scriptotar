@@ -61,6 +61,18 @@
     result = '';
   }
 
+  function invalidateRun() {
+    runGeneration += 1;
+    result = '';
+  }
+
+  function chooseMode(next: AiMode) {
+    if (mode === next) return;
+    mode = next;
+    invalidateRun();
+    status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK runs only when you choose Run with API.';
+  }
+
   function sourceInputChanged() {
     if (selectedTranscriptId !== 'manual') sourceEdited = true;
     invalidatePrompt();
@@ -139,6 +151,15 @@
       status = `Copy failed: ${error instanceof Error ? error.message : 'clipboard access was denied'}`;
     }
   }
+  function redactProviderError(cause: unknown, submittedKey: string): string {
+    if (!(cause instanceof Error)) return 'Unknown error';
+    const secretVariants = [submittedKey, encodeURIComponent(submittedKey)];
+    return secretVariants.reduce(
+      (message, secret) => secret ? message.replaceAll(secret, '[redacted]') : message,
+      cause.message
+    );
+  }
+
   async function runAi() {
     if (busy || building || sourceLoading || sourceError) return;
     if (mode === 'copy') {
@@ -154,13 +175,14 @@
       return;
     }
     const generation = ++runGeneration;
+    const request = payload();
     busy = true;
     try {
-      const output = await api.runAi(payload());
+      const output = await api.runAi(request);
       if (generation === runGeneration) { result = output; status = `Finished with ${provider}.`; }
     } catch (error) {
       if (generation === runGeneration) {
-        status = `AI request failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        status = `AI request failed: ${redactProviderError(error, request.apiKey || '')}`;
       }
     } finally { busy = false; }
   }
@@ -169,8 +191,8 @@
 <section class="view-head ai-head">
   <div><span class="eyebrow">Optional AI layer</span><h1>AI Studio</h1><p>Build portable prompts with no key, or use your own provider credentials for a direct run.</p></div>
   <div class="mode-switch compact-mode" role="group" aria-label="AI mode">
-    <button class:active={mode === 'copy'} on:click={() => mode = 'copy'}><strong>Copy Prompt</strong><span>No API key · nothing sent</span></button>
-    <button class:active={mode === 'byok'} on:click={() => mode = 'byok'}><strong>BYOK</strong><span>Use your own provider key</span></button>
+    <button class:active={mode === 'copy'} on:click={() => chooseMode('copy')}><strong>Copy Prompt</strong><span>No API key · nothing sent</span></button>
+    <button class:active={mode === 'byok'} on:click={() => chooseMode('byok')}><strong>BYOK</strong><span>Use your own provider key</span></button>
   </div>
 </section>
 
@@ -184,8 +206,8 @@
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
-      <label><span>API key · session only</span><input aria-label="API key" type="password" bind:value={apiKey} autocomplete="off" placeholder="Paste key for this run" /></label>
-      {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} placeholder="https://…" /></label>{/if}
+      <label><span>API key · session only</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" placeholder="Paste key for this run" /></label>
+      {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
       <p>Keys are not persisted by this frontend. The Rust host will own secure storage and endpoint policy.</p>
     </div>
   {/if}
