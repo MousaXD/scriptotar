@@ -137,3 +137,53 @@ fn database_rejects_foreign_creator_and_analysis_links() {
         .unwrap();
     assert_eq!(count, 0);
 }
+
+#[test]
+fn job_transcript_link_rejects_cross_project_lineage() {
+    let temp = TempDir::new().unwrap();
+    let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
+    store.run_integration_migrations().unwrap();
+    let a = Project::new("A");
+    let b = Project::new("B");
+    store.create_project(&a).unwrap();
+    store.create_project(&b).unwrap();
+    let job = Job::new(b.id, JobInput::LocalFile("/tmp/unrelated.mp4".to_owned()));
+    store.insert_job(&job).unwrap();
+
+    let conn = Connection::open(store.path()).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+    let now = now_rfc3339();
+    let source = Uuid::new_v4();
+    let media = Uuid::new_v4();
+    let transcript = Uuid::new_v4();
+    conn.execute(
+        "INSERT INTO sources(id, project_id, source_type, locator, created_at)
+         VALUES(?1, ?2, 'local_file', '/tmp/owned.mp4', ?3)",
+        params![source.to_string(), a.id.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO media(id, source_id, local_path, created_at)
+         VALUES(?1, ?2, '/tmp/owned.mp4', ?3)",
+        params![media.to_string(), source.to_string(), now],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO transcripts(id, media_id, text, created_at, updated_at)
+         VALUES(?1, ?2, 'owned', ?3, ?3)",
+        params![transcript.to_string(), media.to_string(), now],
+    )
+    .unwrap();
+
+    assert!(conn
+        .execute(
+            "INSERT INTO job_transcript_links(job_id, transcript_id, linked_at)
+             VALUES(?1, ?2, ?3)",
+            params![job.id.to_string(), transcript.to_string(), now],
+        )
+        .is_err());
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM job_transcript_links", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
