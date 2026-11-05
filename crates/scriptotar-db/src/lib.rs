@@ -12,7 +12,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -213,6 +213,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "transcript_search_backfill",
         apply: migration_3,
     },
+    Migration {
+        version: 4,
+        name: "project_archival_and_relationship_guards",
+        apply: migration_4,
+    },
 ];
 
 fn migration_1(tx: &Transaction<'_>) -> rusqlite::Result<()> {
@@ -377,6 +382,72 @@ fn migration_3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migration_4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE projects ADD COLUMN archived_at TEXT;
+         CREATE INDEX idx_projects_archived_name
+             ON projects(archived_at, name COLLATE NOCASE);
+         CREATE TRIGGER sources_creator_project_insert
+         BEFORE INSERT ON sources
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'source creator must belong to the same project');
+         END;
+         CREATE TRIGGER sources_creator_project_update
+         BEFORE UPDATE OF creator_id, project_id ON sources
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'source creator must belong to the same project');
+         END;
+         CREATE TRIGGER research_creator_project_insert
+         BEFORE INSERT ON research_items
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'research creator must belong to the same project');
+         END;
+         CREATE TRIGGER research_creator_project_update
+         BEFORE UPDATE OF creator_id, project_id ON research_items
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'research creator must belong to the same project');
+         END;
+         CREATE TRIGGER analyses_transcript_project_insert
+         BEFORE INSERT ON analyses
+         WHEN NEW.transcript_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM transcripts t
+             JOIN media m ON m.id = t.media_id
+             JOIN sources s ON s.id = m.source_id
+             WHERE t.id = NEW.transcript_id AND s.project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'analysis transcript must belong to the same project');
+         END;
+         CREATE TRIGGER analyses_transcript_project_update
+         BEFORE UPDATE OF transcript_id, project_id ON analyses
+         WHEN NEW.transcript_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM transcripts t
+             JOIN media m ON m.id = t.media_id
+             JOIN sources s ON s.id = m.source_id
+             WHERE t.id = NEW.transcript_id AND s.project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'analysis transcript must belong to the same project');
+         END;",
+    )
+}
+
 fn fts5_search_query(raw_query: &str) -> Option<String> {
     let terms = raw_query
         .split(|character: char| !character.is_alphanumeric())
@@ -482,6 +553,75 @@ impl ProjectRepository for SqliteStore {
         let rows = statement
             .query_map([], row_project)
             .map_err(storage_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
+    }
+}
+
+impl SqliteStore {
+    /// Renames a project without changing its ID or any related records.
+    pub fn rename_project(&self, id: Uuid, name: &str) -> RepositoryResult<Project> {
+        let name = validate_project_name(name)?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE projects SET name = ?1 WHERE id = ?2",
+                params![name, id.to_string()],
+            )
+            .map_err(storage_error)?;
+        if changed == 0 {
+            return Err(RepositoryError::NotFound(format!("project {id}")));
+        }
+        self.get_project(id)
+    }
+
+    /// Reversible soft archive; children and active selection remain untouched.
+    pub fn archive_project(&self, id: Uuid) -> RepositoryResult<()> {
+        self.set_project_archived(id, true)
+    }
+
+    pub fn restore_project(&self, id: Uuid) -> RepositoryResult<()> {
+        self.set_project_archived(id, false)
+    }
+
+    fn set_project_archived(&self, id: Uuid, archived: bool) -> RepositoryResult<()> {
+        let connection = self.connection()?;
+        let changed = if archived {
+            connection.execute(
+                "UPDATE projects SET archived_at = COALESCE(archived_at, ?1) WHERE id = ?2",
+                params![now_rfc3339(), id.to_string()],
+            )
+        } else {
+            connection.execute(
+                "UPDATE projects SET archived_at = NULL WHERE id = ?1",
+                params![id.to_string()],
+            )
+        }
+        .map_err(storage_error)?;
+        if changed == 0 {
+            return Err(RepositoryError::NotFound(format!("project {id}")));
+        }
+        Ok(())
+    }
+
+    pub fn list_archived_projects(&self) -> RepositoryResult<Vec<Project>> {
+        self.list_projects_by_archive_state(true)
+    }
+
+    pub fn list_active_projects(&self) -> RepositoryResult<Vec<Project>> {
+        self.list_projects_by_archive_state(false)
+    }
+
+    fn list_projects_by_archive_state(&self, archived: bool) -> RepositoryResult<Vec<Project>> {
+        let connection = self.connection()?;
+        let sql = if archived {
+            "SELECT id, name, created_at FROM projects WHERE archived_at IS NOT NULL
+             ORDER BY name COLLATE NOCASE"
+        } else {
+            "SELECT id, name, created_at FROM projects WHERE archived_at IS NULL
+             ORDER BY name COLLATE NOCASE"
+        };
+        let mut statement = connection.prepare(sql).map_err(storage_error)?;
+        let rows = statement.query_map([], row_project).map_err(storage_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 }
@@ -751,7 +891,7 @@ mod tests {
             tx.commit().unwrap();
         }
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(db.schema_version().unwrap(), 4);
         let connection = db.connection().unwrap();
         let count: u32 = connection
             .query_row(
@@ -837,7 +977,7 @@ mod tests {
         }
 
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(db.schema_version().unwrap(), 4);
         assert_eq!(
             db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(),
             vec![transcript_id]
