@@ -39,6 +39,12 @@ GATES: tuple[Gate, ...] = (
         ),
     ),
     Gate(
+        key="mcp",
+        workflow_file="mcp-e2e.yml",
+        workflow_name="Scriptotar MCP E2E",
+        required_jobs=("mcp",),
+    ),
+    Gate(
         key="security",
         workflow_file="security-hygiene.yml",
         workflow_name="Security hygiene",
