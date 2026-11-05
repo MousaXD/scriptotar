@@ -863,11 +863,11 @@ impl ContentRepository for SqliteStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
-        let (project_id, state): (String, String) = tx
+        let (project_id, state, input_kind): (String, String, String) = tx
             .query_row(
-                "SELECT project_id, state FROM jobs WHERE id = ?1",
+                "SELECT project_id, state, input_kind FROM jobs WHERE id = ?1",
                 params![job_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(storage_error)?
@@ -887,6 +887,11 @@ impl ContentRepository for SqliteStore {
             SourceType::Url => "url",
             SourceType::LocalFile => "local_file",
         };
+        if input_kind != source_type {
+            return Err(RepositoryError::Validation(
+                "transcription source type does not match job input type".to_owned(),
+            ));
+        }
         tx.execute(
             "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
              VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
