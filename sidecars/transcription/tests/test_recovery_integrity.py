@@ -77,6 +77,27 @@ class RecoveryIntegrityTests(unittest.TestCase):
 
             self.assertIsNone(prepare_partial(job).reused_media)
 
+    def test_partial_symlink_does_not_write_into_external_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job = self.make_job(root)
+            target = root / "unrelated-user-directory"
+            target.mkdir()
+            sentinel = target / "checkpoint.json"
+            sentinel.write_text('{"user":"preserve"}', encoding="utf-8")
+            output = Path(job["output_root"])
+            output.mkdir()
+            malicious = output / ".scriptotar-integrity-job.partial"
+            try:
+                malicious.symlink_to(target, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink unavailable: {exc}")
+
+            decision = prepare_partial(job)
+            self.assertFalse(malicious.is_symlink())
+            self.assertTrue(decision.partial_dir.is_dir())
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), '{"user":"preserve"}')
+
     def test_copy_free_local_checkpoint_reuses_only_original_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
