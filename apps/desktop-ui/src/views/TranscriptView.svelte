@@ -46,7 +46,7 @@
     } catch (cause) {
       if (generation === selectedGeneration && selectedId === id) {
         selected = undefined;
-        selectedLoadError = cause instanceof Error ? cause.message : 'Could not load the transcript.';
+        selectedLoadError = cause instanceof Error ? cause.message : $translator('transcript.loadFailed');
       }
     } finally {
       if (generation === selectedGeneration) selectedLoading = false;
@@ -116,7 +116,7 @@
     anchor.download = `${safeName(selected.title)}.${extension}`;
     anchor.click();
     URL.revokeObjectURL(href);
-    status = `${extension.toUpperCase()} export prepared.`;
+    status = $translator('transcript.exportPrepared', { format: extension.toUpperCase() });
   }
 
   async function copyText() {
@@ -134,11 +134,11 @@
         textarea.select();
         const copied = document.execCommand?.('copy');
         textarea.remove();
-        if (!copied) throw new Error('Clipboard access is unavailable in this desktop runtime.');
+        if (!copied) throw new Error($translator('transcript.clipboardUnavailable'));
       }
-      status = 'Transcript copied to the clipboard.';
+      status = $translator('transcript.copied');
     } catch (cause) {
-      actionError = cause instanceof Error ? cause.message : 'Could not copy the transcript.';
+      actionError = cause instanceof Error ? cause.message : $translator('transcript.copyFailed');
     }
   }
 
@@ -171,6 +171,8 @@
   }
 
   function searchShortcut(event: KeyboardEvent) {
+    // Do not steal focus from the shell's modal command palette.
+    if ((event.target as HTMLElement | null)?.closest?.('[role="dialog"][aria-modal="true"]')) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
       searchInput?.focus();
@@ -180,9 +182,9 @@
 </script>
 <svelte:window onkeydown={searchShortcut} />
 
-<section class="view-head"><div><span class="eyebrow">Review + reuse</span><h1>Transcript workspace</h1><p>Search timestamped text, jump between matching segments, copy clean text, and export local formats without inventing artifact paths.</p></div></section>
+<section class="view-head" data-i18n-ignore><div><span class="eyebrow">{$translator('transcript.eyebrow')}</span><h1>{$translator('transcript.heading')}</h1><p>{$translator('transcript.description')}</p></div></section>
 {#if transcripts.length === 0}
-  <EmptyState title="No transcripts yet" message="Complete a transcription job and it will appear here." />
+  <EmptyState title={$translator('transcript.emptyTitle')} message={$translator('transcript.emptyMessage')} />
 {:else if !selected}
   <section class="panel transcript-loading" aria-busy={selectedLoading} data-i18n-ignore>
     <strong role="status">{$translator(selectedLoading ? 'transcript.loading' : 'transcript.unavailable')}</strong>
@@ -200,8 +202,8 @@
 {:else}
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">
     {#if listOpen}
-      <aside class="panel transcript-list" aria-label="Transcript list">
-        <div class="rail-head"><span class="eyebrow">Transcript</span><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
+      <aside class="panel transcript-list" data-i18n-ignore aria-label={$translator('transcript.list')}>
+        <div class="rail-head"><span class="eyebrow">{$translator('transcript.listEyebrow')}</span><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
         <div class="transcript-list-scroll">
           {#each transcripts as transcript}
             <button class:active={transcript.id === selected.id} aria-current={transcript.id === selected.id ? 'true' : undefined} on:click={() => selectTranscript(transcript.id)}>
@@ -213,11 +215,11 @@
     {/if}
 
     <section class="panel transcript-reader">
-      <div class="reader-head">
+      <div class="reader-head" data-i18n-ignore>
         <div class="reader-title"><span class="eyebrow">{selected.platform}</span><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.source}</p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
-          <button class="button secondary" on:click={copyText}>Copy text</button>
+          <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
           <details class="export-menu">
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
             <div class="export-popover">
@@ -232,8 +234,8 @@
         </div>
       </div>
 
-      <div class="transcript-search-row">
-        <label class="search-field transcript-search"><span aria-hidden="true">⌕</span><input bind:this={searchInput} aria-label="Search transcript" bind:value={query} placeholder="Search transcript…" /><kbd>Ctrl F</kbd></label>
+      <div class="transcript-search-row" data-i18n-ignore>
+        <label class="search-field transcript-search"><span aria-hidden="true">⌕</span><input bind:this={searchInput} aria-label={$translator('transcript.search')} bind:value={query} placeholder={$translator('transcript.searchPlaceholder')} /><kbd>Ctrl F</kbd></label>
         {#if query.trim()}
           <div class="search-navigation" aria-live="polite">
             <span>{matchingSegments.length > 0 ? $translator('transcript.matches', { current: searchCursor + 1, count: matchingSegments.length }) : $translator('transcript.noMatches')}</span>
@@ -249,7 +251,7 @@
         {:else}
           {#each (query ? matchingSegments : selected.segments) as segment}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
-              <button class="timestamp" aria-label={`Jump to ${time(segment.startSeconds)}`} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
+              <button class="timestamp" aria-label={$translator('transcript.jumpTo', { time: time(segment.startSeconds) })} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
               <p>{segment.text}</p>
             </article>
           {/each}
@@ -258,15 +260,15 @@
     </section>
 
     {#if detailsOpen}
-      <aside class="panel details-panel">
-        <div class="rail-head"><div><span class="eyebrow">Details</span><h3>Source metadata</h3></div><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
-        <dl><div><dt>Language</dt><dd>{selected.language}</dd></div><div><dt>Direction</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>Duration</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>Platform</dt><dd>{selected.platform}</dd></div></dl>
-        <button class="button secondary folder-unavailable" disabled title="The backend does not expose a persisted artifact directory for this transcript yet.">Open output folder unavailable</button>
+      <aside class="panel details-panel" data-i18n-ignore>
+        <div class="rail-head"><div><span class="eyebrow">{$translator('transcript.details')}</span><h3>{$translator('transcript.metadata')}</h3></div><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
+        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div></dl>
+        <button class="button secondary folder-unavailable" disabled title={$translator('transcript.folderHelp')}>{$translator('transcript.folderUnavailable')}</button>
       </aside>
     {/if}
   </div>
-  {#if status}<p class="status-copy" aria-live="polite">{status}</p>{/if}
-  {#if actionError}<p class="status-copy" role="alert">{actionError}</p>{/if}
+  {#if status}<p class="status-copy" aria-live="polite" data-i18n-ignore>{status}</p>{/if}
+  {#if actionError}<p class="status-copy" role="alert" data-i18n-ignore>{actionError}</p>{/if}
 {/if}
 
 <style>
