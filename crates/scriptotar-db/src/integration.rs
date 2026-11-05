@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 4;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -170,6 +170,45 @@ impl SqliteStore {
             tx.execute(
                 "INSERT INTO integration_schema_migrations(version, name, applied_at)
                  VALUES(3, 'safe_job_transcript_backfill', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
+        if current < 4 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TRIGGER job_transcript_project_insert
+                 BEFORE INSERT ON job_transcript_links
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM jobs j
+                     JOIN transcripts t ON t.id = NEW.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE j.id = NEW.job_id AND j.project_id = s.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'job and transcript must belong to the same project');
+                 END;
+                 CREATE TRIGGER job_transcript_project_update
+                 BEFORE UPDATE OF job_id, transcript_id ON job_transcript_links
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM jobs j
+                     JOIN transcripts t ON t.id = NEW.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE j.id = NEW.job_id AND j.project_id = s.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'job and transcript must belong to the same project');
+                 END;",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(4, 'job_transcript_project_guard', ?1)",
                 params![now_rfc3339()],
             )
             .map_err(storage_error)?;
