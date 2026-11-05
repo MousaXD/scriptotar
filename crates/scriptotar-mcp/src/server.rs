@@ -743,7 +743,10 @@ mod tests {
             let mut name = db.as_os_str().to_os_string();
             name.push(suffix);
             let path = PathBuf::from(name);
-            assert!(block_active_db_file(&db, &db, &path).is_err(), "suffix {suffix}");
+            assert!(
+                block_active_db_file(&db, &db, &path).is_err(),
+                "suffix {suffix}"
+            );
         }
         let symlink_db_alias = temp.path().join("opened-by-alias.sqlite3");
         #[cfg(unix)]
