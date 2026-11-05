@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createMockClient } from './api/mockClient';
 import { setLocale } from './i18n';
@@ -11,7 +11,11 @@ beforeEach(() => {
 });
 
 async function ready() {
-  render(App, { props: { api: createMockClient() } });
+  await readyWithApi(createMockClient());
+}
+
+async function readyWithApi(api: ReturnType<typeof createMockClient>) {
+  render(App, { props: { api } });
   await screen.findByRole('heading', { name: 'Creator Lab' });
 }
 
@@ -139,6 +143,25 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.input(search, { target: { value: 'not present' } });
     expect(screen.getByText('لا توجد نتائج مطابقة')).toBeInTheDocument();
     expect(document.documentElement.dir).toBe('rtl');
+  });
+
+  it('recovers from a failed transcript read without trapping the user in a dead end', async () => {
+    const api = createMockClient();
+    const read = api.getTranscript.bind(api);
+    const getTranscript = vi.spyOn(api, 'getTranscript').mockImplementation((id) =>
+      id === 't-ar' ? Promise.reject(new Error('Transcript could not be read')) : read(id)
+    );
+    await readyWithApi(api);
+    await fireEvent.click(screen.getByRole('button', { name: 'Transcripts' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Transcript could not be read');
+    expect(screen.getByRole('button', { name: 'Retry loading' })).toBeInTheDocument();
+    const picker = screen.getByRole('combobox', { name: 'Choose transcript' });
+    await fireEvent.change(picker, { target: { value: 't-en' } });
+
+    expect(await screen.findByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
+    expect(getTranscript).toHaveBeenCalledWith('t-en');
+    expect(screen.getByTestId('transcript-content')).toHaveTextContent('The caption is doing two jobs');
   });
 
 });
