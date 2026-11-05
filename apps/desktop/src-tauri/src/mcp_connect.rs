@@ -597,15 +597,19 @@ impl McpConnectionState {
                 return Err(e);
             }
         };
-        self.activate_connection(data_dir, gateway, ManagedConnection {
-            mode: "cloudflare",
-            started: Instant::now(),
-            child: Some(child),
-            report,
-            local_url,
-            tunnel_id: None,
-            _temp: None,
-        })?;
+        self.activate_connection(
+            data_dir,
+            gateway,
+            ManagedConnection {
+                mode: "cloudflare",
+                started: Instant::now(),
+                child: Some(child),
+                report,
+                local_url,
+                tunnel_id: None,
+                _temp: None,
+            },
+        )?;
         Ok(self.status(app))
     }
 
@@ -628,15 +632,19 @@ impl McpConnectionState {
             detail: "Point your Cloudflare named tunnel at 127.0.0.1:39761, then add the HTTPS URL in ChatGPT.".into(),
             ..Default::default()
         }));
-        self.activate_connection(data_dir, gateway, ManagedConnection {
-            mode: "manual",
-            started: Instant::now(),
-            child: None,
-            report,
-            local_url,
-            tunnel_id: None,
-            _temp: None,
-        })?;
+        self.activate_connection(
+            data_dir,
+            gateway,
+            ManagedConnection {
+                mode: "manual",
+                started: Instant::now(),
+                child: None,
+                report,
+                local_url,
+                tunnel_id: None,
+                _temp: None,
+            },
+        )?;
         Ok(self.status(app))
     }
 
@@ -707,15 +715,19 @@ impl McpConnectionState {
                     .into(),
             ..Default::default()
         }));
-        self.activate_connection(data_dir, gateway, ManagedConnection {
-            mode: "openai",
-            started: Instant::now(),
-            child: Some(child),
-            report,
-            local_url,
-            tunnel_id: Some(id.into()),
-            _temp: Some(temp),
-        })?;
+        self.activate_connection(
+            data_dir,
+            gateway,
+            ManagedConnection {
+                mode: "openai",
+                started: Instant::now(),
+                child: Some(child),
+                report,
+                local_url,
+                tunnel_id: Some(id.into()),
+                _temp: Some(temp),
+            },
+        )?;
         Ok(self.status(app))
     }
 }
