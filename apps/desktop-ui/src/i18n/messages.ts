@@ -3,6 +3,13 @@ import type { AppLocale } from '../i18n';
 export const shellMessages = {
   en: {
     'brand.subtitle': 'Creator workstation',
+    'error.genericTitle': 'Something went wrong',
+    'error.tryAgain': 'Try again',
+    'error.bootTitle': 'Could not open Scriptotar',
+    'error.projectTitle': 'Could not switch projects',
+    'error.backgroundTitle': 'Background status unavailable',
+    'boot.opening': 'Opening Scriptotar',
+    'boot.loading': 'Loading your local workspace…',
     'nav.primary': 'Primary navigation',
     'nav.work': 'Work',
     'nav.create': 'Create',
@@ -313,6 +320,13 @@ export const shellMessages = {
   },
   ar: {
     'brand.subtitle': 'محطة عمل صانع المحتوى',
+    'error.genericTitle': 'حدث خطأ',
+    'error.tryAgain': 'إعادة المحاولة',
+    'error.bootTitle': 'تعذّر فتح Scriptotar',
+    'error.projectTitle': 'تعذّر تغيير المشروع',
+    'error.backgroundTitle': 'حالة العمليات الخلفية غير متاحة',
+    'boot.opening': 'جارٍ فتح Scriptotar',
+    'boot.loading': 'جارٍ تحميل مساحة العمل المحلية…',
     'nav.primary': 'التنقل الرئيسي',
     'nav.work': 'العمل',
     'nav.create': 'الإنشاء',
