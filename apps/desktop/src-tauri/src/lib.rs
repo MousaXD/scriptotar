@@ -504,7 +504,12 @@ async fn get_transcript(
     let transcript_id =
         Uuid::parse_str(&transcript_id).map_err(|_| "invalid transcript id".to_owned())?;
     let services = state.inner().clone();
-    on_blocking_worker(move || services.get_transcript(transcript_id).map_err(command_error)).await
+    on_blocking_worker(move || {
+        services
+            .get_transcript(transcript_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
