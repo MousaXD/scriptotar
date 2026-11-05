@@ -110,16 +110,18 @@ class EngineSupervisor:
             if should_report:
                 self.active_job_id = None
                 self._engine_job_started = False
-        if should_report:
-            self.writer.emit(
-                "error",
-                job_id=job_id,
-                error={
-                    "code": "ENGINE_PROTOCOL",
-                    "message": "Transcription engine produced invalid protocol output.",
-                    "retryable": True,
-                },
-            )
+                # Publish while holding the cancel/start arbitration lock.
+                # Otherwise the next job can be accepted before the prior
+                # worker's fatal protocol error is observed.
+                self.writer.emit(
+                    "error",
+                    job_id=job_id,
+                    error={
+                        "code": "ENGINE_PROTOCOL",
+                        "message": "Transcription engine produced invalid protocol output.",
+                        "retryable": True,
+                    },
+                )
         self._terminate_process_group(proc)
 
     def _read_stdout(self, proc: subprocess.Popen[str]) -> None:
@@ -200,16 +202,17 @@ class EngineSupervisor:
             if should_report:
                 self.active_job_id = None
                 self._engine_job_started = False
-        if should_report:
-            self.writer.emit(
-                "error",
-                job_id=job_id,
-                error={
-                    "code": "ENGINE_CRASHED",
-                    "message": f"Transcription engine exited unexpectedly with code {rc}.",
-                    "retryable": True,
-                },
-            )
+                # Keep unexpected-exit errors ordered with the shared
+                # cancel/start lock, just like ordinary terminal events.
+                self.writer.emit(
+                    "error",
+                    job_id=job_id,
+                    error={
+                        "code": "ENGINE_CRASHED",
+                        "message": f"Transcription engine exited unexpectedly with code {rc}.",
+                        "retryable": True,
+                    },
+                )
 
     def _read_stderr(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stderr is not None
