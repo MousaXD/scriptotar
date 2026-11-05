@@ -86,6 +86,12 @@ def prepare_partial(job: dict[str, Any]) -> RecoveryDecision:
     partial = partial_directory(output_root, job["id"])
     fingerprint = job_fingerprint(job)
 
+    # A crashed job may leave a user-created symlink at the predictable
+    # partial path. Never follow it when reading checkpoints or writing
+    # transcripts: unlinking removes only the link, not the target directory.
+    if partial.is_symlink():
+        partial.unlink()
+
     if partial.exists():
         checkpoint = _load_checkpoint(partial)
         if checkpoint and checkpoint.get("fingerprint") == fingerprint and checkpoint.get("stage") == "media_ready":
