@@ -1110,6 +1110,74 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_schema_upgrade_rolls_back_every_schema_change() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("partially-upgraded.sqlite3");
+        let project = Project::new("Must survive migration failure");
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            configure_connection(&connection).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL
+                    );",
+                )
+                .unwrap();
+            for migration in MIGRATIONS.iter().filter(|migration| migration.version <= 3) {
+                let tx = connection.transaction().unwrap();
+                (migration.apply)(&tx).unwrap();
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
+                    params![migration.version, migration.name, now_rfc3339()],
+                )
+                .unwrap();
+                tx.pragma_update(None, "user_version", migration.version)
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO projects(id, name, created_at) VALUES(?1, ?2, ?3)",
+                    params![project.id.to_string(), project.name, project.created_at],
+                )
+                .unwrap();
+            // Force an error after migration 4's ALTER TABLE has already run.
+            connection
+                .execute_batch(
+                    "CREATE TRIGGER sources_creator_project_insert
+                     AFTER INSERT ON projects BEGIN SELECT 1; END;",
+                )
+                .unwrap();
+        }
+        assert!(SqliteStore::open(&path).is_err());
+
+        let connection = Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let column_count: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'archived_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let persisted_name: String = connection
+            .query_row(
+                "SELECT name FROM projects WHERE id = ?1",
+                params![project.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 3);
+        assert_eq!(column_count, 0);
+        assert_eq!(persisted_name, "Must survive migration failure");
+    }
+
+    #[test]
     fn inconsistent_schema_ledger_is_rejected_without_changing_project_data() {
         let (temp, db) = store();
         let project = project(&db, "Keep me");
