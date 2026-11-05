@@ -35,7 +35,10 @@ mod tests {
     use scriptotar_core::JobInput;
 
     fn job(project_id: Uuid, timestamp: &str) -> Job {
-        let mut job = Job::new(project_id, JobInput::Url("https://example.com/video".to_owned()));
+        let mut job = Job::new(
+            project_id,
+            JobInput::Url("https://example.com/video".to_owned()),
+        );
         job.updated_at = timestamp.to_owned();
         job
     }
