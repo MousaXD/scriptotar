@@ -181,11 +181,17 @@ async fn handle(
             ))
         }
     };
-    let Ok(_permit) = limit.try_acquire() else {
+    let Ok(worker_permit) = Arc::clone(&limit).try_acquire_owned() else {
         return Ok(reply(StatusCode::TOO_MANY_REQUESTS, "MCP busy"));
     };
-    // Tool calls may include bounded subprocess or SQLite work; keep Tokio's accept loop responsive.
-    let result = tokio::task::spawn_blocking(move || server.response(&message)).await;
+    // Tool execution continues after the HTTP request is canceled, so the
+    // owned permit must live inside the blocking worker. Otherwise a peer
+    // can disconnect while each tool runs and bypass the four-worker limit.
+    let result = tokio::task::spawn_blocking(move || {
+        let _worker_permit = worker_permit;
+        server.response(&message)
+    })
+    .await;
     match result {
         Ok(Some(value)) => Ok(json_reply(StatusCode::OK, &value)),
         Ok(None) => Ok(reply(StatusCode::ACCEPTED, "")),
@@ -240,6 +246,55 @@ fn json_reply(status: StatusCode, content: &Value) -> HttpResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancelled_http_response_cannot_release_active_tool_slot() {
+        use std::sync::mpsc;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let limit = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = Arc::clone(&limit).try_acquire_owned().unwrap();
+            let (started_tx, started_rx) = mpsc::sync_channel(1);
+            let (finish_tx, finish_rx) = mpsc::sync_channel(1);
+            let worker = tokio::task::spawn_blocking(move || {
+                let _worker_permit = permit;
+                started_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+            });
+
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if started_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            worker.abort(); // Simulate client disconnect canceling its waiter.
+            assert!(
+                limit.try_acquire().is_err(),
+                "disconnect must not free a worker still running a tool"
+            );
+            finish_tx.send(()).unwrap();
+            let _ = worker.await;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if limit.available_permits() == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        });
+    }
+
     #[test]
     fn bearer_comparison_rejects_wrong_length_and_value() {
         assert!(constant_time_eq(b"abcd", b"abcd"));
