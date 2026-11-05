@@ -448,6 +448,7 @@ def write_runtime_legal_bundle(output_root: Path, ffmpeg_executable: Path, repo_
             "implementation": sys.implementation.name,
             "version": sys.version.split()[0],
             "license_file": python_license,
+            "license_sha256": _sha256_file(output_root / python_license),
             "distribution": "embedded by PyInstaller; separate system Python is not required",
         },
         "ffmpeg": ffmpeg,
