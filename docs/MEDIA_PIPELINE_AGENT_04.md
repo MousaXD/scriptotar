@@ -109,6 +109,25 @@ Independent code audit identified an additional terminal-event race: `EngineSupe
 
 **Compatibility and limits:** no models, formats, providers, device modes, locale options or application-owned security checks were removed. GPU performance, mixed Arabic/English recognition accuracy, and actual Windows descendant cleanup remain unmeasured/unverified. No self-merge.
 
+## Certification checkpoint — 2026-11-06, pre-ledger code HEAD `6af12f28a35daf38ffe91b0e2f3eb05bd1855b7c`
+
+**STATUS: IN PROGRESS; READY FOR AGENT 00 REVIEW: NO.** This checkpoint records the observed *code SHA*. Updating this ledger advances the PR HEAD and requires a new exact-SHA CI pass before any final sign-off.
+
+| Gate | Exact-SHA workflow or job | Verified result |
+| --- | --- | --- |
+| Python sidecar | [Transcription Sidecar 42104436633](https://github.com/MousaXD/scriptotar/actions/runs/42104436633), [unit job 127515424217](https://github.com/MousaXD/scriptotar/actions/runs/42104436633/job/127515424217) | **SUCCESS** — 69 Python tests, 1 Windows-only test skipped; includes both new fatal-error event-order tests and license-byte integrity fixtures. Import check success is separate from model inference |
+| General CI | [CI 42104436574](https://github.com/MousaXD/scriptotar/actions/runs/42104436574) | **SUCCESS** |
+| Security hygiene | [Security hygiene 42104436830](https://github.com/MousaXD/scriptotar/actions/runs/42104436830) | **SUCCESS** |
+| Windows NSIS installer | [Windows Tauri Installer 42104436475](https://github.com/MousaXD/scriptotar/actions/runs/42104436475), [job 127515427029](https://github.com/MousaXD/scriptotar/actions/runs/42104436475/job/127515427029) | **SUCCESS**. Installer and packaged-runtime smoke test; does **not** exercise the Windows-only actual child-process handle regression. Agent 01/07 asked to arrange that runner invocation |
+| Linux .deb + installed-runtime validation | [Linux Tauri Package 42104436908](https://github.com/MousaXD/scriptotar/actions/runs/42104436908), [job 127515422150](https://github.com/MousaXD/scriptotar/actions/runs/42104436908/job/127515422150) | **IN PROGRESS** while installing Tauri system dependencies; no pass or failure claimed |
+| Tauri / Rust ↔ sidecar integration | [Tauri migration integration 42104436990](https://github.com/MousaXD/scriptotar/actions/runs/42104436990) | **IN PROGRESS/QUEUED as aggregate**. Rust workspace job **SUCCESS**, Rust↔sidecar, Python sidecar and Svelte frontend jobs **QUEUED** when inspected; [Supply-chain job 127515424444](https://github.com/MousaXD/scriptotar/actions/runs/42104436990/job/127515424444) **FAILED** on pre-existing `webpki-roots 1.0.9` / `RUSTSEC-2026-0381` (>=1.0.10 required). Rust dependency owner Agent 01, release review Agent 07; no weakening or ignore |
+| MCP E2E | [MCP E2E 42104436548](https://github.com/MousaXD/scriptotar/actions/runs/42104436548) | **CANCELLED**, not a pass, no new functional regression established |
+| Live three-provider E2E | [Real YouTube Instagram TikTok E2E 42104436580](https://github.com/MousaXD/scriptotar/actions/runs/42104436580), [job 127515695009](https://github.com/MousaXD/scriptotar/actions/runs/42104436580/job/127515695009) | **FAILED overall**: YouTube was challenged for bot verification; correctly returned `SOURCE_ACCESS_FAILED`, download/inference not run. Instagram **real download and Faster Whisper inference PASSED** (3 segments; 15-second clip; observed elapsed 15.68 seconds). TikTok **real download/inference PASSED** (0 speech segments; 10.8-second clip; observed elapsed 4.02 seconds). No source/authentication bypass, substitute or skip |
+
+**Known limitations:** Windows real-descendant cancellation remains only mocked in the general unit suite because its native counterpart is skipped on Linux and has not been invoked in the Windows installer workflow. Native GPU CUDA inference, Arabic/mixed-language accuracy, large-model throughput, and systematic memory/performance benchmarks remain unverified. The observed live excerpt elapsed times above are **per-run diagnostics**, not repeatable controlled benchmarks or speedups. Recovery uses bounded-memory streaming SHA-256 and ffprobe incurs bounded additional disk/process work.
+
+**Feature compatibility:** all existing model, provider, output format, language, quality, cookie-source, and CPU/GPU choices are preserved; security and licensing checks remain fail-closed. No changes to Rust dependency lockfiles, branch protection, external authentication, CI workflows, base branch or `main` by Agent 04.
+
 ## Performance tradeoffs / open questions
 
 - Recovery integrity intentionally reads the completed media file once to hash it and once upon attempted restart reuse. This is bounded-memory O(media size) I/O; no throughput benchmark has been measured. Avoid claiming performance gains without measurements.
