@@ -13,10 +13,7 @@ fn project_rename_archive_and_restore_preserve_jobs_and_active_selection() {
     let store = SqliteStore::open(&database).unwrap();
     let project = Project::new("Original");
     store.create_project(&project).unwrap();
-    let job = Job::new(
-        project.id,
-        JobInput::LocalFile("/tmp/keep.mp4".to_owned()),
-    );
+    let job = Job::new(project.id, JobInput::LocalFile("/tmp/keep.mp4".to_owned()));
     store.insert_job(&job).unwrap();
     let mut settings = store.load_settings().unwrap();
     settings.active_project_id = Some(project.id);
@@ -28,13 +25,22 @@ fn project_rename_archive_and_restore_preserve_jobs_and_active_selection() {
     store.archive_project(project.id).unwrap();
     store.archive_project(project.id).unwrap();
     assert!(store.list_active_projects().unwrap().is_empty());
-    assert_eq!(store.list_archived_projects().unwrap(), vec![renamed.clone()]);
+    assert_eq!(
+        store.list_archived_projects().unwrap(),
+        vec![renamed.clone()]
+    );
     assert_eq!(store.get_job(job.id).unwrap().project_id, project.id);
-    assert_eq!(store.load_settings().unwrap().active_project_id, Some(project.id));
+    assert_eq!(
+        store.load_settings().unwrap().active_project_id,
+        Some(project.id)
+    );
 
     drop(store);
     let reopened = SqliteStore::open(&database).unwrap();
-    assert_eq!(reopened.list_archived_projects().unwrap(), vec![renamed.clone()]);
+    assert_eq!(
+        reopened.list_archived_projects().unwrap(),
+        vec![renamed.clone()]
+    );
     reopened.restore_project(project.id).unwrap();
     assert!(reopened.list_archived_projects().unwrap().is_empty());
     assert_eq!(reopened.list_active_projects().unwrap(), vec![renamed]);
@@ -183,7 +189,9 @@ fn job_transcript_link_rejects_cross_project_lineage() {
         )
         .is_err());
     let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM job_transcript_links", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM job_transcript_links", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(count, 0);
 }
