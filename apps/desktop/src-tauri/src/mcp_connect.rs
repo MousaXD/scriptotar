@@ -590,7 +590,11 @@ impl McpConnectionState {
         }
         policy.url_token = new_token();
         let policy = save_permissions(data_dir, policy)?;
-        start_gateway_for_data(data_dir, gateway)?;
+        if let Err(error) = start_gateway_for_data(data_dir, gateway) {
+            // Failure must not leave a valid public credential or child.
+            let _ = revoke_public_gateway(data_dir, gateway);
+            return Err(error);
+        }
         Ok(format!("{LOCAL_ROOT}/mcp/p/{}", policy.url_token))
     }
 

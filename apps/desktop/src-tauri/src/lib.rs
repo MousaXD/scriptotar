@@ -58,20 +58,24 @@ const MCP_HTTP_PORT: u16 = 39761;
 
 impl Drop for McpGatewayState {
     fn drop(&mut self) {
-        if let Ok(child) = self.child.get_mut() {
-            if let Some(mut child) = child.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        // A poisoned mutex must not detach a running gateway.
+        let child = self
+            .child
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(mut child) = child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
 
 fn stop_gateway(state: &McpGatewayState) -> Result<(), String> {
+    // Preserve emergency shutdown even if a previous panic poisoned state.
     let mut child = state
         .child
         .lock()
-        .map_err(|_| "MCP gateway state is unavailable")?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(mut process) = child.take() {
         let _ = process.kill();
         let _ = process.wait();
@@ -127,7 +131,7 @@ fn start_gateway_for_data(
         return gateway_status(gateway);
     }
     let exe = env::current_exe().map_err(|_| "cannot locate Scriptotar executable")?;
-    let child = Command::new(exe)
+    let mut child = Command::new(exe)
         .arg("--mcp-http")
         .env("SCRIPTOTAR_DB_PATH", data_dir.join("scriptotar.sqlite3"))
         .env("SCRIPTOTAR_MCP_PORT", MCP_HTTP_PORT.to_string())
@@ -137,10 +141,15 @@ fn start_gateway_for_data(
         .spawn()
         .map_err(|_| "could not launch local MCP gateway")?;
     {
-        let mut process = gateway
-            .child
-            .lock()
-            .map_err(|_| "MCP gateway state is unavailable")?;
+        let mut process = match gateway.child.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                // Spawn already occurred: never detach this child on failure.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("MCP gateway state is unavailable".into());
+            }
+        };
         *process = Some(child);
     }
     std::thread::sleep(std::time::Duration::from_millis(120));
@@ -930,6 +939,20 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn gateway_stop_recovers_from_poisoned_process_state() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let cloned = Arc::clone(&gateway);
+        let _ = std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("simulate panic in gateway state transition");
+        })
+        .join();
+        assert!(gateway.child.is_poisoned());
+        // A state panic must never make the emergency stop unavailable.
+        assert!(stop_gateway(&gateway).is_ok());
+    }
 
     #[test]
     fn discovers_linux_packaged_runtime_for_headless_mcp() {
