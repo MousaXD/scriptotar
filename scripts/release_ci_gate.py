@@ -39,12 +39,6 @@ GATES: tuple[Gate, ...] = (
         ),
     ),
     Gate(
-        key="mcp",
-        workflow_file="mcp-e2e.yml",
-        workflow_name="Scriptotar MCP E2E",
-        required_jobs=("mcp",),
-    ),
-    Gate(
         key="security",
         workflow_file="security-hygiene.yml",
         workflow_name="Security hygiene",
@@ -61,6 +55,12 @@ GATES: tuple[Gate, ...] = (
         workflow_file="linux-tauri.yml",
         workflow_name="Linux Tauri Package",
         required_jobs=("Build and validate Tauri deb",),
+    ),
+    Gate(
+        key="mcp",
+        workflow_file="mcp-e2e.yml",
+        workflow_name="Scriptotar MCP E2E",
+        required_jobs=("mcp",),
     ),
 )
 
