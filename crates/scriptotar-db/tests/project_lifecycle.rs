@@ -294,5 +294,11 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
         .unwrap();
     assert_eq!(project, a.id.to_string());
     assert_eq!(store.get_job(job.id).unwrap().project_id, a.id);
-    assert_eq!(store.list_job_transcript_links(Some(a.id)).unwrap().get(&job.id), Some(&transcript_a));
+    assert_eq!(
+        store
+            .list_job_transcript_links(Some(a.id))
+            .unwrap()
+            .get(&job.id),
+        Some(&transcript_a)
+    );
 }
