@@ -70,7 +70,10 @@ impl Drop for McpGatewayState {
     }
 }
 
-fn register_gateway_child(state: &McpGatewayState, mut child: std::process::Child) -> Result<(), String> {
+fn register_gateway_child(
+    state: &McpGatewayState,
+    mut child: std::process::Child,
+) -> Result<(), String> {
     let mut process = match state.child.lock() {
         Ok(guard) => guard,
         Err(_) => {
