@@ -264,8 +264,15 @@ class EngineSupervisor:
                         timeout=5,
                         check=True,
                     )
-                except (OSError, subprocess.SubprocessError):
-                    proc.terminate()
+                except (OSError, subprocess.SubprocessError) as exc:
+                    # Parent-only termination would leave FFmpeg/yt-dlp descendants
+                    # alive while allowing a false cancellation acknowledgement.
+                    # Keep the worker/job reserved until tree cleanup is proven.
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Windows could not confirm transcription process-tree cleanup; the job remains blocked.",
+                        retryable=True,
+                    ) from exc
             else:
                 proc.terminate()
         except ProcessLookupError:

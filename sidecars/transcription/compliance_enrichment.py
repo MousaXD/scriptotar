@@ -230,6 +230,12 @@ def _download(url: str, *, expected_sha256: str | None = None, timeout: int = 12
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 data = response.read()
             break
+        except urllib.error.HTTPError as exc:
+            # HTTPError subclasses URLError. Permanent authorization/missing-
+            # notice responses must fail immediately rather than be retried.
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(1 + attempt)
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             if attempt == 2:
                 raise

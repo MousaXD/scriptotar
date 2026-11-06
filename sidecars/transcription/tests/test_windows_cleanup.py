@@ -49,14 +49,45 @@ class WindowsTreeTerminationTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0], ["taskkill", "/PID", "4242", "/T", "/F"])
         self.assertFalse(proc.terminated)
 
-    def test_windows_falls_back_to_parent_termination_if_taskkill_unavailable(self):
+    def test_windows_taskkill_unavailable_fails_closed_instead_of_killing_only_parent(self):
         proc = FakeWindowsProcess()
         with (
             patch.object(service.os, "name", "nt"),
             patch.object(service.subprocess, "run", side_effect=FileNotFoundError),
         ):
-            self.supervisor()._terminate_process_group(proc)
-        self.assertTrue(proc.terminated)
+            with self.assertRaises(service.SidecarError) as raised:
+                self.supervisor()._terminate_process_group(proc)
+        self.assertEqual(raised.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertTrue(proc.running)
+        self.assertFalse(proc.terminated)
+
+    def test_windows_taskkill_nonzero_exit_preserves_worker_and_blocks_successor(self):
+        proc = FakeWindowsProcess()
+        output = io.StringIO()
+        supervisor = service.EngineSupervisor(ProtocolWriter(output), io.StringIO())
+        supervisor.proc = proc
+        supervisor.active_job_id = "windows-job"
+        with (
+            patch.object(service.os, "name", "nt"),
+            patch.object(
+                service.subprocess,
+                "run",
+                side_effect=subprocess.CalledProcessError(1, ["taskkill"]),
+            ),
+        ):
+            with self.assertRaises(service.SidecarError) as raised:
+                supervisor.cancel("windows-job")
+        self.assertEqual(raised.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertTrue(raised.exception.retryable)
+        self.assertIs(supervisor.proc, proc)
+        self.assertEqual(supervisor.active_job_id, "windows-job")
+        self.assertTrue(supervisor._cancel_in_progress)
+        self.assertTrue(proc.running)
+        self.assertFalse(proc.terminated)
+        self.assertEqual(output.getvalue(), "")
+        with self.assertRaises(service.SidecarError) as busy:
+            supervisor.start_job({"id": "successor"})
+        self.assertEqual(busy.exception.code, "BUSY")
 
 
 if __name__ == "__main__":

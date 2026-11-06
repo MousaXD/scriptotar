@@ -73,6 +73,25 @@ class StaticFFmpegArchiveRetryTests(unittest.TestCase):
         )
         sleep.assert_called_once_with(1)
 
+    def test_equal_size_wrong_hash_retries_without_accepting_unreviewed_archive(self):
+        altered = bytearray(self.reviewed)
+        altered[-1] ^= 1
+        self.assertEqual(len(altered), self.spec["size"])
+        self.assertNotEqual(hashlib.sha256(altered).hexdigest(), self.spec["sha256"])
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
+            patch.object(self.distribution.urllib.request, "urlopen",
+                         side_effect=[io.BytesIO(altered), io.BytesIO(self.reviewed)]) as urlopen,
+            patch.object(self.distribution.time, "sleep") as sleep,
+        ):
+            ffmpeg, ffprobe, evidence = self.distribution.fetch_pinned_static_ffmpeg(Path(tmp))
+            self.assertEqual(ffmpeg.read_bytes(), b"reviewed-ffmpeg-fixture")
+            self.assertEqual(ffprobe.read_bytes(), b"reviewed-ffprobe-fixture")
+            self.assertEqual(evidence["archive_sha256"], self.spec["sha256"])
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(1)
+
     def test_persistent_wrong_bytes_remain_hard_failure_and_delete_archive(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -26,6 +26,36 @@ class ComplianceTransportTests(unittest.TestCase):
         self.assertEqual(urlopen.call_args_list[0].args[0].full_url, urlopen.call_args_list[1].args[0].full_url)
         sleep.assert_called_once_with(1)
 
+    def test_permanent_http_404_does_not_retry(self):
+        url = "https://example.test/LICENSE"
+        failure = urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        with (
+            patch.object(compliance_enrichment.urllib.request, "urlopen", side_effect=failure) as urlopen,
+            patch.object(compliance_enrichment.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as raised:
+                compliance_enrichment._download(url)
+        self.assertEqual(raised.exception.code, 404)
+        urlopen.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_transient_http_503_retries_reviewed_notice(self):
+        url = "https://example.test/LICENSE"
+        expected = b"reviewed notice"
+        failure = urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        with (
+            patch.object(compliance_enrichment.urllib.request, "urlopen",
+                         side_effect=[failure, io.BytesIO(expected)]) as urlopen,
+            patch.object(compliance_enrichment.time, "sleep") as sleep,
+        ):
+            self.assertEqual(
+                compliance_enrichment._download(
+                    url, expected_sha256=compliance_enrichment._sha256_bytes(expected)
+                ), expected
+            )
+        self.assertEqual(urlopen.call_count, 2)
+        sleep.assert_called_once_with(1)
+
     def test_transport_failure_exhausts_bounded_attempts(self):
         with (
             patch.object(compliance_enrichment.urllib.request, "urlopen",
