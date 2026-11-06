@@ -40,3 +40,14 @@ Run `.github/workflows/mcp-e2e.yml` on Agent 03 PR: Rust MCP unit, real binary s
 
 ## Handoff
 Agent 00 reviews severity, CI, operational constraints and residual risk. This branch must never merge itself into the feature branch or main.
+
+## Agent 07 follow-up: deterministic negative tests and failure visibility (2026-11-06)
+
+- **Real child under a poisoned gateway mutex:** a Unix fixture starts a real `sleep` child, installs ownership, intentionally poisons the mutex, invokes `stop_gateway`, and checks that the process was killed and reaped. This goes beyond the original empty-mutex poison test. A separate test poisons ownership before post-spawn registration and checks that the newly spawned child is killed/reaped.
+- **Poisoned managed tunnel teardown:** `McpConnectionState::Drop` now recovers a poisoned `active` mutex for emergency kill/wait, with a Unix real-child regression.
+- **Status polling versus stale settings Save:** refactored polling to share one `status_with_resources` lock boundary with the production Tauri command, without a GUI-test harness. The Unix regression holds the active-state lock to make status acquire the transition lock and block while a stale Save is queued. On release, the unexpected exited child causes public-URL token rotation *before* Save completes. The test asserts that Save retains the rotated token and cannot resurrect the former one.
+- **Startup revocation failure:** if gateway startup fails, the cleanup helper attempts to stop the gateway and rotate the URL token; a failure to read/persist the policy is surfaced in the returned error instead of being discarded. A negative test makes the permissions-file path unsafe and asserts the error identifies failed revocation.
+
+**Limits of this evidence:** The Unix tests confirm direct-child process termination and `wait`/reaping, not grandchildren, Windows process-tree behavior, or external provider tunnel termination. The status race test validates in-process serialization and persisted URL rotation, not a genuine ChatGPT connection or every possible OS-level failure. The HTTP E2E gate separately checks that rotated/revoked credentials are rejected by a real localhost listener. A public managed tunnel may remain reachable until status polling observes its exit, and a manually configured HTTPS reverse proxy is not app-managed. Real OpenAI Secure MCP Tunnel authentication is still **UNVERIFIED**.
+
+**Required final check:** collect new exact-HEAD GitHub Actions evidence for Rustfmt, full workspace tests, security checks, MCP stdio/HTTP E2E and Tauri compilation. The cross-agent Linux license-packaging and npm high/critical advisory failures remain independent blockers; no checks are waived.
