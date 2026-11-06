@@ -15,6 +15,9 @@ class FakeWindowsProcess:
     def __init__(self):
         self.running = True
         self.terminated = False
+        # Model the Popen API: idle shutdown tries the graceful stdin path
+        # before falling back to verified process-tree termination.
+        self.stdin = None
 
     def poll(self):
         return None if self.running else 0
