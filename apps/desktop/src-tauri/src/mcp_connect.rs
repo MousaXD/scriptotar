@@ -483,7 +483,7 @@ impl McpConnectionState {
         let gateway = app.try_state::<McpGatewayState>();
         self.status_with_resources(
             operational.as_ref().map(|state| state.data_dir.as_path()),
-            gateway.as_ref().map(|state| &**state),
+            gateway.as_deref(),
             built_in_executable(app, "cloudflared").is_some(),
             built_in_executable(app, "tunnel-client").is_some(),
         )
@@ -520,7 +520,7 @@ impl McpConnectionState {
         let gateway = app.try_state::<McpGatewayState>();
         self.status_inner_with_resources(
             operational.as_ref().map(|state| state.data_dir.as_path()),
-            gateway.as_ref().map(|state| &**state),
+            gateway.as_deref(),
             built_in_executable(app, "cloudflared").is_some(),
             built_in_executable(app, "tunnel-client").is_some(),
         )
