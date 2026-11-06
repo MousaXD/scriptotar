@@ -26,7 +26,12 @@ class StaticFFmpegArchiveRetryTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("_scriptotar_distribution_test", source)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"static_ffmpeg": resolver}):
+        # GitHub MCP contract CI also discovers these tests on Python 3.10.
+        # Packaging runs on 3.12 and owns tomllib; the fixture never parses TOML.
+        imports = {"static_ffmpeg": resolver}
+        if sys.version_info < (3, 11):
+            imports["tomllib"] = types.ModuleType("tomllib")
+        with patch.dict(sys.modules, imports):
             spec.loader.exec_module(module)
         cls.distribution = module
 
