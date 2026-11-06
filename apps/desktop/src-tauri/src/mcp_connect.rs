@@ -1261,7 +1261,10 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert!(recovered.is_none());
-        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+        assert_ne!(
+            load_permissions(dir.path()).unwrap().url_token,
+            previous.url_token
+        );
     }
 
     #[cfg(unix)]
@@ -1293,7 +1296,10 @@ mod tests {
         assert_eq!(status.state, "error");
         assert!(status.detail.contains("URL revoked"));
         assert_fixture_reaped(pid);
-        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+        assert_ne!(
+            load_permissions(dir.path()).unwrap().url_token,
+            previous.url_token
+        );
         assert!(state.active.lock().unwrap().is_none());
     }
 
@@ -1325,7 +1331,10 @@ mod tests {
         assert_eq!(status.state, "error");
         assert!(status.detail.contains("URL revoked"));
         assert_fixture_reaped(pid);
-        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+        assert_ne!(
+            load_permissions(dir.path()).unwrap().url_token,
+            previous.url_token
+        );
     }
 
     #[cfg(unix)]
