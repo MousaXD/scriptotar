@@ -244,6 +244,12 @@ fn launch_cloudflared(
     report: Arc<Mutex<ConnectionReport>>,
     local_url: &str,
 ) -> Result<Child, String> {
+    // Validate every fallible URL property before spawning the child. An
+    // early return after spawn would otherwise detach an untracked process.
+    let path = local_url
+        .strip_prefix(LOCAL_ROOT)
+        .ok_or("invalid local URL")?
+        .to_owned();
     let mut command = Command::new(binary);
     command.args([
         "tunnel",
@@ -262,10 +268,6 @@ fn launch_cloudflared(
         .map_err(|_| {
             "Cloudflare could not start. Verify the packaged cloudflared executable.".to_owned()
         })?;
-    let path = local_url
-        .strip_prefix(LOCAL_ROOT)
-        .ok_or("invalid local URL")?
-        .to_owned();
     if let Some(stdout) = child.stdout.take() {
         let _ = read_cloudflared_output(stdout, Arc::clone(&report), path.clone());
     }
@@ -477,8 +479,11 @@ impl McpConnectionState {
                     let _ = child.kill();
                     let _ = child.wait();
                 }
-                let _ = revoke_public_gateway(data_dir, gateway);
-                Err("MCP connection state unavailable; tunnel was stopped".into())
+                Err(failed_gateway_start(
+                    "MCP connection state unavailable; tunnel was stopped".into(),
+                    data_dir,
+                    gateway,
+                ))
             }
         }
     }
@@ -705,8 +710,7 @@ impl McpConnectionState {
         let child = match launch_cloudflared(&binary, Arc::clone(&report), &local_url) {
             Ok(child) => child,
             Err(e) => {
-                let _ = self.stop_inner(data_dir, gateway);
-                return Err(e);
+                return Err(failed_gateway_start(e, data_dir, gateway));
             }
         };
         self.activate_connection(
@@ -786,8 +790,11 @@ impl McpConnectionState {
         let temp = match tempfile::tempdir_in(data_dir) {
             Ok(temp) => temp,
             Err(_) => {
-                let _ = self.stop_inner(data_dir, gateway);
-                return Err("Could not create a private tunnel working directory".into());
+                return Err(failed_gateway_start(
+                    "Could not create a private tunnel working directory".into(),
+                    data_dir,
+                    gateway,
+                ));
             }
         };
         let health_file = temp.path().join("health.url");
@@ -816,8 +823,11 @@ impl McpConnectionState {
         {
             Ok(child) => child,
             Err(_) => {
-                let _ = self.stop_inner(data_dir, gateway);
-                return Err("OpenAI tunnel-client could not start".into());
+                return Err(failed_gateway_start(
+                    "OpenAI tunnel-client could not start".into(),
+                    data_dir,
+                    gateway,
+                ));
             }
         };
         let report = Arc::new(Mutex::new(ConnectionReport {
@@ -1316,6 +1326,37 @@ mod tests {
         assert!(status.detail.contains("URL revoked"));
         assert_fixture_reaped(pid);
         assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_post_spawn_activation_reports_revocation_failure_and_reaps_child() {
+        let dir = tempfile::tempdir().unwrap();
+        // An unsafe policy must cause revocation to fail, never silently
+        // pretend a URL token was rotated during ownership failure.
+        fs::create_dir(scriptotar_mcp::permissions_path(dir.path())).unwrap();
+        let gateway = McpGatewayState::default();
+        let state = Arc::new(McpConnectionState::default());
+        let cloned = Arc::clone(&state);
+        assert!(thread::spawn(move || {
+            let _guard = cloned.active.lock().unwrap();
+            panic!("poison connection ownership before activation");
+        })
+        .join()
+        .is_err());
+        let (connection, pid) = owned_fixture_connection();
+        let error = state
+            .activate_connection(dir.path(), &gateway, connection)
+            .unwrap_err();
+        assert!(error.contains("URL revocation or gateway cleanup failed"));
+        assert_fixture_reaped(pid);
+    }
+
+    #[test]
+    fn invalid_cloudflare_local_url_is_rejected_before_executable_spawn() {
+        let report = Arc::new(Mutex::new(ConnectionReport::default()));
+        let outcome = launch_cloudflared(Path::new("nonexistent-cloudflared"), report, "bad-url");
+        assert_eq!(outcome.err().as_deref(), Some("invalid local URL"));
     }
 
     #[test]
