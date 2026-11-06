@@ -257,7 +257,7 @@ class EngineSupervisor:
 
     def start_job(self, job: dict[str, Any]) -> None:
         with self._lock:
-            if self.active_job_id is not None or self._cancel_in_progress:
+            if self.active_job_id is not None or self._cancel_in_progress or self._closing:
                 raise SidecarError(
                     "BUSY",
                     "The sidecar runs one transcription job at a time.",
@@ -396,6 +396,15 @@ class EngineSupervisor:
             else:
                 self._terminate_process_group(proc)
         with self._lock:
+            if self._windows_tree_unverified:
+                # The worker may have exited after failed taskkill, but its
+                # descendants were never proven stopped. Do not send a false
+                # shutdown ACK or admit any new transcription work.
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Windows transcription descendants were not confirmed stopped; shutdown is blocked.",
+                    retryable=True,
+                )
             self.proc = None
             self.active_job_id = None
             self._engine_job_started = False
