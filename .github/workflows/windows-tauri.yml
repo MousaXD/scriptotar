@@ -58,6 +58,11 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
           python -m pip check
+      - name: Exercise Windows sidecar subprocess protocol and cancellation
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = (Resolve-Path 'sidecars/transcription').Path
+          python -m unittest discover -s sidecars/transcription/tests -p 'test_subprocess.py' -v
       - name: Build self-contained transcription runtime
         run: >-
           python sidecars/transcription/build_runtime.py
