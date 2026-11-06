@@ -511,12 +511,7 @@ impl McpConnectionState {
                 openai_available: false,
             };
         };
-        self.status_inner_with_resources(
-            data_dir,
-            gateway,
-            cloudflare_available,
-            openai_available,
-        )
+        self.status_inner_with_resources(data_dir, gateway, cloudflare_available, openai_available)
     }
 
     // Called by Connect while already holding transition: never reacquire it.
@@ -1043,8 +1038,7 @@ mod tests {
             let gateway = Arc::clone(&gateway);
             thread::spawn(move || {
                 started_tx.send(()).unwrap();
-                let result =
-                    state.status_with_resources(Some(&data), Some(&gateway), false, false);
+                let result = state.status_with_resources(Some(&data), Some(&gateway), false, false);
                 status_tx.send(result).unwrap();
             })
         };
@@ -1056,7 +1050,10 @@ mod tests {
                 Err(err) => panic!("unexpected transition lock error: {err}"),
                 Ok(guard) => drop(guard),
             }
-            assert!(Instant::now() < deadline, "status did not acquire transition");
+            assert!(
+                Instant::now() < deadline,
+                "status did not acquire transition"
+            );
             thread::yield_now();
         }
 
@@ -1079,7 +1076,9 @@ mod tests {
                 save_tx.send(result).unwrap();
             })
         };
-        save_started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        save_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(
             save_rx.try_recv().is_err(),
             "stale Save cannot bypass the status revocation transition"
@@ -1088,7 +1087,10 @@ mod tests {
         let status = status_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(status.state, "error");
         assert!(status.detail.contains("URL revoked"));
-        let saved = save_rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        let saved = save_rx
+            .recv_timeout(Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
         status_thread.join().unwrap();
         save_thread.join().unwrap();
         let final_policy = load_permissions(dir.path()).unwrap();
