@@ -73,12 +73,16 @@ pub(crate) struct McpConnectionStatus {
 
 impl Drop for McpConnectionState {
     fn drop(&mut self) {
-        if let Ok(active) = self.active.get_mut() {
-            if let Some(mut managed) = active.take() {
-                if let Some(child) = managed.child.as_mut() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        // Drop runs during teardown even if a previous transition panicked.
+        // Recover a poisoned lock only for terminating/reaping an owned child.
+        let active = self
+            .active
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(mut managed) = active.take() {
+            if let Some(child) = managed.child.as_mut() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }
@@ -378,6 +382,18 @@ fn revoke_public_gateway(data_dir: &Path, gateway: &McpGatewayState) -> Result<(
     stop_result
 }
 
+/// Preserve both the original startup failure and any failure to invalidate
+/// the public URL. Do not silently claim cleanup succeeded when persistence
+/// failed, even when the local gateway was stopped.
+fn failed_gateway_start(error: String, data_dir: &Path, gateway: &McpGatewayState) -> String {
+    match revoke_public_gateway(data_dir, gateway) {
+        Ok(()) => error,
+        Err(revocation_error) => {
+            format!("{error}; URL revocation or gateway cleanup failed: {revocation_error}")
+        }
+    }
+}
+
 impl McpConnectionState {
     pub(crate) fn save_app_permissions(
         &self,
@@ -463,9 +479,25 @@ impl McpConnectionState {
     }
 
     pub(crate) fn status(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
-        // Status polling can revoke a dead tunnel. That revocation must be
-        // serialized with settings saves and new connections, or a stale save
-        // can restore the just-revoked URL credential.
+        let operational = app.try_state::<OperationalState>();
+        let gateway = app.try_state::<McpGatewayState>();
+        self.status_with_resources(
+            operational.as_ref().map(|state| state.data_dir.as_path()),
+            gateway.as_ref().map(|state| &**state),
+            built_in_executable(app, "cloudflared").is_some(),
+            built_in_executable(app, "tunnel-client").is_some(),
+        )
+    }
+
+    // This is the public polling lock boundary. Unit tests exercise this same
+    // path with fixture resources, without needing a graphical Tauri app.
+    fn status_with_resources(
+        &self,
+        data_dir: Option<&Path>,
+        gateway: Option<&McpGatewayState>,
+        cloudflare_available: bool,
+        openai_available: bool,
+    ) -> McpConnectionStatus {
         let Ok(_transition) = self.transition.lock() else {
             return McpConnectionStatus {
                 mode: "none".into(),
@@ -479,13 +511,34 @@ impl McpConnectionState {
                 openai_available: false,
             };
         };
-        self.status_inner(app)
+        self.status_inner_with_resources(
+            data_dir,
+            gateway,
+            cloudflare_available,
+            openai_available,
+        )
     }
 
-    // Only call under the transition lock, including from Connect handlers.
+    // Called by Connect while already holding transition: never reacquire it.
     fn status_inner(&self, app: &tauri::AppHandle) -> McpConnectionStatus {
-        let cloudflare_available = built_in_executable(app, "cloudflared").is_some();
-        let openai_available = built_in_executable(app, "tunnel-client").is_some();
+        let operational = app.try_state::<OperationalState>();
+        let gateway = app.try_state::<McpGatewayState>();
+        self.status_inner_with_resources(
+            operational.as_ref().map(|state| state.data_dir.as_path()),
+            gateway.as_ref().map(|state| &**state),
+            built_in_executable(app, "cloudflared").is_some(),
+            built_in_executable(app, "tunnel-client").is_some(),
+        )
+    }
+
+    // The caller holds the transition lock, including on auto-revocation.
+    fn status_inner_with_resources(
+        &self,
+        data_dir: Option<&Path>,
+        gateway: Option<&McpGatewayState>,
+        cloudflare_available: bool,
+        openai_available: bool,
+    ) -> McpConnectionStatus {
         let result = || McpConnectionStatus {
             mode: "none".into(),
             state: "disconnected".into(),
@@ -520,13 +573,8 @@ impl McpConnectionState {
                 }
                 // Hold the connection-state lock while revoking to prevent a
                 // competing Connect from racing a delayed stale cleanup.
-                let revoked = match (
-                    app.try_state::<OperationalState>(),
-                    app.try_state::<McpGatewayState>(),
-                ) {
-                    (Some(operational), Some(gateway)) => {
-                        revoke_public_gateway(&operational.data_dir, &gateway)
-                    }
+                let revoked = match (data_dir, gateway) {
+                    (Some(data_dir), Some(gateway)) => revoke_public_gateway(data_dir, gateway),
                     _ => Err("MCP gateway state unavailable".into()),
                 };
                 return McpConnectionStatus {
@@ -592,8 +640,7 @@ impl McpConnectionState {
         let policy = save_permissions(data_dir, policy)?;
         if let Err(error) = start_gateway_for_data(data_dir, gateway) {
             // Failure must not leave a valid public credential or child.
-            let _ = revoke_public_gateway(data_dir, gateway);
-            return Err(error);
+            return Err(failed_gateway_start(error, data_dir, gateway));
         }
         Ok(format!("{LOCAL_ROOT}/mcp/p/{}", policy.url_token))
     }
@@ -952,6 +999,151 @@ mod tests {
         assert!(!saved.enabled);
         assert_ne!(saved.url_token, initial.url_token);
         assert_eq!(saved, load_permissions(dir.path()).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unexpected_tunnel_exit_cannot_race_a_stale_permission_save() {
+        use std::sync::mpsc;
+        let dir = tempfile::tempdir().unwrap();
+        let initial = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut terminated = Command::new("sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .expect("spawn deterministic exited tunnel");
+        terminated.wait().unwrap();
+        let state = Arc::new(McpConnectionState::default());
+        let gateway = Arc::new(McpGatewayState::default());
+        *state.active.lock().unwrap() = Some(ManagedConnection {
+            mode: "cloudflare",
+            started: Instant::now(),
+            child: Some(terminated),
+            report: Arc::new(Mutex::new(ConnectionReport::default())),
+            local_url: String::from("http://127.0.0.1:39761/mcp/p/test"),
+            tunnel_id: None,
+            _temp: None,
+        });
+
+        // With the active lock held, status must acquire transition and then
+        // block. A stale UI Save must not complete while status is revoking.
+        let active_guard = state.active.lock().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (status_tx, status_rx) = mpsc::channel();
+        let data = dir.path().to_path_buf();
+        let status_thread = {
+            let state = Arc::clone(&state);
+            let gateway = Arc::clone(&gateway);
+            thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                let result =
+                    state.status_with_resources(Some(&data), Some(&gateway), false, false);
+                status_tx.send(result).unwrap();
+            })
+        };
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match state.transition.try_lock() {
+                Err(std::sync::TryLockError::WouldBlock) => break,
+                Err(err) => panic!("unexpected transition lock error: {err}"),
+                Ok(guard) => drop(guard),
+            }
+            assert!(Instant::now() < deadline, "status did not acquire transition");
+            thread::yield_now();
+        }
+
+        let (save_started_tx, save_started_rx) = mpsc::channel();
+        let (save_tx, save_rx) = mpsc::channel();
+        let data = dir.path().to_path_buf();
+        let save_thread = {
+            let state = Arc::clone(&state);
+            let gateway = Arc::clone(&gateway);
+            thread::spawn(move || {
+                save_started_tx.send(()).unwrap();
+                let result = state.save_app_permissions(
+                    &data,
+                    &gateway,
+                    McpPermissions {
+                        read_data: true,
+                        ..initial
+                    },
+                );
+                save_tx.send(result).unwrap();
+            })
+        };
+        save_started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            save_rx.try_recv().is_err(),
+            "stale Save cannot bypass the status revocation transition"
+        );
+        drop(active_guard);
+        let status = status_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(status.state, "error");
+        assert!(status.detail.contains("URL revoked"));
+        let saved = save_rx.recv_timeout(Duration::from_secs(10)).unwrap().unwrap();
+        status_thread.join().unwrap();
+        save_thread.join().unwrap();
+        let final_policy = load_permissions(dir.path()).unwrap();
+        assert_ne!(final_policy.url_token, "a".repeat(64));
+        assert_eq!(saved.url_token, final_policy.url_token);
+        assert!(saved.read_data);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn poisoned_managed_connection_drop_terminates_real_child() {
+        let state = Arc::new(McpConnectionState::default());
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled managed tunnel");
+        let pid = child.id();
+        *state.active.lock().unwrap() = Some(ManagedConnection {
+            mode: "cloudflare",
+            started: Instant::now(),
+            child: Some(child),
+            report: Arc::new(Mutex::new(ConnectionReport::default())),
+            local_url: String::new(),
+            tunnel_id: None,
+            _temp: None,
+        });
+        let cloned = Arc::clone(&state);
+        assert!(thread::spawn(move || {
+            let _lock = cloned.active.lock().unwrap();
+            panic!("simulate poisoned managed tunnel ownership");
+        })
+        .join()
+        .is_err());
+        drop(state);
+        assert!(
+            !Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "managed tunnel child was not reaped during poisoned teardown"
+        );
+    }
+
+    #[test]
+    fn failed_revocation_is_reported_in_startup_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let gateway = McpGatewayState::default();
+        // No local policy exists: revocation cannot load or persist a token.
+        let error = failed_gateway_start("gateway failed".into(), dir.path(), &gateway);
+        assert!(error.contains("gateway failed"));
+        assert!(error.contains("URL revocation or gateway cleanup failed"));
     }
 
     #[test]
