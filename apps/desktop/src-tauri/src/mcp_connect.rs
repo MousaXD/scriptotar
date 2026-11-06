@@ -431,19 +431,24 @@ impl McpConnectionState {
     }
 
     pub(crate) fn stop(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
+        // Disconnect is an emergency revocation operation. A panic that
+        // poisoned the transition mutex must not prevent killing an owned
+        // tunnel, stopping the local gateway, and rotating public credentials.
         let _transition = self
             .transition
             .lock()
-            .map_err(|_| "MCP connection transition unavailable")?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.stop_inner(data_dir, gateway)
     }
 
     // The caller holds the transition lock, so it cannot recurse into stop().
     fn stop_inner(&self, data_dir: &Path, gateway: &McpGatewayState) -> Result<(), String> {
+        // Recover poisoned ownership only to shut down and revoke; Connect and
+        // settings mutations still refuse a poisoned transition.
         let mut active = self
             .active
             .lock()
-            .map_err(|_| "MCP connection state unavailable")?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(mut connected) = active.take() {
             if let Some(child) = connected.child.as_mut() {
                 let _ = child.kill();
@@ -489,6 +494,34 @@ impl McpConnectionState {
         )
     }
 
+    /// An unavailable connection mutex must never be reported as a harmless
+    /// disconnection while a previously published gateway might still run.
+    fn emergency_status(
+        &self,
+        data_dir: Option<&Path>,
+        gateway: Option<&McpGatewayState>,
+        cloudflare_available: bool,
+        openai_available: bool,
+    ) -> McpConnectionStatus {
+        let detail = match (data_dir, gateway) {
+            (Some(data_dir), Some(gateway)) => match self.stop_inner(data_dir, gateway) {
+                Ok(()) => "MCP connection state failed. Managed tunnel stopped, local gateway closed and URL revoked; restart Scriptotar.".to_owned(),
+                Err(_) => "MCP connection state failed and automatic URL revocation could not be verified. Disable MCP locally and restart Scriptotar.".to_owned(),
+            },
+            _ => "MCP connection state failed and gateway resources were unavailable for revocation. Restart Scriptotar and verify MCP is disabled.".to_owned(),
+        };
+        McpConnectionStatus {
+            mode: "none".into(),
+            state: "error".into(),
+            detail,
+            public_url: None,
+            local_url: None,
+            tunnel_id: None,
+            cloudflare_available,
+            openai_available,
+        }
+    }
+
     // This is the public polling lock boundary. Unit tests exercise this same
     // path with fixture resources, without needing a graphical Tauri app.
     fn status_with_resources(
@@ -498,18 +531,19 @@ impl McpConnectionState {
         cloudflare_available: bool,
         openai_available: bool,
     ) -> McpConnectionStatus {
-        let Ok(_transition) = self.transition.lock() else {
-            return McpConnectionStatus {
-                mode: "none".into(),
-                state: "error".into(),
-                detail: "MCP connection state is unavailable; disable MCP permissions locally."
-                    .into(),
-                public_url: None,
-                local_url: None,
-                tunnel_id: None,
-                cloudflare_available: false,
-                openai_available: false,
-            };
+        let _transition = match self.transition.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Hold the recovered transition guard while emergency cleanup
+                // runs, preserving the same lock order even in a panic path.
+                let _guard = poisoned.into_inner();
+                return self.emergency_status(
+                    data_dir,
+                    gateway,
+                    cloudflare_available,
+                    openai_available,
+                );
+            }
         };
         self.status_inner_with_resources(data_dir, gateway, cloudflare_available, openai_available)
     }
@@ -544,8 +578,19 @@ impl McpConnectionState {
             cloudflare_available,
             openai_available,
         };
-        let Ok(mut state) = self.active.lock() else {
-            return result();
+        let mut state = match self.active.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // A poisoned active mutex may still own a live tunnel.
+                // Release its guard before stop_inner reacquires it to reap.
+                drop(poisoned.into_inner());
+                return self.emergency_status(
+                    data_dir,
+                    gateway,
+                    cloudflare_available,
+                    openai_available,
+                );
+            }
         };
         let Some(connection) = state.as_mut() else {
             return result();
@@ -1136,6 +1181,137 @@ mod tests {
                 .success(),
             "managed tunnel child was not reaped during poisoned teardown"
         );
+    }
+
+    #[cfg(unix)]
+    fn owned_fixture_connection() -> (ManagedConnection, u32) {
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled owned tunnel");
+        let pid = child.id();
+        (
+            ManagedConnection {
+                mode: "cloudflare",
+                started: Instant::now(),
+                child: Some(child),
+                report: Arc::new(Mutex::new(ConnectionReport::default())),
+                local_url: String::new(),
+                tunnel_id: None,
+                _temp: None,
+            },
+            pid,
+        )
+    }
+
+    #[cfg(unix)]
+    fn assert_fixture_reaped(pid: u32) {
+        assert!(
+            !Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "owned tunnel {pid} remained running or unreaped"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn disconnect_recovers_poisoned_active_ownership_and_revokes_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "a".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let gateway = McpGatewayState::default();
+        let state = Arc::new(McpConnectionState::default());
+        let (connected, pid) = owned_fixture_connection();
+        *state.active.lock().unwrap() = Some(connected);
+        let cloned = Arc::clone(&state);
+        assert!(thread::spawn(move || {
+            let _guard = cloned.active.lock().unwrap();
+            panic!("simulate panic while tunnel ownership was locked");
+        })
+        .join()
+        .is_err());
+        assert!(state.active.is_poisoned());
+        state.stop(dir.path(), &gateway).unwrap();
+        assert_fixture_reaped(pid);
+        assert!(state.active.lock().unwrap_err().into_inner().is_none());
+        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn poisoned_transition_polling_stops_owned_tunnel_and_revokes_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "b".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let gateway = McpGatewayState::default();
+        let state = Arc::new(McpConnectionState::default());
+        let (connected, pid) = owned_fixture_connection();
+        *state.active.lock().unwrap() = Some(connected);
+        let cloned = Arc::clone(&state);
+        assert!(thread::spawn(move || {
+            let _guard = cloned.transition.lock().unwrap();
+            panic!("simulate panic inside connection transition");
+        })
+        .join()
+        .is_err());
+        assert!(state.transition.is_poisoned());
+        let status = state.status_with_resources(Some(dir.path()), Some(&gateway), false, false);
+        assert_eq!(status.state, "error");
+        assert!(status.detail.contains("URL revoked"));
+        assert_fixture_reaped(pid);
+        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
+        assert!(state.active.lock().unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn poisoned_active_polling_stops_owned_tunnel_and_revokes_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                url_token: "c".repeat(64),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let gateway = McpGatewayState::default();
+        let state = Arc::new(McpConnectionState::default());
+        let (connected, pid) = owned_fixture_connection();
+        *state.active.lock().unwrap() = Some(connected);
+        let cloned = Arc::clone(&state);
+        assert!(thread::spawn(move || {
+            let _guard = cloned.active.lock().unwrap();
+            panic!("simulate panic inside active tunnel ownership");
+        })
+        .join()
+        .is_err());
+        let status = state.status_with_resources(Some(dir.path()), Some(&gateway), false, false);
+        assert_eq!(status.state, "error");
+        assert!(status.detail.contains("URL revoked"));
+        assert_fixture_reaped(pid);
+        assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
     }
 
     #[test]
