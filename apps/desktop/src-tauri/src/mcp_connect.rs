@@ -1142,7 +1142,9 @@ mod tests {
     fn failed_revocation_is_reported_in_startup_error() {
         let dir = tempfile::tempdir().unwrap();
         let gateway = McpGatewayState::default();
-        // No local policy exists: revocation cannot load or persist a token.
+        // A directory at the policy-file path is invalid, and the revocation
+        // path must surface this real persistence failure instead of masking it.
+        fs::create_dir(scriptotar_mcp::permissions_path(dir.path())).unwrap();
         let error = failed_gateway_start("gateway failed".into(), dir.path(), &gateway);
         assert!(error.contains("gateway failed"));
         assert!(error.contains("URL revocation or gateway cleanup failed"));
