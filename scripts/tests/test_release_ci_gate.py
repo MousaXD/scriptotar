@@ -138,6 +138,20 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "Windows Tauri Installer.*blocked publication"):
             prove(FakeClient(listed, views))
 
+    def test_windows_installer_runs_sidecar_subprocess_regression_on_windows(self):
+        workflow = MODULE_PATH.parent.parent / ".github" / "workflows" / "windows-tauri.yml"
+        source = workflow.read_text(encoding="utf-8")
+        self.assertIn("runs-on: windows-latest", source)
+        self.assertIn(
+            "name: Exercise Windows sidecar subprocess protocol and cancellation",
+            source,
+        )
+        self.assertIn(
+            "python -m unittest discover -s sidecars/transcription/tests -p 'test_subprocess.py' -v",
+            source,
+        )
+        self.assertNotIn("continue-on-error:", source)
+
     def test_linux_package_red_blocks_publication(self):
         listed, views = healthy_fixture()
         gate = next(g for g in GATES if g.key == "linux")
