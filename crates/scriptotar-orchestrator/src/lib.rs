@@ -228,13 +228,21 @@ impl SidecarHost {
             protocol: SIDECAR_PROTOCOL_VERSION,
             request_id: None,
         });
-        for _ in 0..20 {
+        // The Python supervisor needs enough time to stop and verify its
+        // transcription engine tree. On Windows taskkill /T /F alone may
+        // take up to five seconds, before the sidecar can finish shutdown.
+        // Killing Python after the previous 500ms grace could interrupt that
+        // cleanup and leave FFmpeg/yt-dlp children behind.
+        for _ in 0..200 {
             match self.child.try_wait() {
                 Ok(Some(_)) => return,
-                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Ok(None) => thread::sleep(Duration::from_millis(50)),
                 Err(_) => break,
             }
         }
+        eprintln!(
+            "[scriptotar-sidecar] shutdown not confirmed after 10s; forcing Python parent exit does not prove its engine descendants stopped"
+        );
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -924,6 +932,47 @@ mod tests {
         };
         assert!(!handle_event(&store, &job, error, &notifier).unwrap());
         assert_eq!(store.get_job(job.id).unwrap().state, JobState::Preparing);
+    }
+
+    #[test]
+    fn shutdown_allows_graceful_cleanup_longer_than_half_a_second() {
+        let temp = TempDir::new().unwrap();
+        let marker = temp.path().join("cleanup-finished");
+        // A controlled sidecar-like subprocess simulates cleanup that takes
+        // longer than the old 500ms Rust timeout. The marker can only exist if
+        // Rust did not kill the child before cleanup finished.
+        let script = r#"import os
+import sys
+import time
+for command in sys.stdin:
+    if '"shutdown"' in command:
+        time.sleep(0.85)
+        with open(os.environ["SCRIPTOTAR_TEST_CLEANUP_MARKER"], "w", encoding="utf-8") as output:
+            output.write("confirmed")
+        break
+"#;
+        let mut child = Command::new("python3")
+            .arg("-u")
+            .arg("-c")
+            .arg(script)
+            .env("SCRIPTOTAR_TEST_CLEANUP_MARKER", &marker)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let (_sender, events) = mpsc::channel();
+        let mut host = SidecarHost {
+            child,
+            stdin,
+            events,
+        };
+        host.shutdown();
+        assert!(
+            marker.is_file(),
+            "the Rust shutdown watchdog killed the sidecar before its cleanup completed"
+        );
     }
 
     #[test]
