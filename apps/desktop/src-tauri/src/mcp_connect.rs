@@ -1246,7 +1246,11 @@ mod tests {
         assert!(state.active.is_poisoned());
         state.stop(dir.path(), &gateway).unwrap();
         assert_fixture_reaped(pid);
-        assert!(state.active.lock().unwrap_err().into_inner().is_none());
+        let recovered = state
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(recovered.is_none());
         assert_ne!(load_permissions(dir.path()).unwrap().url_token, previous.url_token);
     }
 
