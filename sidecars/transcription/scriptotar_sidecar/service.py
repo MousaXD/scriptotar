@@ -46,6 +46,9 @@ class EngineSupervisor:
         # A failed Windows taskkill /T cannot be treated as clean just because
         # the parent later exits; its FFmpeg/yt-dlp descendants may survive.
         self._windows_tree_unverified = False
+        # A partially written transcribe command may already be executing.
+        # Retain the reservation unless termination can be confirmed.
+        self._submission_cleanup_unverified = False
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._closing = False
@@ -269,10 +272,50 @@ class EngineSupervisor:
             self._engine_job_started = False
             try:
                 self._send_internal({"type": "transcribe", "job": job})
-            except Exception:
+            except SidecarError:
+                # _send_internal raises SidecarError only in its preflight,
+                # before any command bytes can have reached the worker.
                 self.active_job_id = None
                 self._engine_job_started = False
                 raise
+            except Exception as exc:
+                # A broken pipe or failed flush can follow a partial write.
+                # Keep the job reserved until the possibly-started worker is
+                # confirmed terminated; do not admit a second transcribe.
+                proc = self.proc
+                self._cancel_in_progress = True
+                self._submission_cleanup_unverified = True
+                try:
+                    if proc is None or proc.poll() is not None:
+                        raise SidecarError(
+                            "ENGINE_TERMINATION_FAILED",
+                            "Worker exited during job submission; descendant cleanup is unverified.",
+                            retryable=True,
+                        )
+                    self._terminate_process_group(proc)
+                    if proc.poll() is None or self._windows_tree_unverified:
+                        raise SidecarError(
+                            "ENGINE_TERMINATION_FAILED",
+                            "Worker cleanup after partial job submission is unverified.",
+                            retryable=True,
+                        )
+                except Exception as stop_exc:
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Could not confirm cleanup after failed job submission; the job remains blocked.",
+                        retryable=True,
+                    ) from stop_exc
+                if self.proc is proc:
+                    self.proc = None
+                self.active_job_id = None
+                self._engine_job_started = False
+                self._cancel_in_progress = False
+                self._submission_cleanup_unverified = False
+                raise SidecarError(
+                    "ENGINE_UNAVAILABLE",
+                    "Failed to submit transcription; the worker was stopped before releasing the job.",
+                    retryable=True,
+                ) from exc
 
     def _terminate_process_group(self, proc: subprocess.Popen[str], grace_seconds: float = 1.5) -> None:
         if proc.poll() is not None:
@@ -349,6 +392,7 @@ class EngineSupervisor:
             self._cancel_in_progress = True
         try:
             if proc is not None:
+                was_running = proc.poll() is None
                 self._terminate_process_group(proc)
                 if proc.poll() is None:
                     raise SidecarError(
@@ -356,6 +400,14 @@ class EngineSupervisor:
                         "Transcription engine is still running; cancellation was not confirmed.",
                         retryable=True,
                     )
+                if was_running and not self._windows_tree_unverified:
+                    self._submission_cleanup_unverified = False
+            if self._submission_cleanup_unverified:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Job submission cleanup is unverified; the job remains blocked.",
+                    retryable=True,
+                )
             if self._windows_tree_unverified:
                 # The reader thread can discard an exited parent handle.
                 # Its exit does not prove children were reaped after taskkill
@@ -395,7 +447,21 @@ class EngineSupervisor:
                     self._terminate_process_group(proc)
             else:
                 self._terminate_process_group(proc)
+            if proc.poll() is None:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Shutdown worker termination could not be confirmed.",
+                    retryable=True,
+                )
+            if not self._windows_tree_unverified:
+                self._submission_cleanup_unverified = False
         with self._lock:
+            if self._submission_cleanup_unverified:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Job submission cleanup is unverified; shutdown is blocked.",
+                    retryable=True,
+                )
             if self._windows_tree_unverified:
                 # The worker may have exited after failed taskkill, but its
                 # descendants were never proven stopped. Do not send a false

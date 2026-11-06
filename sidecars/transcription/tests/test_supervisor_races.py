@@ -141,6 +141,101 @@ class EngineTerminalRaceTests(unittest.TestCase):
             supervisor.start_job({"id": "next-job"})
         self.assertEqual(busy.exception.code, "BUSY")
 
+    def test_partial_submission_cleanup_precedes_releasing_job(self):
+        supervisor, _ = self.supervisor()
+
+        class Worker:
+            running = True
+
+            def poll(self):
+                return None if self.running else 0
+
+        proc = Worker()
+        supervisor.proc = proc
+        supervisor.ensure_started = lambda: None
+
+        def failed_write(_payload):
+            raise BrokenPipeError("pipe broke after partial command")
+
+        supervisor._send_internal = failed_write
+        observed = []
+
+        def stop_worker(_proc):
+            self.assertIs(_proc, proc)
+            self.assertEqual(supervisor.active_job_id, "job-1")
+            self.assertTrue(supervisor._cancel_in_progress)
+            with self.assertRaises(SidecarError) as busy:
+                supervisor.start_job({"id": "job-2"})
+            self.assertEqual(busy.exception.code, "BUSY")
+            observed.append("stopped")
+            proc.running = False
+
+        supervisor._terminate_process_group = stop_worker
+        with self.assertRaises(SidecarError) as error:
+            supervisor.start_job({"id": "job-1"})
+        self.assertEqual(error.exception.code, "ENGINE_UNAVAILABLE")
+        self.assertEqual(observed, ["stopped"])
+        self.assertIsNone(supervisor.active_job_id)
+        self.assertIsNone(supervisor.proc)
+        self.assertFalse(supervisor._cancel_in_progress)
+        self.assertFalse(supervisor._submission_cleanup_unverified)
+
+    def test_failed_partial_submission_cleanup_blocks_successor(self):
+        supervisor, output = self.supervisor()
+
+        class Worker:
+            def poll(self):
+                return None
+
+        proc = Worker()
+        supervisor.proc = proc
+        supervisor.ensure_started = lambda: None
+        supervisor._send_internal = lambda _payload: (_ for _ in ()).throw(
+            BrokenPipeError("partial dispatch")
+        )
+        supervisor._terminate_process_group = lambda _proc: (_ for _ in ()).throw(
+            SidecarError("ENGINE_TERMINATION_FAILED", "could not terminate", retryable=True)
+        )
+        with self.assertRaises(SidecarError) as error:
+            supervisor.start_job({"id": "job-1"})
+        self.assertEqual(error.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertEqual(supervisor.active_job_id, "job-1")
+        self.assertIs(supervisor.proc, proc)
+        self.assertTrue(supervisor._cancel_in_progress)
+        self.assertTrue(supervisor._submission_cleanup_unverified)
+        self.assertEqual(output.getvalue(), "")
+        with self.assertRaises(SidecarError) as busy:
+            supervisor.start_job({"id": "job-2"})
+        self.assertEqual(busy.exception.code, "BUSY")
+
+    def test_partial_submission_with_exited_parent_does_not_acknowledge_cleanup(self):
+        supervisor, output = self.supervisor()
+
+        class Worker:
+            def poll(self):
+                return 0
+
+        proc = Worker()
+        supervisor.proc = proc
+        supervisor.ensure_started = lambda: None
+        supervisor._send_internal = lambda _payload: (_ for _ in ()).throw(
+            BrokenPipeError("worker exited after partial dispatch")
+        )
+        supervisor._terminate_process_group = lambda _proc: self.fail(
+            "cannot confirm descendant cleanup after parent already exited"
+        )
+        with self.assertRaises(SidecarError) as error:
+            supervisor.start_job({"id": "job-1"})
+        self.assertEqual(error.exception.code, "ENGINE_TERMINATION_FAILED")
+        # The worker handle can disappear independently; cancellation must
+        # still refuse to claim that the possible descendants are gone.
+        supervisor.proc = None
+        with self.assertRaises(SidecarError) as cancel:
+            supervisor.cancel("job-1")
+        self.assertEqual(cancel.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertEqual(supervisor.active_job_id, "job-1")
+        self.assertEqual(output.getvalue(), "")
+
     def test_cancelled_acknowledgement_precedes_new_job_acceptance(self):
         supervisor, output = self.supervisor()
         proc = FakeProcess([])
