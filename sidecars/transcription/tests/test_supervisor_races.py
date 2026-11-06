@@ -75,6 +75,72 @@ class EngineTerminalRaceTests(unittest.TestCase):
             lambda supervisor, proc: supervisor._abort_engine_protocol(proc, "bad JSON")
         )
 
+    def test_invalid_protocol_cannot_release_slot_before_cleanup(self):
+        supervisor, output = self.supervisor()
+        proc = FakeProcess([])
+        supervisor.proc = proc
+        supervisor.active_job_id = "job-1"
+        observed = []
+
+        def verify_cleanup_before_error(event_type, **payload):
+            observed.append((event_type, supervisor._cancel_in_progress))
+            original_emit(event_type, **payload)
+
+        original_emit = supervisor.writer.emit
+        supervisor.writer.emit = verify_cleanup_before_error
+
+        def terminate(_proc):
+            self.assertEqual(supervisor.active_job_id, "job-1")
+            self.assertTrue(supervisor._cancel_in_progress)
+            observed.append(("terminated", True))
+
+        supervisor._terminate_process_group = terminate
+        supervisor._abort_engine_protocol(proc, "bad JSON")
+        self.assertEqual(observed, [("terminated", True), ("error", False)])
+        self.assertIsNone(supervisor.active_job_id)
+        self.assertFalse(supervisor._cancel_in_progress)
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(events[0]["error"]["code"], "ENGINE_PROTOCOL")
+
+    def test_invalid_protocol_termination_failure_keeps_job_reserved(self):
+        supervisor, output = self.supervisor()
+        proc = FakeProcess([])
+        supervisor.proc = proc
+        supervisor.active_job_id = "job-1"
+
+        def fail_kill(_proc):
+            raise SidecarError(
+                "ENGINE_TERMINATION_FAILED",
+                "worker was not stopped",
+                retryable=True,
+            )
+
+        supervisor._terminate_process_group = fail_kill
+        supervisor._abort_engine_protocol(proc, "bad JSON")
+        events = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["type"], "error")
+        self.assertEqual(events[0]["error"]["code"], "ENGINE_TERMINATION_FAILED")
+        self.assertEqual(supervisor.active_job_id, "job-1")
+        self.assertTrue(supervisor._cancel_in_progress)
+        with self.assertRaises(SidecarError) as busy:
+            supervisor.start_job({"id": "next-job"})
+        self.assertEqual(busy.exception.code, "BUSY")
+
+    def test_invalid_protocol_without_active_job_blocks_new_jobs_if_cleanup_fails(self):
+        supervisor, output = self.supervisor()
+        proc = FakeProcess([])
+        supervisor.proc = proc
+        supervisor._terminate_process_group = lambda _proc: (_ for _ in ()).throw(
+            SidecarError("ENGINE_TERMINATION_FAILED", "cannot stop worker")
+        )
+        supervisor._abort_engine_protocol(proc, "unsolicited event")
+        self.assertTrue(supervisor._cancel_in_progress)
+        self.assertEqual(output.getvalue(), "")
+        with self.assertRaises(SidecarError) as busy:
+            supervisor.start_job({"id": "next-job"})
+        self.assertEqual(busy.exception.code, "BUSY")
+
     def test_cancelled_acknowledgement_precedes_new_job_acceptance(self):
         supervisor, output = self.supervisor()
         proc = FakeProcess([])

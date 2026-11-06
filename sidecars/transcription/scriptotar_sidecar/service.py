@@ -104,18 +104,43 @@ class EngineSupervisor:
         self._log(f"[engine protocol] {message}")
         with self._lock:
             job_id = self.active_job_id
+            tracked_worker = proc is self.proc
             should_report = (
-                proc is self.proc
+                tracked_worker
                 and job_id is not None
                 and not self._cancel_in_progress
                 and not self._closing
             )
+            prior_cancel = self._cancel_in_progress
+            if tracked_worker:
+                # Never expose the job slot as free until the malformed worker
+                # has actually stopped. This also suppresses its late events.
+                self._cancel_in_progress = True
+            try:
+                self._terminate_process_group(proc)
+            except Exception as exc:
+                # A failed kill cannot be reported as a terminal protocol
+                # failure: the worker or its descendants might still be live.
+                # Keep the slot reserved, allowing explicit cancellation retry.
+                self._log(f"[engine protocol] worker termination unconfirmed: {type(exc).__name__}")
+                if should_report:
+                    self.writer.emit(
+                        "error",
+                        job_id=job_id,
+                        error={
+                            "code": "ENGINE_TERMINATION_FAILED",
+                            "message": "Transcription engine emitted invalid protocol data but could not be stopped.",
+                            "retryable": True,
+                        },
+                    )
+                return
+            if tracked_worker:
+                self._cancel_in_progress = prior_cancel
             if should_report:
                 self.active_job_id = None
                 self._engine_job_started = False
-                # Publish while holding the cancel/start arbitration lock.
-                # Otherwise the next job can be accepted before the prior
-                # worker's fatal protocol error is observed.
+                # Publish the terminal error under the same cancel/start lock,
+                # but only after confirmed termination.
                 self.writer.emit(
                     "error",
                     job_id=job_id,
@@ -125,7 +150,6 @@ class EngineSupervisor:
                         "retryable": True,
                     },
                 )
-        self._terminate_process_group(proc)
 
     def _read_stdout(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stdout is not None
@@ -233,7 +257,7 @@ class EngineSupervisor:
 
     def start_job(self, job: dict[str, Any]) -> None:
         with self._lock:
-            if self.active_job_id is not None:
+            if self.active_job_id is not None or self._cancel_in_progress:
                 raise SidecarError(
                     "BUSY",
                     "The sidecar runs one transcription job at a time.",
