@@ -518,6 +518,18 @@ where
             Ok(true)
         }
         SidecarEvent::Error { error, .. } => {
+            if error.code == "ENGINE_TERMINATION_FAILED" {
+                // The sidecar still owns a potentially live worker/descendant
+                // tree after cancellation failed. Do not mark this job terminal
+                // or dequeue a successor: allow a subsequent cancellation
+                // attempt to confirm cleanup before releasing the job slot.
+                eprintln!(
+                    "[scriptotar-sidecar] cancellation cleanup unconfirmed for job {}: {}",
+                    original_job.id, error.message
+                );
+                notify_job(notifier, original_job.id);
+                return Ok(false);
+            }
             let message = format!("{}: {}", error.code, error.message);
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
@@ -883,6 +895,35 @@ mod tests {
             wait_for_terminal(&store, next.id).state,
             JobState::Completed
         );
+    }
+
+    #[test]
+    fn failed_cancel_cleanup_keeps_job_active_until_retry() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("cancel-failure.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Cancellation failure");
+        store.create_project(&project).unwrap();
+        let job = Job::new(
+            project.id,
+            JobInput::LocalFile(temp.path().join("input.mp4").to_string_lossy().into_owned()),
+        );
+        store.insert_job(&job).unwrap();
+        store.transition_job(job.id, JobState::Preparing).unwrap();
+        let notifier: JobChangeNotifier = Arc::new(|_| {});
+        let error = SidecarEvent::Error {
+            protocol: SIDECAR_PROTOCOL_VERSION,
+            job_id: Some(job.id.to_string()),
+            error: scriptotar_media::SidecarErrorPayload {
+                code: "ENGINE_TERMINATION_FAILED".to_owned(),
+                message: "process tree still running".to_owned(),
+                retryable: true,
+                details: None,
+            },
+            request_id: None,
+        };
+        assert!(!handle_event(&store, &job, error, &notifier).unwrap());
+        assert_eq!(store.get_job(job.id).unwrap().state, JobState::Preparing);
     }
 
     #[test]
