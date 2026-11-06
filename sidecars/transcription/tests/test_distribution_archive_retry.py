@@ -47,7 +47,8 @@ class StaticFFmpegArchiveRetryTests(unittest.TestCase):
         }
 
     def test_transient_wrong_bytes_retries_same_url_and_requires_reviewed_digest(self):
-        with tempfile.TemporaryDirectory() as tmp, (
+        with (
+            tempfile.TemporaryDirectory() as tmp,
             patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
             patch.object(self.distribution.urllib.request, "urlopen", side_effect=[
                 io.BytesIO(b"bad"), io.BytesIO(self.reviewed),
@@ -100,7 +101,8 @@ class StaticFFmpegArchiveRetryTests(unittest.TestCase):
             self.assertFalse((root / "linux.zip").exists())
 
     def test_resolver_url_drift_remains_fail_closed(self):
-        with tempfile.TemporaryDirectory() as tmp, (
+        with (
+            tempfile.TemporaryDirectory() as tmp,
             patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
             patch.object(self.distribution.static_ffmpeg_run, "get_platform_http_zip",
                          return_value="https://different.test/other.zip"),
