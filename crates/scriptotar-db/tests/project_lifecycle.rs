@@ -407,7 +407,10 @@ fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
     store.run_integration_migrations().unwrap();
     let project = Project::new("Before upgrade");
     store.create_project(&project).unwrap();
-    let job = Job::new(project.id, JobInput::LocalFile("/tmp/keep-v4.mp4".to_owned()));
+    let job = Job::new(
+        project.id,
+        JobInput::LocalFile("/tmp/keep-v4.mp4".to_owned()),
+    );
     store.insert_job(&job).unwrap();
     let mut settings = store.load_settings().unwrap();
     settings.active_project_id = Some(project.id);
