@@ -61,6 +61,34 @@ class WindowsTreeTerminationTests(unittest.TestCase):
         self.assertTrue(proc.running)
         self.assertFalse(proc.terminated)
 
+    def test_failed_tree_kill_stays_blocked_after_parent_exits(self):
+        proc = FakeWindowsProcess()
+        output = io.StringIO()
+        supervisor = service.EngineSupervisor(ProtocolWriter(output), io.StringIO())
+        supervisor.proc = proc
+        supervisor.active_job_id = "windows-job"
+        with (
+            patch.object(service.os, "name", "nt"),
+            patch.object(service.subprocess, "run", side_effect=FileNotFoundError),
+        ):
+            with self.assertRaises(service.SidecarError) as first:
+                supervisor.cancel("windows-job")
+        self.assertEqual(first.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertTrue(supervisor._windows_tree_unverified)
+        # The reader can observe the parent exit and discard its handle,
+        # but that says nothing about descendants after taskkill failed.
+        proc.running = False
+        supervisor.proc = None
+        with self.assertRaises(service.SidecarError) as retried:
+            supervisor.cancel("windows-job")
+        self.assertEqual(retried.exception.code, "ENGINE_TERMINATION_FAILED")
+        self.assertTrue(supervisor._cancel_in_progress)
+        self.assertEqual(supervisor.active_job_id, "windows-job")
+        self.assertEqual(output.getvalue(), "")
+        with self.assertRaises(service.SidecarError) as busy:
+            supervisor.start_job({"id": "after-failed-tree-kill"})
+        self.assertEqual(busy.exception.code, "BUSY")
+
     def test_windows_taskkill_nonzero_exit_preserves_worker_and_blocks_successor(self):
         proc = FakeWindowsProcess()
         output = io.StringIO()

@@ -43,6 +43,9 @@ class EngineSupervisor:
         self.active_job_id: str | None = None
         self._engine_job_started = False
         self._cancel_in_progress = False
+        # A failed Windows taskkill /T cannot be treated as clean just because
+        # the parent later exits; its FFmpeg/yt-dlp descendants may survive.
+        self._windows_tree_unverified = False
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._closing = False
@@ -267,12 +270,15 @@ class EngineSupervisor:
                 except (OSError, subprocess.SubprocessError) as exc:
                     # Parent-only termination would leave FFmpeg/yt-dlp descendants
                     # alive while allowing a false cancellation acknowledgement.
-                    # Keep the worker/job reserved until tree cleanup is proven.
+                    # Even if the parent later exits, do not treat the tree as
+                    # verified: the descendants might have survived.
+                    self._windows_tree_unverified = True
                     raise SidecarError(
                         "ENGINE_TERMINATION_FAILED",
                         "Windows could not confirm transcription process-tree cleanup; the job remains blocked.",
                         retryable=True,
                     ) from exc
+                self._windows_tree_unverified = False
             else:
                 proc.terminate()
         except ProcessLookupError:
@@ -326,6 +332,15 @@ class EngineSupervisor:
                         "Transcription engine is still running; cancellation was not confirmed.",
                         retryable=True,
                     )
+            if self._windows_tree_unverified:
+                # The reader thread can discard an exited parent handle.
+                # Its exit does not prove children were reaped after taskkill
+                # failed, so a subsequent cancel must not report success.
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Windows transcription descendants were not confirmed stopped; the job remains blocked.",
+                    retryable=True,
+                )
         except Exception:
             # The worker may still be producing FFmpeg/Whisper output. Keep
             # the job reserved and suppress its late events until a retry or
