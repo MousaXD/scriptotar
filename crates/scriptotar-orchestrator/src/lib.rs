@@ -251,7 +251,10 @@ impl SidecarHost {
                     Ok(ReaderEvent::Protocol(event)) => {
                         if matches!(
                             *event,
-                            SidecarEvent::Shutdown { protocol: SIDECAR_PROTOCOL_VERSION, .. }
+                            SidecarEvent::Shutdown {
+                                protocol: SIDECAR_PROTOCOL_VERSION,
+                                ..
+                            }
                         ) {
                             acknowledged = true;
                         }
