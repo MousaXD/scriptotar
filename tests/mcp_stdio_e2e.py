@@ -68,7 +68,7 @@ with tempfile.TemporaryDirectory() as directory:
 
         initialized = rpc('initialize', {'protocolVersion': '2025-11-25'})['result']
         assert initialized['protocolVersion'] == '2025-11-25'
-        assert initialized['serverInfo']['version'] == '1.1.0', initialized
+        assert initialized['serverInfo']['version'] == '1.2.0', initialized
         assert rpc('ping')['result'] == {}
         tools = rpc('tools/list')['result']['tools']
         expected = {

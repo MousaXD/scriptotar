@@ -29,7 +29,7 @@ class LiveMediaContractTests(unittest.TestCase):
 
     def test_github_summary_is_explicit_on_download_failure(self):
         report = {
-            'app_version':'1.1.0',
+            'app_version':'1.2.0',
             'results':[
                 {'platform':'youtube','download':'passed','transcription':'passed','status':'passed'},
                 {'platform':'instagram','download':'not_run','transcription':'not_run','status':'failed',

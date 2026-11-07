@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory(prefix='scriptotar-mcp-desktop-e2e-') as raw:
             assert reply['result'].get('isError') is True, reply
 
         identity = rpc('initialize', {'protocolVersion':'2025-11-25'})['result']['serverInfo']
-        assert identity['name'] == 'scriptotar' and identity['version'] == '1.1.0', identity
+        assert identity['name'] == 'scriptotar' and identity['version'] == '1.2.0', identity
         denied(call('list_projects'))
         denied(call('download_video', project_id=str(uuid.uuid4()), url='https://youtube.com/watch?v=123'))
 
