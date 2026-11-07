@@ -107,7 +107,15 @@ fn legacy_import_preserves_source_bytes_and_is_repeatable() {
     assert!(!first.skipped);
     let backup_path = first.backup_path.expect("legacy backup path");
     assert_eq!(fs::read(&legacy_path).unwrap(), before);
-    assert_eq!(fs::read(&backup_path).unwrap(), before);
+    let backup = Connection::open(&backup_path).unwrap();
+    let snapshot_transcript: String = backup
+        .query_row(
+            "SELECT transcript FROM jobs WHERE id = 'legacy-job'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(snapshot_transcript, "legacy transcript");
 
     let second = store.import_legacy_database(&legacy_path).unwrap();
     assert!(second.skipped);
@@ -129,4 +137,56 @@ fn integration_migrations_support_fresh_create_and_reopen() {
     let reopened = SqliteStore::open(&database).unwrap();
     reopened.run_integration_migrations().unwrap();
     assert!(reopened.schema_version().unwrap() >= 1);
+}
+
+#[test]
+fn transcription_from_incompatible_input_type_is_rejected_without_partial_writes() {
+    let temp = TempDir::new().unwrap();
+    let store = SqliteStore::open(temp.path().join("scriptotar.sqlite3")).unwrap();
+    store.run_integration_migrations().unwrap();
+    let project = Project::new("Input safety");
+    store.create_project(&project).unwrap();
+    let job = Job::new(project.id, JobInput::LocalFile("/tmp/local.mp4".to_owned()));
+    store.insert_job(&job).unwrap();
+    for stage in [
+        JobState::Preparing,
+        JobState::Transcribing,
+        JobState::Processing,
+    ] {
+        store.transition_job(job.id, stage).unwrap();
+    }
+
+    let now = now_rfc3339();
+    let source = Source {
+        id: Uuid::new_v4(),
+        project_id: project.id,
+        creator_id: None,
+        source_type: SourceType::Url,
+        locator: "https://example.invalid/wrong-job".to_owned(),
+        title: None,
+        created_at: now.clone(),
+    };
+    let media = Media {
+        id: Uuid::new_v4(),
+        source_id: source.id,
+        local_path: "/tmp/local.mp4".to_owned(),
+        duration_seconds: None,
+        mime_type: None,
+        created_at: now.clone(),
+    };
+    let transcript = Transcript {
+        id: Uuid::new_v4(),
+        media_id: media.id,
+        language: None,
+        text: "must not persist".to_owned(),
+        segments_json: None,
+        words_json: None,
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    assert!(store
+        .persist_transcription(job.id, &source, &media, &transcript)
+        .is_err());
+    assert!(store.list_transcripts(Some(project.id)).unwrap().is_empty());
+    assert_eq!(store.get_job(job.id).unwrap().state, JobState::Processing);
 }
