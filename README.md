@@ -6,7 +6,7 @@ Built with **Rust (Tauri v2)** and **Svelte 5**, Scriptotar provides high-perfor
 
 ## Overview
 
-- **Version**: `1.1.0`
+- **Version**: `1.2.0`
 - **Supported Platforms**: Windows (`.exe` NSIS installer) and Linux (`.deb` package)
 - **Zero Configuration**: Bundles Faster Whisper, FFmpeg, and yt-dlp. No separate Python or FFmpeg installation required.
 - **Bilingual & RTL**: Native Arabic and English localization with instant language switching.
@@ -23,12 +23,12 @@ Download the latest release for your platform from the [GitHub Releases](https:/
 
 ### Windows
 Download and run the installer:
-- **`Scriptotar-Next-1.1.0-x64-setup.exe`** (or rolling `Scriptotar-Next-latest-x64-setup.exe`)
+- **`Scriptotar-Next-1.2.0-x64-setup.exe`** (or rolling `Scriptotar-Next-latest-x64-setup.exe`)
 
 ### Linux (Debian / Ubuntu / Pop!_OS)
 Download and install the Debian package:
 ```bash
-sudo apt install ./Scriptotar-Next-1.1.0-amd64.deb
+sudo apt install ./Scriptotar-Next-1.2.0-amd64.deb
 ```
 
 ---
@@ -70,7 +70,7 @@ See [MCP setup and security](docs/mcp/README.md). All capabilities start disable
 
 ## E2E certification
 
-See [Scriptotar 1.1.0 E2E coverage](docs/E2E-COVERAGE-1.1.0.md) for the exact
+See [Scriptotar 1.2.0 E2E coverage](docs/E2E-COVERAGE-1.2.0.md) for the exact
 Rust, Tauri, MCP, sidecar, Windows/Linux, and live YouTube/Instagram/TikTok
 checks. External-provider tests are strict and may expose platform access
 restrictions rather than allowing an artificial pass.

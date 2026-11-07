@@ -92,6 +92,7 @@ def clip_audio(source: Path, destination: Path) -> tuple[float, str]:
 def check_case(case: LiveCase, root: Path, transcribe: bool) -> dict[str, Any]:
     from scriptotar_sidecar.engine import download_url, transcribe_media, write_outputs
     from scriptotar_sidecar.validation import validate_job_payload
+    from scriptotar_sidecar.version import SIDECAR_VERSION
 
     directory = root / case.platform
     directory.mkdir(mode=0o700)
@@ -152,7 +153,7 @@ def check_case(case: LiveCase, root: Path, transcribe: bool) -> dict[str, Any]:
             if not all((exports / relative).is_file() for relative in files.values()):
                 raise CanaryFailure('Transcription output files are missing')
             saved = json.loads((exports / files['json']).read_text(encoding='utf-8'))
-            if saved['sidecar_version'] != '1.1.0' or saved['device'] != 'cpu':
+            if saved['sidecar_version'] != SIDECAR_VERSION or saved['device'] != 'cpu':
                 raise CanaryFailure('Saved transcript identity or device is incorrect')
             result['transcription'] = 'passed'
             result['segment_count'] = len(inference['segments'])
