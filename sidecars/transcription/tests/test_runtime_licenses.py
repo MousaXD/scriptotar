@@ -1,13 +1,83 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from runtime_licenses import LICENSE_METADATA_FALLBACKS, classify_ffmpeg_license, parse_pyav_ffmpeg_report
+import validate_runtime
+
+from runtime_licenses import (
+    CPYTHON_3_12_LICENSE_SHA256,
+    CPYTHON_REVIEWED_3_12_VERSIONS,
+    LICENSE_METADATA_FALLBACKS,
+    classify_ffmpeg_license,
+    parse_pyav_ffmpeg_report,
+)
 
 
 class RuntimeLicenseTests(unittest.TestCase):
+    def test_reviewed_python_runtime_patches_stay_narrowly_pinned(self) -> None:
+        # The 3.12.16 source license is identical to the pinned 3.12.14 text.
+        # Unknown future runtimes must still fail closed and require review.
+        self.assertIn("3.12.16", CPYTHON_REVIEWED_3_12_VERSIONS)
+        self.assertNotIn("3.12.17", CPYTHON_REVIEWED_3_12_VERSIONS)
+        self.assertEqual(len(CPYTHON_3_12_LICENSE_SHA256), 64)
+        self.assertTrue(all(char in "0123456789abcdef" for char in CPYTHON_3_12_LICENSE_SHA256))
+
+
+    def test_packaged_python_license_hash_detects_modified_bytes(self) -> None:
+        # Installed-runtime validation must check shipped bytes, not merely
+        # whether a CPython patch version appears in the reviewed allowlist.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legal = root / "legal" / "python-runtime"
+            legal.mkdir(parents=True)
+            shipped = legal / "LICENSE.txt"
+            shipped.write_bytes(b"reviewed license fixture")
+            expected = hashlib.sha256(shipped.read_bytes()).hexdigest()
+            manifest = {
+                "schema": 1,
+                "python_runtime": {
+                    "implementation": "cpython",
+                    "version": "3.12.16",
+                    "license_file": "legal/python-runtime/LICENSE.txt",
+                    "license_sha256": expected,
+                },
+                "python_components": [
+                    {"name": name, "license_declared": "fixture"}
+                    for name in sorted(validate_runtime.REQUIRED_PYTHON_COMPONENTS)
+                ],
+            }
+            (root / "RUNTIME-LICENSES.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with (
+                patch.object(validate_runtime, "REQUIRED_LEGAL_FILES", set()),
+                patch.object(validate_runtime, "_validate_standalone_ffmpeg"),
+                patch.object(validate_runtime, "_validate_pyav_ffmpeg"),
+            ):
+                validate_runtime._validate_python_licenses(root)
+                shipped.write_bytes(b"modified license fixture")
+                with self.assertRaisesRegex(RuntimeError, "license checksum mismatch"):
+                    validate_runtime._validate_python_licenses(root)
+
+    def test_python_license_manifest_requires_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legal = root / "legal"
+            legal.mkdir()
+            (legal / "LICENSE.txt").write_bytes(b"fixture")
+            manifest = {
+                "schema": 1,
+                "python_runtime": {"license_file": "legal/LICENSE.txt"},
+            }
+            (root / "RUNTIME-LICENSES.json").write_text(json.dumps(manifest), encoding="utf-8")
+            with patch.object(validate_runtime, "REQUIRED_LEGAL_FILES", set()):
+                with self.assertRaisesRegex(RuntimeError, "license checksum mismatch"):
+                    validate_runtime._validate_python_licenses(root)
+
     def test_curl_cffi_native_wheel_matches_reviewed_recipe(self) -> None:
         root = Path(__file__).resolve().parents[1]
         requirements = root / "requirements-engine.txt"

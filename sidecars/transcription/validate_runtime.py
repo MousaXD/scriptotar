@@ -181,7 +181,14 @@ def _validate_python_licenses(root: Path) -> dict:
     python_license = python_runtime.get("license_file")
     if not isinstance(python_license, str):
         raise RuntimeError("runtime license manifest does not identify the embedded Python license")
-    _require_relative_file(root, python_license)
+    installed_python_license = _require_relative_file(root, python_license)
+    expected_python_license_sha = python_runtime.get("license_sha256")
+    actual_python_license_sha = _sha256(installed_python_license)
+    if not isinstance(expected_python_license_sha, str) or actual_python_license_sha != expected_python_license_sha:
+        raise RuntimeError(
+            "packaged Python runtime license checksum mismatch: "
+            "the installed license must match the generated legal inventory"
+        )
     _validate_standalone_ffmpeg(root, manifest.get("ffmpeg"))
     _validate_pyav_ffmpeg(root, manifest.get("pyav_ffmpeg"))
 

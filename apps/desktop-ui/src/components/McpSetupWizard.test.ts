@@ -47,7 +47,7 @@ describe('local MCP connection setup wizard', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ executeCommands: true }), true);
   });
 
-  it('validates OpenAI tunnel ID and supports an existing HTTPS hostname', async () => {
+  it('requires explicit opt-in before saving OpenAI key and supports an HTTPS hostname', async () => {
     const api = await enableReadOnly();
     const openai = vi.spyOn(api, 'mcpConnectOpenai');
     await fireEvent.click(screen.getByRole('radio', { name: /OpenAI Secure Tunnel/ }));
@@ -55,6 +55,10 @@ describe('local MCP connection setup wizard', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Invalid tunnel ID');
     await fireEvent.input(screen.getByPlaceholderText('tunnel_0123456789abcdef0123456789abcdef'), { target: { value: 'tunnel_' + 'a'.repeat(32) } });
     await fireEvent.input(screen.getByPlaceholderText('sk-...'), { target: { value: 'sk-test-secret' } });
+    const remember = screen.getByLabelText('Remember key in the OS keyring (never plain-text settings)');
+    expect(remember).not.toBeChecked();
+    await fireEvent.click(remember);
+    expect(remember).toBeChecked();
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     await screen.findByTestId('mcp-step-finish');
     expect(openai).toHaveBeenCalledWith('tunnel_' + 'a'.repeat(32), 'sk-test-secret', true);

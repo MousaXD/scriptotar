@@ -13,20 +13,23 @@
 
   const kinds: Array<'All' | LibraryKind> = ['All', 'Transcript', 'Research', 'AI run', 'Project', 'Creator'];
 
+  // Preserve the backend's newest-first order without quadratic indexOf lookups during filtering.
+  $: newestOrder = new Map(items.map((item, index) => [item, index]));
   $: filtered = items
     .filter((item) => kind === 'All' || item.kind === kind)
     .filter((item) => `${item.title} ${item.subtitle} ${item.platform || ''} ${item.metric || ''}`.toLowerCase().includes(query.trim().toLowerCase()));
   $: visible = [...filtered].sort((a, b) => {
     if (sort === 'title') return a.title.localeCompare(b.title);
     if (sort === 'type') return a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title);
-    return items.indexOf(a) - items.indexOf(b);
+    return (newestOrder.get(a) ?? 0) - (newestOrder.get(b) ?? 0);
   });
   $: counts = kinds.reduce((result, current) => {
     result[current] = current === 'All' ? items.length : items.filter((item) => item.kind === current).length;
     return result;
   }, {} as Record<'All' | LibraryKind, number>);
 
-  function kindLabel(value: LibraryKind) {
+  function kindLabel(value: 'All' | LibraryKind) {
+    if (value === 'All') return $translator('library.kindAll');
     if (value === 'Transcript') return $translator('library.kind.transcript');
     if (value === 'Research') return $translator('library.kind.research');
     if (value === 'AI run') return $translator('library.kind.ai');
@@ -37,41 +40,41 @@
   async function open(item: LibraryItem) {
     actionError = '';
     try { await onOpen(item); }
-    catch (cause) { actionError = cause instanceof Error ? cause.message : 'Could not open this library item.'; }
+    catch (cause) { actionError = cause instanceof Error ? cause.message : $translator('library.openFailed'); }
   }
 </script>
 
-<section class="view-head library-head">
-  <div><span class="eyebrow">Unified local index</span><h1>Library</h1><p>Browse the active project's transcripts, creator research, AI runs, projects, and creators, then open the related workspace directly.</p></div>
-  <span class="library-total" data-i18n-ignore><strong>{items.length}</strong> {$translator('library.localItems', { count: items.length }).replace(String(items.length), '').trim()}</span>
+<section class="view-head library-head" data-i18n-ignore>
+  <div><span class="eyebrow">{$translator('library.eyebrow')}</span><h1>{$translator('library.heading')}</h1><p>{$translator('library.description')}</p></div>
+  <span class="library-total"><strong>{items.length}</strong> {$translator('library.totalLabel')}</span>
 </section>
 
-<section class="panel library-panel">
+<section class="panel library-panel" data-i18n-ignore>
   <div class="library-toolbar">
-    <label class="search-field library-search"><span aria-hidden="true">⌕</span><input aria-label="Search library" bind:value={query} placeholder="Search your local library…" /></label>
-    <label class="sort-select"><span>Sort</span><select bind:value={sort} aria-label="Library sort"><option value="newest">Newest first</option><option value="title">Title</option><option value="type">Type</option></select></label>
+    <label class="search-field library-search"><span aria-hidden="true">⌕</span><input aria-label={$translator('library.search')} bind:value={query} placeholder={$translator('library.searchPlaceholder')} /></label>
+    <label class="sort-select"><span>{$translator('library.sort')}</span><select bind:value={sort} aria-label={$translator('library.sortControl')}><option value="newest">{$translator('library.sortNewest')}</option><option value="title">{$translator('library.sortTitle')}</option><option value="type">{$translator('library.sortType')}</option></select></label>
   </div>
 
-  <div class="kind-tabs" role="group" aria-label="Library kind">
+  <div class="kind-tabs" role="group" aria-label={$translator('library.kindGroup')}>
     {#each kinds as itemKind}
       <button class:active={kind === itemKind} aria-pressed={kind === itemKind} on:click={() => kind = itemKind}>
-        <span>{itemKind}</span><b>{counts[itemKind]}</b>
+        <span>{kindLabel(itemKind)}</span><b>{counts[itemKind]}</b>
       </button>
     {/each}
   </div>
 
-  <div class="library-result-bar"><span aria-live="polite">{visible.length} {visible.length === 1 ? 'item' : 'items'}</span>{#if query.trim()}<span data-i18n-ignore>{$translator('library.matching', { query: query.trim() })}</span>{/if}</div>
+  <div class="library-result-bar"><span aria-live="polite">{$translator(visible.length === 1 ? 'library.oneResult' : 'library.manyResults', { count: visible.length })}</span>{#if query.trim()}<span data-i18n-ignore>{$translator('library.matching', { query: query.trim() })}</span>{/if}</div>
 
   {#if visible.length === 0}
-    <EmptyState title="Nothing matches" message="Try a broader search or another library type." />
+    <EmptyState title={$translator('library.emptyTitle')} message={$translator('library.emptyMessage')} />
   {:else}
     <div class="library-list">
       <div class="library-columns" aria-hidden="true" data-i18n-ignore><span>{$translator('library.column.item')}</span><span>{$translator('library.column.source')}</span><span>{$translator('library.column.signal')}</span><span>{$translator('library.column.date')}</span></div>
       {#each visible as item}
-        <button aria-label={`Open ${item.kind}: ${item.title}`} on:click={() => open(item)}>
+        <button aria-label={$translator('library.openItem', { kind: kindLabel(item.kind), title: item.title })} on:click={() => open(item)}>
           <span class={`kind-icon kind-${item.kind.toLowerCase().replaceAll(' ', '-')}`} aria-hidden="true">{item.kind.slice(0,1)}</span>
           <span class="library-copy"><strong>{item.title}</strong><small><span class="kind-label" data-i18n-ignore>{kindLabel(item.kind)}</span>{item.subtitle}</small></span>
-          <span class="library-meta">{item.platform || 'Local'}</span>
+          <span class="library-meta">{item.platform || $translator('library.local')}</span>
           <span class="library-meta metric-copy">{item.metric || '—'}</span>
           <span class="library-date">{item.date}</span>
           <span class="open-arrow" aria-hidden="true">›</span>
@@ -80,7 +83,7 @@
     </div>
   {/if}
 </section>
-{#if actionError}<p class="status-copy" role="alert">{actionError}</p>{/if}
+{#if actionError}<p class="status-copy" role="alert" data-i18n-ignore>{actionError}</p>{/if}
 
 <style>
   .library-head { align-items: center; }

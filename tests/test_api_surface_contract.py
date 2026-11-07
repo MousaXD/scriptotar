@@ -18,7 +18,7 @@ TEST = (ROOT / 'apps/desktop-ui/src/api/tauriClient.test.ts').read_text()
 
 
 def actual_commands() -> set[str]:
-    return set(re.findall(r'#\[tauri::command\]\s*fn\s+(\w+)\s*\(', RUST))
+    return set(re.findall(r'#\[tauri::command\]\s*(?:async\s+)?fn\s+(\w+)\s*\(', RUST))
 
 
 def dispatched_commands() -> set[str]:

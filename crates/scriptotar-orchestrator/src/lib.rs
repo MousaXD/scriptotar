@@ -120,21 +120,30 @@ impl SidecarHost {
         let (tx, events) = mpsc::channel();
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
+            // Once a protocol violation is observed, continue reading only
+            // for an authenticated sidecar shutdown acknowledgment. The
+            // reader must not close early and hide proof of cleanup.
+            let mut violated = false;
             for raw in reader.lines() {
                 match raw {
                     Ok(line) if line.trim().is_empty() => {}
                     Ok(line) => match serde_json::from_str::<SidecarEvent>(&line) {
                         Ok(event) => {
+                            if violated && !matches!(event, SidecarEvent::Shutdown { .. }) {
+                                continue;
+                            }
                             if tx.send(ReaderEvent::Protocol(Box::new(event))).is_err() {
                                 return;
                             }
                         }
                         Err(error) => {
-                            let _ = tx.send(ReaderEvent::Violation(format!(
-                                "{error}: {}",
-                                line.chars().take(300).collect::<String>()
-                            )));
-                            return;
+                            if !violated {
+                                violated = true;
+                                let _ = tx.send(ReaderEvent::Violation(format!(
+                                    "{error}: {}",
+                                    line.chars().take(300).collect::<String>()
+                                )));
+                            }
                         }
                     },
                     Err(error) => {
@@ -223,20 +232,51 @@ impl SidecarHost {
         Ok(None)
     }
 
-    fn shutdown(&mut self) {
-        let _ = self.send(&SidecarCommand::Shutdown {
-            protocol: SIDECAR_PROTOCOL_VERSION,
-            request_id: None,
-        });
-        for _ in 0..20 {
+    fn shutdown(&mut self) -> bool {
+        let command_sent = self
+            .send(&SidecarCommand::Shutdown {
+                protocol: SIDECAR_PROTOCOL_VERSION,
+                request_id: None,
+            })
+            .is_ok();
+        // Python sends a shutdown ACK only after verified engine-tree cleanup.
+        // Parent exit alone is never sufficient (an escaped descendant may
+        // survive); consume the ACK before accepting a restart as safe.
+        // Windows taskkill /T /F may need up to five seconds; keep 10s grace.
+        let mut acknowledged = false;
+        let mut reader_closed = false;
+        for _ in 0..200 {
+            loop {
+                match self.events.try_recv() {
+                    Ok(ReaderEvent::Protocol(event)) => {
+                        if matches!(
+                            *event,
+                            SidecarEvent::Shutdown {
+                                protocol: SIDECAR_PROTOCOL_VERSION,
+                                ..
+                            }
+                        ) {
+                            acknowledged = true;
+                        }
+                    }
+                    Ok(ReaderEvent::Closed) => reader_closed = true,
+                    Ok(ReaderEvent::Violation(_)) => {}
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                }
+            }
             match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Ok(Some(_)) if command_sent && acknowledged => return true,
+                Ok(Some(_)) if reader_closed => return false,
+                Ok(_) => thread::sleep(Duration::from_millis(50)),
                 Err(_) => break,
             }
         }
+        eprintln!(
+            "[scriptotar-sidecar] shutdown ACK / exit not confirmed after 10s; forcing Python parent exit does not prove its engine descendants stopped"
+        );
         let _ = self.child.kill();
         let _ = self.child.wait();
+        false
     }
 }
 
@@ -312,19 +352,48 @@ fn worker_loop<R>(
 {
     let mut queue = VecDeque::new();
     let mut host: Option<SidecarHost> = None;
+    // Sticky until the active sidecar confirms cancellation. A sidecar that
+    // disappears after reporting failed tree cleanup cannot prove its engine
+    // descendants stopped; never start the next queued transcription then.
+    let mut cleanup_unverified = false;
 
     loop {
+        if cleanup_unverified {
+            // Preserve queued work for an explicit operator recovery. Allow
+            // cancellation of queued jobs, but never admit a new worker here.
+            match controls.recv() {
+                Ok(Control::Enqueue(job_id)) => {
+                    if !queue.contains(&job_id) {
+                        queue.push_back(job_id);
+                    }
+                }
+                Ok(Control::Cancel(job_id)) => {
+                    cancel_queued(&repository, &mut queue, job_id, &notifier)
+                }
+                Err(_) => break,
+            }
+            continue;
+        }
         if let Some(job_id) = queue.pop_front() {
             if let Err(error) = run_job(
                 &repository,
                 &config,
                 &controls,
                 &mut queue,
-                &mut host,
+                (&mut host, &mut cleanup_unverified),
                 job_id,
                 &notifier,
             ) {
-                record_runtime_error(&repository, job_id, &error, &notifier);
+                if cleanup_unverified {
+                    // Keep the active job nonterminal. Failing it would lose
+                    // the ownership reservation while descendants may live.
+                    eprintln!(
+                        "[scriptotar-sidecar] cleanup unverified for job {job_id}: {error}; queued successors blocked pending operator recovery"
+                    );
+                    notify_job(&notifier, job_id);
+                } else {
+                    record_runtime_error(&repository, job_id, &error, &notifier);
+                }
             }
             continue;
         }
@@ -348,13 +417,14 @@ fn run_job<R>(
     config: &RuntimeConfig,
     controls: &Receiver<Control>,
     queue: &mut VecDeque<Uuid>,
-    host: &mut Option<SidecarHost>,
+    session: (&mut Option<SidecarHost>, &mut bool),
     job_id: Uuid,
     notifier: &JobChangeNotifier,
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
+    let (host, cleanup_unverified) = session;
     let job = repository.get_job(job_id)?;
     if job.state != JobState::Queued {
         return Ok(());
@@ -380,50 +450,62 @@ where
         .as_mut()
         .ok_or_else(|| OrchestratorError::Unavailable("sidecar did not start".to_owned()))?;
 
-    sidecar.send(&transcribe_command(&job, &settings, &output_root))?;
+    if let Err(error) = sidecar.send(&transcribe_command(&job, &settings, &output_root)) {
+        // A failed write/flush may have delivered a partial or complete job.
+        *cleanup_unverified = true;
+        return Err(error);
+    }
 
     loop {
-        drain_controls(repository, controls, queue, sidecar, job_id, notifier)?;
+        if let Err(error) = drain_controls(repository, controls, queue, sidecar, job_id, notifier) {
+            *cleanup_unverified = true;
+            return Err(error);
+        }
 
         match sidecar.events.recv_timeout(Duration::from_millis(50)) {
             Ok(ReaderEvent::Protocol(event)) => {
+                let reported_failure = matches!(&*event, SidecarEvent::Error { error, .. } if error.code == "ENGINE_TERMINATION_FAILED");
+                let confirmed_cancel = matches!(&*event, SidecarEvent::Cancelled { .. });
+                if reported_failure {
+                    *cleanup_unverified = true;
+                }
+                // An unverified worker can still send late results/errors.
+                // Only a verified cancellation ACK may release this job.
+                if *cleanup_unverified && !reported_failure && !confirmed_cancel {
+                    eprintln!("[scriptotar-sidecar] ignoring terminal/progress event while engine cleanup remains unverified for job {job_id}");
+                    continue;
+                }
                 match handle_event(repository, &job, *event, notifier) {
-                    Ok(true) => return Ok(()),
+                    Ok(true) => {
+                        if confirmed_cancel {
+                            *cleanup_unverified = false;
+                        }
+                        return Ok(());
+                    }
                     Ok(false) => {}
                     Err(error @ OrchestratorError::Protocol(_)) => {
-                        sidecar.shutdown();
+                        *cleanup_unverified = !sidecar.shutdown();
                         return Err(error);
                     }
                     Err(error) => return Err(error),
                 }
             }
             Ok(ReaderEvent::Violation(error)) => {
-                sidecar.shutdown();
+                *cleanup_unverified = !sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
             }
-            Ok(ReaderEvent::Closed) => match sidecar.wait_for_exit_after_stream_close()? {
-                Some(status) if !status.success() => {
-                    return Err(OrchestratorError::Unavailable(format!(
-                        "sidecar exited with {status}"
-                    )));
-                }
-                Some(_) => {
-                    let current = repository.get_job(job_id)?;
-                    if current.state.is_active() {
-                        repository.transition_job(job_id, JobState::Interrupted)?;
-                        notify_job(notifier, job_id);
-                    }
-                    return Ok(());
-                }
-                None => {
-                    sidecar.shutdown();
-                    return Err(OrchestratorError::Unavailable(
-                        "sidecar stdout closed while the process remained alive".to_owned(),
-                    ));
-                }
-            },
+            Ok(ReaderEvent::Closed) => {
+                // EOF while a job is still awaiting a verified terminal event
+                // cannot prove an escaped engine descendant is gone.
+                *cleanup_unverified = true;
+                let status = sidecar.wait_for_exit_after_stream_close()?;
+                return Err(OrchestratorError::Unavailable(format!(
+                    "sidecar stream closed without verified job cleanup (exit: {status:?})"
+                )));
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
+                *cleanup_unverified = true;
                 sidecar.shutdown();
                 return Err(OrchestratorError::Unavailable(
                     "sidecar event stream disconnected".to_owned(),
@@ -518,6 +600,18 @@ where
             Ok(true)
         }
         SidecarEvent::Error { error, .. } => {
+            if error.code == "ENGINE_TERMINATION_FAILED" {
+                // The sidecar still owns a potentially live worker/descendant
+                // tree after cancellation failed. Do not mark this job terminal
+                // or dequeue a successor: allow a subsequent cancellation
+                // attempt to confirm cleanup before releasing the job slot.
+                eprintln!(
+                    "[scriptotar-sidecar] cancellation cleanup unconfirmed for job {}: {}",
+                    original_job.id, error.message
+                );
+                notify_job(notifier, original_job.id);
+                return Ok(false);
+            }
             let message = format!("{}: {}", error.code, error.message);
             let current = repository.get_job(original_job.id)?;
             if current.state.is_active() {
@@ -882,6 +976,113 @@ mod tests {
         assert_eq!(
             wait_for_terminal(&store, next.id).state,
             JobState::Completed
+        );
+    }
+
+    #[test]
+    fn failed_cancel_cleanup_keeps_job_active_until_retry() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("cancel-failure.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Cancellation failure");
+        store.create_project(&project).unwrap();
+        let job = Job::new(
+            project.id,
+            JobInput::LocalFile(temp.path().join("input.mp4").to_string_lossy().into_owned()),
+        );
+        store.insert_job(&job).unwrap();
+        store.transition_job(job.id, JobState::Preparing).unwrap();
+        let notifier: JobChangeNotifier = Arc::new(|_| {});
+        let error = SidecarEvent::Error {
+            protocol: SIDECAR_PROTOCOL_VERSION,
+            job_id: Some(job.id.to_string()),
+            error: scriptotar_media::SidecarErrorPayload {
+                code: "ENGINE_TERMINATION_FAILED".to_owned(),
+                message: "process tree still running".to_owned(),
+                retryable: true,
+                details: None,
+            },
+            request_id: None,
+        };
+        assert!(!handle_event(&store, &job, error, &notifier).unwrap());
+        assert_eq!(store.get_job(job.id).unwrap().state, JobState::Preparing);
+    }
+
+    #[test]
+    fn failed_engine_tree_cleanup_then_sidecar_exit_never_starts_queued_successor() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("unverified.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Unverified cleanup");
+        store.create_project(&project).unwrap();
+        let script = temp.path().join("unverified_sidecar.py");
+        // Genuine subprocess and pipe, not a mocked handle_event call: emit
+        // failed cleanup, then exit without a cancellation acknowledgment.
+        fs::write(
+            &script,
+            r#"import json
+import sys
+print(json.dumps({"type":"ready","protocol":1,"capabilities":{"sidecar_version":"test","protocol_versions":[1]}}), flush=True)
+for line in sys.stdin:
+    command = json.loads(line)
+    if command.get("type") == "transcribe":
+        print(json.dumps({"type":"error","protocol":1,"job_id":command["job_id"],"error":{"code":"ENGINE_TERMINATION_FAILED","message":"descendant not verified","retryable":True}}), flush=True)
+        sys.exit(1)
+"#,
+        )
+        .unwrap();
+        let config = RuntimeConfig::new("python3", script, temp.path().join("out"));
+        let orchestrator = JobOrchestrator::start(store.clone(), config);
+        let first = enqueue_file(&store, &orchestrator, &temp.path().join("first.mp4"));
+        let successor = enqueue_file(&store, &orchestrator, &temp.path().join("successor.mp4"));
+        // Enough time for actual sidecar EOF and the formerly unsafe dequeue.
+        thread::sleep(Duration::from_millis(750));
+        assert_eq!(store.get_job(first.id).unwrap().state, JobState::Preparing);
+        assert_eq!(store.get_job(successor.id).unwrap().state, JobState::Queued);
+        // A new request cannot implicitly unlock the poisoned worker loop.
+        let later = enqueue_file(&store, &orchestrator, &temp.path().join("later.mp4"));
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(store.get_job(later.id).unwrap().state, JobState::Queued);
+    }
+
+    #[test]
+    fn shutdown_allows_graceful_cleanup_longer_than_half_a_second() {
+        let temp = TempDir::new().unwrap();
+        let marker = temp.path().join("cleanup-finished");
+        // A controlled sidecar-like subprocess simulates cleanup that takes
+        // longer than the old 500ms Rust timeout. The marker can only exist if
+        // Rust did not kill the child before cleanup finished.
+        let script = r#"import os
+import sys
+import time
+for command in sys.stdin:
+    if '"shutdown"' in command:
+        time.sleep(0.85)
+        with open(os.environ["SCRIPTOTAR_TEST_CLEANUP_MARKER"], "w", encoding="utf-8") as output:
+            output.write("confirmed")
+        break
+"#;
+        let mut child = Command::new("python3")
+            .arg("-u")
+            .arg("-c")
+            .arg(script)
+            .env("SCRIPTOTAR_TEST_CLEANUP_MARKER", &marker)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let (_sender, events) = mpsc::channel();
+        let mut host = SidecarHost {
+            child,
+            stdin,
+            events,
+        };
+        host.shutdown();
+        assert!(
+            marker.is_file(),
+            "the Rust shutdown watchdog killed the sidecar before its cleanup completed"
         );
     }
 

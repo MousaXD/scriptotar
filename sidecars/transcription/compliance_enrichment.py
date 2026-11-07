@@ -9,7 +9,9 @@ import os
 import platform
 import re
 import tarfile
+import urllib.error
 import urllib.request
+import time
 from pathlib import Path
 from typing import Any
 
@@ -220,8 +222,24 @@ def _platform_key() -> str:
 
 def _download(url: str, *, expected_sha256: str | None = None, timeout: int = 120) -> bytes:
     request = urllib.request.Request(url, headers={"User-Agent": "Scriptotar-compliance-builder/1"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        data = response.read()
+    # GitHub/raw-source connections occasionally reset during packaging.
+    # Retry transport errors only; never retry or accept empty/changed legal
+    # notices, and never substitute a different source or bypass checksums.
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = response.read()
+            break
+        except urllib.error.HTTPError as exc:
+            # HTTPError subclasses URLError. Permanent authorization/missing-
+            # notice responses must fail immediately rather than be retried.
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise
+            time.sleep(1 + attempt)
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            if attempt == 2:
+                raise
+            time.sleep(1 + attempt)
     if not data:
         raise RuntimeError(f"downloaded empty compliance source: {url}")
     if expected_sha256:

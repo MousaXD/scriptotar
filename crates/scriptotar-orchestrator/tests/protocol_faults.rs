@@ -99,23 +99,17 @@ fn wrong_job_id_never_commits_to_the_active_job() {
 }
 
 #[test]
-fn nonzero_sidecar_exit_fails_current_job_and_later_job_succeeds() {
+fn nonzero_sidecar_exit_without_cleanup_ack_blocks_next_job() {
     let (temp, store, orchestrator) = setup();
     let broken = enqueue_file(&store, &orchestrator, &temp.path().join("sidecar-exit.mp4"));
     let next = enqueue_file(&store, &orchestrator, &temp.path().join("normal.mp4"));
 
-    let failed = wait_for_terminal(&store, broken.id);
-    assert_eq!(failed.state, JobState::Failed);
-    assert!(
-        failed
-            .last_error
-            .as_deref()
-            .is_some_and(|message| message.contains("sidecar exited")),
-        "unexpected persisted exit error: {:?}",
-        failed.last_error
-    );
-    assert_eq!(
-        wait_for_terminal(&store, next.id).state,
-        JobState::Completed
-    );
+    // The sidecar called os._exit(23) without a shutdown ACK. A dead parent
+    // is not proof that any launched engine descendants have stopped.
+    thread::sleep(Duration::from_millis(700));
+    assert!(store.get_job(broken.id).unwrap().state.is_active());
+    assert_eq!(store.get_job(next.id).unwrap().state, JobState::Queued);
+    let later = enqueue_file(&store, &orchestrator, &temp.path().join("still-queued.mp4"));
+    thread::sleep(Duration::from_millis(150));
+    assert_eq!(store.get_job(later.id).unwrap().state, JobState::Queued);
 }
