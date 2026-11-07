@@ -236,6 +236,18 @@ fn command_error(error: impl ToString) -> String {
     error.to_string()
 }
 
+/// Keep blocking SQLite, provider and subprocess work off Tauri's IPC executor.
+/// Preserve each command's original Result payload and argument validation.
+async fn on_blocking_worker<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|_| "backend worker failed".to_owned())?
+}
+
 fn packaged_executable(stem: &str) -> String {
     if cfg!(windows) {
         format!("{stem}.exe")
@@ -462,13 +474,15 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
 }
 
 #[tauri::command]
-fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
-    state.bootstrap().map_err(command_error)
+async fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.bootstrap().map_err(command_error)).await
 }
 
 #[tauri::command]
-fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
-    state.list_jobs().map_err(command_error)
+async fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.list_jobs().map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -483,13 +497,19 @@ fn search_transcripts(
 }
 
 #[tauri::command]
-fn get_transcript(
+async fn get_transcript(
     transcript_id: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<UiTranscript, String> {
     let transcript_id =
         Uuid::parse_str(&transcript_id).map_err(|_| "invalid transcript id".to_owned())?;
-    state.get_transcript(transcript_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_transcript(transcript_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -594,20 +614,22 @@ fn select_legacy_migration_candidate(
 }
 
 #[tauri::command]
-fn select_project(
+async fn select_project(
     project_id: Uuid,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
-    state.select_project(project_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.select_project(project_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn create_project(
+async fn create_project(
     name: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
     security::validate_project_name(&name)?;
-    state.create_project(name).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.create_project(name).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -696,18 +718,23 @@ fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> 
 }
 
 #[tauri::command]
-fn save_watchlist(
+async fn save_watchlist(
     query: ResearchQuery,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
     security::validate_research_query(&query)?;
-    state.save_watchlist(query)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_watchlist(query)).await
 }
 
 #[tauri::command]
-fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+async fn scan_creator(
+    query: ResearchQuery,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
     security::validate_research_query(&query)?;
-    state.scan_creator(query)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.scan_creator(query)).await
 }
 
 #[tauri::command]
@@ -726,9 +753,13 @@ fn build_ai_prompt(
 }
 
 #[tauri::command]
-fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
+async fn run_ai(
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.run_ai(&input)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.run_ai(&input)).await
 }
 
 fn command_output(command: &mut Command) -> Result<Option<String>, io::Error> {
@@ -931,6 +962,22 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn blocking_worker_keeps_results_and_errors_and_runs_off_caller_thread() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(on_blocking_worker(move || {
+            Ok::<_, String>(std::thread::current().id())
+        }))
+        .expect("blocking worker should return result");
+        assert_ne!(caller, worker);
+
+        let error = tauri::async_runtime::block_on(on_blocking_worker(|| {
+            Err::<(), String>("operation rejected".to_owned())
+        }))
+        .unwrap_err();
+        assert_eq!(error, "operation rejected");
+    }
 
     #[test]
     fn discovers_linux_packaged_runtime_for_headless_mcp() {
