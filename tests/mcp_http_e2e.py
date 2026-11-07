@@ -1,5 +1,6 @@
 """Black-box localhost HTTP MCP transport and authorization certification."""
 import http.client
+from contextlib import contextmanager
 import json
 import os
 import pathlib
@@ -10,6 +11,36 @@ import time
 
 BIN = pathlib.Path(os.environ.get('SCRIPTOTAR_MCP_BIN', 'target/debug/scriptotar-mcp'))
 assert BIN.is_file(), BIN
+
+
+@contextmanager
+def managed_gateway(binary, env):
+    """Always reap a long-running MCP child, even when an assertion fails.
+
+    Popen's own context manager waits forever on a still-running child when
+    the test body raises. A temporary stderr file also prevents PIPE backpressure
+    from deadlocking the gateway before HTTP requests can be answered.
+    """
+    with tempfile.TemporaryFile() as gateway_stderr:
+        proc = subprocess.Popen(
+            [str(binary), '--mcp-http'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=gateway_stderr, env=env,
+        )
+        try:
+            yield proc
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
+def checkpoint(label):
+    print(f'MCP HTTP E2E: {label}', flush=True)
 with tempfile.TemporaryDirectory() as work:
     root = pathlib.Path(work)
     policy_file = root / 'mcp-permissions.json'
@@ -50,11 +81,11 @@ with tempfile.TemporaryDirectory() as work:
         port = sock.getsockname()[1]
     env = {**os.environ, 'SCRIPTOTAR_DB_PATH': str(root / 'scriptotar.sqlite3'),
            'SCRIPTOTAR_MCP_PORT': str(port)}
-    with subprocess.Popen([str(BIN), '--mcp-http'], stdin=subprocess.DEVNULL,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env) as proc:
+    checkpoint('launching installed/local gateway')
+    with managed_gateway(BIN, env) as proc:
         for _ in range(100):
             if proc.poll() is not None:
-                raise RuntimeError(f'HTTP process exited: {proc.stderr.read().decode()}')
+                raise RuntimeError(f'HTTP process exited before readiness (status {proc.returncode})')
             try:
                 with socket.create_connection(('127.0.0.1', port), timeout=0.1):
                     break
@@ -63,6 +94,7 @@ with tempfile.TemporaryDirectory() as work:
         else:
             raise AssertionError('MCP HTTP gateway did not start')
 
+        checkpoint('gateway listening; validating authentication')
         assert request(port, auth=None)[0] == 401
         assert request(port, path='/mcp/p/' + 'wrong' * 13, auth=None)[0] == 401
         assert request(port, path='/mcp/p/' + 'c' * 64, auth=None)[0] == 200
@@ -94,6 +126,7 @@ with tempfile.TemporaryDirectory() as work:
         assert json.loads(result['result']['content'][0]['text']) == []
         # Authenticate before the complete body arrives, rotate BOTH credentials,
         # then finish the old request. It must not dispatch on stale credentials.
+        checkpoint('testing credential rotation during in-flight request')
         payload = json.dumps({'jsonrpc':'2.0','id':87,'method':'tools/call',
                               'params':{'name':'list_projects','arguments':{}}})
         connection = http.client.HTTPConnection('127.0.0.1', port, timeout=8)
@@ -119,6 +152,5 @@ with tempfile.TemporaryDirectory() as work:
         assert request(port, auth=other_token)[0] == 403
         assert request(port, path='/mcp/p/' + 'd' * 64, auth=None)[0] == 403
         assert proc.poll() is None
-        proc.terminate()
-        proc.wait(timeout=5)
+        checkpoint('revocation verified; cleaning up gateway')
 print('PASS: localhost HTTP auth, origin, content limits, dynamic policy and token revocation')
