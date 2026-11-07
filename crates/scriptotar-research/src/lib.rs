@@ -211,7 +211,7 @@ impl ResearchProvider for YtDlpProvider {
         let mut child = command.spawn().map_err(|error| {
             ResearchError::Provider(format!(
                 "could not start yt-dlp runtime: {}",
-                provider_io_message(&error)
+                provider_spawn_message(&error)
             ))
         })?;
         let stdout = child
@@ -222,13 +222,9 @@ impl ResearchProvider for YtDlpProvider {
             .stderr
             .take()
             .ok_or_else(|| ResearchError::Provider("yt-dlp stderr was unavailable".to_owned()))?;
-        let stderr_reader = thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stderr
-                .take(MAX_PROVIDER_ERROR_BYTES)
-                .read_to_end(&mut bytes);
-            String::from_utf8_lossy(&bytes).trim().to_owned()
-        });
+        // Keep draining stderr even after the diagnostic cap; otherwise yt-dlp can block
+        // forever on a full stderr pipe while we wait for its next stdout JSON line.
+        let stderr_reader = thread::spawn(move || capture_provider_stderr(stderr));
 
         let mut observations = Vec::new();
         let mut invalid_lines = 0_usize;
@@ -236,7 +232,7 @@ impl ResearchProvider for YtDlpProvider {
         let mut line = Vec::new();
         loop {
             line.clear();
-            let read = match reader.read_until(b'\n', &mut line) {
+            let read = match read_bounded_provider_line(&mut reader, &mut line) {
                 Ok(read) => read,
                 Err(error) => {
                     let _ = child.kill();
@@ -290,6 +286,35 @@ impl ResearchProvider for YtDlpProvider {
     }
 }
 
+// Collect only bounded diagnostic text while always draining the pipe to EOF.
+// A bounded Read::take would stop consuming stderr once it reached the cap, risking deadlock.
+fn capture_provider_stderr(mut stderr: impl Read) -> String {
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        match stderr.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                let remaining = (MAX_PROVIDER_ERROR_BYTES as usize).saturating_sub(bytes.len());
+                bytes.extend_from_slice(&chunk[..read.min(remaining)]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&bytes).trim().to_owned()
+}
+
+// BufRead::read_until alone can allocate an unbounded line before the size check.
+fn read_bounded_provider_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> std::io::Result<usize> {
+    reader
+        .take(MAX_PROVIDER_LINE_BYTES as u64 + 1)
+        .read_until(b'\n', line)
+}
+
 fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, ResearchError> {
     let Some(value) = raw
         .map(str::trim)
@@ -307,6 +332,16 @@ fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, Research
         ));
     }
     Ok(Some(value.to_owned()))
+}
+
+// Preserve the underlying errno for support/CI triage without exposing file paths,
+// process arguments, cookie material, or untrusted OS error text.
+fn provider_spawn_message(error: &std::io::Error) -> String {
+    let classification = provider_io_message(error);
+    match error.raw_os_error() {
+        Some(code) => format!("{classification} (OS error {code})"),
+        None => classification,
+    }
 }
 
 fn provider_io_message(error: &std::io::Error) -> String {
@@ -362,7 +397,10 @@ fn normalize_research_item(
         like_count: integer_metric(raw.get("like_count")),
         comment_count: integer_metric(raw.get("comment_count")),
         published_at,
-        duration_seconds: raw.get("duration").and_then(Value::as_f64),
+        duration_seconds: raw
+            .get("duration")
+            .and_then(Value::as_f64)
+            .filter(|seconds| seconds.is_finite() && *seconds >= 0.0),
         raw_json,
     }))
 }
@@ -373,11 +411,13 @@ fn first_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 }
 
 fn integer_metric(value: Option<&Value>) -> Option<i64> {
-    value.and_then(|value| {
-        value
-            .as_i64()
-            .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
-    })
+    value
+        .and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|number| i64::try_from(number).ok()))
+        })
+        .filter(|value| *value >= 0)
 }
 
 fn is_absolute_http_url(raw: &str) -> bool {
@@ -392,7 +432,12 @@ fn youtube_fallback(raw: &Value) -> Option<String> {
         return None;
     }
     let id = raw.get("id")?.as_str()?.trim();
-    if id.is_empty() || id.chars().count() > 128 {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
         return None;
     }
     Some(format!("https://www.youtube.com/watch?v={id}"))
@@ -537,6 +582,91 @@ mod tests {
                 .push((profile.as_url().to_string(), limit));
             Ok(Vec::new())
         }
+    }
+
+    #[test]
+    fn spawn_error_reports_errno_without_exposing_underlying_error_text() {
+        let coded = provider_spawn_message(&std::io::Error::from_raw_os_error(42));
+        assert!(coded.contains("OS error 42"));
+        let sensitive = std::io::Error::other("secret-cookie /private/path");
+        let public = provider_spawn_message(&sensitive);
+        assert_eq!(public, "local provider process I/O failed");
+        assert!(!public.contains("secret-cookie"));
+        assert!(!public.contains("/private/path"));
+    }
+
+    #[test]
+    fn provider_stderr_is_fully_drained_but_diagnostics_remain_bounded() {
+        let source = vec![b'e'; MAX_PROVIDER_ERROR_BYTES as usize + 128 * 1024];
+        let mut reader = std::io::Cursor::new(source.as_slice());
+        let diagnostic = capture_provider_stderr(&mut reader);
+        assert_eq!(reader.position(), source.len() as u64);
+        assert_eq!(diagnostic.len(), MAX_PROVIDER_ERROR_BYTES as usize);
+        assert!(diagnostic.bytes().all(|byte| byte == b'e'));
+    }
+
+    #[test]
+    fn bounded_line_reader_keeps_later_provider_records_intact() {
+        let source = b"first\nsecond\n";
+        let mut reader = BufReader::new(source.as_slice());
+        let mut line = Vec::new();
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            6
+        );
+        assert_eq!(line, b"first\n");
+        line.clear();
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            7
+        );
+        assert_eq!(line, b"second\n");
+        line.clear();
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn provider_line_read_stops_at_the_limit_even_without_newline() {
+        let oversized = vec![b'x'; MAX_PROVIDER_LINE_BYTES + 128];
+        let mut reader = BufReader::new(oversized.as_slice());
+        let mut line = Vec::new();
+        assert_eq!(
+            read_bounded_provider_line(&mut reader, &mut line).unwrap(),
+            MAX_PROVIDER_LINE_BYTES + 1
+        );
+        assert_eq!(line.len(), MAX_PROVIDER_LINE_BYTES + 1);
+    }
+
+    #[test]
+    fn rejects_corrupt_metrics_and_untrusted_youtube_fallback_ids() {
+        let profile = NetworkPolicy
+            .validate("https://www.youtube.com/@creator")
+            .unwrap();
+        let item = normalize_research_item(
+            &json!({
+                "webpage_url": "https://www.youtube.com/watch?v=safe",
+                "view_count": -17,
+                "like_count": 0,
+                "comment_count": 3,
+                "duration": -1.5
+            }),
+            profile.as_url(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(item.view_count, None);
+        assert_eq!(item.like_count, Some(0));
+        assert_eq!(item.comment_count, Some(3));
+        assert_eq!(item.duration_seconds, None);
+        assert!(normalize_research_item(
+            &json!({"extractor_key": "Youtube", "id": "safe&list=attacker"}),
+            profile.as_url()
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
@@ -695,7 +825,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn yt_dlp_result_count_is_bounded() {
-        let body = "printf '%s\\n' '{\"id\":\"a\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"b\",\"extractor_key\":\"Youtube\"}' '{\"id\":\"c\",\"extractor_key\":\"Youtube\"}'";
+        let body = r#"printf '%s\n' '{"id":"a","extractor_key":"Youtube"}' '{"id":"b","extractor_key":"Youtube"}' '{"id":"c","extractor_key":"Youtube"}'"#;
         let (_temp, fixture) = fixture_script(body);
         let provider = YtDlpProvider::new(YtDlpCommand::executable(fixture));
         let validated = NetworkPolicy
