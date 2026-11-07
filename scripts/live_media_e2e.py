@@ -152,7 +152,7 @@ def check_case(case: LiveCase, root: Path, transcribe: bool) -> dict[str, Any]:
             if not all((exports / relative).is_file() for relative in files.values()):
                 raise CanaryFailure('Transcription output files are missing')
             saved = json.loads((exports / files['json']).read_text(encoding='utf-8'))
-            if saved['sidecar_version'] != '1.1.0' or saved['device'] != 'cpu':
+            if saved['sidecar_version'] != SIDECAR_VERSION or saved['device'] != 'cpu':
                 raise CanaryFailure('Saved transcript identity or device is incorrect')
             result['transcription'] = 'passed'
             result['segment_count'] = len(inference['segments'])
