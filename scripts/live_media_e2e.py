@@ -92,6 +92,7 @@ def clip_audio(source: Path, destination: Path) -> tuple[float, str]:
 def check_case(case: LiveCase, root: Path, transcribe: bool) -> dict[str, Any]:
     from scriptotar_sidecar.engine import download_url, transcribe_media, write_outputs
     from scriptotar_sidecar.validation import validate_job_payload
+    from scriptotar_sidecar.version import SIDECAR_VERSION
 
     directory = root / case.platform
     directory.mkdir(mode=0o700)
