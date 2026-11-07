@@ -208,7 +208,7 @@ impl ResearchProvider for YtDlpProvider {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        let mut child = command.spawn().map_err(|error| {
+        let mut child = spawn_provider_command(&mut command).map_err(|error| {
             ResearchError::Provider(format!(
                 "could not start yt-dlp runtime: {}",
                 provider_spawn_message(&error)
@@ -332,6 +332,31 @@ fn validate_cookie_browser(raw: Option<&str>) -> Result<Option<String>, Research
         ));
     }
     Ok(Some(value.to_owned()))
+}
+
+// Linux may briefly return ETXTBSY (errno 26) when executing a newly staged
+// downloader or CI fixture. A failed spawn has not launched a child, so a small
+// bounded retry is safe; all other errors remain fail-fast. Do not retry an
+// already running command or any nonzero exit status.
+fn spawn_provider_command(command: &mut Command) -> std::io::Result<std::process::Child> {
+    retry_linux_text_busy(|| command.spawn())
+}
+
+fn retry_linux_text_busy<T>(mut spawn: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    const MAX_RETRIES: u32 = 3;
+    for retry in 0..=MAX_RETRIES {
+        match spawn() {
+            Err(error)
+                if cfg!(target_os = "linux")
+                    && error.raw_os_error() == Some(26)
+                    && retry < MAX_RETRIES =>
+            {
+                thread::sleep(std::time::Duration::from_millis(u64::from(retry + 1) * 30));
+            }
+            result => return result,
+        }
+    }
+    unreachable!("bounded spawn retries always return")
 }
 
 // Preserve the underlying errno for support/CI triage without exposing file paths,
@@ -774,6 +799,41 @@ mod tests {
         let python = YtDlpCommand::from_overrides(None, Some(OsString::from("python-dev")));
         assert_eq!(python.program, PathBuf::from("python-dev"));
         assert_eq!(python.prefix_args, ["-m", "yt_dlp"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_text_busy_spawn_retries_only_errno_26_and_is_bounded() {
+        let mut transient_attempts = 0;
+        let result = retry_linux_text_busy(|| {
+            transient_attempts += 1;
+            if transient_attempts <= 2 {
+                Err(std::io::Error::from_raw_os_error(26))
+            } else {
+                Ok("ready")
+            }
+        })
+        .unwrap();
+        assert_eq!(result, "ready");
+        assert_eq!(transient_attempts, 3);
+
+        let mut permanent_attempts = 0;
+        let error = retry_linux_text_busy(|| {
+            permanent_attempts += 1;
+            Err::<(), _>(std::io::Error::from_raw_os_error(13))
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(13));
+        assert_eq!(permanent_attempts, 1);
+
+        let mut exhausted_attempts = 0;
+        let error = retry_linux_text_busy(|| {
+            exhausted_attempts += 1;
+            Err::<(), _>(std::io::Error::from_raw_os_error(26))
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(26));
+        assert_eq!(exhausted_attempts, 4);
     }
 
     #[cfg(unix)]
