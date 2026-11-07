@@ -58,13 +58,16 @@ with tempfile.TemporaryDirectory() as work:
         os.replace(temp, policy_file)
 
     def request(port, *, method='POST', path='/mcp', auth=token, origin=None, body=None,
-                content_type='application/json', accept='application/json, text/event-stream'):
+                content_type='application/json', accept='application/json, text/event-stream',
+                declared_content_length=None):
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=8)
         headers = {'Accept': accept, 'Content-Type': content_type}
         if auth is not None:
             headers['Authorization'] = 'Bearer ' + auth
         if origin is not None:
             headers['Origin'] = origin
+        if declared_content_length is not None:
+            headers['Content-Length'] = str(declared_content_length)
         if body is None and method == 'POST':
             body = json.dumps({'jsonrpc':'2.0','id':1,'method':'tools/list'})
         try:
@@ -106,7 +109,10 @@ with tempfile.TemporaryDirectory() as work:
         assert request(port, method='GET')[0] == 405
         assert request(port, content_type='text/plain')[0] == 415
         assert request(port, content_type='application/jsonp')[0] == 415
-        assert request(port, body='x' * (1024 * 1024 + 50))[0] == 413
+        # The server rejects an oversized declared Content-Length before reading
+        # any body bytes. Sending a megabyte after that early rejection can cause
+        # BrokenPipeError on Linux even when HTTP 413 is correctly enforced.
+        assert request(port, body=b'', declared_content_length=1024 * 1024 + 50)[0] == 413
         assert request(port, accept='text/plain')[0] == 406
         status, result = request(port)
         assert status == 200, result
