@@ -120,21 +120,30 @@ impl SidecarHost {
         let (tx, events) = mpsc::channel();
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
+            // Once a protocol violation is observed, continue reading only
+            // for an authenticated sidecar shutdown acknowledgment. The
+            // reader must not close early and hide proof of cleanup.
+            let mut violated = false;
             for raw in reader.lines() {
                 match raw {
                     Ok(line) if line.trim().is_empty() => {}
                     Ok(line) => match serde_json::from_str::<SidecarEvent>(&line) {
                         Ok(event) => {
+                            if violated && !matches!(event, SidecarEvent::Shutdown { .. }) {
+                                continue;
+                            }
                             if tx.send(ReaderEvent::Protocol(Box::new(event))).is_err() {
                                 return;
                             }
                         }
                         Err(error) => {
-                            let _ = tx.send(ReaderEvent::Violation(format!(
-                                "{error}: {}",
-                                line.chars().take(300).collect::<String>()
-                            )));
-                            return;
+                            if !violated {
+                                violated = true;
+                                let _ = tx.send(ReaderEvent::Violation(format!(
+                                    "{error}: {}",
+                                    line.chars().take(300).collect::<String>()
+                                )));
+                            }
                         }
                     },
                     Err(error) => {
@@ -223,28 +232,48 @@ impl SidecarHost {
         Ok(None)
     }
 
-    fn shutdown(&mut self) {
-        let _ = self.send(&SidecarCommand::Shutdown {
-            protocol: SIDECAR_PROTOCOL_VERSION,
-            request_id: None,
-        });
-        // The Python supervisor needs enough time to stop and verify its
-        // transcription engine tree. On Windows taskkill /T /F alone may
-        // take up to five seconds, before the sidecar can finish shutdown.
-        // Killing Python after the previous 500ms grace could interrupt that
-        // cleanup and leave FFmpeg/yt-dlp children behind.
+    fn shutdown(&mut self) -> bool {
+        let command_sent = self
+            .send(&SidecarCommand::Shutdown {
+                protocol: SIDECAR_PROTOCOL_VERSION,
+                request_id: None,
+            })
+            .is_ok();
+        // Python sends a shutdown ACK only after verified engine-tree cleanup.
+        // Parent exit alone is never sufficient (an escaped descendant may
+        // survive); consume the ACK before accepting a restart as safe.
+        // Windows taskkill /T /F may need up to five seconds; keep 10s grace.
+        let mut acknowledged = false;
+        let mut reader_closed = false;
         for _ in 0..200 {
+            loop {
+                match self.events.try_recv() {
+                    Ok(ReaderEvent::Protocol(event)) => {
+                        if matches!(
+                            *event,
+                            SidecarEvent::Shutdown { protocol: SIDECAR_PROTOCOL_VERSION, .. }
+                        ) {
+                            acknowledged = true;
+                        }
+                    }
+                    Ok(ReaderEvent::Closed) => reader_closed = true,
+                    Ok(ReaderEvent::Violation(_)) => {}
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+                }
+            }
             match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => thread::sleep(Duration::from_millis(50)),
+                Ok(Some(_)) if command_sent && acknowledged => return true,
+                Ok(Some(_)) if reader_closed => return false,
+                Ok(_) => thread::sleep(Duration::from_millis(50)),
                 Err(_) => break,
             }
         }
         eprintln!(
-            "[scriptotar-sidecar] shutdown not confirmed after 10s; forcing Python parent exit does not prove its engine descendants stopped"
+            "[scriptotar-sidecar] shutdown ACK / exit not confirmed after 10s; forcing Python parent exit does not prove its engine descendants stopped"
         );
         let _ = self.child.kill();
         let _ = self.child.wait();
+        false
     }
 }
 
@@ -348,8 +377,7 @@ fn worker_loop<R>(
                 &config,
                 &controls,
                 &mut queue,
-                &mut host,
-                &mut cleanup_unverified,
+                (&mut host, &mut cleanup_unverified),
                 job_id,
                 &notifier,
             ) {
@@ -386,14 +414,14 @@ fn run_job<R>(
     config: &RuntimeConfig,
     controls: &Receiver<Control>,
     queue: &mut VecDeque<Uuid>,
-    host: &mut Option<SidecarHost>,
-    cleanup_unverified: &mut bool,
+    session: (&mut Option<SidecarHost>, &mut bool),
     job_id: Uuid,
     notifier: &JobChangeNotifier,
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
+    let (host, cleanup_unverified) = session;
     let job = repository.get_job(job_id)?;
     if job.state != JobState::Queued {
         return Ok(());
@@ -453,16 +481,14 @@ where
                     }
                     Ok(false) => {}
                     Err(error @ OrchestratorError::Protocol(_)) => {
-                        *cleanup_unverified = true;
-                        sidecar.shutdown();
+                        *cleanup_unverified = !sidecar.shutdown();
                         return Err(error);
                     }
                     Err(error) => return Err(error),
                 }
             }
             Ok(ReaderEvent::Violation(error)) => {
-                *cleanup_unverified = true;
-                sidecar.shutdown();
+                *cleanup_unverified = !sidecar.shutdown();
                 return Err(OrchestratorError::Protocol(error));
             }
             Ok(ReaderEvent::Closed) => {
