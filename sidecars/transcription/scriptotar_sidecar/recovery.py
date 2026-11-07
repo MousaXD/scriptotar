@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -40,6 +41,23 @@ def write_private_json(path: Path, payload: dict[str, Any]) -> None:
         pass
 
 
+def _media_sha256(media: Path) -> str:
+    """Stream large media in bounded chunks; never trust a filename alone for recovery."""
+    digest = hashlib.sha256()
+    with media.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _checkpoint_media_is_safe(job: dict[str, Any], partial: Path, media: Path) -> bool:
+    # Copy-free local jobs intentionally reference the original source. All
+    # downloaded/copied artifacts must remain inside this job's partial dir.
+    if job["input_type"] == "file" and not job.get("copy_source", True):
+        return media.resolve() == Path(job["source"]).resolve()
+    return media.resolve().is_relative_to(partial.resolve())
+
+
 def _load_checkpoint(partial: Path) -> dict[str, Any] | None:
     try:
         payload = json.loads((partial / CHECKPOINT_NAME).read_text(encoding="utf-8"))
@@ -68,6 +86,12 @@ def prepare_partial(job: dict[str, Any]) -> RecoveryDecision:
     partial = partial_directory(output_root, job["id"])
     fingerprint = job_fingerprint(job)
 
+    # A crashed job may leave a user-created symlink at the predictable
+    # partial path. Never follow it when reading checkpoints or writing
+    # transcripts: unlinking removes only the link, not the target directory.
+    if partial.is_symlink():
+        partial.unlink()
+
     if partial.exists():
         checkpoint = _load_checkpoint(partial)
         if checkpoint and checkpoint.get("fingerprint") == fingerprint and checkpoint.get("stage") == "media_ready":
@@ -78,8 +102,20 @@ def prepare_partial(job: dict[str, Any]) -> RecoveryDecision:
                 if not media.is_absolute():
                     media = partial / media
                 try:
-                    valid_media = media.is_file() and media.stat().st_size > 0
-                except OSError:
+                    size = checkpoint.get("media_size")
+                    digest = checkpoint.get("media_sha256")
+                    valid_media = (
+                        _checkpoint_media_is_safe(job, partial, media)
+                        and isinstance(size, int)
+                        and not isinstance(size, bool)
+                        and size > 0
+                        and isinstance(digest, str)
+                        and len(digest) == 64
+                        and media.is_file()
+                        and media.stat().st_size == size
+                        and _media_sha256(media) == digest
+                    )
+                except (OSError, RuntimeError, ValueError):
                     valid_media = False
                 if valid_media:
                     _clear_transcript_artifacts(partial)
@@ -112,6 +148,8 @@ def mark_media_ready(
             "stage": "media_ready",
             "fingerprint": job_fingerprint(job),
             "media": media_value,
+            "media_size": media.stat().st_size,
+            "media_sha256": _media_sha256(media),
             "metadata": metadata,
         },
     )

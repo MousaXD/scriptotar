@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import queue
@@ -257,6 +258,58 @@ class SubprocessProtocolTests(unittest.TestCase):
                 sidecar.next_event("accepted")
                 self.assertEqual(sidecar.next_event("result")["job_id"], "after-cancel")
             finally:
+                sidecar.close()
+
+    @unittest.skipUnless(os.name == "nt", "real Windows process-tree validation requires Windows")
+    def test_windows_cancellation_kills_actual_engine_descendant(self):
+        # Unlike mocked taskkill argument tests, this holds a Windows process
+        # handle to a real child so PID reuse cannot produce a false pass.
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "spawn-child.mp4"
+            source.write_bytes(b"fixture")
+            pid_file = root / "child.pid"
+            sidecar = SidecarProcess(extra_env={"SCRIPTOTAR_TEST_CHILD_PID_FILE": str(pid_file)})
+            handle = None
+            try:
+                sidecar.send(command_for("windows-cancel", source, root / "out"))
+                self.assertEqual(sidecar.next_event("accepted")["job_id"], "windows-cancel")
+                sidecar.next_event("progress")
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.03)
+                self.assertTrue(pid_file.exists(), "fake engine failed to launch a child")
+                child_pid = int(pid_file.read_text(encoding="utf-8"))
+                handle = kernel32.OpenProcess(0x00100000, False, child_pid)
+                self.assertTrue(handle, f"cannot inspect real descendant PID {child_pid}")
+
+                sidecar.send({"protocol": 1, "type": "cancel", "job_id": "windows-cancel"})
+                cancelled = sidecar.next_event("cancelled", timeout=8)
+                self.assertEqual(cancelled["job_id"], "windows-cancel")
+                self.assertEqual(
+                    kernel32.WaitForSingleObject(handle, 5000),
+                    0,  # WAIT_OBJECT_0: real descendant process exited.
+                    f"engine descendant PID {child_pid} survived Windows cancellation",
+                )
+
+                successor = root / "windows-successor.mp4"
+                successor.write_bytes(b"fixture")
+                sidecar.send(command_for("windows-after-cancel", successor, root / "out"))
+                self.assertEqual(sidecar.next_event("accepted")["job_id"], "windows-after-cancel")
+                self.assertEqual(sidecar.next_event("result")["job_id"], "windows-after-cancel")
+            finally:
+                if handle:
+                    kernel32.CloseHandle(handle)
                 sidecar.close()
 
     def test_engine_crash_reports_failure_and_next_job_still_runs(self):

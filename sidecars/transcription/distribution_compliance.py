@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import urllib.request
 import zipfile
@@ -133,17 +134,37 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
 
     destination.mkdir(parents=True, exist_ok=True)
     archive = destination / f"{key}.zip"
-    with urllib.request.urlopen(url, timeout=600) as response, archive.open("wb") as output:
-        shutil.copyfileobj(response, output, length=1024 * 1024)
-    actual_hash = _sha256(archive)
-    if actual_hash != spec["sha256"]:
-        raise RuntimeError(
-            f"static FFmpeg archive checksum drift for {key}: expected {spec['sha256']}, got {actual_hash}"
-        )
-    if archive.stat().st_size != spec["size"]:
-        raise RuntimeError(
-            f"static FFmpeg archive size drift for {key}: expected {spec['size']}, got {archive.stat().st_size}"
-        )
+    # The legacy upstream URL can briefly return a different/corrupted LFS
+    # response. Retry the *same* provider only; never trust a replacement hash,
+    # alternate URL, partial file, or an oversized response. A persistent
+    # mismatch remains a hard packaging error.
+    try:
+        for attempt in range(1, 4):
+            digest = hashlib.sha256()
+            received = 0
+            with urllib.request.urlopen(url, timeout=600) as response, archive.open("wb") as output:
+                while chunk := response.read(1024 * 1024):
+                    received += len(chunk)
+                    if received > spec["size"]:
+                        raise RuntimeError(
+                            f"static FFmpeg archive size drift for {key}: "
+                            f"expected {spec['size']}, received more than the reviewed size"
+                        )
+                    digest.update(chunk)
+                    output.write(chunk)
+            actual_hash = digest.hexdigest()
+            if actual_hash == spec["sha256"] and received == spec["size"]:
+                break
+            if attempt == 3:
+                raise RuntimeError(
+                    f"static FFmpeg archive checksum/size drift for {key}: "
+                    f"expected {spec['sha256']} ({spec['size']} bytes), "
+                    f"got {actual_hash} ({received} bytes)"
+                )
+            time.sleep(attempt)
+    except Exception:
+        archive.unlink(missing_ok=True)
+        raise
 
     extract_root = destination / "extracted"
     with zipfile.ZipFile(archive) as payload:

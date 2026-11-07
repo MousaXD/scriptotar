@@ -139,6 +139,30 @@ class CudaFallbackTests(unittest.TestCase):
         self.assertEqual(created, ["cuda"])
         self.assertFalse(cache.auto_cuda_disabled)
 
+    def test_auto_initialization_does_not_hide_non_cuda_errors(self):
+        module, created = fake_whisper()
+        original_model = module.WhisperModel
+
+        class BrokenModel(original_model):
+            def __init__(self, name, *, device, compute_type):
+                super().__init__(name, device=device, compute_type=compute_type)
+                if device == "cuda":
+                    raise RuntimeError("model cache disk read failed")
+
+        module.WhisperModel = BrokenModel
+        cache = engine.WhisperCache()
+        with (
+            patch.dict(sys.modules, {"faster_whisper": module}),
+            patch.object(engine, "MODEL_CACHE", cache),
+            patch.object(engine.shutil, "which", return_value="/usr/bin/nvidia-smi"),
+            patch.object(engine.subprocess, "run"),
+            patch.object(cache, "cuda_runtime_available", return_value=True),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "model cache disk read failed"):
+                engine.transcribe_media({"device": "auto"}, self.media, self.metadata, self.emit)
+        self.assertEqual(created, ["cuda"])
+        self.assertFalse(cache.auto_cuda_disabled)
+
     def test_non_cuda_errors_are_not_hidden_by_cpu_fallback(self):
         module, created = fake_whisper(lazy_cuda_failure="unrelated storage corruption")
         cache = engine.WhisperCache()

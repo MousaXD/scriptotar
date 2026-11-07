@@ -43,6 +43,12 @@ class EngineSupervisor:
         self.active_job_id: str | None = None
         self._engine_job_started = False
         self._cancel_in_progress = False
+        # A failed Windows taskkill /T cannot be treated as clean just because
+        # the parent later exits; its FFmpeg/yt-dlp descendants may survive.
+        self._windows_tree_unverified = False
+        # A partially written transcribe command may already be executing.
+        # Retain the reservation unless termination can be confirmed.
+        self._submission_cleanup_unverified = False
         self._lock = threading.RLock()
         self._write_lock = threading.Lock()
         self._closing = False
@@ -91,6 +97,7 @@ class EngineSupervisor:
                 text=True,
                 bufsize=1,
                 start_new_session=(os.name == "posix"),
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
                 env=self._child_env(),
             )
             threading.Thread(target=self._read_stdout, args=(self.proc,), daemon=True).start()
@@ -100,26 +107,52 @@ class EngineSupervisor:
         self._log(f"[engine protocol] {message}")
         with self._lock:
             job_id = self.active_job_id
+            tracked_worker = proc is self.proc
             should_report = (
-                proc is self.proc
+                tracked_worker
                 and job_id is not None
                 and not self._cancel_in_progress
                 and not self._closing
             )
+            prior_cancel = self._cancel_in_progress
+            if tracked_worker:
+                # Never expose the job slot as free until the malformed worker
+                # has actually stopped. This also suppresses its late events.
+                self._cancel_in_progress = True
+            try:
+                self._terminate_process_group(proc)
+            except Exception as exc:
+                # A failed kill cannot be reported as a terminal protocol
+                # failure: the worker or its descendants might still be live.
+                # Keep the slot reserved, allowing explicit cancellation retry.
+                self._log(f"[engine protocol] worker termination unconfirmed: {type(exc).__name__}")
+                if should_report:
+                    self.writer.emit(
+                        "error",
+                        job_id=job_id,
+                        error={
+                            "code": "ENGINE_TERMINATION_FAILED",
+                            "message": "Transcription engine emitted invalid protocol data but could not be stopped.",
+                            "retryable": True,
+                        },
+                    )
+                return
+            if tracked_worker:
+                self._cancel_in_progress = prior_cancel
             if should_report:
                 self.active_job_id = None
                 self._engine_job_started = False
-        if should_report:
-            self.writer.emit(
-                "error",
-                job_id=job_id,
-                error={
-                    "code": "ENGINE_PROTOCOL",
-                    "message": "Transcription engine produced invalid protocol output.",
-                    "retryable": True,
-                },
-            )
-        self._terminate_process_group(proc)
+                # Publish the terminal error under the same cancel/start lock,
+                # but only after confirmed termination.
+                self.writer.emit(
+                    "error",
+                    job_id=job_id,
+                    error={
+                        "code": "ENGINE_PROTOCOL",
+                        "message": "Transcription engine produced invalid protocol output.",
+                        "retryable": True,
+                    },
+                )
 
     def _read_stdout(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stdout is not None
@@ -151,36 +184,39 @@ class EngineSupervisor:
             if not isinstance(job_id, str):
                 self._abort_engine_protocol(proc, f"event {event_type!r} is missing a job_id")
                 break
+            # Validate, publish and finalize each event under the same lock
+            # used by cancel(). Otherwise a terminal result can be emitted
+            # after cancellation has been acknowledged, or a defunct worker
+            # can publish into a newly started job's event stream.
             with self._lock:
+                if proc is not self.proc or self._cancel_in_progress or self._closing:
+                    continue
                 active_job_id = self.active_job_id
                 job_started = self._engine_job_started
-            if active_job_id is None:
-                self._abort_engine_protocol(proc, f"stale event for inactive job {job_id!r}")
-                break
-            if job_id != active_job_id:
-                self._abort_engine_protocol(
-                    proc,
-                    f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
-                )
-                break
-            if event_type == "job_started":
-                if job_started:
-                    self._abort_engine_protocol(proc, f"duplicate job_started for {job_id!r}")
+                if active_job_id is None:
+                    self._abort_engine_protocol(proc, f"stale event for inactive job {job_id!r}")
                     break
-                with self._lock:
+                if job_id != active_job_id:
+                    self._abort_engine_protocol(
+                        proc,
+                        f"event job id mismatch: expected {active_job_id!r}, got {job_id!r}",
+                    )
+                    break
+                if event_type == "job_started":
+                    if job_started:
+                        self._abort_engine_protocol(proc, f"duplicate job_started for {job_id!r}")
+                        break
                     self._engine_job_started = True
-            elif not job_started:
-                self._abort_engine_protocol(
-                    proc,
-                    f"event {event_type!r} arrived before job_started for {job_id!r}",
-                )
-                break
-            if event_type in {"result", "error"}:
-                with self._lock:
-                    if self.active_job_id == job_id:
-                        self.active_job_id = None
-                        self._engine_job_started = False
-            self.writer.emit(event_type, **event)
+                elif not job_started:
+                    self._abort_engine_protocol(
+                        proc,
+                        f"event {event_type!r} arrived before job_started for {job_id!r}",
+                    )
+                    break
+                self.writer.emit(event_type, **event)
+                if event_type in {"result", "error"}:
+                    self.active_job_id = None
+                    self._engine_job_started = False
 
         rc = proc.wait()
         with self._lock:
@@ -196,16 +232,17 @@ class EngineSupervisor:
             if should_report:
                 self.active_job_id = None
                 self._engine_job_started = False
-        if should_report:
-            self.writer.emit(
-                "error",
-                job_id=job_id,
-                error={
-                    "code": "ENGINE_CRASHED",
-                    "message": f"Transcription engine exited unexpectedly with code {rc}.",
-                    "retryable": True,
-                },
-            )
+                # Keep unexpected-exit errors ordered with the shared
+                # cancel/start lock, just like ordinary terminal events.
+                self.writer.emit(
+                    "error",
+                    job_id=job_id,
+                    error={
+                        "code": "ENGINE_CRASHED",
+                        "message": f"Transcription engine exited unexpectedly with code {rc}.",
+                        "retryable": True,
+                    },
+                )
 
     def _read_stderr(self, proc: subprocess.Popen[str]) -> None:
         assert proc.stderr is not None
@@ -223,7 +260,7 @@ class EngineSupervisor:
 
     def start_job(self, job: dict[str, Any]) -> None:
         with self._lock:
-            if self.active_job_id is not None:
+            if self.active_job_id is not None or self._cancel_in_progress or self._closing:
                 raise SidecarError(
                     "BUSY",
                     "The sidecar runs one transcription job at a time.",
@@ -235,10 +272,50 @@ class EngineSupervisor:
             self._engine_job_started = False
             try:
                 self._send_internal({"type": "transcribe", "job": job})
-            except Exception:
+            except SidecarError:
+                # _send_internal raises SidecarError only in its preflight,
+                # before any command bytes can have reached the worker.
                 self.active_job_id = None
                 self._engine_job_started = False
                 raise
+            except Exception as exc:
+                # A broken pipe or failed flush can follow a partial write.
+                # Keep the job reserved until the possibly-started worker is
+                # confirmed terminated; do not admit a second transcribe.
+                proc = self.proc
+                self._cancel_in_progress = True
+                self._submission_cleanup_unverified = True
+                try:
+                    if proc is None or proc.poll() is not None:
+                        raise SidecarError(
+                            "ENGINE_TERMINATION_FAILED",
+                            "Worker exited during job submission; descendant cleanup is unverified.",
+                            retryable=True,
+                        )
+                    self._terminate_process_group(proc)
+                    if proc.poll() is None or self._windows_tree_unverified:
+                        raise SidecarError(
+                            "ENGINE_TERMINATION_FAILED",
+                            "Worker cleanup after partial job submission is unverified.",
+                            retryable=True,
+                        )
+                except Exception as stop_exc:
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Could not confirm cleanup after failed job submission; the job remains blocked.",
+                        retryable=True,
+                    ) from stop_exc
+                if self.proc is proc:
+                    self.proc = None
+                self.active_job_id = None
+                self._engine_job_started = False
+                self._cancel_in_progress = False
+                self._submission_cleanup_unverified = False
+                raise SidecarError(
+                    "ENGINE_UNAVAILABLE",
+                    "Failed to submit transcription; the worker was stopped before releasing the job.",
+                    retryable=True,
+                ) from exc
 
     def _terminate_process_group(self, proc: subprocess.Popen[str], grace_seconds: float = 1.5) -> None:
         if proc.poll() is not None:
@@ -246,6 +323,29 @@ class EngineSupervisor:
         try:
             if os.name == "posix":
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            elif os.name == "nt":
+                # terminate() only stops the worker, leaving child FFmpeg/yt-dlp
+                # processes running. taskkill /T terminates its descendant tree.
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                        check=True,
+                    )
+                except (OSError, subprocess.SubprocessError) as exc:
+                    # Parent-only termination would leave FFmpeg/yt-dlp descendants
+                    # alive while allowing a false cancellation acknowledgement.
+                    # Even if the parent later exits, do not treat the tree as
+                    # verified: the descendants might have survived.
+                    self._windows_tree_unverified = True
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Windows could not confirm transcription process-tree cleanup; the job remains blocked.",
+                        retryable=True,
+                    ) from exc
+                self._windows_tree_unverified = False
             else:
                 proc.terminate()
         except ProcessLookupError:
@@ -267,8 +367,18 @@ class EngineSupervisor:
                 proc.kill()
         try:
             proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            pass
+        except subprocess.TimeoutExpired as exc:
+            raise SidecarError(
+                "ENGINE_TERMINATION_FAILED",
+                "Transcription engine did not stop after cancellation; the job remains blocked.",
+                retryable=True,
+            ) from exc
+        if proc.poll() is None:
+            raise SidecarError(
+                "ENGINE_TERMINATION_FAILED",
+                "Transcription engine termination could not be confirmed; the job remains blocked.",
+                retryable=True,
+            )
 
     def cancel(self, job_id: str) -> None:
         with self._lock:
@@ -282,15 +392,46 @@ class EngineSupervisor:
             self._cancel_in_progress = True
         try:
             if proc is not None:
+                was_running = proc.poll() is None
                 self._terminate_process_group(proc)
-        finally:
+                if proc.poll() is None:
+                    raise SidecarError(
+                        "ENGINE_TERMINATION_FAILED",
+                        "Transcription engine is still running; cancellation was not confirmed.",
+                        retryable=True,
+                    )
+                if was_running and not self._windows_tree_unverified:
+                    self._submission_cleanup_unverified = False
+            if self._submission_cleanup_unverified:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Job submission cleanup is unverified; the job remains blocked.",
+                    retryable=True,
+                )
+            if self._windows_tree_unverified:
+                # The reader thread can discard an exited parent handle.
+                # Its exit does not prove children were reaped after taskkill
+                # failed, so a subsequent cancel must not report success.
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Windows transcription descendants were not confirmed stopped; the job remains blocked.",
+                    retryable=True,
+                )
+        except Exception:
+            # The worker may still be producing FFmpeg/Whisper output. Keep
+            # the job reserved and suppress its late events until a retry or
+            # shutdown actually confirms that the worker has exited.
+            # Never orphan a live process by clearing self.proc here.
+            raise
+        else:
             with self._lock:
                 if self.proc is proc:
                     self.proc = None
                 self.active_job_id = None
                 self._engine_job_started = False
                 self._cancel_in_progress = False
-        self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
+                # Serialize the ACK with a potential successor start_job.
+                self.writer.emit("cancelled", job_id=job_id, reason="user_requested")
 
     def shutdown(self) -> None:
         with self._lock:
@@ -306,7 +447,30 @@ class EngineSupervisor:
                     self._terminate_process_group(proc)
             else:
                 self._terminate_process_group(proc)
+            if proc.poll() is None:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Shutdown worker termination could not be confirmed.",
+                    retryable=True,
+                )
+            if not self._windows_tree_unverified:
+                self._submission_cleanup_unverified = False
         with self._lock:
+            if self._submission_cleanup_unverified:
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Job submission cleanup is unverified; shutdown is blocked.",
+                    retryable=True,
+                )
+            if self._windows_tree_unverified:
+                # The worker may have exited after failed taskkill, but its
+                # descendants were never proven stopped. Do not send a false
+                # shutdown ACK or admit any new transcription work.
+                raise SidecarError(
+                    "ENGINE_TERMINATION_FAILED",
+                    "Windows transcription descendants were not confirmed stopped; shutdown is blocked.",
+                    retryable=True,
+                )
             self.proc = None
             self.active_job_id = None
             self._engine_job_started = False
