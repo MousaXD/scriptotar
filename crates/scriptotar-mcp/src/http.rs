@@ -1,5 +1,5 @@
 //! Localhost-only, bearer-authenticated Streamable HTTP MCP for secure-tunnel connections.
-use std::{convert::Infallible, sync::Arc};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
@@ -17,26 +17,44 @@ use tokio::net::TcpListener;
 use crate::{load_permissions, server::Server};
 
 const MAX_HTTP_BODY: usize = 1024 * 1024;
+const MAX_CONNECTIONS: usize = 32;
+const BODY_TIMEOUT: Duration = Duration::from_secs(15);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(600);
 type HttpResponse = Response<Full<Bytes>>;
 
 pub(crate) async fn serve(server: Server, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     let server = Arc::new(server);
     let limit = Arc::new(tokio::sync::Semaphore::new(4));
+    let connections = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     eprintln!("[scriptotar-mcp] local HTTP transport on 127.0.0.1:{port}/mcp");
     loop {
         let (stream, _) = listener.accept().await?;
+        // Bound connections before parsing HTTP headers, including incomplete
+        // or deliberately slow ones. Keep the four-worker tool limit separate.
+        let Ok(connection_permit) = Arc::clone(&connections).try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
         let local = Arc::clone(&server);
         let limit = Arc::clone(&limit);
         tokio::spawn(async move {
+            let _connection_permit = connection_permit;
             let io = TokioIo::new(stream);
             let service = service_fn(move |req| {
                 let local = Arc::clone(&local);
                 let limit = Arc::clone(&limit);
                 async move { handle(req, local, port, limit).await }
             });
-            if let Err(error) = http1::Builder::new().serve_connection(io, service).await {
-                eprintln!("[scriptotar-mcp] HTTP connection error: {error}");
+            match tokio::time::timeout(
+                CONNECTION_TIMEOUT,
+                http1::Builder::new().serve_connection(io, service),
+            )
+            .await
+            {
+                Ok(Err(error)) => eprintln!("[scriptotar-mcp] HTTP connection error: {error}"),
+                Err(_) => eprintln!("[scriptotar-mcp] HTTP connection timed out"),
+                Ok(Ok(())) => {}
             }
         });
     }
@@ -50,7 +68,7 @@ async fn handle(
 ) -> Result<HttpResponse, Infallible> {
     let path = request.uri().path();
     let is_bearer_path = path == "/mcp";
-    let public_secret = path.strip_prefix("/mcp/p/");
+    let public_secret = path.strip_prefix("/mcp/p/").map(str::to_owned);
     if !is_bearer_path && public_secret.is_none() {
         return Ok(reply(StatusCode::NOT_FOUND, "not found"));
     }
@@ -68,25 +86,15 @@ async fn handle(
         Ok(value) if value.enabled && !value.http_token.is_empty() => value,
         _ => return Ok(reply(StatusCode::FORBIDDEN, "MCP disabled")),
     };
-    // A secret in the path is the authentication method for a remote ChatGPT
-    // URL connection, which cannot set custom bearer headers. /mcp requires the
-    // original bearer header and never accepts a path secret as a fallback.
-    let authorized = if let Some(secret) = public_secret {
-        policy.url_token.len() == 64
-            && constant_time_eq(secret.as_bytes(), policy.url_token.as_bytes())
-    } else {
-        let auth = request
-            .headers()
-            .get(AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-        auth.starts_with("Bearer ")
-            && constant_time_eq(
-                auth.strip_prefix("Bearer ").unwrap_or_default().as_bytes(),
-                policy.http_token.as_bytes(),
-            )
-    };
-    if !authorized {
+    // URL path secrets and header bearer tokens are separate authentication
+    // methods. Retain only the credential required to recheck after body I/O.
+    let bearer = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    if !authenticated(public_secret.as_deref(), &bearer, &policy) {
         return Ok(reply(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     if request.method() == Method::GET {
@@ -103,7 +111,9 @@ async fn handle(
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
-        .starts_with("application/json")
+        .split(';')
+        .next()
+        .is_some_and(|value| value.trim() == "application/json")
     {
         return Ok(reply(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -133,18 +143,35 @@ async fn handle(
             "MCP request too large",
         ));
     }
-    let body = match Limited::new(request.into_body(), MAX_HTTP_BODY)
-        .collect()
-        .await
+    let body = match tokio::time::timeout(
+        BODY_TIMEOUT,
+        Limited::new(request.into_body(), MAX_HTTP_BODY).collect(),
+    )
+    .await
     {
-        Ok(body) => body.to_bytes(),
-        Err(_) => {
+        Ok(Ok(body)) => body.to_bytes(),
+        Ok(Err(_)) => {
             return Ok(reply(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "MCP request too large",
+            ));
+        }
+        Err(_) => {
+            return Ok(reply(
+                StatusCode::REQUEST_TIMEOUT,
+                "MCP request body timed out",
             ))
         }
     };
+    // Revocation and token rotation must invalidate a request even when the
+    // client authenticated before streaming an incomplete HTTP request body.
+    let current = match load_permissions(&server.data_dir) {
+        Ok(policy) if policy.enabled && !policy.http_token.is_empty() => policy,
+        _ => return Ok(reply(StatusCode::FORBIDDEN, "MCP disabled")),
+    };
+    if !authenticated(public_secret.as_deref(), &bearer, &current) {
+        return Ok(reply(StatusCode::UNAUTHORIZED, "unauthorized"));
+    }
     let message: Value = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(_) => {
@@ -154,11 +181,17 @@ async fn handle(
             ))
         }
     };
-    let Ok(_permit) = limit.try_acquire() else {
+    let Ok(worker_permit) = Arc::clone(&limit).try_acquire_owned() else {
         return Ok(reply(StatusCode::TOO_MANY_REQUESTS, "MCP busy"));
     };
-    // Tool calls may include bounded subprocess or SQLite work; keep Tokio's accept loop responsive.
-    let result = tokio::task::spawn_blocking(move || server.response(&message)).await;
+    // Tool execution continues after the HTTP request is canceled, so the
+    // owned permit must live inside the blocking worker. Otherwise a peer
+    // can disconnect while each tool runs and bypass the four-worker limit.
+    let result = tokio::task::spawn_blocking(move || {
+        let _worker_permit = worker_permit;
+        server.response(&message)
+    })
+    .await;
     match result {
         Ok(Some(value)) => Ok(json_reply(StatusCode::OK, &value)),
         Ok(None) => Ok(reply(StatusCode::ACCEPTED, "")),
@@ -166,6 +199,22 @@ async fn handle(
             StatusCode::INTERNAL_SERVER_ERROR,
             "MCP worker failed",
         )),
+    }
+}
+
+fn authenticated(secret: Option<&str>, bearer: &str, policy: &crate::McpPermissions) -> bool {
+    if let Some(secret) = secret {
+        policy.url_token.len() == 64
+            && constant_time_eq(secret.as_bytes(), policy.url_token.as_bytes())
+    } else {
+        bearer.starts_with("Bearer ")
+            && constant_time_eq(
+                bearer
+                    .strip_prefix("Bearer ")
+                    .unwrap_or_default()
+                    .as_bytes(),
+                policy.http_token.as_bytes(),
+            )
     }
 }
 
@@ -198,9 +247,85 @@ fn json_reply(status: StatusCode, content: &Value) -> HttpResponse {
 mod tests {
     use super::*;
     #[test]
+    fn cancelled_http_response_cannot_release_active_tool_slot() {
+        use std::sync::mpsc;
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let limit = Arc::new(tokio::sync::Semaphore::new(1));
+            let permit = Arc::clone(&limit).try_acquire_owned().unwrap();
+            let (started_tx, started_rx) = mpsc::sync_channel(1);
+            let (finish_tx, finish_rx) = mpsc::sync_channel(1);
+            let worker = tokio::task::spawn_blocking(move || {
+                let _worker_permit = permit;
+                started_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+            });
+
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if started_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            worker.abort(); // Simulate client disconnect canceling its waiter.
+            assert!(
+                limit.try_acquire().is_err(),
+                "disconnect must not free a worker still running a tool"
+            );
+            finish_tx.send(()).unwrap();
+            let _ = worker.await;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if limit.available_permits() == 1 {
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+        });
+    }
+
+    #[test]
     fn bearer_comparison_rejects_wrong_length_and_value() {
         assert!(constant_time_eq(b"abcd", b"abcd"));
         assert!(!constant_time_eq(b"abcd", b"abce"));
         assert!(!constant_time_eq(b"abcd", b"abc"));
+    }
+
+    #[test]
+    fn rotating_either_credential_invalidates_older_requests() {
+        let before = crate::McpPermissions {
+            enabled: true,
+            url_token: "a".repeat(64),
+            http_token: "b".repeat(64),
+            ..Default::default()
+        };
+        let after = crate::McpPermissions {
+            url_token: "c".repeat(64),
+            http_token: "d".repeat(64),
+            ..before.clone()
+        };
+        assert!(authenticated(Some(&before.url_token), "", &before));
+        assert!(authenticated(
+            None,
+            &format!("Bearer {}", before.http_token),
+            &before
+        ));
+        assert!(!authenticated(Some(&before.url_token), "", &after));
+        assert!(!authenticated(
+            None,
+            &format!("Bearer {}", before.http_token),
+            &after
+        ));
     }
 }

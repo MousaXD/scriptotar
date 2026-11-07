@@ -18,7 +18,7 @@
   let approvedPrograms = '';
   let tunnelId = '';
   let apiKey = '';
-  let rememberKey = true;
+  let rememberKey = false;
   let customHostname = '';
   let advanced = false;
   let copyStatus = '';
@@ -81,7 +81,11 @@
     notice = '';
     try {
       if (method === 'cloudflare') connection = await api.mcpConnectCloudflare();
-      else if (method === 'openai') connection = await api.mcpConnectOpenai(tunnelId.trim(), apiKey.trim(), rememberKey);
+      else if (method === 'openai') {
+        const suppliedKey = apiKey.trim();
+        apiKey = ''; // Clear the visible password field before network/IPC awaits.
+        connection = await api.mcpConnectOpenai(tunnelId.trim(), suppliedKey, rememberKey);
+      }
       else connection = await api.mcpConnectManual(customHostname.trim());
       apiKey = ''; // Never keep a key in the DOM after IPC completes.
       step = 3;

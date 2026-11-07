@@ -23,7 +23,7 @@ use dto::{
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
-use scriptotar_mcp::{load_permissions, save_permissions, McpPermissions};
+use scriptotar_mcp::{load_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -58,20 +58,42 @@ const MCP_HTTP_PORT: u16 = 39761;
 
 impl Drop for McpGatewayState {
     fn drop(&mut self) {
-        if let Ok(child) = self.child.get_mut() {
-            if let Some(mut child) = child.take() {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+        // A poisoned mutex must not detach a running gateway.
+        let child = self
+            .child
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(mut child) = child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
         }
     }
 }
 
+fn register_gateway_child(
+    state: &McpGatewayState,
+    mut child: std::process::Child,
+) -> Result<(), String> {
+    let mut process = match state.child.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            // If ownership registration fails after spawning, reap the real
+            // child rather than silently detaching an orphaned gateway.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("MCP gateway state is unavailable".into());
+        }
+    };
+    *process = Some(child);
+    Ok(())
+}
+
 fn stop_gateway(state: &McpGatewayState) -> Result<(), String> {
+    // Preserve emergency shutdown even if a previous panic poisoned state.
     let mut child = state
         .child
         .lock()
-        .map_err(|_| "MCP gateway state is unavailable")?;
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if let Some(mut process) = child.take() {
         let _ = process.kill();
         let _ = process.wait();
@@ -110,8 +132,9 @@ fn mcp_gateway_status(
 fn start_mcp_gateway(
     operational: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
 ) -> Result<McpGatewayStatus, String> {
-    start_gateway_for_data(&operational.data_dir, &gateway)
+    manager.start_local_gateway(&operational.data_dir, &gateway)
 }
 
 fn start_gateway_for_data(
@@ -135,13 +158,7 @@ fn start_gateway_for_data(
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| "could not launch local MCP gateway")?;
-    {
-        let mut process = gateway
-            .child
-            .lock()
-            .map_err(|_| "MCP gateway state is unavailable")?;
-        *process = Some(child);
-    }
+    register_gateway_child(gateway, child)?;
     std::thread::sleep(std::time::Duration::from_millis(120));
     let status = gateway_status(gateway)?;
     if !status.running {
@@ -154,9 +171,13 @@ fn start_gateway_for_data(
 
 #[tauri::command]
 fn stop_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
 ) -> Result<McpGatewayStatus, String> {
-    stop_gateway(&gateway)?;
+    // Stopping the local gateway is also a public-URL revocation action.
+    // Do not leave a previously shared tunnel secret reusable if it restarts.
+    manager.stop(&operational.data_dir, &gateway)?;
     gateway_status(&gateway)
 }
 
@@ -691,7 +712,7 @@ fn get_mcp_permissions(
 
 #[tauri::command]
 fn save_mcp_permissions(
-    mut permissions: McpPermissions,
+    permissions: McpPermissions,
     acknowledge_sensitive_access: bool,
     state: tauri::State<'_, OperationalState>,
     gateway: tauri::State<'_, McpGatewayState>,
@@ -703,13 +724,7 @@ fn save_mcp_permissions(
     {
         return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
     }
-    let current = load_permissions(&state.data_dir)?;
-    mcp_connect::preserve_authentication_secrets(&mut permissions, &current);
-    let policy = save_permissions(&state.data_dir, permissions)?;
-    if !policy.enabled {
-        manager.stop(&state.data_dir, &gateway)?;
-    }
-    Ok(policy)
+    manager.save_app_permissions(&state.data_dir, &gateway, permissions)
 }
 
 #[tauri::command]
@@ -962,6 +977,79 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    fn assert_child_reaped(pid: u32) {
+        // A successfully waited child must no longer exist in the process table.
+        // This is an OS-backed assertion, not an assertion about subprocess trees.
+        assert!(
+            !Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("kill executable must be present on Unix CI")
+                .success(),
+            "gateway child {pid} was not terminated and reaped"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_stop_recovers_poisoned_state_with_real_owned_child() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled gateway fixture");
+        let pid = child.id();
+        *gateway.child.lock().unwrap() = Some(child);
+        let cloned = Arc::clone(&gateway);
+        let poisoned = std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("simulate panic while owning gateway child");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        assert!(gateway.child.is_poisoned());
+        stop_gateway(&gateway).expect("emergency stop must succeed after poisoning");
+        assert!(gateway.child.lock().unwrap_err().into_inner().is_none());
+        assert_child_reaped(pid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_post_spawn_registration_failure_reaps_real_child() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let cloned = Arc::clone(&gateway);
+        assert!(std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("poison gateway ownership before post-spawn registration");
+        })
+        .join()
+        .is_err());
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled gateway fixture");
+        let pid = child.id();
+        assert!(register_gateway_child(&gateway, child).is_err());
+        assert_child_reaped(pid);
+    }
+
+    #[test]
+    fn gateway_stop_recovers_from_poisoned_process_state() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let cloned = Arc::clone(&gateway);
+        let _ = std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("simulate panic in gateway state transition");
+        })
+        .join();
+        assert!(gateway.child.is_poisoned());
+        assert!(stop_gateway(&gateway).is_ok());
+    }
 
     #[test]
     fn blocking_worker_keeps_results_and_errors_and_runs_off_caller_thread() {

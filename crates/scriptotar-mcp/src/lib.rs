@@ -279,28 +279,65 @@ fn authorize_path(policy: &McpPermissions, path: &Path) -> Result<(), String> {
     }
 }
 
+/// Internal policy, database and migration snapshot files are never exposed by
+/// generic MCP file tools, even when the user approves the app data directory.
+fn protected_app_name(name: &str) -> bool {
+    matches!(
+        name,
+        "mcp-permissions.json"
+            | "scriptotar.sqlite3"
+            | "scriptotar.sqlite3-wal"
+            | "scriptotar.sqlite3-shm"
+            | "scriptotar.sqlite3-journal"
+            | "history.sqlite3"
+            | "history.sqlite3-wal"
+            | "history.sqlite3-shm"
+            | "history.sqlite3-journal"
+            | ".history.sqlite3.pending-import"
+    ) || (name.starts_with(".mcp-permissions-") && name.ends_with(".tmp"))
+        || name.starts_with(".history.sqlite3.importing-")
+        || name.starts_with(".history.sqlite3.rejected-")
+}
+
 fn block_policy_file(data_dir: &Path, path: &Path) -> Result<(), String> {
-    // Distinct database permissions must not be bypassed through file tools.
-    // SQLite WAL/SHM files can contain database contents and transactional state.
-    let protected = [
-        "mcp-permissions.json",
-        "scriptotar.sqlite3",
-        "scriptotar.sqlite3-wal",
-        "scriptotar.sqlite3-shm",
-    ];
     if path.parent() == Some(data_dir)
         && path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| protected.contains(&name))
+            .is_some_and(protected_app_name)
     {
-        Err(
-            "MCP cannot access its permissions or Scriptotar SQLite database through file tools"
-                .into(),
-        )
-    } else {
-        Ok(())
+        return Err("MCP cannot access internal permissions or SQLite files".into());
     }
+
+    // Canonicalization does not resolve hard links. On Unix, compare file
+    // identities against *all* protected app files, including randomly named
+    // policy and migration snapshots in the data directory. Only hard-linked
+    // candidates need the directory scan.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(candidate) = fs::metadata(path) {
+            if candidate.nlink() > 1 {
+                let entries = fs::read_dir(data_dir)
+                    .map_err(|_| "cannot inspect Scriptotar protected files".to_owned())?;
+                for entry in entries {
+                    let entry = entry
+                        .map_err(|_| "cannot inspect Scriptotar protected files".to_owned())?;
+                    if !protected_app_name(&entry.file_name().to_string_lossy()) {
+                        continue;
+                    }
+                    if let Ok(secret) = fs::metadata(entry.path()) {
+                        if candidate.dev() == secret.dev() && candidate.ino() == secret.ino() {
+                            return Err(
+                                "MCP cannot access internal permissions or SQLite files".into()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -348,6 +385,51 @@ mod tests {
         )
         .is_err());
     }
+    #[cfg(unix)]
+    #[test]
+    fn protected_files_cannot_be_accessed_through_hard_links_or_policy_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let approved = dir.path().join("approved");
+        fs::create_dir(&approved).unwrap();
+        let policy = save_permissions(
+            dir.path(),
+            McpPermissions {
+                enabled: true,
+                read_files: true,
+                write_files: true,
+                overwrite_files: true,
+                allowed_paths: vec![dir.path().to_string_lossy().into_owned()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let alias = approved.join("innocent.txt");
+        fs::hard_link(permissions_path(dir.path()), &alias).unwrap();
+        assert!(authorized_read(&policy, dir.path(), alias.to_str().unwrap()).is_err());
+        assert!(authorized_write(&policy, dir.path(), alias.to_str().unwrap(), true).is_err());
+
+        let database = dir.path().join("scriptotar.sqlite3");
+        fs::write(&database, "sensitive data").unwrap();
+        let database_alias = approved.join("database-alias.txt");
+        fs::hard_link(&database, &database_alias).unwrap();
+        assert!(authorized_read(&policy, dir.path(), database_alias.to_str().unwrap()).is_err());
+
+        let staging = dir.path().join(".mcp-permissions-example.tmp");
+        fs::write(&staging, "temporary credentials").unwrap();
+        assert!(authorized_read(&policy, dir.path(), staging.to_str().unwrap()).is_err());
+        assert!(authorized_write(&policy, dir.path(), staging.to_str().unwrap(), true).is_err());
+
+        let pending = dir.path().join(".history.sqlite3.pending-import");
+        fs::write(&pending, "private migration snapshot").unwrap();
+        assert!(authorized_read(&policy, dir.path(), pending.to_str().unwrap()).is_err());
+        let pending_alias = approved.join("migration-hardlink.txt");
+        fs::hard_link(&pending, &pending_alias).unwrap();
+        assert!(authorized_read(&policy, dir.path(), pending_alias.to_str().unwrap()).is_err());
+        let active = dir.path().join("history.sqlite3");
+        fs::write(&active, "private legacy database").unwrap();
+        assert!(authorized_read(&policy, dir.path(), active.to_str().unwrap()).is_err());
+    }
+
     #[cfg(unix)]
     #[test]
     fn symlink_and_public_policy_are_rejected() {

@@ -4,8 +4,10 @@ Scriptotar has 14 native Rust MCP tools and a **guided connection wizard**, patt
 on Chat On Steroids' provider choices. Permissions remain **app-owned**, never
 controlled by ChatGPT. For a production installer, Scriptotar bundles **pinned,
 SHA-256-verified** OpenAI `tunnel-client` and Cloudflare `cloudflared` binaries,
-including provenance and license files. These programs are not downloaded or
-updated in the background on customer computers.
+including provenance and license files. Production builds only use the
+bundled tunnel executables; they never silently load unverified tools from PATH.
+Debug/development builds may use PATH for local testing. These programs are not
+downloaded or updated in the background on customer computers.
 
 ## Setup in Scriptotar (no terminal required)
 
@@ -66,8 +68,8 @@ client; `tunnel-client` is not needed if the client supports native local MCP.
   access immediately; disabling MCP also stops the active app connection.
 - The wizard's API key input is cleared after the connection request. The
   restricted runtime key is passed to `tunnel-client` via an environment
-  variable and never as a command-line argument. Only an explicit **Remember**
-  choice stores it in the operating system's secure keyring. If the keyring
+  variable and never as a command-line argument. **Remember key starts unchecked**;
+  only an explicit opt-in stores it in the operating system's secure keyring. If the keyring
   cannot be opened, uncheck Remember and connect for the current session.
 - Automatic reconnection across application restarts is not guaranteed: the
   wizard keeps the tunnel running while Scriptotar is open. Quick Tunnel URLs
@@ -96,12 +98,22 @@ invalid UUIDs and oversized text inputs are rejected.
 - The HTTP bearer token **authenticates** a connection; app permissions
   **authorize** every operation independently. ChatGPT-side approvals are
   optional extra checks, not the Scriptotar authorization boundary.
+  HTTP requests recheck authentication after the body arrives, so rotated
+  bearer and URL tokens invalidate pending requests. Slow bodies time out
+  after 15 seconds and at most 32 HTTP connections are held concurrently.
+- Approved commands receive a restricted environment rather than inheriting
+  unrelated parent-process credentials. An active command is terminated when
+  the application removes its executable or working-directory grant, disables
+  MCP or makes the policy unreadable. Descendants launched by approved
+  executables are not fully contained; do not treat this as process isolation.
 - Approved commands run with **your operating-system account's privileges**.
   A shell or interpreter on the allowlist is *not* sandboxed; it may read/write
   outside the configured file roots. Never grant one unless you accept that
   scope of access, and do not use Scriptotar MCP as an OS security sandbox.
 - Files are limited to approved directories with normalized absolute paths,
-  canonicalized path checks, and atomic writes. A separate OS account/sandbox
+  canonicalized path checks, and atomic writes. Protected policy/SQLite files,
+  migration snapshots, their hard-link aliases on Unix, and permission staging
+  files are denied. A separate OS account/sandbox
   is necessary for an adversarial local process that can race filesystem path
   changes. The MCP process itself runs as the same OS user as Scriptotar.
 - `write_file` handles UTF-8 files (up to 256 KiB); `read_file` returns up to
