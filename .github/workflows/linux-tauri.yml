@@ -11,6 +11,8 @@ on:
       - 'apps/desktop-ui/**'
       - 'sidecars/transcription/**'
       - 'scriptotar.svg'
+      - 'tests/mcp_http_e2e.py'
+      - 'tests/mcp_installed_smoke.py'
       - '.github/workflows/linux-tauri.yml'
   pull_request:
     paths:
@@ -21,6 +23,8 @@ on:
       - 'apps/desktop-ui/**'
       - 'sidecars/transcription/**'
       - 'scriptotar.svg'
+      - 'tests/mcp_http_e2e.py'
+      - 'tests/mcp_installed_smoke.py'
       - '.github/workflows/linux-tauri.yml'
   workflow_dispatch:
 
