@@ -25,9 +25,12 @@
   let dragActive = false;
   let nativeDropAvailable = false;
 
-  const filters: { id: 'all' | 'active' | 'attention' | 'done'; label: string }[] = [
-    { id: 'all', label: 'All' }, { id: 'active', label: 'Active' }, { id: 'attention', label: 'Needs attention' }, { id: 'done', label: 'Finished' }
-  ];
+  $: filters = [
+    { id: 'all', label: $translator('queue.filterAll') },
+    { id: 'active', label: $translator('queue.filterActive') },
+    { id: 'attention', label: $translator('queue.filterAttention') },
+    { id: 'done', label: $translator('queue.filterDone') }
+  ] satisfies { id: 'all' | 'active' | 'attention' | 'done'; label: string }[];
   const active = new Set<JobState>(['queued','preparing','downloading','transcribing','processing']);
   $: visible = jobs.filter((job) => filter === 'all' || (filter === 'active' && active.has(job.state)) || (filter === 'attention' && ['failed','interrupted'].includes(job.state)) || (filter === 'done' && ['completed','cancelled'].includes(job.state)));
   $: activeCount = jobs.filter((job) => active.has(job.state)).length;
@@ -48,7 +51,7 @@
       const selected = await onChooseLocal();
       if (selected) {
         localPath = selected;
-        actionStatus = 'Video selected. Queue it when ready.';
+        actionStatus = $translator('queue.selectedStatus');
       }
     });
   }
@@ -157,7 +160,7 @@
     }).catch((error) => {
       dragActive = false;
       nativeDropAvailable = false;
-      actionError = error instanceof Error ? error.message : 'Native file drop could not be enabled.';
+      actionError = error instanceof Error ? error.message : $translator('queue.nativeDropFailed');
     });
 
     return () => {
@@ -167,18 +170,19 @@
   });
 </script>
 
-<section class="view-head queue-head">
-  <div><span class="eyebrow">Persistent activity</span><h1>Jobs</h1><p>Choose local media with the desktop picker, drop a file into the desktop app, or queue a supported URL. Rust still validates every path and owns queue state.</p></div>
-  <div class="queue-summary" aria-label="Job filters">
-    <span><strong>{activeCount}</strong> Active</span>
-    {#if attentionCount > 0}<span class="attention-count"><strong>{attentionCount}</strong> Needs attention</span>{/if}
+<section class="view-head queue-head" data-i18n-ignore>
+  <div><span class="eyebrow">{$translator('queue.headingEyebrow')}</span><h1>{$translator('queue.heading')}</h1><p>{$translator('queue.description')}</p></div>
+  <div class="queue-summary" aria-label={$translator('queue.filters')}>
+    <span><strong>{activeCount}</strong> {$translator('queue.filterActive')}</span>
+    {#if attentionCount > 0}<span class="attention-count"><strong>{attentionCount}</strong> {$translator('queue.filterAttention')}</span>{/if}
   </div>
 </section>
 
 <section
   class:drag-active={dragActive}
   class="panel jobs-capture"
-  aria-label="Add transcription job"
+  data-i18n-ignore
+  aria-label={$translator('queue.addJob')}
   aria-busy={busy}
   on:dragover={handleDragOver}
   on:dragenter={handleDragOver}
@@ -190,43 +194,43 @@
   {/if}
 
   <div class="capture-heading">
-    <span class="eyebrow">Add transcription job</span>
-    <h2>Local media & URLs</h2>
+    <span class="eyebrow">{$translator('queue.addJob')}</span>
+    <h2>{$translator('queue.localAndUrls')}</h2>
     <p data-i18n-ignore>{$translator('queue.dropHint')}</p>
   </div>
 
   <div class="source-grid">
     <section class:ready={Boolean(localPath)} class:drop-ready={nativeDropAvailable} class="source-card local-source">
-      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>Local media</strong>{#if localPath}<small data-i18n-ignore>{displayName(localPath)}</small>{:else if nativeDropAvailable}<small data-i18n-ignore>{$translator('queue.dropEmpty')}</small>{:else}<small>No video selected</small>{/if}</div></div>
+      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>{$translator('queue.localMedia')}</strong>{#if localPath}<small data-i18n-ignore>{displayName(localPath)}</small>{:else if nativeDropAvailable}<small data-i18n-ignore>{$translator('queue.dropEmpty')}</small>{:else}<small>{$translator('queue.noVideo')}</small>{/if}</div></div>
       {#if localPath}<code class="selected-path">{localPath}</code>{/if}
       <div class="capture-actions">
-        <button class="button secondary" disabled={busy} on:click={chooseLocal}>Choose video</button>
-        <button class="button primary" disabled={busy || !localPath} on:click={() => run(async () => { await onEnqueueLocal(localPath); actionStatus = `Queued ${displayName(localPath)}.`; localPath = ''; })}>Queue selected</button>
+        <button class="button secondary" disabled={busy} on:click={chooseLocal}>{$translator('queue.chooseVideo')}</button>
+        <button class="button primary" disabled={busy || !localPath} on:click={() => run(async () => { await onEnqueueLocal(localPath); actionStatus = $translator('queue.queuedFile', { name: displayName(localPath) }); localPath = ''; })}>{$translator('queue.queueSelected')}</button>
       </div>
     </section>
 
     <section class:ready={Boolean(sourceUrl.trim())} class="source-card url-source">
-      <label class="url-capture"><span>Supported media URL</span><input aria-label="Media URL" bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
+      <label class="url-capture"><span>{$translator('queue.supportedUrl')}</span><input aria-label={$translator('queue.mediaUrl')} bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
       <div class="capture-actions">
         <button class="button secondary" type="button" disabled={busy} on:click={enqueueFromClipboard} data-i18n-ignore title={$translator('queue.clipboardUrls')}>
           <span aria-hidden="true">📋</span> {$translator('queue.clipboardUrls')}
         </button>
-        <button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = 'URL queued.'; })}>Queue URL</button>
+        <button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = $translator('queue.queuedUrl'); })}>{$translator('queue.queueUrl')}</button>
       </div>
     </section>
   </div>
 
   <details class="advanced-path">
-    <summary>Advanced: enter a local path manually</summary>
-    <div><input aria-label="Manual local media path" bind:value={manualPath} placeholder="/home/me/video.mp4" /><button class="button secondary" disabled={busy || !manualPath.trim()} on:click={() => run(async () => { await onEnqueueLocal(manualPath.trim()); actionStatus = `Queued ${displayName(manualPath.trim())}.`; manualPath = ''; })}>Queue path</button></div>
+    <summary>{$translator('queue.advancedPath')}</summary>
+    <div><input aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" /><button class="button secondary" disabled={busy || !manualPath.trim()} on:click={() => run(async () => { await onEnqueueLocal(manualPath.trim()); actionStatus = $translator('queue.queuedFile', { name: displayName(manualPath.trim()) }); manualPath = ''; })}>{$translator('queue.queuePath')}</button></div>
   </details>
 </section>
 
-{#if actionError}<p class="status-copy queue-message error-message" role="alert">{actionError}</p>{/if}
+{#if actionError}<p class="status-copy queue-message error-message" role="alert" data-i18n-ignore>{actionError}</p>{/if}
 {#if actionStatus}<p class="status-copy queue-message" aria-live="polite" data-i18n-ignore>{actionStatus}</p>{/if}
 
-<div class="queue-toolbar">
-  <div class="segmented" role="group" aria-label="Job filters">
+<div class="queue-toolbar" data-i18n-ignore>
+  <div class="segmented" role="group" aria-label={$translator('queue.filters')}>
     {#each filters as item}<button class:active={filter === item.id} aria-pressed={filter === item.id} on:click={() => filter = item.id}>{item.label}</button>{/each}
   </div>
   <span class="visible-count">{visible.length} / {jobs.length}</span>
@@ -234,15 +238,15 @@
 
 <section class="panel jobs-panel" aria-busy={busy}>
   {#if visible.length === 0}
-    <EmptyState title="No jobs in this view" message="Change the filter or queue media above." />
+    <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
   {:else}
     {#each visible as job}
       <div class="job-with-actions">
         <JobRow {job} />
-        <div class="job-actions">
-          {#if active.has(job.state)}<button class="button danger subtle" disabled={busy} on:click={() => run(() => onCancel(job.id))}>Cancel</button>{/if}
-          {#if ['failed','interrupted','cancelled'].includes(job.state)}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onRetry(job.id))}>Retry</button>{/if}
-          {#if job.state === 'completed'}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onOpenCompleted(job))}>Open transcript</button>{/if}
+        <div class="job-actions" data-i18n-ignore>
+          {#if active.has(job.state)}<button class="button danger subtle" disabled={busy} on:click={() => run(() => onCancel(job.id))}>{$translator('queue.cancel')}</button>{/if}
+          {#if ['failed','interrupted','cancelled'].includes(job.state)}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onRetry(job.id))}>{$translator('queue.retry')}</button>{/if}
+          {#if job.state === 'completed'}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onOpenCompleted(job))}>{$translator('queue.openTranscript')}</button>{/if}
         </div>
       </div>
     {/each}
@@ -265,7 +269,7 @@
   .capture-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .8fr); column-gap: 24px; align-items: end; padding-bottom: 13px; border-bottom: 1px solid var(--border); }
   .capture-heading .eyebrow { grid-column: 1 / -1; }
   .capture-heading h2, .capture-heading p { margin: 0; }
-  .capture-heading p { justify-self: end; max-width: 420px; font-size: 11px; text-align: right; }
+  .capture-heading p { justify-self: end; max-width: 420px; font-size: 11px; text-align: end; }
   .source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .source-card { display: grid; gap: 12px; min-height: 150px; padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
   .source-card.ready { border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 5%, var(--surface)); }
@@ -291,7 +295,7 @@
   @media (max-width: 900px) {
     .source-grid { grid-template-columns: 1fr; }
     .capture-heading { grid-template-columns: 1fr; }
-    .capture-heading p { justify-self: start; text-align: left; }
+    .capture-heading p { justify-self: start; text-align: start; }
   }
   @media (max-width: 700px) {
     .queue-summary { width: 100%; }
