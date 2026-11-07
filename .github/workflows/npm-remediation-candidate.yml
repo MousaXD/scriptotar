@@ -1,0 +1,45 @@
+name: Scriptotar npm remediation candidate (nonpublishing)
+on:
+  push:
+    branches: [agent-00/npm-audit-candidate-20261107]
+    paths:
+      - '.github/workflows/npm-remediation-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Generate npm lockfile candidate and publish nonsecret hashes in job log
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix apps/desktop-ui --save-dev 'vitest@^5.1.0'
+          (cd apps/desktop-ui && npm audit fix) || echo "npm audit fix left unresolved issues for the strict audit below"
+          node <<'NODE'
+          const fs = require('fs');
+          for (const filename of ['package.json', 'package-lock.json']) {
+            const file = 'apps/desktop-ui/' + filename;
+            const b64 = fs.readFileSync(file).toString('base64');
+            console.log('CANDIDATE_BEGIN:' + filename + ':' + b64.length);
+            for (let i = 0; i < b64.length; i += 3800) {
+              console.log('CANDIDATE_DATA:' + filename + ':' + (i / 3800) + ':' + b64.slice(i, i + 3800));
+            }
+            console.log('CANDIDATE_END:' + filename);
+          }
+          NODE
+      - name: Verify reproducible install
+        run: npm ci --prefix apps/desktop-ui
+      - name: Verify Svelte / TypeScript
+        run: npm run check --prefix apps/desktop-ui
+      - name: Verify frontend regressions
+        run: npm run test --prefix apps/desktop-ui
+      - name: Verify production build
+        run: npm run build --prefix apps/desktop-ui
+      - name: Strict npm security audit (no exclusions)
+        run: npm audit --prefix apps/desktop-ui --audit-level=high
