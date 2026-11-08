@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ctypes
 import gc
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -31,14 +33,33 @@ class WhisperCache:
         self.model: Any = None
         self.key: tuple[str, str, str] | None = None
         self.batched_pipeline: Any = None
+        # A missing CUDA dependency can fail when a transcription iterator is
+        # consumed, well after WhisperModel has finished initializing.
+        self.auto_cuda_disabled = False
 
     @staticmethod
-    def choose_device(requested: str) -> tuple[str, str]:
+    def cuda_runtime_available() -> bool:
+        # nvidia-smi only proves that the driver sees a GPU; it does not prove
+        # that the cuBLAS/cuDNN libraries required by CTranslate2 are loaded.
+        if os.name == "nt":
+            libraries = ("cublas64_12.dll", "cublasLt64_12.dll", "cudnn64_9.dll")
+        elif sys.platform.startswith("linux"):
+            libraries = ("libcublas.so.12", "libcublasLt.so.12", "libcudnn.so.9")
+        else:
+            return False
+        try:
+            for library in libraries:
+                ctypes.CDLL(library)
+        except OSError:
+            return False
+        return True
+
+    def choose_device(self, requested: str) -> tuple[str, str]:
         if requested == "cpu":
             return "cpu", "int8"
         if requested == "cuda":
             return "cuda", "int8_float16"
-        if shutil.which("nvidia-smi"):
+        if not self.auto_cuda_disabled and shutil.which("nvidia-smi"):
             try:
                 subprocess.run(
                     ["nvidia-smi"],
@@ -47,10 +68,18 @@ class WhisperCache:
                     timeout=3,
                     check=True,
                 )
-                return "cuda", "int8_float16"
+                if self.cuda_runtime_available():
+                    return "cuda", "int8_float16"
             except (OSError, subprocess.SubprocessError):
                 pass
         return "cpu", "int8"
+
+    def disable_auto_cuda(self) -> None:
+        self.auto_cuda_disabled = True
+        self.model = None
+        self.key = None
+        self.batched_pipeline = None
+        gc.collect()
 
     def load(self, model_name: str, requested_device: str, use_batched: bool, emit: EventSink):
         from faster_whisper import BatchedInferencePipeline, WhisperModel
@@ -65,9 +94,12 @@ class WhisperCache:
         emit("progress", {"stage": "transcribing", "message": f"Loading Whisper model {model_name}."})
         try:
             model = WhisperModel(model_name, device=device, compute_type=compute)
-        except Exception:
-            if requested_device != "auto" or device != "cuda":
+        except Exception as exc:
+            # Network/cache/model failures are not GPU runtime failures. Do
+            # not disguise them as CUDA errors or repeat them on CPU.
+            if requested_device != "auto" or device != "cuda" or not _is_cuda_runtime_failure(exc):
                 raise
+            self.disable_auto_cuda()
             device, compute = "cpu", "int8"
             key = (model_name, device, compute)
             model = WhisperModel(model_name, device=device, compute_type=compute)
@@ -100,9 +132,18 @@ def probe_duration(path: Path) -> float | None:
             text=True,
             timeout=30,
         )
-        return float(result.stdout.strip())
+        duration = float(result.stdout.strip())
+        return duration if math.isfinite(duration) and duration > 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def _check_duration_limit(duration: float | None, maximum: int) -> None:
+    if duration is not None and duration > 0 and maximum > 0 and duration > maximum:
+        raise SidecarError(
+            "DURATION_LIMIT",
+            f"Media duration {human_time(duration)} exceeds the configured {human_time(maximum)} limit.",
+        )
 
 
 def _quality_format(quality: str) -> tuple[str, str | None, list[str]]:
@@ -118,11 +159,19 @@ def _quality_format(quality: str) -> tuple[str, str | None, list[str]]:
 
 def _limited_metadata(info: dict[str, Any], fallback_url: str) -> dict[str, Any]:
     duration = info.get("duration")
+    valid_duration = (
+        float(duration)
+        if isinstance(duration, (int, float))
+        and not isinstance(duration, bool)
+        and math.isfinite(duration)
+        and duration > 0
+        else None
+    )
     return {
         "title": str(info.get("title") or "video")[:500],
         "uploader": (str(info.get("uploader") or info.get("channel"))[:300] if info.get("uploader") or info.get("channel") else None),
         "source_url": str(info.get("webpage_url") or fallback_url),
-        "duration_seconds": float(duration) if isinstance(duration, (int, float)) else None,
+        "duration_seconds": valid_duration,
         "extractor": str(info.get("extractor_key") or info.get("extractor") or "")[:100] or None,
     }
 
@@ -141,8 +190,16 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     }
     if job.get("cookies") != "none":
         preflight_opts["cookiesfrombrowser"] = (job["cookies"],)
-    with yt_dlp.YoutubeDL(preflight_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL(preflight_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as exc:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source platform could not provide media metadata. Check the URL, network, "
+            "regional availability and any required account access before retrying.",
+            retryable=True,
+        ) from exc
     if not isinstance(info, dict):
         raise SidecarError("MEDIA_METADATA_FAILED", "The source returned no usable media metadata.", retryable=True)
     if info.get("is_live"):
@@ -151,11 +208,7 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     metadata = _limited_metadata(info, url)
     duration = metadata["duration_seconds"]
     max_seconds = int(job.get("max_duration_seconds") or 0)
-    if duration and max_seconds and duration > max_seconds:
-        raise SidecarError(
-            "DURATION_LIMIT",
-            f"Media duration {human_time(duration)} exceeds the configured {human_time(max_seconds)} limit.",
-        )
+    _check_duration_limit(duration, max_seconds)
 
     quality = job.get("quality", "720p")
     format_selector, merge, sort_fields = _quality_format(quality)
@@ -191,8 +244,22 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     if job.get("cookies") != "none":
         options["cookiesfrombrowser"] = (job["cookies"],)
 
-    with yt_dlp.YoutubeDL(options) as ydl:
-        ydl.download([url])
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            status = ydl.download([url])
+    except yt_dlp.utils.DownloadError as exc:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source platform did not complete the download. Check source access "
+            "and connectivity; retry or use an authorized local copy.",
+            retryable=True,
+        ) from exc
+    if status != 0:
+        raise SidecarError(
+            "SOURCE_ACCESS_FAILED",
+            "The source downloader reported a nonzero exit status.",
+            retryable=True,
+        )
 
     candidates = [
         path
@@ -200,12 +267,17 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
         if path.is_file()
         and path.name not in {"checkpoint.json", "job.json", "error.json"}
         and path.suffix.lower() not in {".part", ".ytdl", ".json"}
+        and path.stat().st_size > 0
     ]
     if not candidates:
-        raise SidecarError("DOWNLOAD_OUTPUT_MISSING", "Download completed but no media file was produced.", retryable=True)
+        raise SidecarError("DOWNLOAD_OUTPUT_MISSING", "Download completed but no nonempty media file was produced.", retryable=True)
     media = max(candidates, key=lambda item: item.stat().st_size)
-    if metadata["duration_seconds"] is None:
-        metadata["duration_seconds"] = probe_duration(media)
+    # Metadata may omit or misreport duration. Check the actual downloaded
+    # artifact before the expensive Whisper step when ffprobe is available.
+    measured = probe_duration(media)
+    if measured is not None:
+        metadata["duration_seconds"] = measured
+    _check_duration_limit(metadata["duration_seconds"], max_seconds)
     return media, metadata
 
 
@@ -213,11 +285,7 @@ def prepare_local(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[
     source = Path(job["source"])
     duration = probe_duration(source)
     max_seconds = int(job.get("max_duration_seconds") or 0)
-    if duration and max_seconds and duration > max_seconds:
-        raise SidecarError(
-            "DURATION_LIMIT",
-            f"Media duration {human_time(duration)} exceeds the configured {human_time(max_seconds)} limit.",
-        )
+    _check_duration_limit(duration, max_seconds)
     if job.get("copy_source", True):
         destination = partial / f"video{source.suffix.lower()}"
         shutil.copy2(source, destination)
@@ -235,9 +303,11 @@ def prepare_local(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[
     return media, metadata
 
 
-def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink) -> dict[str, Any]:
+def _transcribe_media_attempt(
+    job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink, requested_device: str
+) -> dict[str, Any]:
     model, batched, device, compute = MODEL_CACHE.load(
-        job.get("model", "medium"), job.get("device", "auto"), bool(job.get("batched", False)), emit
+        job.get("model", "medium"), requested_device, bool(job.get("batched", False)), emit
     )
     language = None if job.get("language") == "auto" else job.get("language")
     task = "translate" if job.get("translate") else "transcribe"
@@ -313,6 +383,57 @@ def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any],
         "compute_type": compute,
         "task": task,
     }
+
+
+def _is_cuda_runtime_failure(exc: Exception) -> bool:
+    if not isinstance(exc, (RuntimeError, OSError)):
+        return False
+    detail = str(exc).lower()
+    return any(
+        marker in detail
+        for marker in (
+            "cuda",
+            "cublas",
+            "cudnn",
+            "cudart",
+            "cufft",
+            "no kernel image",
+        )
+    )
+
+
+def transcribe_media(job: dict[str, Any], media: Path, metadata: dict[str, Any], emit: EventSink) -> dict[str, Any]:
+    requested_device = job.get("device", "auto")
+    try:
+        return _transcribe_media_attempt(job, media, metadata, emit, requested_device)
+    except (RuntimeError, OSError) as exc:
+        if requested_device == "cuda" and _is_cuda_runtime_failure(exc):
+            raise SidecarError(
+                "CUDA_RUNTIME_UNAVAILABLE",
+                "CUDA transcription cannot start because its GPU runtime failed. "
+                "Select CPU or Auto in Scriptotar's transcription settings and retry the job.",
+            ) from exc
+        # A CTranslate2 CUDA failure can be raised by batched.transcribe(),
+        # model.transcribe(), or only when segments_iter is consumed. Always
+        # restart the *entire* attempt on CPU, discarding any partial CUDA
+        # segments, so the transcript and its timestamps cannot be duplicated.
+        if (
+            requested_device != "auto"
+            or MODEL_CACHE.key is None
+            or MODEL_CACHE.key[1] != "cuda"
+            or not _is_cuda_runtime_failure(exc)
+        ):
+            raise
+        MODEL_CACHE.disable_auto_cuda()
+        emit(
+            "progress",
+            {
+                "stage": "transcribing",
+                "percent": 0.0,
+                "message": "CUDA is unavailable during transcription. Retrying on CPU without re-downloading media.",
+            },
+        )
+        return _transcribe_media_attempt(job, media, metadata, emit, "cpu")
 
 
 def write_outputs(

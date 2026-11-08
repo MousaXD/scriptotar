@@ -80,13 +80,7 @@ impl SqliteStore {
                 .execute(
                     "INSERT INTO watchlists(id, project_id, label, profile_url, limit_count, last_scan_at)
                      VALUES(?1, ?2, ?3, ?4, ?5, NULL)",
-                    params![
-                        id.to_string(),
-                        project_id.to_string(),
-                        label,
-                        profile_url,
-                        i64::from(limit_count),
-                    ],
+                    params![id.to_string(), project_id.to_string(), label, profile_url, i64::from(limit_count),],
                 )
                 .map_err(storage_error)?;
             (id, None)

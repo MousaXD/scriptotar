@@ -1,4 +1,5 @@
 mod dto;
+mod mcp_connect;
 mod migration;
 mod security;
 mod services;
@@ -19,8 +20,10 @@ use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
     UiTranscript, UiWatchlistStatus,
 };
+use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
+use scriptotar_mcp::{load_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -39,6 +42,205 @@ struct OperationalState {
     store: SqliteStore,
 }
 
+#[derive(Default)]
+struct McpGatewayState {
+    child: Mutex<Option<std::process::Child>>,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct McpGatewayStatus {
+    running: bool,
+    endpoint: String,
+}
+
+const MCP_HTTP_PORT: u16 = 39761;
+
+impl Drop for McpGatewayState {
+    fn drop(&mut self) {
+        // A poisoned mutex must not detach a running gateway.
+        let child = self
+            .child
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(mut child) = child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+fn register_gateway_child(
+    state: &McpGatewayState,
+    mut child: std::process::Child,
+) -> Result<(), String> {
+    let mut process = match state.child.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            // If ownership registration fails after spawning, reap the real
+            // child rather than silently detaching an orphaned gateway.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("MCP gateway state is unavailable".into());
+        }
+    };
+    *process = Some(child);
+    Ok(())
+}
+
+fn stop_gateway(state: &McpGatewayState) -> Result<(), String> {
+    // Preserve emergency shutdown even if a previous panic poisoned state.
+    let mut child = state
+        .child
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(mut process) = child.take() {
+        let _ = process.kill();
+        let _ = process.wait();
+    }
+    Ok(())
+}
+
+fn gateway_status(state: &McpGatewayState) -> Result<McpGatewayStatus, String> {
+    let mut child = state
+        .child
+        .lock()
+        .map_err(|_| "MCP gateway state is unavailable")?;
+    if let Some(process) = child.as_mut() {
+        if process
+            .try_wait()
+            .map_err(|_| "cannot inspect MCP gateway")?
+            .is_some()
+        {
+            child.take();
+        }
+    }
+    Ok(McpGatewayStatus {
+        running: child.is_some(),
+        endpoint: format!("http://127.0.0.1:{MCP_HTTP_PORT}/mcp"),
+    })
+}
+
+#[tauri::command]
+fn mcp_gateway_status(
+    state: tauri::State<'_, McpGatewayState>,
+) -> Result<McpGatewayStatus, String> {
+    gateway_status(&state)
+}
+
+#[tauri::command]
+fn start_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpGatewayStatus, String> {
+    manager.start_local_gateway(&operational.data_dir, &gateway)
+}
+
+fn start_gateway_for_data(
+    data_dir: &Path,
+    gateway: &McpGatewayState,
+) -> Result<McpGatewayStatus, String> {
+    let permissions = load_permissions(data_dir)?;
+    if !permissions.enabled || permissions.http_token.is_empty() {
+        return Err("Enable MCP and save local permissions before starting the gateway".into());
+    }
+    if gateway_status(gateway)?.running {
+        return gateway_status(gateway);
+    }
+    let exe = env::current_exe().map_err(|_| "cannot locate Scriptotar executable")?;
+    let child = Command::new(exe)
+        .arg("--mcp-http")
+        .env("SCRIPTOTAR_DB_PATH", data_dir.join("scriptotar.sqlite3"))
+        .env("SCRIPTOTAR_MCP_PORT", MCP_HTTP_PORT.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| "could not launch local MCP gateway")?;
+    register_gateway_child(gateway, child)?;
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let status = gateway_status(gateway)?;
+    if !status.running {
+        return Err(
+            "MCP gateway exited during startup; check whether port 39761 is available".into(),
+        );
+    }
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_mcp_gateway(
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpGatewayStatus, String> {
+    // Stopping the local gateway is also a public-URL revocation action.
+    // Do not leave a previously shared tunnel secret reusable if it restarts.
+    manager.stop(&operational.data_dir, &gateway)?;
+    gateway_status(&gateway)
+}
+
+#[tauri::command]
+fn mcp_connection_status(
+    app: tauri::AppHandle,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> McpConnectionStatus {
+    manager.status(&app)
+}
+
+#[tauri::command]
+fn mcp_connect_cloudflare(
+    app: tauri::AppHandle,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_cloudflare(&app, &operational.data_dir, &gateway)
+}
+
+#[tauri::command]
+fn mcp_connect_openai(
+    app: tauri::AppHandle,
+    tunnel_id: String,
+    api_key: String,
+    remember_key: bool,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_openai(
+        &app,
+        &operational.data_dir,
+        &gateway,
+        &tunnel_id,
+        &api_key,
+        remember_key,
+    )
+}
+
+#[tauri::command]
+fn mcp_connect_manual(
+    app: tauri::AppHandle,
+    hostname: String,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.connect_manual(&app, &operational.data_dir, &gateway, &hostname)
+}
+
+#[tauri::command]
+fn mcp_disconnect(
+    app: tauri::AppHandle,
+    operational: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpConnectionStatus, String> {
+    manager.stop(&operational.data_dir, &gateway)?;
+    Ok(manager.status(&app))
+}
+
 #[derive(Debug, Clone, Copy)]
 enum NativePicker {
     MediaFile,
@@ -53,6 +255,18 @@ enum MigrationLockError {
 
 fn command_error(error: impl ToString) -> String {
     error.to_string()
+}
+
+/// Keep blocking SQLite, provider and subprocess work off Tauri's IPC executor.
+/// Preserve each command's original Result payload and argument validation.
+async fn on_blocking_worker<T, F>(task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|_| "backend worker failed".to_owned())?
 }
 
 fn packaged_executable(stem: &str) -> String {
@@ -99,6 +313,41 @@ fn configure_packaged_runtime(resource_dir: &Path, data_dir: &Path) {
     }
     if let Ok(joined) = env::join_paths(search_path) {
         env::set_var("PATH", joined);
+    }
+}
+
+/// Discover the same bundled runtime that the GUI registers during Tauri setup.
+/// The CLI MCP path does not enter Tauri's `.setup` hook, so it must configure
+/// the runtime independently before it opens the sidecar/job orchestrator.
+fn packaged_resource_dir_for_executable(executable: &Path) -> Option<PathBuf> {
+    let bin_dir = executable.parent()?;
+    let candidates = [
+        bin_dir.to_path_buf(),
+        bin_dir.join("resources"),
+        bin_dir.join("../Resources"),
+        bin_dir.join("../lib/Scriptotar"),
+        bin_dir.join("../share/Scriptotar"),
+    ];
+    candidates.into_iter().find(|root| {
+        let runtime = root.join("transcription-runtime");
+        runtime.join("sidecar.py").is_file()
+            && runtime
+                .join(packaged_executable("scriptotar-transcription"))
+                .is_file()
+            && runtime
+                .join(packaged_executable("scriptotar-ytdlp"))
+                .is_file()
+    })
+}
+
+/// Called by the packaged binary's `--mcp-stdio` / `--mcp-http` entrypoints.
+/// Never requires a bundled runtime for local source builds with explicit
+/// developer sidecar settings; absent packaging does not unlock capabilities.
+pub fn configure_mcp_cli_runtime(data_dir: &Path) {
+    if let Ok(executable) = env::current_exe() {
+        if let Some(resource_dir) = packaged_resource_dir_for_executable(&executable) {
+            configure_packaged_runtime(&resource_dir, data_dir);
+        }
     }
 }
 
@@ -246,13 +495,15 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
 }
 
 #[tauri::command]
-fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
-    state.bootstrap().map_err(command_error)
+async fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.bootstrap().map_err(command_error)).await
 }
 
 #[tauri::command]
-fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
-    state.list_jobs().map_err(command_error)
+async fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.list_jobs().map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -267,13 +518,19 @@ fn search_transcripts(
 }
 
 #[tauri::command]
-fn get_transcript(
+async fn get_transcript(
     transcript_id: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<UiTranscript, String> {
     let transcript_id =
         Uuid::parse_str(&transcript_id).map_err(|_| "invalid transcript id".to_owned())?;
-    state.get_transcript(transcript_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_transcript(transcript_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -378,20 +635,22 @@ fn select_legacy_migration_candidate(
 }
 
 #[tauri::command]
-fn select_project(
+async fn select_project(
     project_id: Uuid,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
-    state.select_project(project_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.select_project(project_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn create_project(
+async fn create_project(
     name: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
     security::validate_project_name(&name)?;
-    state.create_project(name).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.create_project(name).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -445,23 +704,52 @@ fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, Stri
 }
 
 #[tauri::command]
+fn get_mcp_permissions(
+    state: tauri::State<'_, OperationalState>,
+) -> Result<McpPermissions, String> {
+    load_permissions(&state.data_dir)
+}
+
+#[tauri::command]
+fn save_mcp_permissions(
+    permissions: McpPermissions,
+    acknowledge_sensitive_access: bool,
+    state: tauri::State<'_, OperationalState>,
+    gateway: tauri::State<'_, McpGatewayState>,
+    manager: tauri::State<'_, McpConnectionState>,
+) -> Result<McpPermissions, String> {
+    if permissions.enabled
+        && (permissions.write_files || permissions.overwrite_files || permissions.execute_commands)
+        && !acknowledge_sensitive_access
+    {
+        return Err("Approve powerful MCP file-write and command access locally in Scriptotar Settings first.".into());
+    }
+    manager.save_app_permissions(&state.data_dir, &gateway, permissions)
+}
+
+#[tauri::command]
 fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     state.save_settings(settings).map_err(command_error)
 }
 
 #[tauri::command]
-fn save_watchlist(
+async fn save_watchlist(
     query: ResearchQuery,
     state: tauri::State<'_, AppServices>,
 ) -> Result<BootstrapData, String> {
     security::validate_research_query(&query)?;
-    state.save_watchlist(query)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_watchlist(query)).await
 }
 
 #[tauri::command]
-fn scan_creator(query: ResearchQuery, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+async fn scan_creator(
+    query: ResearchQuery,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
     security::validate_research_query(&query)?;
-    state.scan_creator(query)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.scan_creator(query)).await
 }
 
 #[tauri::command]
@@ -480,9 +768,13 @@ fn build_ai_prompt(
 }
 
 #[tauri::command]
-fn run_ai(input: AiPromptInput, state: tauri::State<'_, AppServices>) -> Result<String, String> {
+async fn run_ai(
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.run_ai(&input)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.run_ai(&input)).await
 }
 
 fn command_output(command: &mut Command) -> Result<Option<String>, io::Error> {
@@ -637,6 +929,8 @@ pub fn run() {
                 store: operational_store,
             });
             app.manage(services);
+            app.manage(McpGatewayState::default());
+            app.manage(McpConnectionState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -659,6 +953,16 @@ pub fn run() {
             retry_job,
             get_settings,
             save_settings,
+            get_mcp_permissions,
+            save_mcp_permissions,
+            mcp_gateway_status,
+            start_mcp_gateway,
+            stop_mcp_gateway,
+            mcp_connection_status,
+            mcp_connect_cloudflare,
+            mcp_connect_openai,
+            mcp_connect_manual,
+            mcp_disconnect,
             save_watchlist,
             scan_creator,
             queue_research,
@@ -673,6 +977,124 @@ pub fn run() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(unix)]
+    fn assert_child_reaped(pid: u32) {
+        // A successfully waited child must no longer exist in the process table.
+        // This is an OS-backed assertion, not an assertion about subprocess trees.
+        assert!(
+            !Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .expect("kill executable must be present on Unix CI")
+                .success(),
+            "gateway child {pid} was not terminated and reaped"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_stop_recovers_poisoned_state_with_real_owned_child() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled gateway fixture");
+        let pid = child.id();
+        *gateway.child.lock().unwrap() = Some(child);
+        let cloned = Arc::clone(&gateway);
+        let poisoned = std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("simulate panic while owning gateway child");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        assert!(gateway.child.is_poisoned());
+        stop_gateway(&gateway).expect("emergency stop must succeed after poisoning");
+        assert!(gateway.child.lock().unwrap_err().into_inner().is_none());
+        assert_child_reaped(pid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gateway_post_spawn_registration_failure_reaps_real_child() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let cloned = Arc::clone(&gateway);
+        assert!(std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("poison gateway ownership before post-spawn registration");
+        })
+        .join()
+        .is_err());
+        let child = Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .expect("spawn controlled gateway fixture");
+        let pid = child.id();
+        assert!(register_gateway_child(&gateway, child).is_err());
+        assert_child_reaped(pid);
+    }
+
+    #[test]
+    fn gateway_stop_recovers_from_poisoned_process_state() {
+        let gateway = Arc::new(McpGatewayState::default());
+        let cloned = Arc::clone(&gateway);
+        let _ = std::thread::spawn(move || {
+            let _lock = cloned.child.lock().unwrap();
+            panic!("simulate panic in gateway state transition");
+        })
+        .join();
+        assert!(gateway.child.is_poisoned());
+        assert!(stop_gateway(&gateway).is_ok());
+    }
+
+    #[test]
+    fn blocking_worker_keeps_results_and_errors_and_runs_off_caller_thread() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(on_blocking_worker(move || {
+            Ok::<_, String>(std::thread::current().id())
+        }))
+        .expect("blocking worker should return result");
+        assert_ne!(caller, worker);
+
+        let error = tauri::async_runtime::block_on(on_blocking_worker(|| {
+            Err::<(), String>("operation rejected".to_owned())
+        }))
+        .unwrap_err();
+        assert_eq!(error, "operation rejected");
+    }
+
+    #[test]
+    fn discovers_linux_packaged_runtime_for_headless_mcp() {
+        let temp = TempDir::new().unwrap();
+        let bin = temp.path().join("bin");
+        let runtime = temp.path().join("lib/Scriptotar/transcription-runtime");
+        fs::create_dir_all(&bin).unwrap();
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("sidecar.py"), "fixture").unwrap();
+        fs::write(
+            runtime.join(packaged_executable("scriptotar-transcription")),
+            "fixture",
+        )
+        .unwrap();
+        fs::write(
+            runtime.join(packaged_executable("scriptotar-ytdlp")),
+            "fixture",
+        )
+        .unwrap();
+        let exe = bin.join(packaged_executable("scriptotar-desktop"));
+        fs::write(&exe, "fixture").unwrap();
+        assert_eq!(
+            packaged_resource_dir_for_executable(&exe)
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            runtime.parent().unwrap().canonicalize().unwrap()
+        );
+    }
 
     #[test]
     fn migration_completion_marker_survives_restart_and_is_private() {

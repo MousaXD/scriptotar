@@ -1,3 +1,5 @@
+mod project_jobs;
+
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -32,6 +34,7 @@ use crate::dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
     UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
 };
+use project_jobs::summarize_project_jobs;
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
@@ -304,8 +307,7 @@ impl AppServices {
                 .map_err(|error| error.to_string())?;
             if !claimed {
                 return Err(
-                    "A refresh for this saved watchlist is already running. Try again after it finishes."
-                        .to_owned(),
+                    "A refresh for this saved watchlist is already running. Try again after it finishes.".to_owned()
                 );
             }
         }
@@ -335,9 +337,7 @@ impl AppServices {
                         &safe_error,
                         None,
                     ) {
-                        eprintln!(
-                            "[scriptotar-watchlist] could not persist manual refresh failure: {status_error}"
-                        );
+                        eprintln!("[scriptotar-watchlist] could not persist manual refresh failure: {status_error}");
                     }
                 }
                 Err(safe_error)
@@ -488,6 +488,9 @@ impl AppServices {
     fn bootstrap_for(&self, active_project: Uuid) -> RepositoryResult<BootstrapData> {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
+        // Precompute project counts and latest updates once. Repeatedly filtering all
+        // jobs for every project makes bootstrap CPU work quadratic in workspace size.
+        let project_job_summaries = summarize_project_jobs(&all_jobs);
         let transcripts = self.store.list_transcripts(Some(active_project))?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
@@ -561,14 +564,9 @@ impl AppServices {
         let ui_projects = projects
             .iter()
             .map(|project| {
-                let project_jobs = all_jobs
-                    .iter()
-                    .filter(|job| job.project_id == project.id)
-                    .collect::<Vec<_>>();
-                let updated_at = project_jobs
-                    .iter()
-                    .map(|job| job.updated_at.as_str())
-                    .max()
+                let summary = project_job_summaries.get(&project.id);
+                let updated_at = summary
+                    .and_then(|summary| summary.latest_updated_at)
                     .unwrap_or(&project.created_at)
                     .to_owned();
                 UiProject {
@@ -576,7 +574,7 @@ impl AppServices {
                     name: project.name.clone(),
                     description: None,
                     updated_at,
-                    item_count: project_jobs.len(),
+                    item_count: summary.map(|summary| summary.item_count).unwrap_or(0),
                 }
             })
             .collect::<Vec<_>>();
@@ -725,14 +723,12 @@ fn safe_watchlist_error(error: &str) -> String {
         || lower.contains("connection")
         || lower.contains("dns")
     {
-        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff."
-            .to_owned()
+        "Creator refresh could not reach the provider. Scriptotar will retry after the configured backoff.".to_owned()
     } else if lower.contains("yt-dlp") || lower.contains("executable") || lower.contains("spawn") {
         "The local research runtime could not start. Repair the packaged runtime before retrying."
             .to_owned()
     } else if lower.contains("unsupported") || lower.contains("invalid") {
-        "The creator profile could not be scanned because the provider rejected or does not support it."
-            .to_owned()
+        "The creator profile could not be scanned because the provider rejected or does not support it.".to_owned()
     } else {
         "Creator refresh failed. Open Research and run a manual scan for more detail.".to_owned()
     }
@@ -1497,7 +1493,8 @@ mod tests {
                 25,
             )
             .unwrap();
-        let raw = "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
+        let raw =
+            "Authorization: Bearer super-secret cookie=/home/user/profile?token=query-secret <html>Traceback</html>";
         let safe = safe_watchlist_error(raw);
         store
             .record_watchlist_refresh_failure(watchlist.id, "2026-08-10T10:00:00Z", &safe, None)
@@ -1574,6 +1571,100 @@ mod tests {
             bootstrap_active_id(&restarted.bootstrap().unwrap()),
             selected_project
         );
+    }
+
+    #[test]
+    fn overlapping_project_changes_watchlists_and_copy_ai_preserve_project_ownership() {
+        use std::sync::Barrier;
+
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let inbox = bootstrap_active_id(&services.bootstrap().unwrap());
+        let second = bootstrap_active_id(&services.create_project("Second".to_owned()).unwrap());
+        let barrier = Arc::new(Barrier::new(4));
+
+        // All three tasks operate on cloned services, as the async Tauri IPC
+        // adapters do. No network provider runs: Copy Prompt persists locally.
+        let created_project = thread::scope(|scope| {
+            let selection_service = services.clone();
+            let selection_barrier = Arc::clone(&barrier);
+            let selection = scope.spawn(move || {
+                selection_barrier.wait();
+                for index in 0..8 {
+                    let target = if index % 2 == 0 { inbox } else { second };
+                    let snapshot = selection_service.select_project(target).unwrap();
+                    assert_eq!(bootstrap_active_id(&snapshot), target);
+                }
+            });
+
+            let creation_service = services.clone();
+            let creation_barrier = Arc::clone(&barrier);
+            let creation = scope.spawn(move || {
+                creation_barrier.wait();
+                let snapshot = creation_service
+                    .create_project("Created concurrently".to_owned())
+                    .unwrap();
+                bootstrap_active_id(&snapshot)
+            });
+
+            let writer_service = services.clone();
+            let writer_barrier = Arc::clone(&barrier);
+            let writer = scope.spawn(move || {
+                writer_barrier.wait();
+                for index in 0..4 {
+                    let snapshot = writer_service
+                        .save_watchlist(ResearchQuery {
+                            profile_url: format!("https://www.youtube.com/@agent01race{index}"),
+                            limit: 10,
+                        })
+                        .unwrap();
+                    assert!(Uuid::parse_str(&snapshot.active_project_id).is_ok());
+
+                    let mut request = prompt_input("Hook ideas");
+                    request.mode = "copy_prompt".to_owned();
+                    let response = writer_service.run_ai(&request).unwrap();
+                    assert!(response.contains("10 distinct hooks"));
+                    assert!(!response.contains("super-secret"));
+                }
+            });
+
+            barrier.wait();
+            selection.join().unwrap();
+            writer.join().unwrap();
+            creation.join().unwrap()
+        });
+
+        let projects = services.store.list_projects().unwrap();
+        let project_ids = projects
+            .iter()
+            .map(|project| project.id)
+            .collect::<HashSet<_>>();
+        assert!(project_ids.contains(&inbox));
+        assert!(project_ids.contains(&second));
+        assert!(project_ids.contains(&created_project));
+
+        // Competing selection commands can finish in either order, but the
+        // in-memory selection and persisted settings must agree after all join.
+        let selected = services.active_project_id().unwrap();
+        assert_eq!(
+            services.store.load_settings().unwrap().active_project_id,
+            Some(selected)
+        );
+        assert!(project_ids.contains(&selected));
+
+        let watchlists = services.store.list_watchlists(None).unwrap();
+        assert_eq!(watchlists.len(), 4);
+        assert!(watchlists
+            .iter()
+            .all(|watchlist| project_ids.contains(&watchlist.project_id)));
+
+        let runs = services.store.list_ai_runs(None).unwrap();
+        assert_eq!(runs.len(), 4);
+        assert!(runs.iter().all(|run| {
+            project_ids.contains(&run.project_id)
+                && run.mode == AiRunMode::CopyPrompt
+                && !run.prompt.contains("super-secret")
+        }));
     }
 
     #[test]

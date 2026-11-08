@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io::Read, time::Duration};
 
 use reqwest::blocking::{Client, Response};
 use serde::{Deserialize, Serialize};
@@ -361,10 +361,7 @@ fn parse_json_response(
     {
         return Err(AiError::ResponseTooLarge);
     }
-    let body = response.text().map_err(map_transport_error)?;
-    if body.len() as u64 > MAX_RESPONSE_BYTES {
-        return Err(AiError::ResponseTooLarge);
-    }
+    let body = read_response_body(response)?;
     if !status.is_success() {
         let message = provider_error_message(&body);
         return Err(AiError::Provider(format!(
@@ -382,6 +379,24 @@ fn parse_json_response(
         ));
     }
     Ok(AiResponse { text })
+}
+
+// Bound reads even when the provider omits Content-Length or streams a response.
+fn read_response_body(mut response: impl Read) -> Result<String, AiError> {
+    let mut bytes = Vec::new();
+    response
+        .by_ref()
+        .take(MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => AiError::Timeout,
+            _ => AiError::Provider("could not read provider response".to_owned()),
+        })?;
+    if bytes.len() as u64 > MAX_RESPONSE_BYTES {
+        return Err(AiError::ResponseTooLarge);
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| AiError::InvalidResponse("response was not valid UTF-8".to_owned()))
 }
 
 fn provider_error_message(body: &str) -> String {
@@ -625,6 +640,19 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
         (format!("http://{address}"), captured)
+    }
+
+    #[test]
+    fn response_reader_rejects_unbounded_streams_and_invalid_utf8() {
+        // An infinite provider stream must stop after the configured read limit.
+        assert_eq!(
+            read_response_body(std::io::repeat(b'x')).unwrap_err(),
+            AiError::ResponseTooLarge
+        );
+        assert_eq!(
+            read_response_body(std::io::Cursor::new(vec![0xff])).unwrap_err(),
+            AiError::InvalidResponse("response was not valid UTF-8".to_owned())
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -133,6 +133,15 @@ fn configure_connection(connection: &Connection) -> RepositoryResult<()> {
 }
 
 fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
+    let mut current = connection
+        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+        .map_err(storage_error)?;
+    if current > LATEST_SCHEMA_VERSION {
+        return Err(RepositoryError::Storage(format!(
+            "unsupported database schema version {current}; expected at most {LATEST_SCHEMA_VERSION}"
+        )));
+    }
+
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -142,10 +151,39 @@ fn migrate(connection: &mut Connection) -> RepositoryResult<()> {
             );",
         )
         .map_err(storage_error)?;
-
-    let mut current = connection
-        .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+    let (recorded_version, recorded_count): (u32, u32) = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0), COUNT(*) FROM schema_migrations",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .map_err(storage_error)?;
+    if current != recorded_version || current != recorded_count {
+        return Err(RepositoryError::Storage(format!(
+            "database schema version {current} does not match migration ledger (highest {recorded_version}, count {recorded_count}); refusing to modify existing data"
+        )));
+    }
+    {
+        let mut statement = connection
+            .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(storage_error)?;
+        for (index, row) in rows.enumerate() {
+            let (version, name) = row.map_err(storage_error)?;
+            let expected = MIGRATIONS
+                .get(index)
+                .map(|migration| (migration.version, migration.name));
+            if expected != Some((version, name.as_str())) {
+                return Err(RepositoryError::Storage(format!(
+                    "database migration ledger has unexpected version {version} or name {name:?}; refusing to modify existing data"
+                )));
+            }
+        }
+    }
 
     for migration in MIGRATIONS {
         if migration.version <= current {
@@ -195,6 +233,16 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "transcript_search_backfill",
         apply: migration_3,
+    },
+    Migration {
+        version: 4,
+        name: "project_archival_and_relationship_guards",
+        apply: migration_4,
+    },
+    Migration {
+        version: 5,
+        name: "parent_relationship_reassignment_guards",
+        apply: migration_5,
     },
 ];
 
@@ -360,6 +408,125 @@ fn migration_3(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migration_4(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "ALTER TABLE projects ADD COLUMN archived_at TEXT;
+         CREATE INDEX idx_projects_archived_name
+             ON projects(archived_at, name COLLATE NOCASE);
+         CREATE TRIGGER sources_creator_project_insert
+         BEFORE INSERT ON sources
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'source creator must belong to the same project');
+         END;
+         CREATE TRIGGER sources_creator_project_update
+         BEFORE UPDATE OF creator_id, project_id ON sources
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'source creator must belong to the same project');
+         END;
+         CREATE TRIGGER research_creator_project_insert
+         BEFORE INSERT ON research_items
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'research creator must belong to the same project');
+         END;
+         CREATE TRIGGER research_creator_project_update
+         BEFORE UPDATE OF creator_id, project_id ON research_items
+         WHEN NEW.creator_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM creators
+             WHERE id = NEW.creator_id AND project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'research creator must belong to the same project');
+         END;
+         CREATE TRIGGER analyses_transcript_project_insert
+         BEFORE INSERT ON analyses
+         WHEN NEW.transcript_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM transcripts t
+             JOIN media m ON m.id = t.media_id
+             JOIN sources s ON s.id = m.source_id
+             WHERE t.id = NEW.transcript_id AND s.project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'analysis transcript must belong to the same project');
+         END;
+         CREATE TRIGGER analyses_transcript_project_update
+         BEFORE UPDATE OF transcript_id, project_id ON analyses
+         WHEN NEW.transcript_id IS NOT NULL AND NOT EXISTS (
+             SELECT 1 FROM transcripts t
+             JOIN media m ON m.id = t.media_id
+             JOIN sources s ON s.id = m.source_id
+             WHERE t.id = NEW.transcript_id AND s.project_id = NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'analysis transcript must belong to the same project');
+         END;",
+    )
+}
+
+fn migration_5(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "CREATE TRIGGER creators_project_reassignment_guard
+         BEFORE UPDATE OF project_id ON creators
+         WHEN NEW.project_id <> OLD.project_id AND (
+             EXISTS (
+                 SELECT 1 FROM sources s
+                 WHERE s.creator_id = OLD.id AND s.project_id <> NEW.project_id
+             )
+             OR EXISTS (
+                 SELECT 1 FROM research_items r
+                 WHERE r.creator_id = OLD.id AND r.project_id <> NEW.project_id
+             )
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving creator would invalidate project relationships');
+         END;
+         CREATE TRIGGER sources_project_reassignment_guard
+         BEFORE UPDATE OF project_id ON sources
+         WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN transcripts t ON t.id = a.transcript_id
+             JOIN media m ON m.id = t.media_id
+             WHERE m.source_id = OLD.id AND a.project_id <> NEW.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving source would invalidate analysis relationships');
+         END;
+         CREATE TRIGGER media_source_reassignment_guard
+         BEFORE UPDATE OF source_id ON media
+         WHEN NEW.source_id <> OLD.source_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN transcripts t ON t.id = a.transcript_id
+             JOIN sources target ON target.id = NEW.source_id
+             WHERE t.media_id = OLD.id AND a.project_id <> target.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving media would invalidate analysis relationships');
+         END;
+         CREATE TRIGGER transcripts_media_reassignment_guard
+         BEFORE UPDATE OF media_id ON transcripts
+         WHEN NEW.media_id <> OLD.media_id AND EXISTS (
+             SELECT 1 FROM analyses a
+             JOIN media target_media ON target_media.id = NEW.media_id
+             JOIN sources target_source ON target_source.id = target_media.source_id
+             WHERE a.transcript_id = OLD.id AND a.project_id <> target_source.project_id
+         )
+         BEGIN
+             SELECT RAISE(ABORT, 'moving transcript would invalidate analysis relationships');
+         END;",
+    )
+}
+
 fn fts5_search_query(raw_query: &str) -> Option<String> {
     let terms = raw_query
         .split(|character: char| !character.is_alphanumeric())
@@ -469,6 +636,77 @@ impl ProjectRepository for SqliteStore {
     }
 }
 
+impl SqliteStore {
+    /// Renames a project without changing its ID or any related records.
+    pub fn rename_project(&self, id: Uuid, name: &str) -> RepositoryResult<Project> {
+        let name = validate_project_name(name)?;
+        let connection = self.connection()?;
+        let changed = connection
+            .execute(
+                "UPDATE projects SET name = ?1 WHERE id = ?2",
+                params![name, id.to_string()],
+            )
+            .map_err(storage_error)?;
+        if changed == 0 {
+            return Err(RepositoryError::NotFound(format!("project {id}")));
+        }
+        self.get_project(id)
+    }
+
+    /// Reversible soft archive; children and active selection remain untouched.
+    pub fn archive_project(&self, id: Uuid) -> RepositoryResult<()> {
+        self.set_project_archived(id, true)
+    }
+
+    pub fn restore_project(&self, id: Uuid) -> RepositoryResult<()> {
+        self.set_project_archived(id, false)
+    }
+
+    fn set_project_archived(&self, id: Uuid, archived: bool) -> RepositoryResult<()> {
+        let connection = self.connection()?;
+        let changed = if archived {
+            connection.execute(
+                "UPDATE projects SET archived_at = COALESCE(archived_at, ?1) WHERE id = ?2",
+                params![now_rfc3339(), id.to_string()],
+            )
+        } else {
+            connection.execute(
+                "UPDATE projects SET archived_at = NULL WHERE id = ?1",
+                params![id.to_string()],
+            )
+        }
+        .map_err(storage_error)?;
+        if changed == 0 {
+            return Err(RepositoryError::NotFound(format!("project {id}")));
+        }
+        Ok(())
+    }
+
+    pub fn list_archived_projects(&self) -> RepositoryResult<Vec<Project>> {
+        self.list_projects_by_archive_state(true)
+    }
+
+    pub fn list_active_projects(&self) -> RepositoryResult<Vec<Project>> {
+        self.list_projects_by_archive_state(false)
+    }
+
+    fn list_projects_by_archive_state(&self, archived: bool) -> RepositoryResult<Vec<Project>> {
+        let connection = self.connection()?;
+        let sql = if archived {
+            "SELECT id, name, created_at FROM projects WHERE archived_at IS NOT NULL
+             ORDER BY name COLLATE NOCASE"
+        } else {
+            "SELECT id, name, created_at FROM projects WHERE archived_at IS NULL
+             ORDER BY name COLLATE NOCASE"
+        };
+        let mut statement = connection.prepare(sql).map_err(storage_error)?;
+        let rows = statement
+            .query_map([], row_project)
+            .map_err(storage_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
+    }
+}
+
 impl JobRepository for SqliteStore {
     fn insert_job(&self, job: &Job) -> RepositoryResult<()> {
         let (input_kind, input_value) = job.input.parts();
@@ -549,19 +787,26 @@ impl JobRepository for SqliteStore {
             .map_err(storage_error)?
             .ok_or_else(|| RepositoryError::NotFound(format!("job {id}")))?;
         current.state.validate_transition(next)?;
-        let progress = if next == JobState::Completed {
-            Some(1.0_f32)
+        let progress = match next {
+            JobState::Queued => None,
+            JobState::Completed => Some(1.0_f32),
+            _ => current.progress,
+        };
+        // Retain the previous error for diagnosis until a successful completion.
+        let last_error = if next == JobState::Completed {
+            None
         } else {
-            current.progress
+            current.last_error
         };
         let updated_at = now_rfc3339();
         let changed = tx
             .execute(
-                "UPDATE jobs SET state = ?1, progress = ?2, updated_at = ?3
-                 WHERE id = ?4 AND state = ?5",
+                "UPDATE jobs SET state = ?1, progress = ?2, last_error = ?3, updated_at = ?4
+                 WHERE id = ?5 AND state = ?6",
                 params![
                     next.as_str(),
                     progress,
+                    last_error,
                     updated_at,
                     id.to_string(),
                     current.state.as_str(),
@@ -727,7 +972,7 @@ mod tests {
             tx.commit().unwrap();
         }
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         let connection = db.connection().unwrap();
         let count: u32 = connection
             .query_row(
@@ -813,7 +1058,7 @@ mod tests {
         }
 
         let db = SqliteStore::open(&path).unwrap();
-        assert_eq!(db.schema_version().unwrap(), 3);
+        assert_eq!(db.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
         assert_eq!(
             db.search_transcript_ids(project_id, "النتيجة", 10).unwrap(),
             vec![transcript_id]
@@ -840,24 +1085,14 @@ mod tests {
                 .execute(
                     "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
                      VALUES(?1, ?2, NULL, 'local_file', ?3, NULL, ?4)",
-                    params![
-                        source_id.to_string(),
-                        project_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![source_id.to_string(), project_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection
                 .execute(
                     "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
                      VALUES(?1, ?2, ?3, 4.0, NULL, ?4)",
-                    params![
-                        media_id.to_string(),
-                        source_id.to_string(),
-                        format!("/tmp/{suffix}.mp4"),
-                        now,
-                    ],
+                    params![media_id.to_string(), source_id.to_string(), format!("/tmp/{suffix}.mp4"), now,],
                 )
                 .unwrap();
             connection
@@ -917,6 +1152,188 @@ mod tests {
 
         assert_eq!(db.mark_active_jobs_interrupted().unwrap(), 1);
         assert_eq!(db.get_job(job.id).unwrap().state, JobState::Interrupted);
+    }
+
+    #[test]
+    fn retry_resets_progress_and_success_clears_previous_error() {
+        let (_temp, db) = store();
+        let project = project(&db, "Retry preservation");
+        let job = Job::new(project.id, JobInput::LocalFile("/tmp/retry.mp4".to_owned()));
+        db.insert_job(&job).unwrap();
+        db.transition_job(job.id, JobState::Preparing).unwrap();
+
+        db.connection()
+            .unwrap()
+            .execute(
+                "UPDATE jobs SET progress = 0.8, last_error = 'original failure' WHERE id = ?1",
+                params![job.id.to_string()],
+            )
+            .unwrap();
+        db.transition_job(job.id, JobState::Failed).unwrap();
+
+        let retried = db.transition_job(job.id, JobState::Queued).unwrap();
+        assert_eq!(retried.progress, None);
+        assert_eq!(retried.last_error.as_deref(), Some("original failure"));
+
+        for state in [
+            JobState::Preparing,
+            JobState::Transcribing,
+            JobState::Processing,
+            JobState::Completed,
+        ] {
+            db.transition_job(job.id, state).unwrap();
+        }
+        let completed = db.get_job(job.id).unwrap();
+        assert_eq!(completed.progress, Some(1.0));
+        assert_eq!(completed.last_error, None);
+    }
+
+    #[test]
+    fn interrupted_schema_upgrade_rolls_back_every_schema_change() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("partially-upgraded.sqlite3");
+        let project = Project::new("Must survive migration failure");
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            configure_connection(&connection).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL
+                    );",
+                )
+                .unwrap();
+            for migration in MIGRATIONS.iter().filter(|migration| migration.version <= 3) {
+                let tx = connection.transaction().unwrap();
+                (migration.apply)(&tx).unwrap();
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
+                    params![migration.version, migration.name, now_rfc3339()],
+                )
+                .unwrap();
+                tx.pragma_update(None, "user_version", migration.version)
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO projects(id, name, created_at) VALUES(?1, ?2, ?3)",
+                    params![project.id.to_string(), project.name, project.created_at],
+                )
+                .unwrap();
+            // Force an error after migration 4's ALTER TABLE has already run.
+            connection
+                .execute_batch(
+                    "CREATE TRIGGER sources_creator_project_insert
+                     AFTER INSERT ON projects BEGIN SELECT 1; END;",
+                )
+                .unwrap();
+        }
+        assert!(SqliteStore::open(&path).is_err());
+
+        let connection = Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let column_count: u32 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('projects') WHERE name = 'archived_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let persisted_name: String = connection
+            .query_row(
+                "SELECT name FROM projects WHERE id = ?1",
+                params![project.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 3);
+        assert_eq!(column_count, 0);
+        assert_eq!(persisted_name, "Must survive migration failure");
+    }
+
+    #[test]
+    fn spoofed_migration_versions_and_names_fail_closed_without_data_loss() {
+        for corrupt_name in [false, true] {
+            let (temp, db) = store();
+            let project = project(&db, "Preserve on ledger corruption");
+            let connection = db.connection().unwrap();
+            if corrupt_name {
+                connection
+                    .execute(
+                        "UPDATE schema_migrations SET name = 'unexpected' WHERE version = 2",
+                        [],
+                    )
+                    .unwrap();
+            } else {
+                // Highest version and count still match user_version, but v1 is absent.
+                connection
+                    .execute("DELETE FROM schema_migrations WHERE version = 1", [])
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version, name, applied_at)
+                         VALUES(0, 'initial_domain_schema', '2026-01-01T00:00:00Z')",
+                        [],
+                    )
+                    .unwrap();
+            }
+            drop(connection);
+            drop(db);
+            let path = temp.path().join("private").join("scriptotar.sqlite3");
+            assert!(matches!(
+                SqliteStore::open(&path),
+                Err(RepositoryError::Storage(_))
+            ));
+            let connection = Connection::open(&path).unwrap();
+            let name: String = connection
+                .query_row(
+                    "SELECT name FROM projects WHERE id = ?1",
+                    params![project.id.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(name, "Preserve on ledger corruption");
+            let version: u32 = connection
+                .query_row("PRAGMA user_version", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, LATEST_SCHEMA_VERSION);
+        }
+    }
+
+    #[test]
+    fn inconsistent_schema_ledger_is_rejected_without_changing_project_data() {
+        let (temp, db) = store();
+        let project = project(&db, "Keep me");
+        let connection = db.connection().unwrap();
+        connection
+            .execute("DELETE FROM schema_migrations WHERE version = 3", [])
+            .unwrap();
+        drop(connection);
+        drop(db);
+
+        let error =
+            SqliteStore::open(temp.path().join("private").join("scriptotar.sqlite3")).unwrap_err();
+        assert!(matches!(error, RepositoryError::Storage(_)));
+
+        let connection =
+            Connection::open(temp.path().join("private").join("scriptotar.sqlite3")).unwrap();
+        let recorded_version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let retained_project: String = connection
+            .query_row(
+                "SELECT name FROM projects WHERE id = ?1",
+                params![project.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(recorded_version, LATEST_SCHEMA_VERSION);
+        assert_eq!(retained_project, "Keep me");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Scriptotar Next migration
 
-Scriptotar Next is the Rust/Tauri replacement line for the legacy Python/Tkinter application. The migration is **integrated and distributable**, but Next remains a **0.1.x preview** and Classic remains supported.
+Scriptotar Next is the Rust/Tauri replacement line for the legacy Python/Tkinter application. The migration is integrated into the **1.3.0 preview candidate**. Windows/Linux package workflows exercise the runtime boundary; candidate checks do not by themselves establish public publication. Classic sources remain archived for historical reference.
 
 This document describes the current architecture and migration boundary. It no longer treats already-integrated AI, research, sidecar, or packaging work as future agent tasks.
 
@@ -37,10 +37,10 @@ The frontend must not open the application SQLite database or spawn Python direc
 
 ## Product identity during migration
 
-Two application lines intentionally coexist:
+The repository distinguishes current development from historical source:
 
-- **Scriptotar Next 0.1.0**: current preview, Windows NSIS and Linux Debian packages.
-- **Scriptotar Classic 1.3.0**: supported Python/Tkinter line with Debian, AppImage, and Flatpak packages.
+- **Scriptotar Next 1.3.0**: current preview candidate, Windows NSIS and Linux Debian packaging.
+- **Scriptotar Classic 1.3.0**: archived Python/Tkinter source in `archive/legacy-python/`, with separate historical artifacts.
 
 The version numbers are independent. See `docs/VERSIONING.md` for the release/tag policy.
 
@@ -95,9 +95,13 @@ Transitions are validated by the Rust `JobState` state machine.
 
 A job is stored as `queued` before orchestration starts. Sidecar progress drives validated stage transitions. A completed transcription is persisted into the Rust-owned database rather than being treated as frontend-only state.
 
+The selected project is stored in application settings and restored when that project still exists. Missing, invalid, or stale saved project IDs fall back to the default project; a restart does not deliberately discard a valid selection.
+
 On startup, work left in active states is classified `interrupted`. Scriptotar does not pretend an interrupted Whisper operation resumed from the middle. Retry is an explicit transition back to `queued`.
 
 Unexpected sidecar death is not completion. Controlled cancellation and failures remain distinguishable and the queue can recover for later work.
+
+Cancellation/shutdown must verify that the engine process tree has terminated before releasing its job slot. When cleanup cannot be verified, the supervisor keeps work blocked rather than acknowledging cancellation or accepting a successor that could overlap the old engine.
 
 ## Transcription sidecar contract
 
@@ -121,7 +125,7 @@ Packaged Next builds use the bundled supervisor/engine executables described in 
 The production application uses Tauri's application-data directory for bundle identifier:
 
 ```text
-io.github.mousaxd.scriptotar.next
+io.github.mousaxd.scriptotar
 ```
 
 Inside it, the Rust application stores:
@@ -182,7 +186,7 @@ Current Next behavior includes:
 - queueing selected research items into the transcription job path;
 - saved watchlists with in-app refresh/backoff behavior.
 
-CI does not depend on live Instagram/TikTok/YouTube responses. Deterministic fixtures are used for release health; live platform behavior remains an operational dependency for users.
+Deterministic unit, orchestration, and installed-app tests use explicit local fixtures. A separate strict live-platform workflow downloads the pinned Instagram/TikTok/YouTube sources and runs real inference; provider failures remain failures. A passing fixture test does not certify that workflow. See [source-access diagnostics](SOURCE_ACCESS.md).
 
 ## Database migration policy
 
@@ -209,7 +213,7 @@ Windows and Linux Next packages include the Python supervisor/engine runtime, Fa
 
 Selected model weights download on first uncached use into the Next model cache.
 
-**Current release-ready package formats:**
+**Package formats exercised by CI:**
 
 - Windows NSIS preview installer;
 - Linux Debian preview package.
@@ -220,11 +224,11 @@ Selected model weights download on first uncached use into the Next model cache.
 - Linux Flatpak;
 - macOS package/signing/notarization output.
 
-The existing Classic Linux release lanes remain intentionally separate.
+Historical Classic packaging is preserved in the archive and is not published by the Next preview workflow.
 
 ## Remaining migration limitations
 
-The integrated Next app is no longer merely compile-ready, but it is not yet the stable channel.
+The integrated Next app has compiled and installed-package acceptance coverage, while remaining on the preview channel. Match any acceptance claim to its tested commit.
 
 Known current boundaries include:
 
@@ -233,13 +237,12 @@ Known current boundaries include:
 - no Next AppImage/Flatpak;
 - first-use Whisper model download requirement;
 - external source-platform variability;
-- active project selection currently falls back to Inbox after restart;
 - package smoke tests validate the installed runtime boundary but intentionally do not download a large Whisper model or depend on live social sites.
 
-Classic should not be removed merely because Next packages successfully. Deprecation/removal requires a separate deliberate compatibility and release decision.
+Preserve the Classic source archive and original user databases. Packaging success does not authorize deleting historical artifacts or performing destructive data migration.
 
 ## Developer validation
 
-Use the commands in `CONTRIBUTING.md` for the Rust workspace, Svelte frontend, sidecar, integrated Tauri build, and preserved Classic tests.
+Use the commands in `CONTRIBUTING.md` for the Rust workspace, Svelte frontend, sidecar, integrated Tauri build, and repository contracts. Historical Classic reproduction uses the archive and its own dependency environment.
 
 The main integrated quality gate is `.github/workflows/integration.yml`; installed package validation is performed by the Windows and Linux Tauri package workflows.

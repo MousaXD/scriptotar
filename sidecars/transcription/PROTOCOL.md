@@ -28,7 +28,7 @@ On startup the sidecar emits:
   "protocol": 1,
   "type": "ready",
   "capabilities": {
-    "sidecar_version": "0.1.0",
+    "sidecar_version": "1.3.0",
     "protocol_versions": [1],
     "features": {
       "url_input": true,
@@ -59,7 +59,7 @@ Command:
 Event:
 
 ```json
-{"protocol":1,"type":"pong","request_id":"optional-correlation-id","sidecar_version":"0.1.0"}
+{"protocol":1,"type":"pong","request_id":"optional-correlation-id","sidecar_version":"1.3.0"}
 ```
 
 ## Transcribe
@@ -112,6 +112,17 @@ Accepted values are intentionally bounded:
 - URL domains: Instagram, TikTok, YouTube, and youtu.be subdomains only
 
 The sidecar rejects embedded URL credentials, non-standard ports, unsupported domains, arbitrary model names, unknown options, and browser-cookie use over plaintext HTTP.
+
+`device: auto` probes for the CUDA 12 cuBLAS/cuDNN runtime as well as a working
+NVIDIA driver. If the driver exists but CUDA libraries are unavailable, it
+selects CPU (`int8`). If CUDA fails later during model initialization or the
+lazy transcription iterator, it restarts that *same media* from the beginning
+on CPU, discarding any incomplete GPU transcript and preventing duplicates.
+The failed GPU path stays disabled for subsequent automatic jobs in the same
+engine process. A deliberate `device: cuda` selection is **not** silently
+overridden: an unavailable CUDA runtime produces `CUDA_RUNTIME_UNAVAILABLE`
+with instructions to switch the app setting to CPU or Auto. Other runtime
+errors are still surfaced rather than disguised as CUDA failures.
 
 After validation and handoff to the engine:
 

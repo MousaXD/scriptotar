@@ -1,0 +1,107 @@
+name: Real YouTube Instagram TikTok E2E
+
+# Real social platforms can challenge hosted GitHub runners. This check runs
+# only for media implementation changes, by explicit request, and weekly.
+# The job fails closed on any platform/login/bot/model error. No mock fallbacks.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '41 3 * * 3'
+  pull_request:
+    paths:
+      - 'sidecars/transcription/scriptotar_sidecar/engine.py'
+      - 'sidecars/transcription/scriptotar_sidecar/validation.py'
+      - 'sidecars/transcription/requirements-engine.txt'
+      - 'scripts/live_media_e2e.py'
+      - 'tests/test_live_media_contract.py'
+      - '.github/workflows/live-platform-e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-social-media-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-provider-download-and-transcription:
+    name: Actual downloads and 15s real Whisper excerpts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONPATH: sidecars/transcription
+      PYTHONUNBUFFERED: '1'
+      HF_HOME: ${{ github.workspace }}/.scriptotar-huggingface-cache
+      HF_HUB_DISABLE_TELEMETRY: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: sidecars/transcription/requirements-engine.txt
+      - name: Contract and source validation (offline)
+        run: |
+          python3 -m unittest discover -s tests -p test_live_media_contract.py -v
+          python3 scripts/live_media_e2e.py --validate-only
+      - name: Install and verify FFmpeg audio decoding tools
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            # Pre-seeded GitHub runner package indices often make install fast.
+            # Limit apt operations so a mirror outage does not burn the entire job.
+            if ! sudo timeout 180 env DEBIAN_FRONTEND=noninteractive \
+              apt-get install -y --no-install-recommends ffmpeg; then
+              sudo timeout 180 apt-get update \
+                -o Acquire::Retries=1 \
+                -o Acquire::http::Timeout=20 \
+                -o Acquire::https::Timeout=20
+              sudo timeout 180 env DEBIAN_FRONTEND=noninteractive \
+                apt-get install -y --no-install-recommends ffmpeg
+            fi
+          fi
+          command -v ffmpeg
+          command -v ffprobe
+          ffprobe -version
+          ffmpeg -version
+      - name: Install production-pinned downloader and Whisper dependencies
+        run: |
+          python3 -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-engine.txt
+          python3 -m pip check
+      - name: Download exact YouTube URL, Instagram and TikTok, and transcribe real excerpts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/live_media_e2e.py \
+            --summary-json "$RUNNER_TEMP/live-platform-e2e.json" \
+            2>&1 | tee "$RUNNER_TEMP/live-platform-e2e.log"
+      - name: Publish per-platform pass or failure summary
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          from sys import path
+          path.insert(0, 'scripts')
+          from live_media_e2e import summary_markdown
+          source = Path(os.environ['RUNNER_TEMP']) / 'live-platform-e2e.json'
+          if source.is_file():
+              report = json.loads(source.read_text())
+              summary = summary_markdown(report)
+          else:
+              summary = ('## Real platform E2E did not produce a result\n\n'
+                         'The runner failed before completion; inspect the diagnostic log.\n')
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
+              stream.write(summary)
+          PY
+      - name: Keep diagnostics, not downloaded copyrighted media
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-platform-e2e-report
+          path: |
+            ${{ runner.temp }}/live-platform-e2e.json
+            ${{ runner.temp }}/live-platform-e2e.log
+          retention-days: 14
+          if-no-files-found: warn

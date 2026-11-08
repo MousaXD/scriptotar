@@ -97,6 +97,29 @@ class ReleaseGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GateError, "Tauri migration integration.*blocked publication"):
             prove(FakeClient(listed, views))
 
+    def test_mcp_e2e_cancelled_blocks_publication(self):
+        listed, views = healthy_fixture()
+        gate = next(g for g in GATES if g.key == "mcp")
+        cancelled = run_for(gate, 7, conclusion="cancelled")
+        listed[gate.workflow_file] = [cancelled]
+        views[7] = cancelled
+        with self.assertRaisesRegex(GateError, "Scriptotar MCP E2E.*blocked publication"):
+            prove(FakeClient(listed, views))
+
+    def test_mcp_e2e_missing_blocks_publication(self):
+        listed, views = healthy_fixture()
+        gate = next(g for g in GATES if g.key == "mcp")
+        listed[gate.workflow_file] = []
+        with self.assertRaisesRegex(GateError, "Missing mandatory.*Scriptotar MCP E2E"):
+            prove(FakeClient(listed, views))
+
+    def test_mcp_main_push_trigger_is_part_of_release_contract(self):
+        workflow = MODULE_PATH.parent.parent / ".github" / "workflows" / "mcp-e2e.yml"
+        self.assertRegex(
+            workflow.read_text(encoding="utf-8"),
+            r"(?m)^  push:\n    branches: \[main\]$",
+        )
+
     def test_security_red_blocks_publication(self):
         listed, views = healthy_fixture()
         gate = next(g for g in GATES if g.key == "security")
@@ -114,6 +137,20 @@ class ReleaseGateTests(unittest.TestCase):
         views[3] = failed
         with self.assertRaisesRegex(GateError, "Windows Tauri Installer.*blocked publication"):
             prove(FakeClient(listed, views))
+
+    def test_windows_installer_runs_sidecar_subprocess_regression_on_windows(self):
+        workflow = MODULE_PATH.parent.parent / ".github" / "workflows" / "windows-tauri.yml"
+        source = workflow.read_text(encoding="utf-8")
+        self.assertIn("runs-on: windows-latest", source)
+        self.assertIn(
+            "name: Exercise Windows sidecar subprocess protocol and cancellation",
+            source,
+        )
+        self.assertIn(
+            "python -m unittest discover -s sidecars/transcription/tests -p 'test_subprocess.py' -v",
+            source,
+        )
+        self.assertNotIn("continue-on-error:", source)
 
     def test_linux_package_red_blocks_publication(self):
         listed, views = healthy_fixture()

@@ -5,6 +5,9 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  McpPermissions,
+  McpGatewayStatus,
+  McpConnectionStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -30,6 +33,7 @@ async function hydrateBootstrap(
 
 export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): ScriptotarApi {
   return {
+    backendHealth: () => invoke<{schema_version: number}>('backend_health'),
     bootstrap: () => hydrateBootstrap(invoke, invoke<CoreBootstrapData>('bootstrap_app')),
     listJobs: () => invoke<Job[]>('list_jobs'),
     searchTranscripts: (query, limit = 10) =>
@@ -62,5 +66,17 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     runAi: (input: AiPromptInput) => invoke<string>('run_ai', { input }),
     getSettings: () => invoke<AppSettings>('get_settings'),
     saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { settings }),
+    getMcpPermissions: () => invoke<McpPermissions>('get_mcp_permissions'),
+    mcpConnectionStatus: () => invoke<McpConnectionStatus>('mcp_connection_status'),
+    mcpConnectCloudflare: () => invoke<McpConnectionStatus>('mcp_connect_cloudflare'),
+    mcpConnectOpenai: (tunnelId, apiKey, rememberKey) =>
+      invoke<McpConnectionStatus>('mcp_connect_openai', { tunnelId, apiKey, rememberKey }),
+    mcpConnectManual: (hostname) => invoke<McpConnectionStatus>('mcp_connect_manual', { hostname }),
+    mcpDisconnect: () => invoke<McpConnectionStatus>('mcp_disconnect'),
+    mcpGatewayStatus: () => invoke<McpGatewayStatus>('mcp_gateway_status'),
+    startMcpGateway: () => invoke<McpGatewayStatus>('start_mcp_gateway'),
+    stopMcpGateway: () => invoke<McpGatewayStatus>('stop_mcp_gateway'),
+    saveMcpPermissions: (permissions: McpPermissions, acknowledgeSensitiveAccess: boolean) =>
+      invoke<McpPermissions>('save_mcp_permissions', { permissions, acknowledgeSensitiveAccess }),
   };
 }

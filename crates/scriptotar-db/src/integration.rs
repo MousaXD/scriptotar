@@ -1,12 +1,8 @@
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-    str::FromStr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, fs, io::Read, path::Path, str::FromStr, time::Duration};
 
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{
+    params, Connection, OpenFlags, OptionalExtension, Transaction, TransactionBehavior,
+};
 use scriptotar_core::{
     now_rfc3339, AiRunMode, ContentRepository, Job, JobRepository, JobRuntimeRepository, JobState,
     LegacyImportReport, Media, RepositoryError, RepositoryResult, Source, SourceType, Transcript,
@@ -16,7 +12,7 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
-pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 3;
+pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 5;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
     RepositoryError::Storage(error.to_string())
@@ -55,17 +51,48 @@ impl SqliteStore {
                 );",
             )
             .map_err(storage_error)?;
-        let current: u32 = connection
+        let (current, recorded_count): (u32, u32) = connection
             .query_row(
-                "SELECT COALESCE(MAX(version), 0) FROM integration_schema_migrations",
+                "SELECT COALESCE(MAX(version), 0), COUNT(*)
+                 FROM integration_schema_migrations",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(storage_error)?;
         if current > LATEST_INTEGRATION_SCHEMA_VERSION {
             return Err(RepositoryError::Storage(format!(
                 "unsupported integration schema version {current}; expected at most {LATEST_INTEGRATION_SCHEMA_VERSION}"
             )));
+        }
+        if current != recorded_count {
+            return Err(RepositoryError::Storage(format!(
+                "integration schema migration ledger has gaps: highest version {current}, count {recorded_count}; refusing to modify existing data"
+            )));
+        }
+        {
+            const EXPECTED: &[(u32, &str)] = &[
+                (1, "legacy_import_support"),
+                (2, "job_transcript_lineage"),
+                (3, "safe_job_transcript_backfill"),
+                (4, "job_transcript_project_guard"),
+                (5, "parent_lineage_reassignment_guards"),
+            ];
+            let mut statement = connection
+                .prepare("SELECT version, name FROM integration_schema_migrations ORDER BY version")
+                .map_err(storage_error)?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, u32>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(storage_error)?;
+            for (index, row) in rows.enumerate() {
+                let (version, name) = row.map_err(storage_error)?;
+                if EXPECTED.get(index).copied() != Some((version, name.as_str())) {
+                    return Err(RepositoryError::Storage(format!(
+                        "integration migration ledger has unexpected version {version} or name {name:?}; refusing to modify existing data"
+                    )));
+                }
+            }
         }
         if current < 1 {
             let tx = connection
@@ -174,6 +201,108 @@ impl SqliteStore {
             .map_err(storage_error)?;
             tx.commit().map_err(storage_error)?;
         }
+        if current < 4 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TRIGGER job_transcript_project_insert
+                 BEFORE INSERT ON job_transcript_links
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM jobs j
+                     JOIN transcripts t ON t.id = NEW.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE j.id = NEW.job_id AND j.project_id = s.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'job and transcript must belong to the same project');
+                 END;
+                 CREATE TRIGGER job_transcript_project_update
+                 BEFORE UPDATE OF job_id, transcript_id ON job_transcript_links
+                 WHEN NOT EXISTS (
+                     SELECT 1 FROM jobs j
+                     JOIN transcripts t ON t.id = NEW.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE j.id = NEW.job_id AND j.project_id = s.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'job and transcript must belong to the same project');
+                 END;",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(4, 'job_transcript_project_guard', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
+        if current < 5 {
+            let tx = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(storage_error)?;
+            tx.execute_batch(
+                "CREATE TRIGGER jobs_project_lineage_reassignment_guard
+                 BEFORE UPDATE OF project_id ON jobs
+                 WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     JOIN sources s ON s.id = m.source_id
+                     WHERE l.job_id = OLD.id AND s.project_id <> NEW.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving job would invalidate transcript lineage');
+                 END;
+                 CREATE TRIGGER sources_project_lineage_reassignment_guard
+                 BEFORE UPDATE OF project_id ON sources
+                 WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN media m ON m.id = t.media_id
+                     WHERE m.source_id = OLD.id AND j.project_id <> NEW.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving source would invalidate job lineage');
+                 END;
+                 CREATE TRIGGER media_source_lineage_reassignment_guard
+                 BEFORE UPDATE OF source_id ON media
+                 WHEN NEW.source_id <> OLD.source_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN transcripts t ON t.id = l.transcript_id
+                     JOIN sources target ON target.id = NEW.source_id
+                     WHERE t.media_id = OLD.id AND j.project_id <> target.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving media would invalidate job lineage');
+                 END;
+                 CREATE TRIGGER transcripts_media_lineage_reassignment_guard
+                 BEFORE UPDATE OF media_id ON transcripts
+                 WHEN NEW.media_id <> OLD.media_id AND EXISTS (
+                     SELECT 1 FROM job_transcript_links l
+                     JOIN jobs j ON j.id = l.job_id
+                     JOIN media target_media ON target_media.id = NEW.media_id
+                     JOIN sources target_source ON target_source.id = target_media.source_id
+                     WHERE l.transcript_id = OLD.id AND j.project_id <> target_source.project_id
+                 )
+                 BEGIN
+                     SELECT RAISE(ABORT, 'moving transcript would invalidate job lineage');
+                 END;",
+            )
+            .map_err(storage_error)?;
+            tx.execute(
+                "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                 VALUES(5, 'parent_lineage_reassignment_guards', ?1)",
+                params![now_rfc3339()],
+            )
+            .map_err(storage_error)?;
+            tx.commit().map_err(storage_error)?;
+        }
         Ok(())
     }
 
@@ -225,10 +354,7 @@ impl SqliteStore {
                 |row| {
                     let project_id = parse_uuid(row.get::<_, String>(0)?)?;
                     let source_id = parse_uuid(row.get::<_, String>(1)?)?;
-                    let creator_id = row
-                        .get::<_, Option<String>>(2)?
-                        .map(parse_uuid)
-                        .transpose()?;
+                    let creator_id = row.get::<_, Option<String>>(2)?.map(parse_uuid).transpose()?;
                     let source_type: String = row.get(3)?;
                     let source = Source {
                         id: source_id,
@@ -262,12 +388,7 @@ impl SqliteStore {
                         created_at: row.get(17)?,
                         updated_at: row.get(18)?,
                     };
-                    Ok(TranscriptBundle {
-                        project_id,
-                        source,
-                        media,
-                        transcript,
-                    })
+                    Ok(TranscriptBundle { project_id, source, media, transcript })
                 },
             )
             .optional()
@@ -293,28 +414,70 @@ impl SqliteStore {
             ));
         }
 
-        let metadata = fs::metadata(legacy_path).map_err(io_error)?;
-        let modified = metadata
-            .modified()
-            .unwrap_or(SystemTime::UNIX_EPOCH)
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
         let canonical = fs::canonicalize(legacy_path).map_err(io_error)?;
-        let fingerprint = format!("{}:{}:{}", canonical.display(), metadata.len(), modified);
+        if canonical == fs::canonicalize(self.path()).map_err(io_error)? {
+            return Err(RepositoryError::Validation(
+                "legacy database must be different from the Scriptotar Next database".to_owned(),
+            ));
+        }
+
         let file_name = legacy_path
             .file_name()
             .and_then(|value| value.to_str())
             .unwrap_or("history.sqlite3");
-        let backup_path = legacy_path.with_file_name(format!(
-            "{file_name}.scriptotar-next-{modified}-{}.bak",
-            metadata.len()
+        let snapshot_path = legacy_path.with_file_name(format!(
+            ".{file_name}.scriptotar-next-{}.partial",
+            Uuid::new_v4()
         ));
-        if !backup_path.exists() {
-            fs::copy(legacy_path, &backup_path).map_err(io_error)?;
-        }
+        let snapshot_result = (|| -> RepositoryResult<String> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            drop(options.open(&snapshot_path).map_err(io_error)?);
+            create_legacy_snapshot(legacy_path, &snapshot_path)?;
+            snapshot_fingerprint(&snapshot_path)
+        })();
+        let fingerprint = match snapshot_result {
+            Ok(fingerprint) => fingerprint,
+            Err(error) => {
+                let _ = fs::remove_file(&snapshot_path);
+                return Err(error);
+            }
+        };
+        let backup_path =
+            legacy_path.with_file_name(format!("{file_name}.scriptotar-next-{fingerprint}.bak"));
+        // Atomically publish a complete backup without replacing a pre-existing path.
+        // The temporary snapshot and destination share a directory/filesystem.
+        // Unlike rename, hard_link fails even if the destination is a dangling symlink.
+        let publish_result = (|| -> RepositoryResult<()> {
+            match fs::hard_link(&snapshot_path, &backup_path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(&backup_path).map_err(io_error)?;
+                    if !metadata.file_type().is_file()
+                        || snapshot_fingerprint(&backup_path)? != fingerprint
+                    {
+                        return Err(RepositoryError::Conflict(format!(
+                            "existing legacy backup {} is not a regular matching snapshot; refusing to replace it",
+                            backup_path.display()
+                        )));
+                    }
+                    Ok(())
+                }
+                Err(error) => Err(io_error(error)),
+            }
+        })();
+        let cleanup_result = fs::remove_file(&snapshot_path);
+        publish_result?;
+        cleanup_result.map_err(io_error)?;
 
-        let legacy = Connection::open(legacy_path).map_err(storage_error)?;
+        // Import exclusively from the consistent snapshot, never from a live WAL database.
+        let legacy = Connection::open_with_flags(&backup_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(storage_error)?;
         let mut destination = connection(self)?;
         let already_imported: bool = destination
             .query_row(
@@ -356,8 +519,7 @@ impl SqliteStore {
                 report.projects += 1;
             }
         }
-        let inbox_id = ensure_project(&tx, "Inbox", &now_rfc3339())?;
-        projects.entry("Inbox".to_owned()).or_insert(inbox_id);
+        // Missing legacy projects are resolved lazily by project_id_for.
 
         if table_exists(&legacy, "jobs")? {
             let mut statement = legacy
@@ -387,12 +549,18 @@ impl SqliteStore {
                 let row = row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &row.project)?;
                 let job_id = legacy_uuid("job", &row.id);
-                let input_kind = if row.input_type.eq_ignore_ascii_case("url") {
-                    "url"
-                } else {
-                    "local_file"
+                let input_kind = match row.input_type.trim().to_ascii_lowercase().as_str() {
+                    "url" => "url",
+                    "file" | "local_file" => "local_file",
+                    other => {
+                        return Err(RepositoryError::Validation(format!(
+                            "unsupported legacy input type {other:?} for job {:?}",
+                            row.id
+                        )));
+                    }
                 };
-                let state = legacy_job_state(&row.status);
+                let state = legacy_job_state(&row.status)?;
+                reject_legacy_id_collision(&tx, "jobs", job_id)?;
                 let progress = if state == JobState::Completed {
                     Some(1.0_f32)
                 } else {
@@ -433,6 +601,10 @@ impl SqliteStore {
                     let source_id = legacy_uuid("source", &row.id);
                     let media_id = legacy_uuid("media", &row.id);
                     let transcript_id = legacy_uuid("transcript", &row.id);
+                    reject_legacy_id_collision(&tx, "sources", source_id)?;
+                    reject_legacy_id_collision(&tx, "media", media_id)?;
+                    reject_legacy_id_collision(&tx, "transcripts", transcript_id)?;
+                    reject_legacy_link_collision(&tx, job_id)?;
                     let source_type = if input_kind == "url" {
                         "url"
                     } else {
@@ -461,12 +633,7 @@ impl SqliteStore {
                         "INSERT INTO media(id, source_id, local_path, duration_seconds, mime_type, created_at)
                          VALUES(?1, ?2, ?3, NULL, NULL, ?4)
                          ON CONFLICT(id) DO UPDATE SET local_path = excluded.local_path",
-                        params![
-                            media_id.to_string(),
-                            source_id.to_string(),
-                            local_path,
-                            row.created_at,
-                        ],
+                        params![media_id.to_string(), source_id.to_string(), local_path, row.created_at,],
                     )
                     .map_err(storage_error)?;
                     tx.execute(
@@ -477,13 +644,7 @@ impl SqliteStore {
                             language = excluded.language,
                             text = excluded.text,
                             updated_at = excluded.updated_at",
-                        params![
-                            transcript_id.to_string(),
-                            media_id.to_string(),
-                            row.language,
-                            text,
-                            row.created_at,
-                        ],
+                        params![transcript_id.to_string(), media_id.to_string(), row.language, text, row.created_at,],
                     )
                     .map_err(storage_error)?;
                     tx.execute(
@@ -545,18 +706,13 @@ impl SqliteStore {
                         "INSERT INTO creators(id, project_id, platform, profile_url, display_name, created_at)
                          VALUES(?1, ?2, ?3, ?4, NULL, ?5)
                          ON CONFLICT(id) DO NOTHING",
-                        params![
-                            id.to_string(),
-                            project_id.to_string(),
-                            platform,
-                            row.creator_url,
-                            row.scanned_at,
-                        ],
+                        params![id.to_string(), project_id.to_string(), platform, row.creator_url, row.scanned_at,],
                     )
                     .map_err(storage_error)?;
                     Some(id)
                 };
                 let item_id = legacy_uuid("research", &row.storage_id);
+                reject_legacy_id_collision(&tx, "research_items", item_id)?;
                 let source_url = row.source_url.as_deref().unwrap_or(&row.creator_url);
                 tx.execute(
                     "INSERT INTO research_items(
@@ -619,6 +775,7 @@ impl SqliteStore {
                     row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &project)?;
                 let id = legacy_uuid("watchlist", &legacy_id.to_string());
+                reject_legacy_id_collision(&tx, "watchlists", id)?;
                 tx.execute(
                     "INSERT INTO watchlists(id, project_id, label, profile_url, limit_count, last_scan_at)
                      VALUES(?1, ?2, ?3, ?4, ?5, ?6)
@@ -679,10 +836,15 @@ impl SqliteStore {
                 ) = row.map_err(storage_error)?;
                 let project_id = project_id_for(&tx, &mut projects, &project)?;
                 let id = legacy_uuid("ai-run", &legacy_id);
-                let mode = if mode.to_ascii_lowercase().contains("copy") {
-                    AiRunMode::CopyPrompt
-                } else {
-                    AiRunMode::Byok
+                reject_legacy_id_collision(&tx, "ai_runs", id)?;
+                let mode = match mode.trim().to_ascii_lowercase().as_str() {
+                    "copy" | "copy_prompt" | "copy prompt only" => AiRunMode::CopyPrompt,
+                    "api" | "byok" | "use api key" => AiRunMode::Byok,
+                    other => {
+                        return Err(RepositoryError::Validation(format!(
+                            "unsupported legacy AI mode {other:?}; refusing to guess"
+                        )));
+                    }
                 };
                 let mode = match mode {
                     AiRunMode::CopyPrompt => "copy_prompt",
@@ -807,11 +969,11 @@ impl ContentRepository for SqliteStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
-        let (project_id, state): (String, String) = tx
+        let (project_id, state, input_kind): (String, String, String) = tx
             .query_row(
-                "SELECT project_id, state FROM jobs WHERE id = ?1",
+                "SELECT project_id, state, input_kind FROM jobs WHERE id = ?1",
                 params![job_id.to_string()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
             .map_err(storage_error)?
@@ -831,6 +993,11 @@ impl ContentRepository for SqliteStore {
             SourceType::Url => "url",
             SourceType::LocalFile => "local_file",
         };
+        if input_kind != source_type {
+            return Err(RepositoryError::Validation(
+                "transcription source type does not match job input type".to_owned(),
+            ));
+        }
         tx.execute(
             "INSERT INTO sources(id, project_id, creator_id, source_type, locator, title, created_at)
              VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1017,6 +1184,83 @@ fn parse_uuid(value: String) -> rusqlite::Result<Uuid> {
     })
 }
 
+fn create_legacy_snapshot(source_path: &Path, snapshot_path: &Path) -> RepositoryResult<()> {
+    let source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(storage_error)?;
+    let mut snapshot = Connection::open(snapshot_path).map_err(storage_error)?;
+    {
+        let backup =
+            rusqlite::backup::Backup::new(&source, &mut snapshot).map_err(storage_error)?;
+        backup
+            .run_to_completion(128, Duration::from_millis(10), None)
+            .map_err(storage_error)?;
+    }
+    let integrity: String = snapshot
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .map_err(storage_error)?;
+    if integrity != "ok" {
+        return Err(RepositoryError::Storage(format!(
+            "legacy snapshot integrity check failed: {integrity}"
+        )));
+    }
+    Ok(())
+}
+
+// Stable, streaming fingerprint of the complete database snapshot (including WAL changes).
+// It is used to detect content changes, not as a security signature.
+fn snapshot_fingerprint(path: &Path) -> RepositoryResult<String> {
+    let mut file = fs::File::open(path).map_err(io_error)?;
+    let mut bytes = [0_u8; 64 * 1024];
+    let mut total = 0_u64;
+    let mut hash = 0xcbf29ce484222325_u64;
+    loop {
+        let read = file.read(&mut bytes).map_err(io_error)?;
+        if read == 0 {
+            break;
+        }
+        total += read as u64;
+        for byte in &bytes[..read] {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    Ok(format!("{total:016x}-{hash:016x}"))
+}
+
+fn reject_legacy_id_collision(
+    tx: &Transaction<'_>,
+    table: &'static str,
+    id: Uuid,
+) -> RepositoryResult<()> {
+    // Table names are fixed compile-time call sites, never imported user data.
+    let sql = format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE id = ?1)");
+    let exists: bool = tx
+        .query_row(&sql, params![id.to_string()], |row| row.get(0))
+        .map_err(storage_error)?;
+    if exists {
+        return Err(RepositoryError::Conflict(format!(
+            "legacy {table} ID {id} already exists; refusing to overwrite or reassign user data"
+        )));
+    }
+    Ok(())
+}
+
+fn reject_legacy_link_collision(tx: &Transaction<'_>, job_id: Uuid) -> RepositoryResult<()> {
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM job_transcript_links WHERE job_id = ?1)",
+            params![job_id.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(storage_error)?;
+    if exists {
+        return Err(RepositoryError::Conflict(format!(
+            "legacy job {job_id} already has a transcript link; refusing to reassign it"
+        )));
+    }
+    Ok(())
+}
+
 fn table_exists(connection: &Connection, table: &str) -> RepositoryResult<bool> {
     connection
         .query_row(
@@ -1040,7 +1284,8 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
     } else {
         name.trim()
     };
-    if let Some(id) = tx
+    let id = legacy_uuid("project", &normalized.to_ascii_lowercase());
+    if let Some(existing_id) = tx
         .query_row(
             "SELECT id FROM projects WHERE name = ?1 COLLATE NOCASE",
             params![normalized],
@@ -1049,9 +1294,10 @@ fn ensure_project(tx: &Transaction<'_>, name: &str, created_at: &str) -> Reposit
         .optional()
         .map_err(storage_error)?
     {
-        return Uuid::parse_str(&id).map_err(|error| RepositoryError::Storage(error.to_string()));
+        return Err(RepositoryError::Conflict(format!(
+            "legacy project {normalized:?} already exists as {existing_id}; refusing to merge historical imports with existing user data"
+        )));
     }
-    let id = legacy_uuid("project", &normalized.to_ascii_lowercase());
     tx.execute(
         "INSERT INTO projects(id, name, created_at) VALUES(?1, ?2, ?3)",
         params![id.to_string(), normalized, created_at],
@@ -1073,13 +1319,17 @@ fn project_id_for(
     Ok(id)
 }
 
-fn legacy_job_state(status: &str) -> JobState {
+fn legacy_job_state(status: &str) -> RepositoryResult<JobState> {
     match status.trim().to_ascii_lowercase().as_str() {
-        "queued" => JobState::Queued,
-        "done" | "completed" => JobState::Completed,
-        "failed" => JobState::Failed,
-        "canceled" | "cancelled" => JobState::Cancelled,
-        _ => JobState::Interrupted,
+        "queued" => Ok(JobState::Queued),
+        "done" | "completed" => Ok(JobState::Completed),
+        "failed" => Ok(JobState::Failed),
+        "canceled" | "cancelled" => Ok(JobState::Cancelled),
+        "starting" | "running" | "finishing" | "preparing" | "downloading" | "transcribing"
+        | "processing" | "interrupted" => Ok(JobState::Interrupted),
+        other => Err(RepositoryError::Validation(format!(
+            "unsupported legacy job status {other:?}; refusing to guess"
+        ))),
     }
 }
 
@@ -1145,6 +1395,47 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, LATEST_INTEGRATION_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn integration_migration_rejects_spoofed_versions_and_names() {
+        for corrupt_name in [false, true] {
+            let temp = TempDir::new().unwrap();
+            let store = new_store(&temp);
+            let project = Project::new("Preserve integration data");
+            store.create_project(&project).unwrap();
+            let connection = connection(&store).unwrap();
+            if corrupt_name {
+                connection
+                    .execute(
+                        "UPDATE integration_schema_migrations
+                         SET name = 'unexpected' WHERE version = 2",
+                        [],
+                    )
+                    .unwrap();
+            } else {
+                // Preserve max/count while replacing the first migration with version 0.
+                connection
+                    .execute(
+                        "DELETE FROM integration_schema_migrations WHERE version = 1",
+                        [],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO integration_schema_migrations(version, name, applied_at)
+                         VALUES(0, 'legacy_import_support', '2026-01-01T00:00:00Z')",
+                        [],
+                    )
+                    .unwrap();
+            }
+            drop(connection);
+            assert!(matches!(
+                store.run_integration_migrations(),
+                Err(RepositoryError::Storage(_))
+            ));
+            assert_eq!(store.get_project(project.id).unwrap().name, project.name);
+        }
     }
 
     #[test]
@@ -1214,9 +1505,14 @@ mod tests {
                 )
                 .unwrap();
             connection
-                .execute(
-                    "DELETE FROM integration_schema_migrations WHERE version = 3",
-                    [],
+                .execute_batch(
+                    "DROP TRIGGER job_transcript_project_insert;
+                     DROP TRIGGER job_transcript_project_update;
+                     DROP TRIGGER jobs_project_lineage_reassignment_guard;
+                     DROP TRIGGER sources_project_lineage_reassignment_guard;
+                     DROP TRIGGER media_source_lineage_reassignment_guard;
+                     DROP TRIGGER transcripts_media_lineage_reassignment_guard;
+                     DELETE FROM integration_schema_migrations WHERE version IN (3, 4, 5);",
                 )
                 .unwrap();
         }
@@ -1278,9 +1574,14 @@ mod tests {
             )
             .unwrap();
         connection
-            .execute(
-                "DELETE FROM integration_schema_migrations WHERE version = 3",
-                [],
+            .execute_batch(
+                "DROP TRIGGER job_transcript_project_insert;
+                 DROP TRIGGER job_transcript_project_update;
+                 DROP TRIGGER jobs_project_lineage_reassignment_guard;
+                 DROP TRIGGER sources_project_lineage_reassignment_guard;
+                 DROP TRIGGER media_source_lineage_reassignment_guard;
+                 DROP TRIGGER transcripts_media_lineage_reassignment_guard;
+                 DELETE FROM integration_schema_migrations WHERE version IN (3, 4, 5);",
             )
             .unwrap();
         drop(connection);

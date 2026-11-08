@@ -187,13 +187,7 @@ impl SqliteStore {
                     last_attempt_at = COALESCE(watchlist_refresh_status.last_attempt_at, excluded.last_attempt_at),
                     last_error = excluded.last_error,
                     next_retry_at = excluded.next_retry_at",
-                params![
-                    watchlist_id.to_string(),
-                    state.as_str(),
-                    failed_at,
-                    safe_error,
-                    next_retry_at,
-                ],
+                params![watchlist_id.to_string(), state.as_str(), failed_at, safe_error, next_retry_at,],
             )
             .map_err(storage_error)?;
         Ok(())

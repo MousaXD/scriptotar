@@ -20,6 +20,8 @@
 
   const SIDEBAR_KEY = 'scriptotar.sidebarCollapsed';
   let searchInput: HTMLInputElement;
+  let paletteRestoreFocus: HTMLElement | null = null;
+  let suppressSearchFocus = false;
   let paletteOpen = false;
   let paletteIndex = 0;
   let sidebarCollapsed = readSidebarState();
@@ -109,6 +111,8 @@
   }
 
   async function openPalette() {
+    if (paletteOpen) return;
+    paletteRestoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     paletteOpen = true;
     paletteIndex = 0;
     await tick();
@@ -121,13 +125,42 @@
     void openPalette();
   }
 
+  function topbarFocus() {
+    if (!suppressSearchFocus) void openPalette();
+  }
+
   function closePalette() {
+    if (!paletteOpen) return;
     paletteOpen = false;
     globalSearch = '';
     paletteIndex = 0;
+    const restore = paletteRestoreFocus;
+    paletteRestoreFocus = null;
+    void tick().then(() => {
+      if (!restore?.isConnected) return;
+      // Returning to the topbar search must not immediately reopen the dialog.
+      suppressSearchFocus = true;
+      restore.focus({ preventScroll: true });
+      suppressSearchFocus = false;
+    });
   }
 
   function paletteKeys(event: KeyboardEvent) {
+    if (event.key === 'Tab') {
+      const dialog = event.currentTarget as HTMLElement;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('input:not([disabled]), button:not([disabled])'));
+      if (focusable.length === 0) { event.preventDefault(); return; }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (event.key === 'Escape') {
       event.preventDefault();
       closePalette();
@@ -143,7 +176,7 @@
       paletteIndex = paletteItems.length ? (paletteIndex - 1 + paletteItems.length) % paletteItems.length : 0;
       return;
     }
-    if (event.key === 'Enter' && paletteItems[paletteIndex]) {
+    if (event.key === 'Enter' && event.target === searchInput && paletteItems[paletteIndex]) {
       event.preventDefault();
       void paletteItems[paletteIndex].run();
     }
@@ -161,6 +194,7 @@
 <svelte:window onkeydown={globalShortcut} />
 
 <div class:collapsed={sidebarCollapsed} class="app-frame shell-v2">
+  <a class="skip-link" href="#workspace-main">{$translator('nav.skipToContent')}</a>
   <aside class="sidebar" aria-label={$translator('nav.primary')} data-i18n-ignore>
     <div class="brand-row">
       <div class="brand-lockup">
@@ -176,7 +210,7 @@
       <section class="nav-group" aria-label={$translator('nav.work')}>
         <span class="nav-group-label">{$translator('nav.work')}</span>
         {#each workNav as item}
-          <button class:active={activeView === item.id} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
             {#if item.id === 'jobs' && activeJobs > 0}<b class="activity-count" aria-label={$translator('jobs.active', { count: activeJobs })}>{activeJobs}</b>{/if}
@@ -187,7 +221,7 @@
       <section class="nav-group" aria-label={$translator('nav.create')}>
         <span class="nav-group-label">{$translator('nav.create')}</span>
         {#each createNav as item}
-          <button class:active={activeView === item.id} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
           </button>
@@ -196,7 +230,11 @@
     </nav>
 
     <div class="sidebar-utility">
-      <button class:active={activeView === 'settings'} class="settings-link" aria-current={activeView === 'settings' ? 'page' : undefined} title={`${$translator('nav.settings')} · ,`} on:click={() => navigate('settings')}>
+      <button class="settings-link" type="button" aria-label={$translator('mcp.setup')} title={$translator('mcp.openSettings')} on:click={() => navigate('settings')}>
+        <Icon name="globe" />
+        <span class="nav-label">{$translator('mcp.setup')}</span>
+      </button>
+      <button class:active={activeView === 'settings'} class="settings-link" type="button" aria-label={$translator('nav.settings')} aria-current={activeView === 'settings' ? 'page' : undefined} title={`${$translator('nav.settings')} · ,`} on:click={() => navigate('settings')}>
         <Icon name="settings" />
         <span class="nav-label">{$translator('nav.settings')}</span>
       </button>
@@ -218,7 +256,7 @@
 
       <label class="command-trigger">
         <Icon name="search" size={17} />
-        <input aria-label={$translator('search.field')} value={globalSearch} on:focus={openPalette} on:input={topbarSearch} placeholder={$translator('search.open')} />
+        <input aria-label={$translator('search.field')} value={globalSearch} on:focus={topbarFocus} on:click={() => { if (!paletteOpen) void openPalette(); }} on:input={topbarSearch} placeholder={$translator('search.open')} />
         <kbd>{$translator('palette.shortcut')}</kbd>
       </label>
 
@@ -237,17 +275,17 @@
         </button>
       </div>
     </header>
-    <main class="workspace"><slot /></main>
+    <main id="workspace-main" class="workspace" tabindex="-1"><slot /></main>
   </div>
 </div>
 
 {#if paletteOpen}
   <div class="palette-backdrop" role="presentation" on:mousedown={(event) => { if (event.currentTarget === event.target) closePalette(); }} data-i18n-ignore>
-    <div class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')}>
+    <div class="command-palette" role="dialog" aria-modal="true" aria-label={$translator('search.dialog')} tabindex="-1" on:keydown={paletteKeys}>
       <label class="palette-search">
         <Icon name="search" size={19} />
         <span class="sr-only">{$translator('search.open')}</span>
-        <input bind:this={searchInput} bind:value={globalSearch} on:keydown={paletteKeys} placeholder={$translator('search.placeholder')} aria-label={$translator('search.open')} aria-controls="command-results" />
+        <input bind:this={searchInput} bind:value={globalSearch} placeholder={$translator('search.placeholder')} aria-label={$translator('search.open')} aria-controls="command-results" />
         <kbd>Esc</kbd>
       </label>
       <div id="command-results" class="palette-results" aria-label={$translator('search.results')}>
@@ -270,6 +308,8 @@
 <style>
   .app-frame { --shell-sidebar-width: var(--sidebar-expanded); grid-template-columns: var(--shell-sidebar-width) minmax(0, 1fr); background: var(--color-canvas); }
   .app-frame.collapsed { --shell-sidebar-width: var(--sidebar-collapsed); }
+  .skip-link { position: fixed; z-index: 120; inset-block-start: 8px; inset-inline-start: 8px; padding: 10px 14px; border: 2px solid var(--color-signal-strong); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text); transform: translateY(-160%); }
+  .skip-link:focus { transform: none; }
 
   .sidebar { z-index: 20; width: var(--shell-sidebar-width); padding: var(--space-3); border: 0; border-inline-end: 1px solid var(--color-border); background: color-mix(in srgb, var(--color-sidebar) 94%, transparent); transition: width var(--motion-normal) var(--ease-standard); }
   .brand-row { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 2px var(--space-4); border-bottom: 1px solid var(--color-border); }
@@ -367,9 +407,13 @@
 
   @media (max-width: 720px) {
     .app-frame { display: block; }
-    .sidebar { position: static; width: 100%; height: auto; padding: 8px; border-inline-end: 0; border-bottom: 1px solid var(--color-border); }
-    .brand-row, .sidebar-utility, .nav-group-label { display: none; }
-    .primary-nav { display: flex; gap: 4px; padding: 0; overflow-x: auto; }
+    .sidebar { position: static; display: flex; flex-direction: row; align-items: center; gap: 4px; width: 100%; height: auto; padding: 8px; border-inline-end: 0; border-bottom: 1px solid var(--color-border); }
+    .brand-row, .nav-group-label { display: none; }
+    .primary-nav { display: flex; flex: 1; min-width: 0; gap: 4px; padding: 0; overflow-x: auto; }
+    .sidebar-utility { display: flex; flex: 0 0 auto; gap: 4px; margin-top: 0; }
+    .sidebar-utility .settings-link { display: flex; align-items: center; justify-content: center; width: 42px; min-height: 42px; padding: 0; }
+    .sidebar-utility .settings-link .nav-label, .sidebar-utility .local-status { display: none; }
+    .sidebar-utility .settings-link.active::before { inset-inline-start: 9px; inset-block-start: auto; bottom: -5px; width: 22px; height: 3px; }
     .nav-group { display: flex; gap: 4px; }
     .nav-group button { display: flex; min-width: 42px; width: 42px; justify-content: center; padding: 0; }
     .nav-group button.active::before { inset-inline-start: 9px; inset-block-start: auto; bottom: -5px; width: 22px; height: 3px; }

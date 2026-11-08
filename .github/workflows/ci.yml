@@ -34,6 +34,9 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      - name: Install required Linux Tauri native libraries
+        run: bash scripts/install_tauri_deps.sh
+
       - name: Repository hygiene and action pinning
         run: |
           python3 scripts/check_repo_hygiene.py
@@ -54,4 +57,4 @@ jobs:
         run: PYTHONPATH=sidecars/transcription python3 -m unittest discover -s sidecars/transcription/tests -v
 
       - name: Rust workspace tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked

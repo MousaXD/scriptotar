@@ -196,10 +196,12 @@ impl JobState {
                     | Self::Cancelled
                     | Self::Interrupted
             ),
-            Self::Downloading => matches!(
-                next,
-                Self::Transcribing | Self::Failed | Self::Cancelled | Self::Interrupted
-            ),
+            Self::Downloading => {
+                matches!(
+                    next,
+                    Self::Transcribing | Self::Failed | Self::Cancelled | Self::Interrupted
+                )
+            }
             Self::Transcribing => matches!(
                 next,
                 Self::Processing | Self::Failed | Self::Cancelled | Self::Interrupted

@@ -6,6 +6,9 @@ import type {
   BootstrapData,
   Job,
   MigrationStatus,
+  McpPermissions,
+  McpGatewayStatus,
+  McpConnectionStatus,
   Transcript,
   WatchlistStatus
 } from '../types';
@@ -31,6 +34,7 @@ export interface AiPromptInput {
 }
 
 export interface ScriptotarApi {
+  backendHealth(): Promise<{schema_version: number}>;
   bootstrap(): Promise<BootstrapData>;
   listJobs(): Promise<Job[]>;
   searchTranscripts(query: string, limit?: number): Promise<string[]>;
@@ -55,4 +59,14 @@ export interface ScriptotarApi {
   runAi(input: AiPromptInput): Promise<string>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
+  getMcpPermissions(): Promise<McpPermissions>;
+  mcpConnectionStatus(): Promise<McpConnectionStatus>;
+  mcpConnectCloudflare(): Promise<McpConnectionStatus>;
+  mcpConnectOpenai(tunnelId: string, apiKey: string, rememberKey: boolean): Promise<McpConnectionStatus>;
+  mcpConnectManual(hostname: string): Promise<McpConnectionStatus>;
+  mcpDisconnect(): Promise<McpConnectionStatus>;
+  mcpGatewayStatus(): Promise<McpGatewayStatus>;
+  startMcpGateway(): Promise<McpGatewayStatus>;
+  stopMcpGateway(): Promise<McpGatewayStatus>;
+  saveMcpPermissions(permissions: McpPermissions, acknowledgeSensitiveAccess: boolean): Promise<McpPermissions>;
 }

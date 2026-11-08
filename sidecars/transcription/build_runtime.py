@@ -156,7 +156,7 @@ def build(output: Path) -> None:
             "PyInstaller=6.21.0\n"
             "static-ffmpeg=3.0 provider mapping (archive byte-pinned by Scriptotar)\n"
             "faster-whisper=1.2.1\n"
-            "yt-dlp=2026.7.4 (dedicated scriptotar-ytdlp executable)\n"
+            "yt-dlp=2026.10.21 (dedicated scriptotar-ytdlp executable)\n"
         )
         (output / "RUNTIME-VERSIONS.txt").write_text(versions, encoding="utf-8")
 

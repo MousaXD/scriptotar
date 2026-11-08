@@ -25,20 +25,14 @@ permissions:
 
 jobs:
   rust:
-    runs-on: ubuntu-22.04
+    # Validation can use the newer runner; the distributable Linux .deb is
+    # deliberately still built on Ubuntu 22.04 for older glibc compatibility.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
       - name: Install Tauri system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            patchelf
+        run: bash scripts/install_tauri_deps.sh
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
         with:
           components: rustfmt, clippy
