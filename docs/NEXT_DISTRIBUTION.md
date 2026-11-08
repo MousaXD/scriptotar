@@ -1,6 +1,6 @@
 # Scriptotar Next distribution
 
-Scriptotar Next `1.2.0` is the current Rust/Tauri/Svelte preview line. Windows and Linux packages include a self-contained transcription runtime, while Scriptotar Classic `1.3.0` keeps its separate Linux release channel and package formats.
+Scriptotar Next `1.3.0` is the current Rust/Tauri/Svelte preview line. Windows and Linux packages include a self-contained transcription runtime, while Scriptotar Classic `1.3.0` keeps its separate Linux release channel and package formats.
 
 ## Release identity
 
@@ -13,8 +13,8 @@ tauri-next-latest
 Package workflows first build versioned artifacts from the Tauri application version:
 
 ```text
-Scriptotar-Next-1.2.0-x64-setup.exe
-Scriptotar-Next-1.2.0-amd64.deb
+Scriptotar-Next-1.3.0-x64-setup.exe
+Scriptotar-Next-1.3.0-amd64.deb
 ```
 
 The rolling preview publishes stable channel filenames:
@@ -106,7 +106,7 @@ Its installed-package smoke test verifies:
 6. discovery/validation of the runtime from installed files instead of the repository tree;
 7. successful NSIS uninstall invocation.
 
-The Windows `1.2.x` package is a preview. CI does not claim Authenticode signing when signing credentials are absent.
+The Windows `1.3.x` package is a preview. CI does not claim Authenticode signing when signing credentials are absent.
 
 ## Linux package
 
@@ -181,7 +181,7 @@ No repository checkout, manual virtual environment, `pip install`, or system FFm
 
 ## Known limitations
 
-- Next is a `1.2.x` preview, not the stable release channel.
+- Next is a `1.3.x` preview, not the stable release channel.
 - Whisper model weights are not bundled.
 - GPU acceleration depends on compatible host NVIDIA support.
 - Windows preview artifacts are unsigned unless external signing credentials are configured.

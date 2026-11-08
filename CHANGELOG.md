@@ -1,5 +1,12 @@
 # Changelog
 
+## Scriptotar Next 1.3.0 — 2026-11-08 (release candidate; unpublished)
+
+- Bumped the integrated owner-overhaul candidate from 1.2.0 to 1.3.0 at the owner's request before promotion to `main`.
+- Aligned Rust workspace and lockfile packages, Tauri, Svelte package and lockfile, sidecar identity, MCP acceptance checks, and current public documentation. Sidecar protocol remains version 1.
+- Retains the 1.2.0 candidate's integrated features, fixes, security gates, and disclosed live-provider/manual acceptance limitations. Classic 1.3.0 is a separate archived product line.
+- See [1.3.0 release readiness](docs/releases/NEXT_1.3.0_RELEASE_READINESS.md) for the candidate checks and publication status.
+
 ## Scriptotar Next 1.2.0 — 2026-11-07 (release candidate; unpublished)
 
 This candidate integrates the seven-agent Rust/Tauri/Svelte Next overhaul. Archived Scriptotar Classic remains at 1.3.0 and is **not** upgraded or replaced.

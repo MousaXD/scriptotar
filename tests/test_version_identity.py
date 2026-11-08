@@ -56,7 +56,7 @@ class VersionIdentityTests(unittest.TestCase):
 
         self.assertEqual(
             {workspace_version, tauri_version, frontend_version, sidecar_version},
-            {"1.2.0"},
+            {"1.3.0"},
             "Scriptotar application versions drifted; keep Cargo, Tauri, Frontend, and Sidecar aligned",
         )
 
