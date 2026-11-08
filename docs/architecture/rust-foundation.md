@@ -1,6 +1,6 @@
 # Scriptotar Next Rust backend architecture
 
-This document defines the current Rust ownership boundaries for Scriptotar Next. The Rust/Tauri/Svelte application is now integrated and packaged as the `0.1.x` preview line. The Python/Tkinter Scriptotar Classic application remains supported separately.
+This document defines the current Rust ownership boundaries for the Scriptotar Next `1.3.0` preview candidate. Windows and Linux package workflows exercise the integrated runtime; publication remains a separate decision. Historical Python/Tkinter Classic sources live under `archive/legacy-python/`.
 
 ## Dependency direction
 
@@ -62,6 +62,10 @@ Owns AI provider contracts, provider HTTP execution, and endpoint security polic
 ### `scriptotar-research`
 
 Owns supported source/network policy and the yt-dlp-backed creator/profile research provider. Production uses the dedicated packaged `scriptotar-ytdlp` executable.
+
+### `scriptotar-mcp`
+
+Owns the 14-tool MCP catalog, stdio/localhost HTTP transports, and app-owned authorization checks. The desktop connection manager controls the gateway and tunnel lifecycle. MCP uses existing repositories and media orchestration; a queued tool response does not certify a completed transcript. Setup, queued-job semantics, and permission limits are described in [the MCP guide](../mcp/README.md).
 
 ### `apps/desktop/src-tauri`
 

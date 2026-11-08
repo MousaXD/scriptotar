@@ -1,0 +1,67 @@
+{
+  "app_version": "1.3.0",
+  "status": "passed",
+  "results": [
+    {
+      "platform": "youtube",
+      "source_url": "https://youtu.be/2PuFyjAs7JA?si=yqHYehEncAJH67oB",
+      "download": "passed",
+      "transcription": "passed",
+      "status": "passed",
+      "file_bytes": 5286,
+      "duration_seconds": 11.02,
+      "codec": "opus",
+      "extractor": "Youtube",
+      "download_seconds": 6.31,
+      "segment_count": 0,
+      "clip_seconds": 10.99,
+      "event_count": 7,
+      "elapsed_seconds": 26.9
+    },
+    {
+      "platform": "instagram",
+      "source_url": "https://www.instagram.com/reel/DaLCUltyZ7p/?hl=en",
+      "download": "passed",
+      "transcription": "passed",
+      "status": "passed",
+      "file_bytes": 584969,
+      "duration_seconds": 67.5,
+      "codec": "aac",
+      "extractor": "Instagram",
+      "download_seconds": 8.71,
+      "segment_count": 3,
+      "clip_seconds": 15.0,
+      "event_count": 16,
+      "elapsed_seconds": 12.83
+    },
+    {
+      "platform": "tiktok",
+      "source_url": "https://www.tiktok.com/@scout2015/video/6718335390845095173",
+      "download": "passed",
+      "transcription": "passed",
+      "status": "passed",
+      "file_bytes": 173696,
+      "duration_seconds": 10.81,
+      "codec": "mp3",
+      "extractor": "TikTok",
+      "download_seconds": 3.89,
+      "segment_count": 0,
+      "clip_seconds": 10.8,
+      "event_count": 11,
+      "elapsed_seconds": 5.37
+    }
+  ],
+  "evidence": {
+    "date": "2026-11-08",
+    "source_commit": "42349aace4e9479c450ab2a0d1eb7446f299aaa6",
+    "environment": "Local Linux development machine, isolated Python 3.12 environment and initially empty temporary model cache",
+    "yt_dlp": "2026.10.21",
+    "faster_whisper": "1.2.1",
+    "model": "small",
+    "device": "cpu",
+    "compute_type": "int8",
+    "cookies": "none",
+    "scope": "Real source downloads, FFprobe inspection, FFmpeg decoding, Whisper inference, and all six output types. This is local source-tree evidence, not hosted CI or installed-package certification.",
+    "accuracy_limit": "YouTube and TikTok returned zero speech segments; these do not prove speech recognition accuracy."
+  }
+}

@@ -14,7 +14,7 @@ external provider outage as a product success.
 | `Scriptotar MCP E2E` | Real localhost HTTP MCP authorization with bearer/path secrets, Origin checks, token changes, disable/revoke and negative cases | Yes |
 | `Linux Tauri Package` | Actual installed `.deb`, bundled engine, FFmpeg, verified tunnel binaries, read-only MCP startup, HTTP URL auth, GUI launch, IPC and restart persistence | Yes for Linux release |
 | `Windows Tauri Installer` | NSIS clean install, bundled media runtime, MCP default deny, GUI/backend check and uninstall | Yes for Windows release |
-| `Real YouTube Instagram TikTok E2E` | **Real network downloads** via Scriptotar `download_url`, no cookies or fake metadata, validates audio using FFprobe and runs actual Faster Whisper `small` CPU on a 15-second excerpt from each download; checks SRT/VTT/JSON/text exports | Yes; platform failures are visible failures |
+| `Real YouTube Instagram TikTok E2E` | **Real network downloads** via Scriptotar `download_url`, no cookies or fake metadata, validates audio using FFprobe and runs actual Faster Whisper `small` CPU on an excerpt of up to 15 seconds from each download; checks SRT/VTT/JSON/text exports | Yes; platform failures are visible failures |
 | `Weekly Real Whisper Canary` | Real bundled Whisper model downloaded once, known spoken phrase transcribed and repeated offline with cached model | Yes when run (separate weekly/manual workflow) |
 
 ## API surface checks
@@ -62,8 +62,17 @@ any provider fails, rather than showing a fake green check.
   suite enforces registered API surface coverage and exercises major features,
   including negative and revocation behavior.
 
-## Candidate status — 2026-11-08
+## Candidate evidence — 2026-11-08
 
-Existing combined pre-version-bump GitHub CI included passing [Windows installer](https://github.com/MousaXD/scriptotar/actions/runs/42395493363), [MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/42395493229) and [strict supply-chain audit](https://github.com/MousaXD/scriptotar/actions/runs/42395493283). The corrected [Linux installed package run](https://github.com/MousaXD/scriptotar/actions/runs/42398429828) passed after PR #81's HTTP 413 test correction, including installed auth/revocation, shell and three restarts. These runs **do not certify the eventual final versioned commit**.
+Evidence identifies a source commit and environment; it does not certify later local edits or another runner.
 
-The pinned [real-provider E2E](https://github.com/MousaXD/scriptotar/actions/runs/42395493246) **FAILS** at YouTube source bot/sign-in, before download or inference. Instagram actual download/inference passed (3 speech segments), TikTok actual inference completed with 0 speech segments. No source substitution, fixtures or security bypass. See [release readiness](releases/NEXT_1.3.0_RELEASE_READINESS.md).
+| Source / environment | Evidence | Outcome |
+| --- | --- | --- |
+| `427cbcd`, hosted CI | [Full integration](https://github.com/MousaXD/scriptotar/actions/runs/42471864196), [MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/42471864209), [Linux installed package](https://github.com/MousaXD/scriptotar/actions/runs/42471864187), [Windows NSIS/native cleanup](https://github.com/MousaXD/scriptotar/actions/runs/42471864217) | All 17 core/security checks passed. |
+| `427cbcd`, hosted live providers | [Live run](https://github.com/MousaXD/scriptotar/actions/runs/42471864208) | YouTube source access failed before download/inference; Instagram passed with three segments, TikTok passed with zero. |
+| `42349aa`, developer machine | [Real local result summary](evidence/2026-11-08-local-live-platforms.json) | All three pinned sources passed download, decoding, real `small` CPU inference, and six output-type checks. YouTube/TikTok had zero speech segments, Instagram three. |
+| `42349aa`, hosted live providers | [Live run](https://github.com/MousaXD/scriptotar/actions/runs/42485461014) | YouTube requested sign-in/bot verification before metadata completed; Instagram passed with three segments, TikTok passed with zero. |
+
+`42349aa` corrects the canary's arbitrary 8 KiB compressed-media minimum. The exact YouTube URL yields valid 5,286-byte, roughly 11-second Opus audio locally. Empty and oversized downloads remain rejected, valid audio/duration must be probed, and the full run must decode audio and execute real inference/exports. Unit regressions do not stand in for that real-media evidence.
+
+The local run uses source-tree engine functions with the pinned Python dependencies and a fresh temporary model cache. It does not certify an installed package, full desktop interaction, speech accuracy on silent inputs, or hosted CI access. See [source-access diagnosis](SOURCE_ACCESS.md) and [release readiness](releases/NEXT_1.3.0_RELEASE_READINESS.md).

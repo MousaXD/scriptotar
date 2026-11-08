@@ -1,6 +1,8 @@
 # Scriptotar Next distribution
 
-Scriptotar Next `1.3.0` is the current Rust/Tauri/Svelte preview line. Windows and Linux packages include a self-contained transcription runtime, while Scriptotar Classic `1.3.0` keeps its separate Linux release channel and package formats.
+Scriptotar Next `1.3.0` is the current Rust/Tauri/Svelte preview candidate. Windows and Linux package workflows include a self-contained transcription runtime. Scriptotar Classic `1.3.0` is archived under `archive/legacy-python/`; its historical Linux artifacts use separate names and channels.
+
+A successful build or source version does not mean a public package has been published. Download only assets actually present on the release page. The candidate and its exact-commit evidence are described in [release readiness](releases/NEXT_1.3.0_RELEASE_READINESS.md).
 
 ## Release identity
 
@@ -58,7 +60,8 @@ The packaging build includes:
 - Scriptotar's transcription supervisor and engine worker;
 - a dedicated packaged yt-dlp command for creator research;
 - `faster-whisper==1.2.1` and its packaged runtime dependencies;
-- `yt-dlp[default,curl-cffi]==2026.7.4`;
+- `yt-dlp[default,curl-cffi]==2026.10.21`;
+- reviewed `curl-cffi==0.15.0`, `tokenizers==0.23.1`, and `av==18.0.0` dependency pins;
 - FFmpeg and ffprobe from the pinned `static-ffmpeg==3.0` packaging dependency;
 - protocol/runtime provenance in `RUNTIME-VERSIONS.txt`.
 
@@ -110,7 +113,7 @@ The Windows `1.3.x` package is a preview. CI does not claim Authenticode signing
 
 ## Linux package
 
-`.github/workflows/linux-tauri.yml` builds the Next Debian preview without replacing the Classic Linux release workflows.
+`.github/workflows/linux-tauri.yml` builds the Next Debian preview. Archived Classic packaging and historical releases remain separate.
 
 The Linux lane verifies:
 
@@ -122,7 +125,7 @@ The Linux lane verifies:
 - package removal;
 - SHA-256 checksum metadata for the staged artifacts.
 
-Next currently publishes a Debian package on Linux. Next AppImage and Flatpak packages are not part of this preview line; those formats remain available through Scriptotar Classic.
+Next currently publishes a Debian package on Linux. Next AppImage and Flatpak packages are not part of this preview line; those formats belong to historical Scriptotar Classic artifacts rather than this preview.
 
 ## Runtime validation
 
@@ -135,7 +138,7 @@ It intentionally does not contact social platforms or download a Whisper model. 
 The Tauri bundle identifier is:
 
 ```text
-io.github.mousaxd.scriptotar.next
+io.github.mousaxd.scriptotar
 ```
 
 Next stores its Rust-owned database and model cache beneath Tauri's application-data directory. `SCRIPTOTAR_DATA_DIR` can replace that root for tests and diagnostics.
@@ -188,4 +191,6 @@ No repository checkout, manual virtual environment, `pip install`, or system FFm
 - No macOS distributable is currently published.
 - Linux Next packaging is Debian-only in this release line.
 - Package smoke tests intentionally avoid live Instagram/TikTok/YouTube availability and large model downloads.
-- Scriptotar Classic remains supported; successful Next packaging does not by itself authorize deleting the Classic application or release line.
+- Scriptotar Classic sources are preserved as a historical archive; successful Next packaging does not authorize deleting legacy data or changing historical release artifacts.
+- Live YouTube/Instagram/TikTok access depends on the source and environment. The source canary is separate from installer smoke tests; see [source-access diagnostics](SOURCE_ACCESS.md).
+- Supported JavaScript runtime requirements for additional YouTube extraction features must be evaluated separately; the current runtime list does not claim that Node or Deno is bundled.

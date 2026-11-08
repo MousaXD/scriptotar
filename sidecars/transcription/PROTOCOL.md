@@ -28,7 +28,7 @@ On startup the sidecar emits:
   "protocol": 1,
   "type": "ready",
   "capabilities": {
-    "sidecar_version": "0.1.0",
+    "sidecar_version": "1.3.0",
     "protocol_versions": [1],
     "features": {
       "url_input": true,
@@ -59,7 +59,7 @@ Command:
 Event:
 
 ```json
-{"protocol":1,"type":"pong","request_id":"optional-correlation-id","sidecar_version":"0.1.0"}
+{"protocol":1,"type":"pong","request_id":"optional-correlation-id","sidecar_version":"1.3.0"}
 ```
 
 ## Transcribe

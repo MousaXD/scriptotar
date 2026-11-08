@@ -75,6 +75,12 @@ client; `tunnel-client` is not needed if the client supports native local MCP.
   wizard keeps the tunnel running while Scriptotar is open. Quick Tunnel URLs
   intentionally change when a new connection starts.
 
+## Queued jobs and saved transcripts
+
+`download_video` and `enqueue_local_media` return queued jobs; a successful queue response is not a completed download or transcription. Follow `list_jobs`, then retrieve the resulting saved transcript within its project. Creator research saves metadata and does not itself transcribe videos.
+
+Source-platform access failures remain distinct from MCP permission denials and failed inference. The tools do not accept arbitrary yt-dlp flags or browser-cookie arguments. See [source-access diagnosis](../SOURCE_ACCESS.md) for the pinned YouTube challenge and local evidence.
+
 ## Tool capabilities
 
 | Tool | Required local permission |

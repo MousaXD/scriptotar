@@ -2,7 +2,7 @@
 
 This directory contains the Python media/transcription boundary used by Scriptotar Next. Python owns media execution and Faster Whisper behavior; Rust owns application persistence, durable jobs, orchestration, AI/research state, and the desktop lifecycle.
 
-The sidecar component version is currently `0.1.0`. Its public JSON Lines wire protocol is independently versioned as protocol `1`.
+The sidecar component version is currently `1.3.0`, aligned with the Rust/Tauri/frontend preview candidate. Its public JSON Lines wire protocol is independently versioned as protocol `1`.
 
 ## Responsibilities
 
@@ -51,7 +51,7 @@ sidecars/transcription/
   tests/
 ```
 
-The supervisor isolates the heavy engine in its own process group. Successful sequential jobs can reuse that engine and loaded Whisper model. Cancellation terminates the engine group and descendants; later work can start a fresh engine.
+The supervisor isolates the heavy engine in its own process group. Successful sequential jobs can reuse that engine and loaded Whisper model. Cancellation attempts to terminate the engine group and descendants, and acknowledges cleanup only after termination is verified. Unverified cleanup keeps the job slot reserved and blocks later work; a fresh engine can start after verified recovery.
 
 ## Development run
 
@@ -156,6 +156,12 @@ python sidecars/transcription/validate_runtime.py <runtime-directory>
 
 That smoke test validates packaged imports, private FFmpeg/ffprobe resolution, the dedicated yt-dlp command, and supervisor protocol startup/ping/shutdown.
 
+## Real source access
+
+The separate live-provider canary uses the production downloader and Whisper engine for the pinned YouTube/Instagram/TikTok inputs. It is distinct from the fixture and packaged-import tests above. A source can challenge a hosted runner while remaining accessible locally; a valid compressed audio file can also be smaller than 8 KiB. The canary validates actual media and inference rather than using a compressed-size minimum as proof of audio.
+
+See [source-access diagnostics and local reproduction](../../docs/SOURCE_ACCESS.md). An anonymous download pass does not certify Whisper inference, speech accuracy, or access from every network.
+
 ## Classic boundary
 
-The root-level `worker.py` and Classic Python/Tkinter application remain a separate supported product line. Next's packaged sidecar does not require deleting or rewriting that Classic runtime.
+The historical `worker.py` and Classic Python/Tkinter application are preserved under `archive/legacy-python/`. They are not root-level Next entry points. Next's packaged sidecar does not require deleting the archive or modifying original Classic databases.

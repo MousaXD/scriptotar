@@ -1,6 +1,6 @@
 # Scriptotar versioning and release identity
 
-Scriptotar **1.3.0** is the primary cross-platform desktop application built with Rust (Tauri v2) and Svelte 5.
+Scriptotar Next **1.3.0** is the current Rust/Tauri/Svelte desktop preview candidate. This is the source/package identity, not a claim that 1.3.0 has been published. See the [candidate readiness record](releases/NEXT_1.3.0_RELEASE_READINESS.md).
 
 ## Current product versions
 
@@ -61,19 +61,9 @@ The `latest` filename is therefore a rolling-channel name, not another applicati
 
 There is currently no stable Scriptotar Next channel and no published macOS Next artifact.
 
-### Classic rolling release
+### Archived Classic channels
 
-`continuous` / **Scriptotar Latest** is the rolling supported Classic channel. The Classic Debian artifact is required for that release; Classic AppImage/Flatpak assets are added when the portable packaging lane succeeds.
-
-### Classic permanent versions
-
-Classic permanent version tags use `v<Classic version>`, for example:
-
-```text
-v1.3.0
-```
-
-The release workflow rejects a Classic version tag that does not match the application version.
+Classic's historical `continuous` / **Scriptotar Latest** channel and permanent tags such as `v1.3.0` refer to the Python/Tkinter product preserved under `archive/legacy-python/`. They are separate from Next's rolling prerelease. Current Next CI/publishing does not promise continuing Classic builds or publish a stable Next release under those tags.
 
 ## When to bump versions
 
@@ -81,21 +71,21 @@ Do not bump a version merely to make Classic and Next look numerically consisten
 
 For a Classic change:
 
-1. decide whether a Classic application release is actually being made;
-2. update `scriptotar_common.py`;
-3. update Classic package metadata to exactly match;
-4. update user-facing documentation that names the current Classic version;
-5. run Classic tests and package validation;
-6. create a matching permanent tag only when intentionally publishing that release.
+1. explicitly decide whether historical Classic maintenance is in scope;
+2. work in `archive/legacy-python/`, including its `scriptotar_common.py` and package metadata;
+3. preserve original user data and distinguish any historical-package changes from Next;
+4. run the affected Classic tests/package checks in its own dependency environment;
+5. create or publish a matching tag only when that separate release is authorized.
 
 For a Next change:
 
 1. decide whether the Next application release version is changing;
 2. update `tauri.conf.json`;
-3. keep the Rust workspace, frontend package, and sidecar version aligned unless a future policy explicitly decouples one component;
+3. keep the Rust workspace, frontend package, sidecar, npm lockfile root package, and local Cargo lockfile package versions aligned unless a future policy explicitly decouples them;
 4. update user-facing documentation that names the current Next version;
 5. run Rust/frontend/sidecar tests plus affected package validation;
-6. do not invent a stable Next tag/channel merely because the numeric version changed.
+6. assess exact-commit CI, installed-package checks, and separately identified live/manual evidence; local success does not certify another environment;
+7. do not infer permission to push, merge, or publish from a numeric version change, or invent a stable Next tag/channel.
 
 ## Classic and Next version identities
 

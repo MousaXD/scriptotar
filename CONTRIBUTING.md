@@ -1,167 +1,127 @@
 # Contributing to Scriptotar
 
-Thanks for improving Scriptotar. The repository contains two supported application lines:
-
-- **Scriptotar Next 0.1.x**: Rust + Tauri 2 + Svelte with the Python transcription sidecar.
-- **Scriptotar Classic 1.2.x**: the preserved Python/Tkinter application.
-
-Do not remove or silently break Classic while working on Next. Keep changes at the correct architectural boundary and add tests for behavior that crosses persistence, process, network, or IPC boundaries.
+Current development targets **Scriptotar Next 1.3.0**, the Rust/Tauri/Svelte preview. The Python/Tkinter **Classic 1.3.0** sources are historical and live under `archive/legacy-python/`. Preserve that archive and the safety of existing user data; Next's publication workflow does not publish a new Classic release.
 
 ## Repository map
 
 ```text
-Cargo.toml                         Rust workspace
-crates/                            Rust domain/service/repository crates
-apps/desktop/src-tauri/            Tauri desktop host
-apps/desktop-ui/                   Svelte + TypeScript frontend
-sidecars/transcription/            Python JSONL transcription runtime
-scriptotar.py + *_mixin.py         Scriptotar Classic GUI/application
-worker.py / creator.py             Classic worker/research/AI helpers
-tests/                             Classic and repository contract tests
-docs/                              Architecture, distribution, migration, versioning
-.github/workflows/                 CI and packaging
+Cargo.toml                         Rust workspace and shared application version
+crates/                            Domain, database, jobs, media, AI, research, MCP
+apps/desktop/src-tauri/             Tauri desktop host
+apps/desktop-ui/                    Svelte + TypeScript frontend
+sidecars/transcription/             Python JSONL media/transcription runtime
+archive/legacy-python/              Historical Classic source and packaging
+scripts/ and tests/                 Repository contracts and integration helpers
+docs/                              Architecture, distribution, migration, test evidence
+.github/workflows/                  CI, installed-package checks, preview publisher
 ```
 
-## Scriptotar Next development
+## Development environment
 
-### Linux prerequisites
+Match the CI toolchain when reproducing a build: Node.js 22, Rust 1.97.1 with rustfmt/Clippy, Python 3.12, and Tauri CLI 2.11.2. Package/runtime dependency pins are in `sidecars/transcription/requirements-engine.txt` and `requirements-bundle.txt`; JavaScript and Rust dependencies use their checked-in lockfiles.
 
-On Debian/Ubuntu/Pop!_OS, the integrated Tauri build uses the normal WebKit/GTK development dependencies:
+On Debian/Ubuntu, the repository helper installs the GTK/WebKit, OpenSSL, DBus, and packaging libraries used by CI:
 
 ```bash
-sudo apt update
-sudo apt install -y \
-  libwebkit2gtk-4.1-dev \
-  libappindicator3-dev \
-  librsvg2-dev \
-  libgtk-3-dev \
-  libssl-dev \
-  patchelf \
-  zenity \
-  python3 \
-  python3-venv
+bash scripts/install_tauri_deps.sh
 ```
 
-Use a current Rust toolchain, Node.js 22-compatible tooling, and Python 3.12 when reproducing the packaging environment.
+The helper uses sudo/apt. The desktop's Linux native picker also uses `zenity`. Installed-GUI acceptance uses Xvfb. See the package workflow for its complete environment rather than assuming a bare `cargo build` produces an installer.
 
-### Rust workspace
+## Frontend and desktop
 
-From the repository root:
+Run frontend checks from the repository root:
+
+```bash
+npm ci --prefix apps/desktop-ui
+npm run check --prefix apps/desktop-ui
+npm test --prefix apps/desktop-ui
+npm run build --prefix apps/desktop-ui
+```
+
+A browser-only development session is useful for UI work:
+
+```bash
+npm run dev --prefix apps/desktop-ui
+```
+
+It uses the mock `ScriptotarApi`. The Tauri window selects the real client. Keep host calls behind `apps/desktop-ui/src/api/`; do not open SQLite or spawn processes from frontend components.
+
+For the integrated desktop shell:
+
+```bash
+cargo install tauri-cli --version 2.11.2 --locked
+cd apps/desktop
+cargo tauri dev
+```
+
+The development host needs a configured Python engine environment for real transcription. For example, bootstrap an isolated environment from the repository root:
+
+```bash
+python3 sidecars/transcription/bootstrap.py --venv .venv
+```
+
+Set `SCRIPTOTAR_SIDECAR_PYTHON` to that environment's absolute Python executable before launching the desktop. Packaged applications use their bundled runtime instead. See [sidecar development](sidecars/transcription/README.md).
+
+## Rust and repository contracts
+
+Build frontend assets before checking the integrated host, then run the checks appropriate to the change:
 
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --locked
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+python3 -m unittest discover -s scripts/tests -v
+python3 -m unittest discover -s .github/tests -v
+python3 scripts/check_github_action_pins.py
+python3 scripts/check_repo_hygiene.py
 ```
 
-Important ownership rules:
+Rust tests include real localhost servers. An environment that forbids local socket binding can fail those tests before product behavior is exercised; diagnose that restriction rather than removing the test.
 
-- `scriptotar-core` owns stable domain contracts.
-- `scriptotar-db` owns the Next SQLite schema and migrations.
-- `scriptotar-jobs` owns job lifecycle operations.
-- `scriptotar-media` owns media/sidecar host contracts.
-- `scriptotar-orchestrator` owns durable sidecar process orchestration.
-- `scriptotar-ai` owns AI provider execution and endpoint policy.
-- `scriptotar-research` owns creator-research execution and network policy.
-- Tauri command handlers should remain thin adapters over services.
-
-### Svelte frontend
+The integrated production-equivalent compile is run from `apps/desktop`:
 
 ```bash
-cd apps/desktop-ui
-npm ci
-npm run check
-npm run test
-npm run build
-```
-
-A browser-only Vite run uses the mock `ScriptotarApi`. The production Tauri window injects the real Tauri-backed client. Do not bypass that API seam by scattering raw host calls through components.
-
-### Tauri application
-
-The integrated production-equivalent compile used by CI is:
-
-```bash
-cd apps/desktop
 cargo tauri build --no-bundle -- --locked
 ```
 
-For local Tauri development, install the Tauri CLI version used by CI and launch from `apps/desktop` after installing frontend dependencies.
+Ownership follows the existing boundaries: `scriptotar-core` defines domain/repository contracts; `scriptotar-db` owns SQLite and migrations; jobs/media/orchestrator own durable execution and the sidecar host; AI/research own provider execution and network policy; `scriptotar-mcp` owns tool authorization and transports. Tauri commands adapt these services to the UI.
 
-Packaged releases use generated platform bundle configuration, so a successful `cargo build` alone is not proof that an installer contains or can discover the packaged transcription runtime.
+## Python sidecar
 
-### Python transcription sidecar
-
-Fast protocol/unit tests do not download Whisper models or contact live social platforms:
+Fast tests do not need engine dependencies, live platforms, or Whisper models:
 
 ```bash
-cd sidecars/transcription
-PYTHONPATH=. python3 -m compileall -q .
-PYTHONPATH=. python3 -m unittest discover -s tests -v
+PYTHONPATH=sidecars/transcription python3 -m compileall -q sidecars/transcription
+PYTHONPATH=sidecars/transcription python3 -m unittest discover -s sidecars/transcription/tests -v
 ```
 
-To verify the real pinned engine dependency set without downloading a model:
+For real engine imports, use an isolated environment:
 
 ```bash
-python3 -m pip install -r sidecars/transcription/requirements-engine.txt
-python3 -m pip check
-python3 -c 'import faster_whisper, yt_dlp; print(faster_whisper.__version__, yt_dlp.version.__version__)'
+python3 -m venv .venv
+.venv/bin/python -m pip install -r sidecars/transcription/requirements-engine.txt
+.venv/bin/python -m pip check
+.venv/bin/python -c 'import faster_whisper, yt_dlp; print(faster_whisper.__version__, yt_dlp.version.__version__)'
 ```
 
-The public sidecar protocol is documented in `sidecars/transcription/PROTOCOL.md`. Rust owns the application database; the sidecar must not open or mutate it.
+These paths use POSIX shell conventions; Windows environments use their `Scripts` directory. The sidecar owns media execution and protocol v1, and must not open the Rust application database. See [PROTOCOL.md](sidecars/transcription/PROTOCOL.md).
 
-## Next packaging
+## Packaging and live checks
 
-The authoritative package workflows are:
+- `integration.yml` checks Rust/frontend/sidecar integration and dependency audits.
+- `mcp-e2e.yml` exercises real MCP processes and the compiled desktop executable.
+- `windows-tauri.yml` and `linux-tauri.yml` build/install actual packages and validate their bundled resources.
+- `tauri-next-release.yml` is the sole rolling preview publisher, with exact-main-commit gates and the existing distribution approval variable.
 
-- `.github/workflows/windows-tauri.yml`: builds and smoke-tests the Windows NSIS installer.
-- `.github/workflows/linux-tauri.yml`: builds and smoke-tests the Linux Debian package.
-- `.github/workflows/tauri-next-release.yml`: assembles the rolling `tauri-next-latest` preview from validated package artifacts.
+Normal unit and installed-app flows use clearly identified deterministic providers. Separate live canaries contact the pinned YouTube/Instagram/TikTok URLs and download a real Whisper model. They fail on source-access or inference errors. Keep those outcomes distinct from fixture tests and retain exact source URLs. See [source-access diagnosis and local commands](docs/SOURCE_ACCESS.md) and [the E2E inventory](docs/E2E-COVERAGE-1.3.0.md).
 
-Package smoke tests validate installed resource discovery. Do not weaken them to source-tree-only checks.
+## Versioning and pull requests
 
-The packaged Next runtime is intentionally self-contained for Python/Faster Whisper/yt-dlp/FFmpeg, while Whisper model weights remain first-use downloads.
+The workspace, Tauri, frontend, sidecar, and local lockfile package identities are aligned at `1.3.0`; protocol v1 is independent. Follow [VERSIONING.md](docs/VERSIONING.md) when changing them. A candidate version is not a publication approval.
 
-## Scriptotar Classic development
+Run meaningful checks for changed parsing, persistence, migrations, process cleanup, IPC, or authorization behavior. Respect the requested scope for local changes, commits, pushes, merges, and publication. Do not change release gates to obtain a green check.
 
-Classic remains a working Python/Tkinter application and continues to have its own Linux release line.
-
-On Debian/Ubuntu/Pop!_OS:
-
-```bash
-sudo apt install python3 python3-venv python3-tk ffmpeg libsecret-tools xvfb dpkg-dev
-python3 -m unittest discover -s tests -v
-```
-
-Run Classic from source:
-
-```bash
-python3 scriptotar.py
-```
-
-Build the Classic Debian package:
-
-```bash
-./build-deb.sh
-```
-
-Portable Classic packages are built by `packaging/build-appimage.sh` and `io.github.mousaxd.scriptotar.yml`; CI also validates them on non-PR Linux release runs.
-
-## Version identity
-
-Do not infer that the Classic and Next numbers should match.
-
-- Classic currently uses `1.3.0`.
-- Next currently uses `0.1.0` across the Rust workspace, Tauri package identity, Svelte package, and transcription sidecar.
-- Sidecar protocol version `1` is a wire-protocol compatibility number, not an application version.
-
-Read `docs/VERSIONING.md` before changing any version. A repository test verifies the current cross-file identity contract.
-
-## Pull requests
-
-Keep changes focused. Add tests for parsing, persistence, prompt generation, migrations, security-sensitive input handling, package/runtime boundaries, and process recovery as appropriate.
-
-Never commit API keys, cookies, browser profiles, downloaded creator media, Whisper model caches, generated databases, private certificates/keys, or local environment files.
-
-For source-platform integrations, preserve the local-first model and document when a feature contacts a third party. CI should use deterministic local fixtures rather than live Instagram, TikTok, YouTube, or paid AI requests.
+Never commit API keys, tunnel URLs/tokens, cookies, browser profiles, downloaded media, model caches, generated databases, private keys, or local environment files. Use synthetic fixtures for public bug reports. Historical Classic reproduction belongs inside `archive/legacy-python/` with its own dependencies; its old entry points are not root-level Next commands.

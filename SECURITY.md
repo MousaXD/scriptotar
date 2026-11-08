@@ -1,42 +1,41 @@
 # Security policy
 
-Scriptotar currently has two supported application lines: the **Scriptotar Next 0.1.x preview** and the **Scriptotar Classic 1.2.x** legacy/stable line. Security fixes should preserve both unless a change explicitly documents a narrower affected surface.
+Current development and CI cover the **Scriptotar Next 1.3.0 preview candidate**, built with Rust/Tauri/Svelte and the transcription sidecar. **Scriptotar Classic 1.3.0** is historical source preserved under `archive/legacy-python/`. Identify the affected product line and version when reporting a problem; matching version numbers do not make their data, packages, or release channels interchangeable.
 
-## Supported release surfaces
+## Release surfaces and integrity
 
-- `main`: current development and integration target.
-- `tauri-next-latest`: rolling Scriptotar Next preview channel.
-- `continuous` / **Scriptotar Latest**: rolling Scriptotar Classic channel.
-- Current permanent Classic release tags such as `v1.2.0`.
+- `main` is the integration target; a candidate on another branch is not a published release.
+- `tauri-next-latest` is the rolling Next prerelease channel.
+- Classic's `continuous` channel and tags such as `v1.3.0` identify historical Classic artifacts, not a stable Next release.
 
-Scriptotar Next is still a prerelease. A preview label is not permission to weaken secret handling, input validation, package integrity checks, or local-data protections.
+The Next publisher requires its configured exact-main-commit gates and distribution approval. A passing installer or candidate version does not authorize skipping a failed check or publishing a stable tag. Packaging verifies pinned runtime/tunnel artifacts and includes provenance and license notices. Transient download retries and GitHub asset-API fallback retain the existing binary digests and size checks.
 
-## Secrets
+## Credentials and private content
 
-Never include API keys, cookies, browser profiles, access tokens, downloaded private media, database files, model caches, private certificates, or signing keys in bug reports or commits.
+Never include API keys, bearer tokens, secret tunnel URLs, cookies, browser profiles, private media, databases, model caches, signing keys, or private certificates in public reports or commits.
 
-### Scriptotar Next
+Next's AI BYOK keys are request/session values. They must not enter SQLite settings, browser persistent storage, ordinary configuration serialization, or logs. Copy Prompt requires no provider key; BYOK execution sends selected source/prompt content to the configured provider. Endpoint validation runs below the UI before credentials are attached.
 
-Next treats BYOK credentials as request-time/session values. API keys are not part of `ApplicationSettings` and must not be written to the Rust-owned SQLite database, browser storage, logs, crash output, or normal settings serialization.
+The MCP wizard has a separate optional **Remember key** choice for the restricted tunnel-runtime key. That opt-in uses the operating-system keyring rather than SQLite or the repository. Connection path URLs are bearer credentials. Revoking/disconnecting and rotating credentials are desktop-owned operations.
 
-Custom AI endpoints are validated below the UI boundary before credentials are attached. Remote plaintext HTTP endpoints are not accepted; loopback development endpoints are handled by the backend's explicit endpoint policy.
+Archived Classic's optional remembered AI key uses the historical keyring path; do not generalize that behavior into a claim that Next stores AI keys in settings.
 
-### Scriptotar Classic
+## MCP authorization
 
-Classic keeps the AI key in memory unless the user explicitly chooses **Remember in keyring**. On Linux, that option uses Secret Service through `secret-tool`; the key is not written into `settings.json`.
+MCP capabilities start disabled. Read-data, write-data, public creator research, media jobs, file reads/writes, overwrites, and command execution are independently granted in the desktop app. Authentication does not replace those grants. The MCP catalog has no tool for changing permissions or tokens.
 
-## Local data and migration
+File access is restricted to approved roots, and protected policy/database files are denied. Commands require an approved executable and receive a restricted environment. An approved shell/interpreter still runs with the user's OS privileges and can exceed ordinary file-tool boundaries; this is not an OS sandbox. Recheck the actual requested operation rather than treating any tool grant as blanket authorization.
 
-Next stores its database in Tauri's application-data directory under bundle identifier `io.github.mousaxd.scriptotar.next`. Classic uses the `scriptotar` XDG data directory, with a separate Flatpak sandbox path when installed as Flatpak.
+The local HTTP gateway binds to loopback and enforces its token, Origin, and request-size rules. Policy/token changes affect subsequent and pending calls as implemented by the gateway. See [MCP setup and security](docs/mcp/README.md) for limits, revocation, and the command-process boundary.
 
-The Next migration bridge must not overwrite the source Classic/WesamBoss database. Legacy discovery rejects unsafe candidates and refuses to guess when multiple distinct databases are present.
+## Data, media, and migration
 
-Do not attach real user databases to public issues. Create a minimal synthetic reproduction instead.
+Next uses Tauri's application-data directory for bundle identifier `io.github.mousaxd.scriptotar`, with `SCRIPTOTAR_DATA_DIR` available for diagnostics. Classic's historical XDG/Flatpak paths are separate. Legacy import stages a WAL-aware SQLite backup, does not overwrite the source database, and rejects unsafe or ambiguous source candidates. Preserve these properties when changing migrations or recovery.
+
+Provider access failures must remain visible. Do not import private cookies into CI, substitute a different source, weaken media validation, or treat zero speech segments as an accuracy pass. Small compressed media can be valid: enforce nonempty/max-size, audio/duration, decoding, and inference checks rather than an arbitrary minimum compressed size. See [source-access diagnosis](docs/SOURCE_ACCESS.md).
 
 ## Reporting vulnerabilities
 
-Prefer GitHub's private vulnerability reporting / Security Advisory flow for vulnerabilities that could expose secrets, execute commands, bypass URL or endpoint policy, escape intended filesystem boundaries, tamper with packaged runtimes, or corrupt local data.
+Use GitHub's private vulnerability-reporting/Security Advisory flow when available for issues involving secrets, authorization bypass, command execution, filesystem escapes, runtime tampering, or data corruption. Do not post working secrets, personal databases, or private media in a public issue.
 
-Avoid posting proof-of-concept secrets, private media, authentication cookies, or personal database contents in a public issue.
-
-When reporting, include the affected line (**Next** or **Classic**), version/release channel, operating system, installation format, and the smallest safe reproduction steps you can provide.
+Include the product line, version and commit/release channel, operating system, installation format, affected boundary, and a minimal safe reproduction. Use synthetic data where possible, and distinguish a provider/network restriction from a reproducible application defect.
