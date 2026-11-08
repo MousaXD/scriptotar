@@ -48,7 +48,7 @@ jobs:
       - run: python3 tests/mcp_stdio_e2e.py
       - run: python3 tests/mcp_http_e2e.py
       - run: python3 -m unittest discover -s tests -p test_mcp_tool_bundle.py -v
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '22'
           cache: npm
