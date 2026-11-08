@@ -1,6 +1,6 @@
 faster-whisper==1.2.1
 # Keep the reviewed license-metadata fallback in sync with the packaged wheel.
-tokenizers==0.23.1
+tokenizers==0.23.3
 av==18.0.0
 yt-dlp[default,curl-cffi]==2026.10.21
 # Keep curl-cffi's bundled native dependencies on the reviewed, inventoried lineage.
