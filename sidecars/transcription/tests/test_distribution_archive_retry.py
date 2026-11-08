@@ -8,6 +8,7 @@ import tempfile
 import types
 import unittest
 import zipfile
+from urllib.error import HTTPError, URLError
 from pathlib import Path
 from unittest.mock import call, patch
 
@@ -135,6 +136,58 @@ class StaticFFmpegArchiveRetryTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "provider URL drifted"):
                 self.distribution.fetch_pinned_static_ffmpeg(Path(tmp))
             urlopen.assert_not_called()
+
+    def test_gateway_timeout_retries_same_pinned_archive(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
+            patch.object(self.distribution.urllib.request, "urlopen", side_effect=[
+                HTTPError(self.spec["url"], 504, "Gateway Time-out", {}, None),
+                io.BytesIO(self.reviewed),
+            ]) as request,
+            patch.object(self.distribution.time, "sleep") as sleep,
+        ):
+            ffmpeg, _, evidence = self.distribution.fetch_pinned_static_ffmpeg(Path(tmp))
+            self.assertEqual(ffmpeg.read_bytes(), b"reviewed-ffmpeg-fixture")
+            self.assertEqual(evidence["archive_sha256"], self.spec["sha256"])
+            self.assertEqual([item.args[0] for item in request.call_args_list], [self.spec["url"]] * 2)
+            sleep.assert_called_once_with(1)
+
+    def test_transport_exhaustion_cleans_partial_archive(self):
+        class BrokenRead(io.BytesIO):
+            def read(self, size=-1):
+                if self.tell():
+                    raise URLError("connection reset")
+                return super().read(10)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with (
+                patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
+                patch.object(self.distribution.urllib.request, "urlopen", side_effect=[
+                    BrokenRead(self.reviewed) for _ in range(3)
+                ]) as request,
+                patch.object(self.distribution.time, "sleep") as sleep,
+            ):
+                with self.assertRaises(URLError):
+                    self.distribution.fetch_pinned_static_ffmpeg(root)
+                self.assertEqual(request.call_count, 3)
+                self.assertEqual(sleep.call_args_list, [call(1), call(2)])
+            self.assertFalse((root / "linux.zip").exists())
+            self.assertFalse((root / "extracted").exists())
+
+    def test_missing_archive_does_not_retry(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(self.distribution, "STATIC_FFMPEG_ARCHIVES", {"linux": self.spec}),
+            patch.object(self.distribution.urllib.request, "urlopen", side_effect=
+                         HTTPError(self.spec["url"], 404, "Not Found", {}, None)) as request,
+            patch.object(self.distribution.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(HTTPError):
+                self.distribution.fetch_pinned_static_ffmpeg(Path(tmp))
+            request.assert_called_once()
+            sleep.assert_not_called()
 
 
 if __name__ == "__main__":

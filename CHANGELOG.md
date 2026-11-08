@@ -4,6 +4,7 @@
 
 - Bumped the integrated owner-overhaul candidate from 1.2.0 to 1.3.0 at the owner's request before promotion to `main`.
 - Aligned Rust workspace and lockfile packages, Tauri, Svelte package and lockfile, sidecar identity, MCP acceptance checks, and current public documentation. Sidecar protocol remains version 1.
+- Packaging retries transient FFmpeg/tunnel download failures; tunnel assets can use GitHub's official asset API when its download edge fails, retaining pinned digests, size limits, and exact release/filename matching.
 - Retains the 1.2.0 candidate's integrated features, fixes, security gates, and disclosed live-provider/manual acceptance limitations. Classic 1.3.0 is a separate archived product line.
 - See [1.3.0 release readiness](docs/releases/NEXT_1.3.0_RELEASE_READINESS.md) for the candidate checks and publication status.
 

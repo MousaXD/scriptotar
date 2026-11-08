@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from http.client import IncompleteRead
 import importlib.metadata as metadata
 import json
 import platform
@@ -12,6 +13,7 @@ import tempfile
 import time
 import tomllib
 import urllib.request
+import urllib.error
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -142,16 +144,29 @@ def fetch_pinned_static_ffmpeg(destination: Path) -> tuple[Path, Path, dict[str,
         for attempt in range(1, 4):
             digest = hashlib.sha256()
             received = 0
-            with urllib.request.urlopen(url, timeout=600) as response, archive.open("wb") as output:
-                while chunk := response.read(1024 * 1024):
-                    received += len(chunk)
-                    if received > spec["size"]:
-                        raise RuntimeError(
-                            f"static FFmpeg archive size drift for {key}: "
-                            f"expected {spec['size']}, received more than the reviewed size"
-                        )
-                    digest.update(chunk)
-                    output.write(chunk)
+            try:
+                with urllib.request.urlopen(url, timeout=600) as response, archive.open("wb") as output:
+                    while chunk := response.read(1024 * 1024):
+                        received += len(chunk)
+                        if received > spec["size"]:
+                            raise RuntimeError(
+                                f"static FFmpeg archive size drift for {key}: "
+                                f"expected {spec['size']}, received more than the reviewed size"
+                            )
+                        digest.update(chunk)
+                        output.write(chunk)
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 3:
+                    raise
+                archive.unlink(missing_ok=True)
+                time.sleep(attempt)
+                continue
+            except (urllib.error.URLError, ConnectionError, TimeoutError, IncompleteRead):
+                if attempt == 3:
+                    raise
+                archive.unlink(missing_ok=True)
+                time.sleep(attempt)
+                continue
             actual_hash = digest.hexdigest()
             if actual_hash == spec["sha256"] and received == spec["size"]:
                 break

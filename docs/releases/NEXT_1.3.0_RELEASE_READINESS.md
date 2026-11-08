@@ -17,6 +17,8 @@ The owner-overhaul integration branch combines the seven specialist workstreams,
 
 CI evidence must identify the final candidate commit. Passing older runs does not certify version 1.3.0.
 
+Initial 1.3.0 checks on `9d2c665` passed Rust, frontend, sidecar, MCP E2E, full integration, security audits and publisher contracts. Windows/Linux packaging encountered upstream HTTP 504s downloading pinned FFmpeg/tunnel assets. The follow-up adds bounded transport retries and an official GitHub asset API fallback for the same release/name, retaining the existing binary digests and size limits. Permanent HTTP failures and integrity failures remain fatal; retry-exhaustion and tampering regressions are covered by offline tests. Both installed-package checks must pass on the final follow-up commit.
+
 ## Known external and manual limitations
 
 The previous integrated commit `42ac2eb256943e19a4c543109df800d0168e192c` passed its deterministic, security, MCP, Linux and Windows checks. Its [live-provider run](https://github.com/MousaXD/scriptotar/actions/runs/42407836286) failed. Earlier diagnostics identify a bot/sign-in challenge on the pinned YouTube source before download or inference. Instagram real inference produced three segments; TikTok inference produced zero segments, which does not prove recognition accuracy. Preserve the exact sources and visible failure; do not substitute fixtures or bypass source access controls.

@@ -14,6 +14,9 @@ import json
 from pathlib import Path
 import os
 import stat
+import time
+from http.client import IncompleteRead
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
@@ -44,13 +47,51 @@ def sha(data: bytes) -> str:
 def retrieve(url: str, expected: str | None = None, limit: int = 110 * 1024 * 1024) -> bytes:
     if not url.startswith("https://"):
         raise RuntimeError("Refusing a non-HTTPS binary source")
-    with urlopen(Request(url, headers={"User-Agent": "Scriptotar-MCP-Bundle/1"}), timeout=120) as response:
-        data = response.read(limit + 1)
+    headers = {"User-Agent": "Scriptotar-MCP-Bundle/1"}
+    if url.startswith("https://api.github.com/repos/") and "/releases/assets/" in url:
+        headers["Accept"] = "application/octet-stream"
+    request = Request(url, headers=headers)
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=120) as response:
+                data = response.read(limit + 1)
+            break
+        except HTTPError as exc:
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise
+        except (URLError, ConnectionError, TimeoutError, IncompleteRead):
+            if attempt == 2:
+                raise
+        time.sleep(attempt + 1)
     if len(data) > limit:
         raise RuntimeError("Upstream artifact exceeds the expected size bound")
     if expected is not None and sha(data) != expected:
         raise RuntimeError(f"SHA-256 mismatch for {url.split('/')[-1]}")
     return data
+
+
+def retrieve_release_asset(repository: str, tag: str, filename: str,
+                           expected: str | None = None, limit: int = 110 * 1024 * 1024) -> bytes:
+    url = f"https://github.com/{repository}/releases/download/{tag}/{filename}"
+    try:
+        return retrieve(url, expected, limit)
+    except HTTPError as exc:
+        if exc.code not in {408, 429, 500, 502, 503, 504}:
+            raise
+    except (URLError, ConnectionError, TimeoutError, IncompleteRead):
+        pass
+    # GitHub's download edge may fail while its asset API remains healthy.
+    # Resolve the exact same release/name; binary integrity checks still apply.
+    metadata = json.loads(retrieve(
+        f"https://api.github.com/repos/{repository}/releases/tags/{tag}", limit=1024 * 1024,
+    ))
+    matches = [asset for asset in metadata["assets"]
+               if asset.get("name") == filename and asset.get("browser_download_url") == url]
+    if len(matches) != 1 or type(matches[0].get("id")) is not int:
+        raise RuntimeError(f"Expected exactly one official release asset: {filename}")
+    return retrieve(
+        f"https://api.github.com/repos/{repository}/releases/assets/{matches[0]['id']}", expected, limit,
+    )
 
 
 def extract_exact_binary(archive: bytes, expected_name: str) -> bytes:
@@ -66,10 +107,12 @@ def build(platform: str, output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     extension = spec["extension"]
     archive_url = f"https://github.com/openai/tunnel-client/releases/download/{TUNNEL_TAG}/{spec['tunnel_archive']}"
-    archive = retrieve(archive_url, spec["tunnel_sha256"])
+    archive = retrieve_release_asset("openai/tunnel-client", TUNNEL_TAG,
+                                     spec["tunnel_archive"], spec["tunnel_sha256"])
     tunnel = extract_exact_binary(archive, "tunnel-client" + extension)
     cloudflare_url = f"https://github.com/cloudflare/cloudflared/releases/download/{CF_TAG}/{spec['cloudflared']}"
-    cloudflare = retrieve(cloudflare_url, spec["cloudflared_sha256"])
+    cloudflare = retrieve_release_asset("cloudflare/cloudflared", CF_TAG,
+                                        spec["cloudflared"], spec["cloudflared_sha256"])
     destinations = {"tunnel-client" + extension: tunnel, "cloudflared" + extension: cloudflare}
     for filename, data in destinations.items():
         path = output / filename
@@ -81,7 +124,7 @@ def build(platform: str, output: Path) -> None:
     notices.mkdir(exist_ok=True)
     for extension_name in ("-licenses.txt", ".spdx.json"):
         legal_name = f"tunnel-client-{TUNNEL_TAG}-{platform}-amd64{extension_name}"
-        legal = retrieve(f"https://github.com/openai/tunnel-client/releases/download/{TUNNEL_TAG}/{legal_name}", limit=5 * 1024 * 1024)
+        legal = retrieve_release_asset("openai/tunnel-client", TUNNEL_TAG, legal_name, limit=5 * 1024 * 1024)
         (notices / legal_name).write_bytes(legal)
     license_data = retrieve(f"https://raw.githubusercontent.com/cloudflare/cloudflared/{CF_TAG}/LICENSE", limit=256 * 1024)
     (notices / "cloudflared-LICENSE").write_bytes(license_data)
