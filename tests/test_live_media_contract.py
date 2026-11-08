@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -26,6 +27,48 @@ class LiveMediaContractTests(unittest.TestCase):
         )):
             with self.assertRaisesRegex(live.CanaryFailure, 'audio'):
                 live.probe_media(Path('/fixture.mp4'))
+
+    def test_small_download_is_validated_as_media_instead_of_rejected_by_size(self):
+        from scriptotar_sidecar import engine
+
+        cases = (
+            ('small_valid_audio', 5286, (11.021, 'opus'), 'passed'),
+            ('small_invalid_audio', 5286, live.CanaryFailure('no decodable audio'), 'failed'),
+            ('empty', 0, (11.021, 'opus'), 'failed'),
+            ('oversized', 300 * 1024 * 1024 + 1, (11.021, 'opus'), 'failed'),
+        )
+        for name, size, probe_result, expected in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                def download(job, partial, emit):
+                    media = partial / 'audio.webm'
+                    with media.open('wb') as stream:
+                        stream.truncate(size)
+                    return media, {'extractor': 'Youtube'}
+
+                with (
+                    patch.object(engine, 'download_url', side_effect=download),
+                    patch.object(live, 'probe_media') as probe,
+                    patch.object(engine, 'transcribe_media') as transcribe,
+                ):
+                    if isinstance(probe_result, Exception):
+                        probe.side_effect = probe_result
+                    else:
+                        probe.return_value = probe_result
+                    result = live.check_case(live.CASES[0], Path(tmp), transcribe=False)
+
+                self.assertEqual(result['status'], expected, result)
+                transcribe.assert_not_called()
+                if size == 5286:
+                    probe.assert_called_once()
+                    if expected == 'passed':
+                        self.assertEqual(result['download'], 'passed')
+                        self.assertEqual(result['file_bytes'], 5286)
+                        self.assertEqual(result['codec'], 'opus')
+                    else:
+                        self.assertIn('no decodable audio', result['error'])
+                else:
+                    probe.assert_not_called()
+                    self.assertIn('size outside accepted bounds', result['error'])
 
     def test_github_summary_is_explicit_on_download_failure(self):
         report = {

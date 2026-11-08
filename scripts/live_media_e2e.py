@@ -127,7 +127,10 @@ def check_case(case: LiveCase, root: Path, transcribe: bool) -> dict[str, Any]:
         if not media.is_file() or not media.resolve().is_relative_to(partial.resolve()):
             raise CanaryFailure('Downloader wrote media outside its dedicated directory')
         size = media.stat().st_size
-        if not 8192 <= size <= 300 * 1024 * 1024:
+        # Short/silent compressed audio can be smaller than 8 KiB. Validate
+        # media using ffprobe below and FFmpeg decoding before inference,
+        # rather than treating a minimum compressed size as proof of audio.
+        if not 0 < size <= 300 * 1024 * 1024:
             raise CanaryFailure(f'Download size outside accepted bounds: {size} bytes')
         reported_extractor = str(metadata.get('extractor') or '').lower()
         if case.extractor_token not in reported_extractor:
