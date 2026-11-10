@@ -42,7 +42,8 @@
       performance.mark(name);
     }
   }
-  $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
+  // Never silently show data from another project when the backend returns a stale ID.
+  $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId);
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
   $: searchResults = data && globalSearch.trim() ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
   $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
@@ -135,6 +136,9 @@
     try {
       const next = await api.bootstrap();
       if (generation !== workspaceGeneration) return;
+      if (next.projects.length && !next.projects.some((project) => project.id === next.activeProjectId)) {
+        throw new Error('The backend did not identify an active project.');
+      }
       data = prepareData(next);
       if (firstBootstrap) {
         startupMark('scriptotar.bootstrap-ready');
@@ -223,7 +227,9 @@
     try {
       const next = await api.selectProject(id);
       if (generation !== workspaceGeneration) return false;
-      if (next.activeProjectId !== id) throw new Error('The selected project did not match the backend response.');
+      if (next.activeProjectId !== id || !next.projects.some((project) => project.id === id)) {
+        throw new Error('The selected project did not match the backend response.');
+      }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
       return true;
@@ -343,7 +349,13 @@
   async function openSearchResult(result: WorkspaceSearchResult) {
     if (!data) return;
     if (result.projectId && result.projectId !== data.activeProjectId && !(await selectProject(result.projectId))) return;
-    if (result.kind === 'Transcript' && result.targetId) selectedTranscriptId = result.targetId;
+    if (result.kind === 'Transcript' && result.targetId) {
+      if (!data?.transcripts.some((item) => item.id === result.targetId)) {
+        switchError = 'The selected transcript is not available in the active project.';
+        return;
+      }
+      selectedTranscriptId = result.targetId;
+    }
     activeView = result.view;
     globalSearch = '';
   }
@@ -433,6 +445,12 @@
     {:else if activeView === 'settings'}
       <SettingsView settings={data.settings} migrationStatus={data.migrationStatus} {api} onSaved={settingsSaved} onMigrationStatus={migrationStatusChanged} />
     {/if}
+  {:else if data?.projects.length}
+    <ErrorState
+      title={$translator('error.bootTitle')}
+      message={$locale === 'ar' ? 'تعذر العثور على المشروع النشط. حاول إعادة تحميل مساحة العمل.' : 'The active project could not be found. Retry loading the workspace.'}
+      onRetry={() => load()}
+    />
   {:else}
     <section class="first-project" aria-labelledby="first-project-title">
       <h1 id="first-project-title">{$locale === 'ar' ? 'أنشئ مشروعك الأول' : 'Create your first project'}</h1>
