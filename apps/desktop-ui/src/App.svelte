@@ -9,6 +9,12 @@
   import ErrorState from './components/ErrorState.svelte';
   import DashboardView from './views/DashboardView.svelte';
   import WorkspaceSkeleton from './components/WorkspaceSkeleton.svelte';
+  import ResearchView from './views/ResearchView.svelte';
+  import JobsView from './views/JobsView.svelte';
+  import TranscriptView from './views/TranscriptView.svelte';
+  import AiStudioView from './views/AiStudioView.svelte';
+  import LibraryView from './views/LibraryView.svelte';
+  import SettingsView from './views/SettingsView.svelte';
 
   export let api: ScriptotarApi = getApi();
   let data: BootstrapData | null = null;
@@ -29,15 +35,6 @@
   let transcriptSearchKey = '';
   let workspaceGeneration = 0;
   let switchingProject = false;
-  const pendingViews = new Set<ViewId>();
-  let viewLoadErrors: Partial<Record<ViewId, string>> = {};
-  let ResearchView: typeof import('./views/ResearchView.svelte')['default'] | undefined;
-  let JobsView: typeof import('./views/JobsView.svelte')['default'] | undefined;
-  let TranscriptView: typeof import('./views/TranscriptView.svelte')['default'] | undefined;
-  let AiStudioView: typeof import('./views/AiStudioView.svelte')['default'] | undefined;
-  let LibraryView: typeof import('./views/LibraryView.svelte')['default'] | undefined;
-  let SettingsView: typeof import('./views/SettingsView.svelte')['default'] | undefined;
-
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   function startupMark(name: string): void {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
@@ -48,35 +45,6 @@
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
   $: searchResults = data && globalSearch.trim() ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
   $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
-  $: if (data) void ensureView(activeView);
-
-  // The initial dashboard stays in the entry bundle. Inactive workspaces are loaded on demand.
-  // Keep promises single-flight, including when a user navigates rapidly between views.
-  async function ensureView(view: ViewId): Promise<void> {
-    if (view === 'dashboard' || pendingViews.has(view)) return;
-    if ((view === 'research' && ResearchView) || (view === 'jobs' && JobsView) ||
-        (view === 'transcript' && TranscriptView) || (view === 'ai' && AiStudioView) ||
-        (view === 'library' && LibraryView) || (view === 'settings' && SettingsView)) return;
-    pendingViews.add(view);
-    viewLoadErrors = { ...viewLoadErrors, [view]: '' };
-    try {
-      switch (view) {
-        case 'research': ResearchView = (await import('./views/ResearchView.svelte')).default; break;
-        case 'jobs': JobsView = (await import('./views/JobsView.svelte')).default; break;
-        case 'transcript': TranscriptView = (await import('./views/TranscriptView.svelte')).default; break;
-        case 'ai': AiStudioView = (await import('./views/AiStudioView.svelte')).default; break;
-        case 'library': LibraryView = (await import('./views/LibraryView.svelte')).default; break;
-        case 'settings': SettingsView = (await import('./views/SettingsView.svelte')).default; break;
-      }
-    } catch (cause) {
-      viewLoadErrors = {
-        ...viewLoadErrors,
-        [view]: cause instanceof Error ? cause.message : 'Unable to load this workspace.'
-      };
-    } finally {
-      pendingViews.delete(view);
-    }
-  }
 
   function invalidateTranscriptSearch(): void {
     transcriptSearchGeneration += 1;
@@ -443,48 +411,22 @@
     {#if operationalError}
       <ErrorState title={$translator('error.backgroundTitle')} message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
-    {#if viewLoadErrors[activeView]}
-      <ErrorState title={$translator('error.bootTitle')} message={viewLoadErrors[activeView] || ''} onRetry={() => ensureView(activeView)} />
-    {:else if activeView === 'dashboard'}
+    {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
-      {#if ResearchView}
       <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={saveWatchlist} />
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {:else if activeView === 'jobs'}
-      {#if JobsView}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {:else if activeView === 'transcript'}
-      {#if TranscriptView}
       <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {:else if activeView === 'ai'}
-      {#if AiStudioView}
       {#key data.activeProjectId}
         <AiStudioView {api} transcripts={data.transcripts} />
       {/key}
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {:else if activeView === 'library'}
-      {#if LibraryView}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {:else if activeView === 'settings'}
-      {#if SettingsView}
       <SettingsView settings={data.settings} migrationStatus={data.migrationStatus} {api} onSaved={settingsSaved} onMigrationStatus={migrationStatusChanged} />
-      {:else}
-        <WorkspaceSkeleton />
-      {/if}
     {/if}
   {:else}
     <section class="first-project" aria-labelledby="first-project-title">
