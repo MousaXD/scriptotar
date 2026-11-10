@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { locale } from '../i18n';
   import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
@@ -15,7 +16,10 @@
   export let onEnqueueUrl: (url: string) => Promise<void> | void;
   export let onOpenCompleted: (job: Job) => Promise<void> | void;
 
-  let filter: 'all' | 'active' | 'attention' | 'done' = 'all';
+  type QueueFilter = 'all' | 'active' | 'attention' | 'done';
+  const activeStates = new Set<JobState>(['queued', 'preparing', 'downloading', 'transcribing', 'processing']);
+  let filter: QueueFilter = 'all';
+  let pageSize = 30;
   let localPath = '';
   let manualPath = '';
   let sourceUrl = '';
@@ -26,15 +30,24 @@
   let nativeDropAvailable = false;
 
   $: filters = [
-    { id: 'all', label: $translator('queue.filterAll') },
-    { id: 'active', label: $translator('queue.filterActive') },
-    { id: 'attention', label: $translator('queue.filterAttention') },
-    { id: 'done', label: $translator('queue.filterDone') }
-  ] satisfies { id: 'all' | 'active' | 'attention' | 'done'; label: string }[];
-  const active = new Set<JobState>(['queued','preparing','downloading','transcribing','processing']);
-  $: visible = jobs.filter((job) => filter === 'all' || (filter === 'active' && active.has(job.state)) || (filter === 'attention' && ['failed','interrupted'].includes(job.state)) || (filter === 'done' && ['completed','cancelled'].includes(job.state)));
-  $: activeCount = jobs.filter((job) => active.has(job.state)).length;
-  $: attentionCount = jobs.filter((job) => ['failed', 'interrupted'].includes(job.state)).length;
+    { id: 'all', label: $translator('queue.filterAll'), count: jobs.length },
+    { id: 'active', label: $translator('queue.filterActive'), count: activeCount },
+    { id: 'attention', label: $translator('queue.filterAttention'), count: attentionCount },
+    { id: 'done', label: $translator('queue.filterDone'), count: doneCount }
+  ] satisfies { id: QueueFilter; label: string; count: number }[];
+  $: activeCount = jobs.filter((job) => activeStates.has(job.state)).length;
+  $: attentionCount = jobs.filter((job) => job.state === 'failed' || job.state === 'interrupted').length;
+  $: doneCount = jobs.filter((job) => job.state === 'completed' || job.state === 'cancelled').length;
+  $: visible = jobs.filter((job) => filter === 'all'
+    || (filter === 'active' && activeStates.has(job.state))
+    || (filter === 'attention' && (job.state === 'failed' || job.state === 'interrupted'))
+    || (filter === 'done' && (job.state === 'completed' || job.state === 'cancelled')));
+  $: shown = visible.slice(0, pageSize);
+
+  function changeFilter(next: QueueFilter) {
+    filter = next;
+    pageSize = 30;
+  }
 
   async function run(action: () => Promise<void> | void) {
     if (busy) return;
@@ -71,6 +84,36 @@
       : $translator('queue.dropSelected', { name: displayName(selected) });
   }
 
+  function enqueueSelectedLocal() {
+    return run(async () => {
+      const selected = localPath;
+      if (!selected) return;
+      await onEnqueueLocal(selected);
+      localPath = '';
+      actionStatus = $translator('queue.queuedFile', { name: displayName(selected) });
+    });
+  }
+
+  function enqueueManualPath() {
+    return run(async () => {
+      const selected = manualPath.trim();
+      if (!selected) return;
+      await onEnqueueLocal(selected);
+      manualPath = '';
+      actionStatus = $translator('queue.queuedFile', { name: displayName(selected) });
+    });
+  }
+
+  function enqueueUrl() {
+    return run(async () => {
+      const url = sourceUrl.trim();
+      if (!url) return;
+      await onEnqueueUrl(url);
+      sourceUrl = '';
+      actionStatus = $translator('queue.queuedUrl');
+    });
+  }
+
   async function enqueueFromClipboard() {
     await run(async () => {
       if (!navigator.clipboard?.readText) {
@@ -78,81 +121,55 @@
         return;
       }
       let clipText = '';
-      try {
-        clipText = await navigator.clipboard.readText();
-      } catch {
-        actionError = $translator('queue.clipboardDenied');
-        return;
-      }
+      try { clipText = await navigator.clipboard.readText(); }
+      catch { actionError = $translator('queue.clipboardDenied'); return; }
       const urls = extractUrlsFromText(clipText);
-      if (urls.length === 0) {
-        actionError = $translator('queue.clipboardEmpty');
-        return;
-      }
-      if (urls.length === 1) {
-        await onEnqueueUrl(urls[0]);
-        actionStatus = $translator('queue.clipboardQueuedSingle');
-      } else {
-        for (const url of urls) {
-          await onEnqueueUrl(url);
-        }
-        actionStatus = $translator('queue.clipboardQueuedMultiple', { count: urls.length });
-      }
+      if (!urls.length) { actionError = $translator('queue.clipboardEmpty'); return; }
+      for (const url of urls) await onEnqueueUrl(url);
+      actionStatus = urls.length === 1
+        ? $translator('queue.clipboardQueuedSingle')
+        : $translator('queue.clipboardQueuedMultiple', { count: urls.length });
     });
   }
 
-  function handleDragOver(e: DragEvent) {
-    e.preventDefault();
+  function handleDragOver(event: DragEvent) {
+    event.preventDefault();
     dragActive = true;
   }
 
-  function handleDragLeave(e: DragEvent) {
-    if (e.currentTarget === e.target) {
-      dragActive = false;
-    }
+  function handleDragLeave(event: DragEvent) {
+    if (event.currentTarget === event.target) dragActive = false;
   }
 
-  function handleDrop(e: DragEvent) {
-    e.preventDefault();
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
     dragActive = false;
-    if (!e.dataTransfer) return;
-
-    const textData = e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain');
-    if (textData) {
-      const urls = extractUrlsFromText(textData);
-      if (urls.length > 0) {
-        sourceUrl = urls[0];
-        actionStatus = $translator('queue.dropLink', { url: urls[0] });
-        actionError = '';
-        return;
-      }
+    if (!event.dataTransfer) return;
+    const text = event.dataTransfer.getData('text/uri-list') || event.dataTransfer.getData('text/plain');
+    const urls = extractUrlsFromText(text);
+    if (urls.length) {
+      sourceUrl = urls[0];
+      actionStatus = $translator('queue.dropLink', { url: urls[0] });
+      actionError = '';
+      return;
     }
-
-    if (e.dataTransfer.files?.length) {
-      const fileList = Array.from(e.dataTransfer.files);
-      const paths = fileList.map((f) => (f as { path?: string }).path || f.name).filter(Boolean);
-      if (paths.length > 0) {
-        acceptDroppedPaths(paths);
-      }
-    }
+    // Web File.name is not a filesystem path. Native Tauri drop events provide paths;
+    // browser fallback may only use an explicitly supplied path, never a bare name.
+    if (nativeDropAvailable) return;
+    const dropped = Array.from(event.dataTransfer.files ?? []);
+    const paths = dropped.map((file) => (file as File & { path?: string }).path).filter((path): path is string => Boolean(path));
+    if (paths.length) acceptDroppedPaths(paths);
+    else if (dropped.length) actionError = $translator('queue.nativeDropFailed');
   }
 
   onMount(() => {
     nativeDropAvailable = hasNativeFileDrop();
     if (!nativeDropAvailable) return;
-
     let disposed = false;
     let unlisten: (() => void) | undefined;
-
     void subscribeToNativeFileDrop((event) => {
-      if (event.type === 'enter' || event.type === 'over') {
-        dragActive = true;
-        return;
-      }
-      if (event.type === 'leave') {
-        dragActive = false;
-        return;
-      }
+      if (event.type === 'enter' || event.type === 'over') { dragActive = true; return; }
+      if (event.type === 'leave') { dragActive = false; return; }
       acceptDroppedPaths(event.paths);
     }).then((next) => {
       if (disposed) next?.();
@@ -162,25 +179,21 @@
       nativeDropAvailable = false;
       actionError = error instanceof Error ? error.message : $translator('queue.nativeDropFailed');
     });
-
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
+    return () => { disposed = true; unlisten?.(); };
   });
 </script>
 
-<section class="view-head queue-head" data-i18n-ignore>
-  <div><span class="eyebrow">{$translator('queue.headingEyebrow')}</span><h1>{$translator('queue.heading')}</h1><p>{$translator('queue.description')}</p></div>
-  <div class="queue-summary" aria-label={$translator('queue.filters')}>
-    <span><strong>{activeCount}</strong> {$translator('queue.filterActive')}</span>
-    {#if attentionCount > 0}<span class="attention-count"><strong>{attentionCount}</strong> {$translator('queue.filterAttention')}</span>{/if}
+<header class="queue-header" data-i18n-ignore>
+  <h1>{$translator('queue.heading')}</h1>
+  <div class="queue-indicators" aria-label={$translator('queue.filters')}>
+    <span>{activeCount} {$translator('queue.filterActive')}</span>
+    {#if attentionCount}<span class="attention-indicator">{attentionCount} {$translator('queue.filterAttention')}</span>{/if}
   </div>
-</section>
+</header>
 
 <section
   class:drag-active={dragActive}
-  class="panel jobs-capture"
+  class="ingestion-workspace"
   data-i18n-ignore
   aria-label={$translator('queue.addJob')}
   aria-busy={busy}
@@ -190,116 +203,124 @@
   on:drop={handleDrop}
 >
   {#if dragActive}
-    <div class="drop-overlay" aria-live="polite" data-i18n-ignore><div><strong>{$translator('queue.dropTitle')}</strong><span>{$translator('queue.dropSafety')}</span></div></div>
+    <div class="drop-overlay" aria-live="polite"><strong>{$translator('queue.dropTitle')}</strong><span>{$translator('queue.dropSafety')}</span></div>
   {/if}
-
-  <div class="capture-heading">
-    <span class="eyebrow">{$translator('queue.addJob')}</span>
-    <h2>{$translator('queue.localAndUrls')}</h2>
-    <p data-i18n-ignore>{$translator('queue.dropHint')}</p>
-  </div>
-
-  <div class="source-grid">
-    <section class:ready={Boolean(localPath)} class:drop-ready={nativeDropAvailable} class="source-card local-source">
-      <div class="source-label"><span class="source-icon" aria-hidden="true">＋</span><div><strong>{$translator('queue.localMedia')}</strong>{#if localPath}<small data-i18n-ignore>{displayName(localPath)}</small>{:else if nativeDropAvailable}<small data-i18n-ignore>{$translator('queue.dropEmpty')}</small>{:else}<small>{$translator('queue.noVideo')}</small>{/if}</div></div>
-      {#if localPath}<code class="selected-path">{localPath}</code>{/if}
+  <div class="ingestion-heading"><h2>{$translator('queue.addJob')}</h2></div>
+  <div class="ingestion-columns">
+    <section class="source-block" aria-label={$translator('queue.localMedia')}>
+      <h3>{$translator('queue.localMedia')}</h3>
+      <div class="selected-source">
+        {#if localPath}
+          <strong dir="auto" title={localPath}>{displayName(localPath)}</strong>
+        {:else}
+          <span>{nativeDropAvailable ? $translator('queue.dropEmpty') : $translator('queue.noVideo')}</span>
+        {/if}
+      </div>
       <div class="capture-actions">
-        <button class="button secondary" disabled={busy} on:click={chooseLocal}>{$translator('queue.chooseVideo')}</button>
-        <button class="button primary" disabled={busy || !localPath} on:click={() => run(async () => { await onEnqueueLocal(localPath); actionStatus = $translator('queue.queuedFile', { name: displayName(localPath) }); localPath = ''; })}>{$translator('queue.queueSelected')}</button>
+        <button type="button" class="button secondary" disabled={busy} on:click={chooseLocal}>{$translator('queue.chooseVideo')}</button>
+        <button type="button" class="button primary" disabled={busy || !localPath} on:click={enqueueSelectedLocal}>{$translator('queue.queueSelected')}</button>
       </div>
     </section>
-
-    <section class:ready={Boolean(sourceUrl.trim())} class="source-card url-source">
-      <label class="url-capture"><span>{$translator('queue.supportedUrl')}</span><input aria-label={$translator('queue.mediaUrl')} bind:value={sourceUrl} placeholder="https://youtube.com/…" /></label>
-      <div class="capture-actions">
-        <button class="button secondary" type="button" disabled={busy} on:click={enqueueFromClipboard} data-i18n-ignore title={$translator('queue.clipboardUrls')}>
-          <span aria-hidden="true">📋</span> {$translator('queue.clipboardUrls')}
-        </button>
-        <button class="button primary" disabled={busy || !sourceUrl.trim()} on:click={() => run(async () => { const queued = sourceUrl.trim(); await onEnqueueUrl(queued); sourceUrl = ''; actionStatus = $translator('queue.queuedUrl'); })}>{$translator('queue.queueUrl')}</button>
-      </div>
+    <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
+      <form class="url-form" on:submit|preventDefault={enqueueUrl}>
+        <label for="queue-url">{$translator('queue.supportedUrl')}</label>
+        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} bind:value={sourceUrl} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <div class="capture-actions">
+          <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
+          <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
+        </div>
+      </form>
     </section>
   </div>
-
   <details class="advanced-path">
     <summary>{$translator('queue.advancedPath')}</summary>
-    <div><input aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" /><button class="button secondary" disabled={busy || !manualPath.trim()} on:click={() => run(async () => { await onEnqueueLocal(manualPath.trim()); actionStatus = $translator('queue.queuedFile', { name: displayName(manualPath.trim()) }); manualPath = ''; })}>{$translator('queue.queuePath')}</button></div>
+    <form on:submit|preventDefault={enqueueManualPath}>
+      <input aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" disabled={busy} />
+      <button class="button secondary" type="submit" disabled={busy || !manualPath.trim()}>{$translator('queue.queuePath')}</button>
+    </form>
   </details>
 </section>
 
-{#if actionError}<p class="status-copy queue-message error-message" role="alert" data-i18n-ignore>{actionError}</p>{/if}
-{#if actionStatus}<p class="status-copy queue-message" aria-live="polite" data-i18n-ignore>{actionStatus}</p>{/if}
+{#if actionError}<p class="queue-feedback error-message" role="alert" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
-<div class="queue-toolbar" data-i18n-ignore>
-  <div class="segmented" role="group" aria-label={$translator('queue.filters')}>
-    {#each filters as item}<button class:active={filter === item.id} aria-pressed={filter === item.id} on:click={() => filter = item.id}>{item.label}</button>{/each}
+<section class="queue-workspace" aria-label={$translator('queue.heading')}>
+  <div class="queue-toolbar" data-i18n-ignore>
+    <div class="queue-filters" role="group" aria-label={$translator('queue.filters')}>
+      {#each filters as item (item.id)}
+        <button type="button" class:active={filter === item.id} aria-pressed={filter === item.id} on:click={() => changeFilter(item.id)}>
+          <span>{item.label}</span><span class="filter-count">{item.count}</span>
+        </button>
+      {/each}
+    </div>
+    <span class="visible-count" aria-live="polite">{shown.length} / {visible.length}</span>
   </div>
-  <span class="visible-count">{visible.length} / {jobs.length}</span>
-</div>
-
-<section class="panel jobs-panel" aria-busy={busy}>
-  {#if visible.length === 0}
-    <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
-  {:else}
-    {#each visible as job}
-      <div class="job-with-actions">
-        <JobRow {job} />
-        <div class="job-actions" data-i18n-ignore>
-          {#if active.has(job.state)}<button class="button danger subtle" disabled={busy} on:click={() => run(() => onCancel(job.id))}>{$translator('queue.cancel')}</button>{/if}
-          {#if ['failed','interrupted','cancelled'].includes(job.state)}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onRetry(job.id))}>{$translator('queue.retry')}</button>{/if}
-          {#if job.state === 'completed'}<button class="button secondary subtle" disabled={busy} on:click={() => run(() => onOpenCompleted(job))}>{$translator('queue.openTranscript')}</button>{/if}
+  <div class="jobs-list" aria-busy={busy}>
+    {#if visible.length === 0}
+      <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
+    {:else}
+      {#each shown as job (job.id)}
+        <div class="job-with-actions">
+          <JobRow {job} />
+          <div class="job-actions" data-i18n-ignore>
+            {#if activeStates.has(job.state)}<button type="button" class="button danger subtle" disabled={busy} on:click={() => run(() => onCancel(job.id))}>{$translator('queue.cancel')}</button>{/if}
+            {#if job.state === 'failed' || job.state === 'interrupted' || job.state === 'cancelled'}<button type="button" class="button secondary subtle" disabled={busy} on:click={() => run(() => onRetry(job.id))}>{$translator('queue.retry')}</button>{/if}
+            {#if job.state === 'completed'}<button type="button" class="button secondary subtle" disabled={busy} on:click={() => run(() => onOpenCompleted(job))}>{$translator('queue.openTranscript')}</button>{/if}
+          </div>
         </div>
-      </div>
-    {/each}
-  {/if}
+      {/each}
+      {#if shown.length < visible.length}
+        <button type="button" class="show-more" on:click={() => pageSize += 30}>
+          {$locale === 'ar' ? 'عرض المزيد من المهام' : 'Show more jobs'} ({visible.length - shown.length})
+        </button>
+      {/if}
+    {/if}
+  </div>
 </section>
 
 <style>
-  .queue-head { align-items: center; }
-  .queue-summary { display: flex; flex-wrap: wrap; gap: 8px; }
-  .queue-summary > span { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
-  .queue-summary strong { color: var(--text); }
-  .queue-summary .attention-count { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
-
-  .jobs-capture { position: relative; display: grid; gap: 14px; margin-bottom: 14px; padding: 16px; overflow: hidden; }
-  .jobs-capture.drag-active { border-color: color-mix(in srgb, var(--accent-strong) 72%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-strong) 32%, transparent), var(--shadow-1); }
-  .drop-overlay { position: absolute; inset: 0; z-index: 12; display: grid; place-items: center; padding: 20px; background: color-mix(in srgb, var(--surface) 90%, var(--accent-strong) 10%); backdrop-filter: blur(5px); pointer-events: none; }
-  .drop-overlay > div { display: grid; gap: 7px; max-width: 420px; padding: 18px 22px; border: 1px dashed color-mix(in srgb, var(--accent-strong) 70%, var(--border)); border-radius: 12px; background: var(--surface); text-align: center; }
-  .drop-overlay strong { color: var(--text); font-size: 14px; }
-  .drop-overlay span { color: var(--muted); font-size: 11px; line-height: 1.5; }
-  .capture-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .8fr); column-gap: 24px; align-items: end; padding-bottom: 13px; border-bottom: 1px solid var(--border); }
-  .capture-heading .eyebrow { grid-column: 1 / -1; }
-  .capture-heading h2, .capture-heading p { margin: 0; }
-  .capture-heading p { justify-self: end; max-width: 420px; font-size: 11px; text-align: end; }
-  .source-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .source-card { display: grid; gap: 12px; min-height: 150px; padding: 14px; border: 1px solid var(--border); border-radius: 11px; background: color-mix(in srgb, var(--surface-2) 45%, transparent); }
-  .source-card.ready { border-color: color-mix(in srgb, var(--accent-strong) 38%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 5%, var(--surface)); }
-  .source-card.drop-ready:not(.ready) { border-style: dashed; }
-  .source-label { display: flex; align-items: center; gap: 10px; }
-  .source-label strong, .source-label small { display: block; }
-  .source-label small { margin-top: 4px; color: var(--muted); font-size: 11px; }
-  .source-icon { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--surface); font-size: 18px; }
-  .selected-path { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 9px; border-radius: 7px; color: var(--muted); font-size: 10px; }
-  .capture-actions, .job-actions { display: flex; flex-wrap: wrap; gap: 7px; align-self: end; }
-  .url-capture { display: grid; gap: 7px; }
-  .url-capture span { color: var(--muted); font-size: 11px; }
-  .url-capture input { width: 100%; }
-  .advanced-path { padding-top: 2px; color: var(--muted); font-size: 11px; }
-  .advanced-path summary { width: fit-content; cursor: pointer; }
-  .advanced-path div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 10px; }
-  .queue-message { margin: -4px 0 12px; padding: 8px 10px; border-inline-start: 2px solid var(--accent-strong); background: color-mix(in srgb, var(--accent-strong) 5%, transparent); }
-  .error-message { border-color: var(--danger); }
-  .queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .visible-count { color: var(--faint); font-family: var(--font-technical); font-size: 10px; }
-  .job-actions { justify-content: flex-end; }
-
-  @media (max-width: 900px) {
-    .source-grid { grid-template-columns: 1fr; }
-    .capture-heading { grid-template-columns: 1fr; }
-    .capture-heading p { justify-self: start; text-align: start; }
-  }
-  @media (max-width: 700px) {
-    .queue-summary { width: 100%; }
-    .advanced-path div { grid-template-columns: 1fr; }
-    .capture-actions, .job-actions { justify-content: flex-start; }
-  }
+  .queue-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
+  .queue-header h1 { margin: 0; font-size: var(--text-xl); }
+  .queue-indicators { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); }
+  .attention-indicator { color: var(--color-warning); }
+  .ingestion-workspace { position: relative; margin-bottom: var(--space-5); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+  .ingestion-workspace.drag-active { border-color: var(--color-signal); }
+  .ingestion-heading h2 { margin: 0 0 var(--space-3); font-size: var(--text-md); }
+  .ingestion-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  .source-block { display: flex; flex-direction: column; min-width: 0; gap: var(--space-2); }
+  .source-block + .source-block { border-inline-start: 1px solid var(--color-border); padding-inline-start: var(--space-4); }
+  .source-block h3, .url-form label { display: block; margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 650; }
+  .selected-source { display: flex; align-items: center; min-width: 0; flex: 1; min-height: var(--control-height); }
+  .selected-source strong, .selected-source span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+  .selected-source span { color: var(--color-text-muted); }
+  .capture-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: auto; }
+  .url-form { display: flex; flex-direction: column; flex: 1; gap: var(--space-2); }
+  .url-form input { min-width: 0; width: 100%; }
+  .advanced-path { margin-top: var(--space-3); padding-top: var(--space-3); border-block-start: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--text-xs); }
+  .advanced-path summary { width: fit-content; min-height: 28px; cursor: pointer; }
+  .advanced-path form { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+  .advanced-path input { flex: 1; min-width: 0; }
+  .drop-overlay { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-2); padding: var(--space-4); border-radius: inherit; background: color-mix(in srgb, var(--color-surface) 92%, var(--color-signal)); text-align: center; pointer-events: none; }
+  .drop-overlay strong { font-size: var(--text-md); }
+  .drop-overlay span { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .queue-feedback { margin: calc(-1 * var(--space-3)) 0 var(--space-4); padding: var(--space-2) var(--space-3); border-inline-start: 2px solid var(--color-signal); background: var(--color-surface); color: var(--color-text-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .error-message { border-color: var(--color-danger); color: var(--color-danger); }
+  .queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-block-end: 1px solid var(--color-border); }
+  .queue-filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+  .queue-filters button { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-3); border: 0; border-block-end: 2px solid transparent; background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); }
+  .queue-filters button.active { border-color: var(--color-signal); color: var(--color-text); }
+  .queue-filters button:hover { color: var(--color-text); background: var(--color-surface-raised); }
+  .filter-count { color: var(--color-text-faint); font-family: var(--font-technical); font-size: var(--text-xs); }
+  .visible-count { color: var(--color-text-faint); font-family: var(--font-technical); font-size: var(--text-xs); white-space: nowrap; }
+  .jobs-list { min-width: 0; }
+  .job-with-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); border-block-start: 1px solid var(--color-border); }
+  .job-with-actions:first-child { border-block-start: 0; }
+  .job-with-actions :global(.job-row) { border: 0; }
+  .job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+  .job-actions .button { white-space: nowrap; }
+  .show-more { display: block; width: 100%; min-height: var(--control-height); padding: var(--space-3); border: 0; border-block-start: 1px solid var(--color-border); background: transparent; color: var(--color-signal); font-size: var(--text-sm); text-align: center; }
+  .show-more:hover { background: var(--color-surface-raised); }
+  @media (max-width: 900px) { .ingestion-columns { grid-template-columns: 1fr; } .source-block + .source-block { padding: var(--space-3) 0 0; border-inline-start: 0; border-block-start: 1px solid var(--color-border); } }
+  @media (max-width: 760px) { .queue-toolbar { align-items: flex-start; flex-direction: column; } .queue-filters button { padding-inline: var(--space-2); } .visible-count { margin-bottom: var(--space-2); } .job-with-actions { grid-template-columns: 1fr; gap: 0; padding-bottom: var(--space-3); } .job-actions { justify-content: flex-start; } }
+  @media (max-width: 480px) { .capture-actions .button { flex: 1; } .advanced-path form { flex-direction: column; } }
 </style>
