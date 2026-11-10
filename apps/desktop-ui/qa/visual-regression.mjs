@@ -203,6 +203,20 @@ async function runWorkspace(browser, width, locale, theme) {
       await screenshot(page, label + '-' + view.name);
       await checkSwitchesAndPopovers(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
+      if (view.name === 'research') {
+        const search = page.locator('#workspace-main .search-field input').first();
+        await search.fill('qa-absent-research-000000000');
+        await page.locator('.research-table').waitFor({ state: 'hidden', timeout: 5000 });
+        await screenshot(page, label + '-research-empty');
+        await search.fill('');
+      }
+      if (view.name === 'transcript') {
+        const search = page.locator('.transcript-search input').first();
+        await search.fill('qa-absent-transcript-000000000');
+        await page.locator('.transcript-content .segment').first().waitFor({ state: 'hidden', timeout: 5000 });
+        await screenshot(page, label + '-transcript-no-matches');
+        await search.fill('');
+      }
       if (view.name === 'library') {
         const search = page.locator('.library-toolbar input').first();
         await search.fill('qa-absent-item-000000000');
@@ -304,4 +318,4 @@ const report = {
 await writeFile(resolve(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 console.log('Rendered screenshots: ' + screenshotCount +
   '; checked combinations: ' + results.length + '; failures: ' + failures.length);
-if (failures.length || screenshotCount !== 116) process.exitCode = 1;
+if (failures.length || screenshotCount !== 140) process.exitCode = 1;
