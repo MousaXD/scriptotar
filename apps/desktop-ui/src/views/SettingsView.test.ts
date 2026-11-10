@@ -66,4 +66,12 @@ describe('Settings UX', () => {
     expect(screen.getByTestId('migration-status')).toBeInTheDocument();
     expect(screen.getByText(/Discovery uses a read-only, WAL-aware SQLite snapshot/)).toBeInTheDocument();
   });
+  it('keeps legacy migration retry actions connected to the host API', async () => {
+    const { api } = setup();
+    const retry = vi.spyOn(api, 'retryLegacyMigration');
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry migration discovery' }));
+    await waitFor(() => expect(retry).toHaveBeenCalledOnce());
+    expect(screen.getByTestId('migration-status')).toHaveAttribute('data-state', 'no_legacy_db');
+  });
+
 });
