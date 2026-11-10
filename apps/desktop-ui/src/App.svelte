@@ -159,7 +159,7 @@
     }
   }
 
-  async function refresh() { await load(false); }
+  async function refresh() { if (!switchingProject) await load(false); }
 
   async function refreshJobs() {
     if (!data || jobRefreshInFlight || switchingProject) return;
@@ -262,6 +262,17 @@
       throw cause;
     } finally {
       if (generation === workspaceGeneration) switchingProject = false;
+    }
+  }
+
+  async function saveWatchlist(profileUrl: string, limit: number) {
+    if (!data || switchingProject) return;
+    const generation = workspaceGeneration;
+    const projectId = data.activeProjectId;
+    const next = await api.saveWatchlist({ profileUrl, limit });
+    if (generation === workspaceGeneration && !switchingProject &&
+        data?.activeProjectId === projectId && next.activeProjectId === projectId) {
+      data = prepareData(next);
     }
   }
 
@@ -398,7 +409,7 @@
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
       {#if ResearchView}
-      <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
+      <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={saveWatchlist} />
       {:else}
         <WorkspaceSkeleton />
       {/if}
