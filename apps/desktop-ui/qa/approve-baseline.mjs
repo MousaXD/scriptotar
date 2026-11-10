@@ -10,7 +10,9 @@ if (!/^[a-f0-9]{40}$/.test(sha || '')) {
 const directory = resolve(process.cwd(), 'qa');
 const evidence = resolve(directory, 'evidence');
 const report = JSON.parse(await readFile(resolve(evidence, 'report.json'), 'utf8'));
-if (report.sha !== sha || report.failures.length || report.screenshotCount !== 140) {
+if (report.sha !== sha || !Array.isArray(report.failures) || report.failures.length ||
+    !Array.isArray(report.results) || report.results.length !== 12 ||
+    report.screenshotCount !== 140) {
   throw new Error('Refusing unpinned, incomplete or failing screenshot evidence.');
 }
 const images = (await readdir(evidence)).filter((name) => name.endsWith('.png')).sort();
@@ -22,6 +24,7 @@ for (const name of images) {
 }
 await mkdir(resolve(directory, 'baselines'), { recursive: true });
 await writeFile(resolve(directory, 'baselines', 'manifest.json'),
-  JSON.stringify({ approvedSourceSha: sha, reviewedBy: 'Agent 00 manual review required',
-    note: 'Review all browser artifact screenshots before committing this manifest.', screenshots }, null, 2) + '\n');
+  JSON.stringify({ approvedSourceSha: sha, reviewStatus: 'PENDING_MANUAL_REVIEW',
+    reviewedBy: null, reviewedAt: null,
+    note: 'Agent 00 must inspect all images, then explicitly set reviewStatus=APPROVED and reviewedBy/reviewedAt before committing.', screenshots }, null, 2) + '\n');
 console.log('Baseline manifest generated. Commit only AFTER screenshot review and explicit approval.');
