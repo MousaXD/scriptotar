@@ -11,7 +11,11 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
   console.log('NO APPROVED VISUAL BASELINE: capture-only until Agent 00 approves screenshots.');
-  // Do not confuse this informational comparison step with full release certification.
+  // A green interaction gate must never be mistaken for a certified image diff.
+  const fs = await import('node:fs/promises');
+  await fs.mkdir(evidence, { recursive: true });
+  await writeFile(resolve(evidence, 'comparison.json'),
+    JSON.stringify({ comparison: 'NOT_CERTIFIED', reason: 'No manually approved visual baseline' }, null, 2) + '\n');
   process.exit(0);
 }
 const images = (await readdir(evidence)).filter((name) => name.endsWith('.png')).sort();
