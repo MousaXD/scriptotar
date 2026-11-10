@@ -140,6 +140,7 @@
         throw new Error('The backend did not identify an active project.');
       }
       data = prepareData(next);
+      switchError = '';
       if (firstBootstrap) {
         startupMark('scriptotar.bootstrap-ready');
         if (typeof performance !== 'undefined' && typeof performance.mark === 'function' &&
@@ -255,6 +256,7 @@
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
     const generation = ++workspaceGeneration;
+    let inconsistentResponse = false;
     creatingProject = true;
     switchError = '';
     invalidateTranscriptSearch();
@@ -263,14 +265,22 @@
       const next = await api.createProject(name);
       if (generation !== workspaceGeneration) return;
       if (!next.projects.some((project) => project.id === next.activeProjectId)) {
+        inconsistentResponse = true;
         throw new Error('The created project was not available in the backend response.');
       }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
       activeView = 'dashboard';
     } catch (cause) {
-      if (generation === workspaceGeneration && !hadActiveProject) {
-        switchError = cause instanceof Error ? cause.message : 'Unable to create project.';
+      if (generation === workspaceGeneration) {
+        const message = cause instanceof Error ? cause.message : 'Unable to create project.';
+        if (inconsistentResponse) {
+          // A malformed successful mutation can leave the backend's active project unknown.
+          data = null;
+          error = message;
+        } else if (!hadActiveProject) {
+          switchError = message;
+        }
       }
       throw cause;
     } finally {
@@ -356,6 +366,7 @@
 
   async function openSearchResult(result: WorkspaceSearchResult) {
     if (!data) return;
+    switchError = '';
     if (result.projectId && result.projectId !== data.activeProjectId && !(await selectProject(result.projectId))) return;
     if (result.kind === 'Transcript' && result.targetId) {
       if (!data?.transcripts.some((item) => item.id === result.targetId)) {
