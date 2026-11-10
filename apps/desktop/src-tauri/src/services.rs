@@ -1896,4 +1896,131 @@ mod tests {
             Some(inbox_id)
         );
     }
+
+    fn seed_transcript_row(connection: &Connection, project_id: Uuid, ordinal: usize) -> Uuid {
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let timestamp = format!(
+            "2026-11-10T00:{:02}:{:02}Z",
+            ordinal % 3,
+            ordinal % 60
+        );
+        let locator = format!("/mock/source-{ordinal}.mp4");
+        connection
+            .execute(
+                "INSERT INTO sources(id, project_id, source_type, locator, title, created_at)
+                 VALUES(?1, ?2, 'local_file', ?3, ?4, ?5)",
+                params![
+                    source_id.to_string(),
+                    project_id.to_string(),
+                    locator,
+                    format!("Recording {ordinal}"),
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO media(id, source_id, local_path, duration_seconds, created_at)
+                 VALUES(?1, ?2, ?3, 24.5, ?4)",
+                params![
+                    media_id.to_string(),
+                    source_id.to_string(),
+                    format!("/mock/source-{ordinal}.mp4"),
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        let language = if ordinal % 2 == 0 { "ar" } else { "en" };
+        let segments = serde_json::json!([{
+            "index": 0,
+            "start": 0.0,
+            "end": 24.5,
+            "text": "a long segment ".repeat(500)
+        }])
+        .to_string();
+        connection
+            .execute(
+                "INSERT INTO transcripts(id, media_id, language, text, segments_json, created_at, updated_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![
+                    transcript_id.to_string(),
+                    media_id.to_string(),
+                    language,
+                    format!("private-body-{ordinal}:{}", "longword ".repeat(6000)),
+                    segments,
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        transcript_id
+    }
+
+    #[test]
+    fn summary_bootstrap_preserves_metadata_and_project_isolation_without_large_bodies() {
+        for count in [2_usize, 128] {
+            let temp = TempDir::new().unwrap();
+            let services = AppServices::new(temp.path()).unwrap();
+            let inbox = Uuid::parse_str(&services.bootstrap().unwrap().active_project_id).unwrap();
+            let active = Uuid::parse_str(
+                &services
+                    .create_project("Test workspace".to_owned())
+                    .unwrap()
+                    .active_project_id,
+            )
+            .unwrap();
+            let connection = Connection::open(database_path(&temp)).unwrap();
+            let other_id = seed_transcript_row(&connection, inbox, 999);
+            let active_ids = (0..count)
+                .map(|ordinal| seed_transcript_row(&connection, active, ordinal))
+                .collect::<Vec<_>>();
+            drop(connection);
+
+            let full_started = Instant::now();
+            let full = services.bootstrap().unwrap();
+            let full_duration = full_started.elapsed();
+            let summary_started = Instant::now();
+            let summary = services.bootstrap_summary().unwrap();
+            let summary_duration = summary_started.elapsed();
+            let full_json = serde_json::to_vec(&full).unwrap();
+            let summary_json = serde_json::to_vec(&summary).unwrap();
+            println!(
+                "agent03 fixture={} full_ms={:.3} summary_ms={:.3} full_bytes={} summary_bytes={}",
+                count,
+                full_duration.as_secs_f64() * 1_000.0,
+                summary_duration.as_secs_f64() * 1_000.0,
+                full_json.len(),
+                summary_json.len()
+            );
+
+            assert_eq!(full.transcripts.len(), count);
+            assert_eq!(summary.transcripts.len(), count);
+            assert_eq!(summary.active_project_id, full.active_project_id);
+            assert_eq!(
+                summary
+                    .transcripts
+                    .iter()
+                    .map(|entry| entry.id.as_str())
+                    .collect::<Vec<_>>(),
+                full.transcripts
+                    .iter()
+                    .map(|entry| entry.id.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                serde_json::to_value(&summary.library).unwrap(),
+                serde_json::to_value(&full.library).unwrap()
+            );
+            assert!(full.transcripts[0].text.starts_with("private-body-"));
+            assert_eq!(full.transcripts[0].segments.len(), 1);
+            assert!(!String::from_utf8_lossy(&summary_json).contains("private-body-"));
+            assert!(!String::from_utf8_lossy(&summary_json).contains("segments"));
+            assert!(summary_json.len() * 5 < full_json.len());
+            assert!(services.get_transcript(other_id).is_err());
+            assert!(active_ids.contains(
+                &Uuid::parse_str(&services.get_transcript(active_ids[0]).unwrap().id).unwrap()
+            ));
+        }
+    }
 }
