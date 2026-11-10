@@ -26,9 +26,9 @@
   let globalSearch = '';
   let selectedTranscriptId = '';
   let firstProjectName = '';
-  let jobRefreshInFlight = false;
+  let jobRefreshGeneration: number | undefined;
   let jobRefreshTimer: number | undefined;
-  let operationalRefreshInFlight = false;
+  let operationalRefreshGeneration: number | undefined;
   let transcriptSearchIds: string[] = [];
   let transcriptSearchTimer: number | undefined;
   let transcriptSearchGeneration = 0;
@@ -161,10 +161,10 @@
   async function refresh() { if (!switchingProject) await load(false); }
 
   async function refreshJobs() {
-    if (!data || jobRefreshInFlight || switchingProject) return;
+    if (!data || jobRefreshGeneration === workspaceGeneration || switchingProject) return;
     const generation = workspaceGeneration;
     const snapshot = data;
-    jobRefreshInFlight = true;
+    jobRefreshGeneration = generation;
     try {
       const previousStates = new Map(snapshot.jobs.map((job) => [job.id, job.state]));
       const jobs = await api.listJobs();
@@ -180,7 +180,7 @@
         operationalError = cause instanceof Error ? cause.message : 'Unable to refresh jobs.';
       }
     } finally {
-      jobRefreshInFlight = false;
+      if (jobRefreshGeneration === generation) jobRefreshGeneration = undefined;
     }
   }
 
@@ -193,10 +193,10 @@
   }
 
   async function refreshOperationalStatus() {
-    if (!data || operationalRefreshInFlight || switchingProject) return;
+    if (!data || operationalRefreshGeneration === workspaceGeneration || switchingProject) return;
     const generation = workspaceGeneration;
     const projectId = data.activeProjectId;
-    operationalRefreshInFlight = true;
+    operationalRefreshGeneration = generation;
     try {
       const [watchlistStatuses, migrationStatus] = await Promise.all([
         api.getWatchlistStatuses(),
@@ -212,7 +212,7 @@
           : 'Could not refresh background operation status.';
       }
     } finally {
-      operationalRefreshInFlight = false;
+      if (operationalRefreshGeneration === generation) operationalRefreshGeneration = undefined;
     }
   }
 
