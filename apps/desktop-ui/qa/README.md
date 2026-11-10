@@ -12,11 +12,11 @@ From apps/desktop-ui on Node 22:
 4. node qa/visual-regression.mjs
 5. node qa/verify-snapshots.mjs
 
-The runner starts the actual Vite production preview on 127.0.0.1:4173 and stops it. It outputs 116 real Chromium PNG screenshots and a measured JSON report into qa/evidence/. The CI artifact is named for the exact GitHub commit SHA. Screenshots are not synthetic images.
+The runner starts the actual Vite production preview on 127.0.0.1:4173 and stops it. It outputs 140 real Chromium PNG screenshots and a measured JSON report into qa/evidence/. The CI artifact is named for the exact GitHub commit SHA. Screenshots are not synthetic images.
 
 ## Matrix and checks
 
-At 1440, 1100, and 760 widths with English LTR / Arabic RTL and dark / system-light themes: Dashboard, Research, Jobs, Transcript, AI Studio, Library, Settings, and scrolled MCP setup. Include 12 library empty-search screenshots plus 8 loading/error screenshots captured from rendered real Svelte components with injected pending/rejected bootstrap. Total: 116 screenshots.
+At 1440, 1100, and 760 widths with English LTR / Arabic RTL and dark / system-light themes: Dashboard, Research, Jobs, Transcript, AI Studio, Library, Settings, and scrolled MCP setup. Include 12 library empty-search screenshots plus 8 loading/error screenshots captured from rendered real Svelte components with injected pending/rejected bootstrap. Total: 140 screenshots (12 research-empty and 12 transcript-no-matches cases added).
 
 Checks cover focus-visible style, command-palette focus trapping and Escape, actual native selector/range appearance against a narrow allowlist, navigation shortcuts, overflow, browser exceptions, direction and stored appearance. Browser performance metrics report time to useful shell, view navigation and optional JS heap memory; the labels explicitly say browser mock client.
 
