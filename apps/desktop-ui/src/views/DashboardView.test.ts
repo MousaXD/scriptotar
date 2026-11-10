@@ -60,8 +60,13 @@ describe('dashboard creator workflow', () => {
     setLocale('ar');
     const name = 'مشروع طويل جداً '.repeat(10);
     setup({ project: { ...project, name } });
-    expect(screen.getByRole('heading', { name })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(name.trim());
     expect(screen.getByRole('button', { name: 'إضافة مهمة تفريغ' })).toBeInTheDocument();
+  });
+
+  it('shows the selected project identity while switching remains in the application shell', () => {
+    setup({ project: { ...project, id: 'p2', name: 'Other project' } });
+    expect(screen.getByRole('heading', { name: 'Other project' })).toBeInTheDocument();
   });
 
   it('shows a queue entry point for an empty project', () => {

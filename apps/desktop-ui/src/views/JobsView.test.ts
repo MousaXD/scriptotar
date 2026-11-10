@@ -75,6 +75,42 @@ describe('jobs workspace', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument();
   });
 
+
+  it('accepts native desktop drop paths and queues them through backend validation', async () => {
+    let nativeHandler: ((event: { payload: { type: 'drop'; paths: string[] } }) => void) | undefined;
+    (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
+      webview: {
+        getCurrentWebview: () => ({
+          onDragDropEvent: async (handler: typeof nativeHandler) => { nativeHandler = handler; return () => {}; }
+        })
+      }
+    };
+    const { onEnqueueLocal } = setup();
+    await waitFor(() => expect(nativeHandler).toBeDefined());
+    nativeHandler?.({ payload: { type: 'drop', paths: ['/safe/native-drop.mp4'] } });
+    await screen.findByText('native-drop.mp4');
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue selected' }));
+    await waitFor(() => expect(onEnqueueLocal).toHaveBeenCalledWith('/safe/native-drop.mp4'));
+  });
+
+  it('keeps manual paths behind a disclosure and submits them unchanged', async () => {
+    const { onEnqueueLocal } = setup();
+    await fireEvent.click(screen.getByText('Advanced: enter a local path manually'));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Manual local media path' }), { target: { value: '/home/media/movie.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue path' }));
+    await waitFor(() => expect(onEnqueueLocal).toHaveBeenCalledWith('/home/media/movie.mp4'));
+  });
+
+  it('queues all clipboard URLs rather than silently dropping extras', async () => {
+    const readText = vi.fn(async () => 'https://example.org/1 https://example.org/2');
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { readText } });
+    const { onEnqueueUrl } = setup();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clipboard URLs' }));
+    await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledTimes(2));
+    expect(onEnqueueUrl).toHaveBeenNthCalledWith(1, 'https://example.org/1');
+    expect(onEnqueueUrl).toHaveBeenNthCalledWith(2, 'https://example.org/2');
+  });
+
   it('keeps controls accessible in Arabic without changing backend identifiers', async () => {
     setLocale('ar');
     const { onRetry } = setup([job('failed-ar', 'failed')]);
