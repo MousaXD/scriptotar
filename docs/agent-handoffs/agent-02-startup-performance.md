@@ -1,57 +1,56 @@
-# Agent 02 — Frontend startup and performance handoff
+# Agent 02 — Scriptotar startup, loading and frontend performance
 
-## Branch and scope
-- Repository: `MousaXD/scriptotar`
-- Assigned branch: `agent-02/frontend-startup-performance`
-- Audited main baseline: `f741244634b5143602a21a554094a498a0005b11`
-- PR: https://github.com/MousaXD/scriptotar/pull/90
-- Branch was absent when assigned and was created from the exact baseline. No earlier Agent 02 work existed to replace.
-- All changes confined to `App.svelte`, `AppShell.svelte`, `main.ts`, and new dedicated startup component/test. No modifications to global design files or backend contracts.
+## Ownership / source verification
+- Repository: `MousaXD/scriptotar` (verified via connected GitHub account)
+- Original assigned branch: `agent-02/frontend-startup-performance`; **resumed** rather than recreated during this audit
+- PR: https://github.com/MousaXD/scriptotar/pull/90 (draft)
+- Original main baseline: `f741244634b5143602a21a554094a498a0005b11`; main not modified or merged
+- Latest audited **code** commit: `5b75948fae8bf8e207caf03c8abb513fd4bcbfc0`
+- This report is a subsequent documentation commit; use PR #90's live HEAD SHA as the authoritative final branch commit.
+- Connected workspace is not a local Git checkout (`pwd=/`, `git rev-parse` reports not a repository). Direct clone failed because `github.com` could not be resolved. Source was verified/updated through GitHub's authenticated contents and PR APIs. No pretend local test results.
 
-## Root causes observed in baseline
-1. `App.svelte` rendered the full-screen `boot-screen` until all of `api.bootstrap()` finished; the shell and navigation were withheld even with an available WebView.
-2. Seven workspace view modules were eagerly statically imported, competing with initial shell rendering.
-3. Job and operational refreshes could commit asynchronously returned data after a project switch. Full refreshes could also race with a project switch.
-4. App initialization applied the persisted appearance only after bootstrap; initial localization was launched after Svelte mounted.
+## Delivered functionality
+1. **No blocking splash.** `AppShell` mounts immediately with navigation, search/command palette, language control and visible project selector while backend bootstrap is pending. A small accessible `WorkspaceSkeleton` renders **inside** the main content region only. Real init failures retain a retry action.
+2. **Project lifecycle safety.** In-flight project switches hide the previous project's workspace; concurrent project creation/selection is prevented. Failed ordinary switch requests preserve the previous project. Inconsistent backend switch snapshots are treated as unsafe: clear actionable data, show recovery UI, and do not silently pick a different project's content.
+3. **No project empty state.** A localized first-project creation form replaces the previous empty/dead-end screen. Duplicate submissions are disabled; backend errors are visible. Dashboard project-creation forms are no longer unmounted while requests are pending, preserving existing validation behavior.
+4. **Stale-response protection.** Generation-scoped guards stop old bootstrap, job updates, watchlist status, transcript search and research saves from overwriting a newer workspace. New-project polling can proceed even when the old project's request never resolves. Search clears on project changes; cross-project search selection aborts on failure and checks transcript IDs.
+5. **Search optimization.** Workspace search skips scanning when blank and stops once the existing 10-result limit is reached. Backend transcript search remains debounced at 160ms.
+6. **First paint preferences.** Persisted appearance and localization initialize before Svelte mount; legacy and shell translation capabilities remain intact.
+7. **Measurements hooks.** Supported WebViews receive performance marks `scriptotar.shell-mounted`, `scriptotar.bootstrap-start`, `scriptotar.bootstrap-ready`, and the `scriptotar.bootstrap` duration measure.
+8. **Design consistency.** The skeleton uses semantic tokens, avoids flashing animation and network assets, and has responsive 900px/540px adjustments. No global design tokens/CSS were modified.
 
-## Changes
-- `AppShell` now mounts immediately. A small `WorkspaceSkeleton` fills only its main content area while bootstrap or a project switch is pending. No artificial delay or full-screen logo animation.
-- If boot fails, the retryable error stays within the shell. If bootstrap returns no usable project, a localized, functional first-project form appears instead of an empty screen.
-- The project selector is disabled while loading or switching, and placeholder text is shown until project metadata is available. Navigation, keyboard shortcuts and command palette remain mounted.
-- Dashboard stays eager; Research, Jobs, Transcripts, AI Studio, Library, and Settings use demand-driven dynamic imports. Imports are single-flight; loading fallback is workspace-local. Project-keyed AI state remains isolated.
-- Project transitions increment a local generation and guard against delayed job polling, operational status polling, workspace refresh, and watchlist-save replies committing stale data. Search IDs and debounce timers are invalidated on switch. Cross-project search selection stops when switching fails.
-- Appearance and localization initialize before the Svelte app is mounted.
-- Search result mapping skips work for empty query strings and exits when the existing ten-result limit is reached, avoiding scans of the remainder of large lists.
-- View import failures now render a retryable error inside the selected workspace rather than leaving an indefinite skeleton.
+## Audit finding: lazy-loading regression and correction
+- The first implementation dynamically imported six inactive views. The real Desktop UI workflow on `1857ba8363ebf36c42dcbb2a3fb1764ac44bee08` **passed Type and Svelte checks but failed interaction tests**: 36 failures, 46 passes, 82 total; the production build was skipped. Evidence: https://github.com/MousaXD/scriptotar/actions/runs/42924625080
+- Root cause: existing view/AI/project tests (and corresponding established navigation behavior) expect a destination view to be usable synchronously after navigation. The new lazy import rendered a placeholder in place of inputs and controls. One project-creation failure was separate: an in-flight create unmounted the dashboard form and hid its validation error.
+- **Correction:** restored original eager view imports to preserve all existing keyboard/UI/workflow contracts, while retaining the nonblocking startup shell and guarded refreshes. Restored dashboard creation-form continuity independently. No assertions or other agents' tests were weakened.
+- Future view chunking must be separately designed with an explicit no-flicker/keyboard contract and Agent 08 certification; shipping broken lazy navigation to reduce JS bytes was rejected.
 
-## Dedicated test scenarios
-`apps/desktop-ui/src/startup-performance.test.ts`:
-1. Shell, accessible loading state, project control, and navigation exist before a deliberately unresolved bootstrap.
-2. Bootstrap failure leaves the shell visible and is recoverable through retry.
-3. Stale in-flight jobs cannot appear after selecting another project.
-4. Bootstrap with zero available projects displays the first-project form and successfully creates a workspace.
+## Startup-specific tests
+`apps/desktop-ui/src/startup-performance.test.ts` contains dedicated scenarios:
+- Shell/nav/status visible before a deliberately unresolved bootstrap; user can navigate ahead of loading data.
+- Recoverable bootstrap failure keeps shell available.
+- Old project job results cannot appear after a switch.
+- A pending older project request cannot block new project job refresh.
+- Invalid bootstrap active-project ID shows fail-closed error, not another project's data.
+- Invalid project-switch response shows fail-closed error; no stale project remains actionable.
+- RTL shell/status is available while Arabic bootstrap is pending.
+- Empty database allows first-project creation.
 
-Existing interaction tests also cover project-switch failures, Arabic content and UI, appearance persistence, command palette, persisted jobs, search, and migration recovery.
+Existing `App.test.ts`, `gui-overhaul.test.ts`, `project-management.test.ts`, and AI source-selection tests remain unchanged and are required to pass.
 
-## Performance evidence
-- **Architectural measurements:** Initial route now excludes six inactive view imports by using Vite dynamic-import boundaries; a lightweight workspace skeleton replaces a full application loading view. This is a code-level observation, not a benchmark.
-- **Cold-start time:** not measured — packaged Tauri binary not available in this connected environment.
-- **User Timing instrumentation:** `scriptotar.shell-mounted`, `scriptotar.bootstrap-start`, `scriptotar.bootstrap-ready`, and the `scriptotar.bootstrap` measure are available when supported by the WebView Performance API. These are instrumentation names, not measured numbers.
-- **Warm-start time:** not measured — packaged Tauri binary not available.
-- **Initial JavaScript bytes:** not yet measured against the baseline build.
-- **Acceptance target:** Agent 08 should record shell-first-paint, bootstrap completion, and navigation timings on the packaged build in both English/Arabic and dark/system appearance.
+## Validation evidence and remaining gates
+- GitHub Actions before regression fixes: Desktop UI [run 42924625080](https://github.com/MousaXD/scriptotar/actions/runs/42924625080): Svelte/type checks **passed**, interaction tests **failed (36/82)**, production build **skipped**. No claim of success.
+- Latest **code** head: `5b75948fae8bf8e207caf03c8abb513fd4bcbfc0`, Desktop UI [run 42927407388](https://github.com/MousaXD/scriptotar/actions/runs/42927407388) was **queued** at audit. Subsequent documentation-only commit creates a new exact HEAD and will require a fresh status check.
+- Local `npm ci`, Svelte checks, Vitest and Vite build could not execute because the session has no network-accessible Git clone or installed project dependencies. Rely on actual GitHub Actions once runners complete.
+- **Packaged cold/warm startup time:** not measured. **Bundle JS bytes:** not measured; views were kept eager for compatibility. Do not claim a size win. Project shell-first paint and bootstrap interval can be measured via marks in the packaged app after integration.
+- Must independently validate 1440/1100/760px layouts; dark and system-light themes; English and Arabic; large workspace; empty/slow/failing boot; keyboard palette; rapid project changes; and installed Windows/Linux desktop behavior.
 
-## Validation
-- GitHub Actions Desktop UI PR workflow on latest *source* commit `d3b455b8d7b5a1549aff865b565974590c3e84e7`: https://github.com/MousaXD/scriptotar/actions/runs/42924518988 — queued when checked. Earlier PR runs were superseded/cancelled by later source commits.
-- Local Svelte checks, Vitest and Vite build cannot be executed in this session: repository dependencies are not available locally and outbound GitHub clone is unavailable. CI status is **not** assumed successful.
-- PR is intentionally a draft pending checks and independent QA.
+## Coordination and unmerged dependencies
+- **Agent 01:** global design tokens, custom/native controls, global CSS. This branch changes none of them.
+- **Agent 03:** [PR #92](https://github.com/MousaXD/scriptotar/pull/92) introduces an opt-in typed `bootstrapSummary()` / `bootstrap_app({summary:true})`. Agent 02 currently uses unchanged full `api.bootstrap()`; that means workspace data still waits for the full bootstrap call. Do **not** activate summary without coordinated Agent 06 on-demand `getTranscript` hydration, search, AI source, export and project authorization. Explicit coordination comment has been posted on PR #92.
+- **Agent 06:** transcript/AI workspaces must handle metadata-only snapshots before the summary contract can be adopted.
+- **Agent 08:** independent current-head tests/build, packaged-app measurements, keyboard/RTL/accessibility and cross-PR regression verdict.
+- No other agent branches were merged or edited.
 
-## Coordination and remaining work
-- **Agent 03:** staged bootstrap data requires an explicit reviewed backend/API contract; this branch does not invent or silently change the bootstrap interface. Existing whole-bootstrap request still controls when workspace *data* becomes available (but no longer blocks shell).
-- **Agent 01:** merge design-token/control work separately. This change does not edit global CSS; shell native select styling remains Agent 01's ownership.
-- **Agent 08:** validate real packaged cold/warm startup, slow/failed database, large workspaces, Arabic/English, system/dark, keyboard palette, project switches, and layout across widths.
-- **Risk:** dynamic import failure now has an explicit retry control, but it still requires CI and packaged-binary verification.
-- **Do not merge** based on source-only evidence or the presence of unit tests; use exact-head checks and packaged application acceptance.
-
-## Final state
-Latest validated *source review* SHA before this handoff update: `d3b455b8d7b5a1549aff865b565974590c3e84e7`. The GitHub PR's head SHA is the authoritative final branch SHA, including this documentation commit. All CI and packaged tests remain unverified while runners are queued. No code is merged to `main`.
+## Readiness verdict
+**BLOCKED — NOT READY FOR AGENT 00 REVIEW/MERGE** until the latest exact-head Desktop UI tests/build and required integrated/packaged gates are genuinely green. Code regression fixes have been pushed and tests added, but queued CI is not passing CI. PR #90 remains a draft; main is unchanged.
