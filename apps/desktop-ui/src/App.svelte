@@ -460,8 +460,8 @@
       {/if}
       <form on:submit={createFirstProject}>
         <label for="first-project-name">{$locale === 'ar' ? 'اسم المشروع' : 'Project name'}</label>
-        <input id="first-project-name" bind:value={firstProjectName} required maxlength="100" autocomplete="off" />
-        <button type="submit" class="button primary">{$locale === 'ar' ? 'إنشاء مشروع' : 'Create project'}</button>
+        <input id="first-project-name" bind:value={firstProjectName} required maxlength="100" autocomplete="off" disabled={creatingProject} />
+        <button type="submit" class="button primary" disabled={creatingProject}>{creatingProject ? $translator('project.creating') : $locale === 'ar' ? 'إنشاء مشروع' : 'Create project'}</button>
       </form>
     </section>
   {/if}
