@@ -41,6 +41,8 @@
   };
 
   $: selectedTranscript = transcripts.find((transcript) => transcript.id === selectedTranscriptId);
+  // Project/source changes must not leave an orphaned transcript ready for a BYOK request.
+  $: if (selectedTranscriptId !== 'manual' && !selectedTranscript) void loadSource('manual');
   $: sourceWords = countWords(sourceText);
   $: sourceChars = sourceText.length;
   $: sourceSpeakingSeconds = Math.ceil(sourceWords / paceWordsPerSec[pace]);
@@ -59,6 +61,7 @@
     // Prompt construction is local and safe to retry with newer inputs even if an old call stalls.
     // The generation guard prevents either response from overwriting the other.
     building = false;
+    busy = false;
     prompt = '';
     builtPrompt = '';
     result = '';
@@ -66,6 +69,7 @@
 
   function invalidateRun() {
     runGeneration += 1;
+    busy = false;
     result = '';
   }
 
@@ -86,6 +90,7 @@
     sourceEdited = false;
     selectedTranscriptId = id;
     sourceError = '';
+    status = 'Source changed. Build a prompt for the current context.';
     const generation = ++sourceLoadGeneration;
     if (id === 'manual') {
       sourceLoading = false;
@@ -157,11 +162,15 @@
   }
   function redactProviderError(cause: unknown, submittedKey: string): string {
     if (!(cause instanceof Error)) return 'Unknown error';
-    const secretVariants = [submittedKey, encodeURIComponent(submittedKey)];
-    return secretVariants.reduce(
+    const secretVariants = [submittedKey, encodeURIComponent(submittedKey), encodeURIComponent(submittedKey).replaceAll('%', '%25')];
+    const redacted = secretVariants.reduce(
       (message, secret) => secret ? message.replaceAll(secret, '[redacted]') : message,
       cause.message
     );
+    // Do not put authorization headers or URL-embedded credentials into the UI.
+    return redacted.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/([?&](?:api_key|token|key|authorization)=)[^&\s]+/gi, '$1[redacted]')
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@');
   }
 
   async function runAi() {
@@ -183,12 +192,14 @@
     busy = true;
     try {
       const output = await api.runAi(request);
-      if (generation === runGeneration) { result = output; status = `Finished with ${provider}.`; }
+      if (generation === runGeneration) { result = output; status = `Finished with ${request.provider}.`; }
     } catch (error) {
       if (generation === runGeneration) {
         status = `AI request failed: ${redactProviderError(error, request.apiKey || '')}`;
       }
-    } finally { busy = false; }
+    } finally {
+      if (generation === runGeneration) busy = false;
+    }
   }
 </script>
 
