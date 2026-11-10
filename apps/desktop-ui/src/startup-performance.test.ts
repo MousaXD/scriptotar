@@ -80,6 +80,48 @@ describe('progressive desktop startup', () => {
     expect(screen.queryByText('STALE JOB FROM OTHER PROJECT')).not.toBeInTheDocument();
   });
 
+  it('does not show a different project when bootstrap returns an invalid active ID', async () => {
+    const api = createMockClient({
+      bootstrap: async () => ({ ...structuredClone(mockBootstrap), activeProjectId: 'missing-project' })
+    });
+    render(App, { props: { api } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not identify an active project');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('keeps the previous project selected when the backend switch snapshot is inconsistent', async () => {
+    const api = createMockClient({
+      selectProject: async () => ({
+        ...structuredClone(mockBootstrap),
+        activeProjectId: 'p-client-a',
+        projects: [structuredClone(mockBootstrap.projects[0])]
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Project')).toHaveValue('p-creator-lab');
+  });
+
+  it('renders an RTL shell and localized skeleton while Arabic bootstrap is pending', async () => {
+    setLocale('ar');
+    const bootstrap = deferred<BootstrapData>();
+    const api = createMockClient({ bootstrap: () => bootstrap.promise });
+    render(App, { props: { api } });
+
+    expect(document.documentElement.dir).toBe('rtl');
+    expect(screen.getByRole('main')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true');
+    bootstrap.resolve(structuredClone(mockBootstrap));
+    expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(document.documentElement.dir).toBe('rtl');
+  });
+
   it('allows creating a project from an otherwise empty workspace', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), projects: [], activeProjectId: '' })
