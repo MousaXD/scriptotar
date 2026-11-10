@@ -1903,7 +1903,7 @@ mod tests {
         let transcript_id = Uuid::new_v4();
         let timestamp = format!(
             "2026-11-10T00:{:02}:{:02}Z",
-            ordinal % 3,
+            ordinal / 60,
             ordinal % 60
         );
         let locator = format!("/mock/source-{ordinal}.mp4");
