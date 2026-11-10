@@ -166,7 +166,7 @@
   .kind-tabs b { font-weight: 500; font-variant-numeric: tabular-nums; color: var(--color-text-muted); }
   .library-result-bar { display: flex; justify-content: space-between; gap: 12px; align-items: center; min-height: 34px; padding: 0 14px; font-size: var(--text-sm); color: var(--color-text-muted); }
   .query-context { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .library-columns { display: grid; grid-template-columns: minmax(200px, 1fr) 112px 116px 112px; gap: 12px; min-height: 33px; align-items: center; padding: 0 45px 0 60px; border-top: 1px solid var(--color-border); background: var(--color-surface-raised); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; text-transform: none; }
+  .library-columns { display: grid; grid-template-columns: minmax(200px, 1fr) 112px 116px 112px; gap: 12px; min-height: 33px; align-items: center; padding-inline-start: 60px; padding-inline-end: 45px; border-top: 1px solid var(--color-border); background: var(--color-surface-raised); color: var(--color-text-muted); font-size: var(--text-xs); font-weight: 600; text-transform: none; }
   .library-list .library-item { display: grid; grid-template-columns: 32px minmax(200px, 1fr) 112px 116px 112px 14px; gap: 12px; align-items: center; width: 100%; min-height: 66px; padding: 8px 14px; border: 0; border-top: 1px solid var(--color-border); border-radius: 0; background: transparent; text-align: start; }
   .library-list .library-item:hover { background: var(--color-surface-raised); }
   .kind-icon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: 14px; font-weight: 650; }
