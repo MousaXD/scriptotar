@@ -4,6 +4,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  BootstrapSummaryData,
   Job,
   MigrationStatus,
   McpPermissions,
@@ -36,6 +37,7 @@ export interface AiPromptInput {
 export interface ScriptotarApi {
   backendHealth(): Promise<{schema_version: number}>;
   bootstrap(): Promise<BootstrapData>;
+  bootstrapSummary(): Promise<BootstrapSummaryData>;
   listJobs(): Promise<Job[]>;
   searchTranscripts(query: string, limit?: number): Promise<string[]>;
   getTranscript(id: string): Promise<Transcript>;
