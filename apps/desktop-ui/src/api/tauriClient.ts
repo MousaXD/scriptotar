@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BackendJob,
   BootstrapData,
+  BootstrapSummaryData,
   Job,
   MigrationStatus,
   McpPermissions,
@@ -17,12 +18,14 @@ export type TauriListen = <T>(
   event: string,
   handler: (event: { payload: T }) => void
 ) => Promise<() => void>;
-type CoreBootstrapData = Omit<BootstrapData, 'watchlistStatuses' | 'migrationStatus'>;
+type BootstrapStatus = Pick<BootstrapData, 'watchlistStatuses' | 'migrationStatus'>;
+type CoreBootstrapData = Omit<BootstrapData, keyof BootstrapStatus>;
+type CoreBootstrapSummaryData = Omit<BootstrapSummaryData, keyof BootstrapStatus>;
 
-async function hydrateBootstrap(
+async function hydrateBootstrap<T extends CoreBootstrapData | CoreBootstrapSummaryData>(
   invoke: TauriInvoke,
-  core: Promise<CoreBootstrapData>
-): Promise<BootstrapData> {
+  core: Promise<T>
+): Promise<T & BootstrapStatus> {
   const [snapshot, watchlistStatuses, migrationStatus] = await Promise.all([
     core,
     invoke<WatchlistStatus[]>('get_watchlist_statuses'),
@@ -35,6 +38,8 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
   return {
     backendHealth: () => invoke<{schema_version: number}>('backend_health'),
     bootstrap: () => hydrateBootstrap(invoke, invoke<CoreBootstrapData>('bootstrap_app')),
+    bootstrapSummary: () =>
+      hydrateBootstrap(invoke, invoke<CoreBootstrapSummaryData>('bootstrap_app', { summary: true })),
     listJobs: () => invoke<Job[]>('list_jobs'),
     searchTranscripts: (query, limit = 10) =>
       invoke<string[]>('search_transcripts', { query, limit }),
