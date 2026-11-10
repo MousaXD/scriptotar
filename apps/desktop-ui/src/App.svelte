@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { translator } from './i18n/translate';
+  import { locale } from './i18n';
   import { getApi, type ScriptotarApi } from './api';
   import { applyAppearance, loadAppearance } from './appearance';
   import type { AppSettings, BootstrapData, Job, LibraryItem, MigrationStatus, ViewId, WorkspaceSearchResult } from './types';
@@ -18,6 +19,7 @@
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
   let selectedTranscriptId = '';
+  let firstProjectName = '';
   let jobRefreshInFlight = false;
   let jobRefreshTimer: number | undefined;
   let operationalRefreshInFlight = false;
@@ -281,6 +283,17 @@
     }
   }
 
+  async function createFirstProject(event: SubmitEvent) {
+    event.preventDefault();
+    const name = firstProjectName.trim();
+    if (!name) return;
+    try {
+      await createProject(name);
+    } catch {
+      // createProject supplies the visible, retryable error in the empty workspace.
+    }
+  }
+
   async function enqueueLocal(path: string) {
     if (!data) return;
     await api.enqueueLocalMedia(data.activeProjectId, path);
@@ -454,6 +467,27 @@
       {/if}
     {/if}
   {:else}
-    <ErrorState title={$translator('error.bootTitle')} message="The workspace has no available project." onRetry={() => load()} />
+    <section class="first-project" aria-labelledby="first-project-title">
+      <h1 id="first-project-title">{$locale === 'ar' ? 'أنشئ مشروعك الأول' : 'Create your first project'}</h1>
+      <p>{$locale === 'ar' ? 'مساحة العمل فارغة. أضف مشروعاً للبدء.' : 'Your workspace is empty. Add a project to get started.'}</p>
+      {#if switchError}
+        <ErrorState title={$translator('error.projectTitle')} message={switchError} />
+      {/if}
+      <form on:submit={createFirstProject}>
+        <label for="first-project-name">{$locale === 'ar' ? 'اسم المشروع' : 'Project name'}</label>
+        <input id="first-project-name" bind:value={firstProjectName} required maxlength="100" autocomplete="off" />
+        <button type="submit" class="button primary">{$locale === 'ar' ? 'إنشاء مشروع' : 'Create project'}</button>
+      </form>
+    </section>
   {/if}
 </AppShell>
+
+<style>
+  .first-project { max-width: 560px; margin-block: clamp(32px, 8vh, 110px); }
+  .first-project h1 { margin-block-end: 8px; }
+  .first-project p { margin-block-end: 24px; }
+  .first-project form { display: grid; gap: 12px; max-width: 380px; }
+  .first-project label { font-weight: 600; }
+  .first-project input { min-width: 0; width: 100%; }
+  .first-project button { justify-self: start; }
+</style>
