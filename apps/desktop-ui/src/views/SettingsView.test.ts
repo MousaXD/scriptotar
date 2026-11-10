@@ -46,6 +46,8 @@ describe('Settings UX', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ appearance: next })));
     expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ appearance: next }));
+    await waitFor(() => expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
   });
 
   it('switches interface language to Arabic without changing transcription language', async () => {
