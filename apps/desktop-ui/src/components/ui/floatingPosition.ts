@@ -22,7 +22,11 @@ export function floatingPosition(node: HTMLElement, initial: FloatingOptions) {
     const viewportHeight = window.innerHeight;
     const maxWidth = Math.max(0, viewportWidth - MARGIN * 2);
     const intrinsicWidth = Math.max(node.scrollWidth, rect.width, 160);
-    const width = Math.min(matchWidth ? (rect.width || intrinsicWidth) : intrinsicWidth, maxWidth);
+    // Content popovers have a 440px visual cap; match-width selects may be wider.
+    // Keep geometry in sync with the panel's CSS max-width when near the viewport edge.
+    const width = matchWidth
+      ? Math.min(rect.width || intrinsicWidth, maxWidth)
+      : Math.min(intrinsicWidth, maxWidth, 440, viewportWidth * 0.9);
     const availableBelow = Math.max(0, viewportHeight - rect.bottom - GAP - MARGIN);
     const availableAbove = Math.max(0, rect.top - GAP - MARGIN);
     const flip = availableBelow < Math.min(160, node.scrollHeight || 160) && availableAbove > availableBelow;

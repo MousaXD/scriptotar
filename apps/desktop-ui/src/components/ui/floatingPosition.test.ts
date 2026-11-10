@@ -19,6 +19,22 @@ describe('floating control placement', () => {
     anchor.remove(); panel.remove();
   });
 
+  it('keeps wide menu content within the intended popup width cap', () => {
+    const anchor = document.createElement('button');
+    const panel = document.createElement('div');
+    document.body.append(anchor, panel);
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      top: 100, bottom: 140, left: 850, right: 900, width: 50, height: 40, x: 850, y: 100,
+      toJSON: () => ({})
+    });
+    Object.defineProperty(panel, 'scrollWidth', { configurable: true, value: 960 });
+    const action = floatingPosition(panel, { anchor, align: 'end' });
+    expect(Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(440);
+    expect(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(window.innerWidth - 8);
+    action.destroy();
+    anchor.remove(); panel.remove();
+  });
+
   it('uses the logical inline-start anchor in RTL without exceeding the viewport', () => {
     const anchor = document.createElement('button');
     const panel = document.createElement('div');

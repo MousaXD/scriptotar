@@ -50,12 +50,12 @@ The baseline contains no native `type=range` in those files. AppShell and owned 
 1. Preserve existing handlers and values. Replace each native select only after mapping its `<option>` values to a `Select` options array; use `bind:value` and explicitly retain existing `onChange` side effects.
 2. Pass already translated English/Arabic visible strings. Do not put localization inside generic primitives or translate user-generated item names.
 3. Use `Checkbox`/`Switch` for boolean controls and `RadioGroup` for exclusive options; retain settings saves and authorization checks from the original view.
-4. For controls in tables and popovers, test clipping/scroll containers and overlapping focus surfaces in installed Linux/Windows WebViews.
+4. Select and Popover use viewport-fixed floating placement, with an action that observes window resize and nested scroll capture. Their DOM hierarchy, keyboard focus and outside-click boundaries remain intact. Test clipping/scroll containers, WebView zoom and overlapping focus surfaces in installed Linux/Windows builds.
 5. Agent 07 owns localization dictionaries, Agent 08 screenshot infrastructure, and each view owner migrates its own markup.
 
 ## Gaps to certify
 
-- Rendered Windows/Linux WebViews are needed to establish open-popover clipping, native file picker regressions, font rendering and focus behavior in production.
+- Rendered Windows/Linux WebViews are needed to confirm fixed popup placement/flip inside overflow panels, native file picker regressions, font rendering and focus behavior in production.
 - JSDOM tests verify roles, changes and event handling; they do not constitute visual or real-screen-reader certification.
 - Cross-platform pixel fidelity requires an explicitly licensed and offline-bundled font (currently a deliberate installed-font fallback).
 - Native forms still using `select` have platform-controlled *open* menus until their owning agents migrate.
