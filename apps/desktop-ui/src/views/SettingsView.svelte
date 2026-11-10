@@ -12,12 +12,13 @@
   export let onSaved: (settings: AppSettings) => Promise<void> | void = () => {};
   export let onMigrationStatus: (status: MigrationStatus) => Promise<void> | void = () => {};
 
-  let draft = structuredClone(settings);
+  let savedSnapshot = structuredClone(settings);
+  let draft = structuredClone(savedSnapshot);
   let status = '';
   let saveError = '';
   let migrationBusy = false;
   let busy = false;
-  $: dirty = JSON.stringify(draft) !== JSON.stringify(settings);
+  $: dirty = JSON.stringify(draft) !== JSON.stringify(savedSnapshot);
 
   $: migrationLabel = {
     completed: $translator('settings.migrationCompleted'),
@@ -47,7 +48,7 @@
 
   function discardChanges() {
     if (busy) return;
-    draft = structuredClone(settings);
+    draft = structuredClone(savedSnapshot);
     status = '';
     saveError = '';
   }
@@ -59,6 +60,7 @@
     saveError = '';
     try {
       await api.saveSettings(draft);
+      savedSnapshot = structuredClone(draft);
       persistAppearance(draft.appearance);
       await onSaved(structuredClone(draft));
       status = $translator('settings.saved');
