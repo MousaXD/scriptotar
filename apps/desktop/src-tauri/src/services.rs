@@ -2023,4 +2023,46 @@ mod tests {
             ));
         }
     }
+
+    #[test]
+    fn grouped_sql_job_summary_matches_full_history_and_active_project_order() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let inbox = Uuid::parse_str(&services.bootstrap().unwrap().active_project_id).unwrap();
+        let other = Uuid::parse_str(
+            &services
+                .create_project("Other workspace".to_owned())
+                .unwrap()
+                .active_project_id,
+        )
+        .unwrap();
+        for project in [inbox, other, other, other] {
+            services
+                .store
+                .insert_job(&Job::new(
+                    project,
+                    JobInput::Url(format!("https://example.com/{project}")),
+                ))
+                .unwrap();
+        }
+        let old = summarize_project_jobs(&services.store.list_jobs(None).unwrap());
+        let sql = services.store.project_job_summaries().unwrap();
+        assert_eq!(old.len(), sql.len());
+        for (project_id, original) in old {
+            let summarized = sql.get(&project_id).unwrap();
+            assert_eq!(summarized.item_count, original.item_count);
+            assert_eq!(
+                summarized.latest_updated_at.as_deref(),
+                original.latest_updated_at
+            );
+        }
+        let snapshot = services.bootstrap_summary().unwrap();
+        assert_eq!(snapshot.jobs.len(), 3);
+        assert!(snapshot.projects.iter().any(|item| {
+            item.id == inbox.to_string() && item.item_count == 1
+        }));
+        assert!(snapshot.projects.iter().any(|item| {
+            item.id == other.to_string() && item.item_count == 3
+        }));
+    }
 }
