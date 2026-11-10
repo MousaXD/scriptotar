@@ -22,7 +22,7 @@ use scriptotar_core::{
     RepositoryResult, ResearchItem, ResearchRepository, SettingsRepository, SourceType,
     TranscriptBundle, Watchlist, WatchlistRepository,
 };
-use scriptotar_db::{SqliteStore, WatchlistRefreshState};
+use scriptotar_db::{SqliteStore, TranscriptMetadata, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
 use scriptotar_orchestrator::{JobChangeNotifier, JobOrchestrator, RuntimeConfig};
@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use crate::dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
-    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
+    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment, UiTranscriptSummary,
 };
 use project_jobs::summarize_project_jobs;
 
@@ -136,6 +136,13 @@ impl AppServices {
     }
 
     pub fn bootstrap(&self) -> RepositoryResult<BootstrapData> {
+        let active_project = self.active_project_id()?;
+        self.bootstrap_for(active_project)
+    }
+
+    /// Opt-in first-screen snapshot. Existing bootstrap() stays byte-for-byte
+    /// compatible for callers that still require eager transcript bodies.
+    pub fn bootstrap_summary(&self) -> RepositoryResult<BootstrapData<UiTranscriptSummary>> {
         let active_project = self.active_project_id()?;
         self.bootstrap_for(active_project)
     }
@@ -485,13 +492,16 @@ impl AppServices {
             .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))
     }
 
-    fn bootstrap_for(&self, active_project: Uuid) -> RepositoryResult<BootstrapData> {
+    fn bootstrap_for<T: BootstrapTranscript>(
+        &self,
+        active_project: Uuid,
+    ) -> RepositoryResult<BootstrapData<T>> {
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
         // Precompute project counts and latest updates once. Repeatedly filtering all
         // jobs for every project makes bootstrap CPU work quadratic in workspace size.
         let project_job_summaries = summarize_project_jobs(&all_jobs);
-        let transcripts = self.store.list_transcripts(Some(active_project))?;
+        let ui_transcripts = T::list_for(&self.store, active_project)?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
         let ai_runs = self.store.list_ai_runs(Some(active_project))?;
@@ -560,7 +570,6 @@ impl AppServices {
             .map(|item| research_to_ui(item, &creator_by_id, &queued_sources))
             .collect::<Vec<_>>();
         let ui_ai_runs = ai_runs.iter().map(ai_run_to_ui).collect::<Vec<_>>();
-        let ui_transcripts = transcripts.iter().map(transcript_to_ui).collect::<Vec<_>>();
         let ui_projects = projects
             .iter()
             .map(|project| {
@@ -591,16 +600,7 @@ impl AppServices {
                 date: project.updated_at.clone(),
             })
             .collect::<Vec<_>>();
-        library.extend(ui_transcripts.iter().map(|transcript| UiLibraryItem {
-            id: format!("transcript:{}", transcript.id),
-            kind: "Transcript".to_owned(),
-            title: transcript.title.clone(),
-            subtitle: transcript.source.clone(),
-            project_id: transcript.project_id.clone(),
-            platform: Some(transcript.platform.clone()),
-            metric: None,
-            date: transcript.created_at.clone(),
-        }));
+        library.extend(ui_transcripts.iter().map(BootstrapTranscript::library_item));
         library.extend(ui_research.iter().map(|item| {
             UiLibraryItem {
                 id: format!("research:{}", item.id),
@@ -1086,6 +1086,96 @@ fn stage_label(state: JobState) -> String {
         JobState::Interrupted => "Interrupted",
     }
     .to_owned()
+}
+
+/// Common operations needed to build the same ordered library entries for
+/// full and summary snapshots without loading full transcript content twice.
+trait BootstrapTranscript {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>>
+    where
+        Self: Sized;
+    fn library_item(&self) -> UiLibraryItem;
+}
+
+fn transcript_library_item(
+    id: &str,
+    project_id: &str,
+    title: &str,
+    source: &str,
+    platform: &str,
+    created_at: &str,
+) -> UiLibraryItem {
+    UiLibraryItem {
+        id: format!("transcript:{id}"),
+        kind: "Transcript".to_owned(),
+        title: title.to_owned(),
+        subtitle: source.to_owned(),
+        project_id: project_id.to_owned(),
+        platform: Some(platform.to_owned()),
+        metric: None,
+        date: created_at.to_owned(),
+    }
+}
+
+impl BootstrapTranscript for UiTranscript {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>> {
+        Ok(store
+            .list_transcripts(Some(project_id))?
+            .iter()
+            .map(transcript_to_ui)
+            .collect())
+    }
+
+    fn library_item(&self) -> UiLibraryItem {
+        transcript_library_item(
+            &self.id, &self.project_id, &self.title, &self.source,
+            &self.platform, &self.created_at,
+        )
+    }
+}
+
+impl BootstrapTranscript for UiTranscriptSummary {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>> {
+        Ok(store
+            .list_transcript_metadata(project_id)?
+            .into_iter()
+            .map(transcript_summary_to_ui)
+            .collect())
+    }
+
+    fn library_item(&self) -> UiLibraryItem {
+        transcript_library_item(
+            &self.id, &self.project_id, &self.title, &self.source,
+            &self.platform, &self.created_at,
+        )
+    }
+}
+
+fn transcript_summary_to_ui(metadata: TranscriptMetadata) -> UiTranscriptSummary {
+    let language = metadata.language.unwrap_or_else(|| "unknown".to_owned());
+    let direction = if language.to_ascii_lowercase().starts_with("ar") {
+        "rtl"
+    } else {
+        "ltr"
+    };
+    let title = metadata.title.unwrap_or_else(|| {
+        Path::new(&metadata.source)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "Transcript".to_owned())
+    });
+    UiTranscriptSummary {
+        id: metadata.id.to_string(),
+        project_id: metadata.project_id.to_string(),
+        title,
+        language,
+        direction: direction.to_owned(),
+        platform: source_platform(&metadata.source, metadata.source_type),
+        source: metadata.source,
+        duration_seconds: metadata.duration_seconds.unwrap_or_default(),
+        created_at: metadata.created_at,
+    }
 }
 
 fn transcript_to_ui(bundle: &TranscriptBundle) -> UiTranscript {
