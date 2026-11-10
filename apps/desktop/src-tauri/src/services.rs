@@ -9,7 +9,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
@@ -82,13 +82,17 @@ impl AppServices {
         data_dir: impl AsRef<Path>,
         notifier: JobChangeNotifier,
     ) -> RepositoryResult<Self> {
+        let startup_started = Instant::now();
         let data_dir = data_dir.as_ref();
         std::fs::create_dir_all(data_dir)
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
+        let database_opened = Instant::now();
         store.run_integration_migrations()?;
+        let migrations_complete = Instant::now();
         store.recover_interrupted_watchlist_refreshes()?;
         JobService::new(store.clone()).recover_after_unclean_shutdown()?;
+        let recovery_complete = Instant::now();
 
         let legacy_path = data_dir.join("history.sqlite3");
 
@@ -120,6 +124,17 @@ impl AppServices {
         let research_command = YtDlpCommand::from_environment();
         let watchlist_refresher =
             spawn_watchlist_refresher(store.clone(), research_command.clone());
+
+        if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
+            eprintln!(
+                "[scriptotar-perf] database_open_ms={:.3} migrations_ms={:.3} recovery_ms={:.3} service_init_ms={:.3} total_ms={:.3}",
+                database_opened.duration_since(startup_started).as_secs_f64() * 1_000.0,
+                migrations_complete.duration_since(database_opened).as_secs_f64() * 1_000.0,
+                recovery_complete.duration_since(migrations_complete).as_secs_f64() * 1_000.0,
+                recovery_complete.elapsed().as_secs_f64() * 1_000.0,
+                startup_started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
 
         Ok(Self {
             store,
@@ -492,10 +507,11 @@ impl AppServices {
             .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))
     }
 
-    fn bootstrap_for<T: BootstrapTranscript>(
+    fn bootstrap_for<T: BootstrapTranscript + serde::Serialize>(
         &self,
         active_project: Uuid,
     ) -> RepositoryResult<BootstrapData<T>> {
+        let started = Instant::now();
         let projects = self.store.list_projects()?;
         let all_jobs = self.store.list_jobs(None)?;
         // Precompute project counts and latest updates once. Repeatedly filtering all
@@ -507,6 +523,7 @@ impl AppServices {
         let ai_runs = self.store.list_ai_runs(Some(active_project))?;
         let stored_creators = self.store.list_creators(Some(active_project))?;
         let watchlists = self.store.list_watchlists(Some(active_project))?;
+        let queries_complete = Instant::now();
         let watch_by_url = watchlists
             .iter()
             .map(|watchlist| (watchlist.profile_url.clone(), watchlist))
@@ -636,7 +653,7 @@ impl AppServices {
             }
         }));
 
-        Ok(BootstrapData {
+        let payload = BootstrapData {
             projects: ui_projects,
             active_project_id: active_project.to_string(),
             creators,
@@ -646,7 +663,22 @@ impl AppServices {
             ai_runs: ui_ai_runs,
             library,
             settings: self.load_settings()?,
-        })
+        };
+        if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
+            let assembled = Instant::now();
+            let serialization_started = Instant::now();
+            if let Ok(serialized) = serde_json::to_vec(&payload) {
+                eprintln!(
+                    "[scriptotar-perf] bootstrap_mode={} query_ms={:.3} assemble_ms={:.3} json_ms={:.3} json_bytes={}",
+                    std::any::type_name::<T>(),
+                    queries_complete.duration_since(started).as_secs_f64() * 1_000.0,
+                    assembled.duration_since(queries_complete).as_secs_f64() * 1_000.0,
+                    serialization_started.elapsed().as_secs_f64() * 1_000.0,
+                    serialized.len(),
+                );
+            }
+        }
+        Ok(payload)
     }
 }
 
