@@ -2055,7 +2055,7 @@ mod tests {
                 ))
                 .unwrap();
         }
-        let old = summarize_project_jobs(&services.store.list_jobs(None).unwrap());
+        let old = project_jobs::summarize_project_jobs(&services.store.list_jobs(None).unwrap());
         let sql = services.store.project_job_summaries().unwrap();
         assert_eq!(old.len(), sql.len());
         for (project_id, original) in old {
