@@ -168,6 +168,8 @@
   async function jumpToSegment(segmentId: string) {
     query = '';
     searchCursor = 0;
+    // Let the query-reset reaction finish before expanding to a late segment.
+    await tick();
     const index = selected?.segments.findIndex((segment) => segment.id === segmentId) ?? -1;
     if (index >= 0) visibleCount = Math.max(visibleCount, index + 1);
     await scrollToSegment(segmentId);
@@ -282,7 +284,7 @@
       </div>
 
       <div class="transcript-content" dir={selected.direction} data-testid="transcript-content" data-i18n-ignore class:rtl={selected.direction === 'rtl'} on:scroll={onReaderScroll}>
-        {#if query && matchingSegments.length === 0}
+        {#if query.trim() && matchingSegments.length === 0}
           <p class="no-match">{$translator('transcript.noMatches')}</p>
         {:else}
           {#each visibleSegments as segment (segment.id)}
