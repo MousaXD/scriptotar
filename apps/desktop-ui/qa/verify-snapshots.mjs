@@ -30,6 +30,11 @@ try {
 const approved = manifest.screenshots ?? {};
 const expected = Object.keys(approved).sort();
 const differences = [];
+if (manifest.reviewStatus !== 'APPROVED' ||
+    typeof manifest.reviewedBy !== 'string' || !manifest.reviewedBy.trim() ||
+    !/^\d{4}-\d{2}-\d{2}T/.test(manifest.reviewedAt || '')) {
+  differences.push('Manifest is not explicitly human-approved with a reviewer and timestamp.');
+}
 if (!/^[a-f0-9]{40}$/.test(manifest.approvedSourceSha || '')) {
   differences.push('Baseline is missing an exact 40-character approvedSourceSha.');
 }
