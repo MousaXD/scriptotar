@@ -42,11 +42,11 @@ No browser-only green check replaces the real Rust/SQLite/MCP/installer gates.
 | --- | --- | --- |
 | 01 Design/controls | agent-01/design-system-controls-overhaul; PR #89 | PENDING adoption into actual views |
 | 02 Startup | agent-02/frontend-startup-performance; PR #90 | PENDING native and progressive-startup validation |
-| 03 Rust/bootstrap | agent-03/rust-bootstrap-optimization | PENDING large-database and payload contract |
-| 04 Dashboard/Jobs | agent-04/dashboard-jobs-overhaul | PENDING queue and cancel/retry parity |
+| 03 Rust/bootstrap | agent-03/rust-bootstrap-optimization; PR #92 | PENDING summary opt-in, DB/perf and payload contract |
+| 04 Dashboard/Jobs | agent-04/dashboard-jobs-overhaul; PR #95 | PENDING queue and cancel/retry parity |
 | 05 Research/Library | agent-05/research-library-overhaul; PR #91 | PENDING pagination, watchlists and Arabic |
-| 06 Transcript/AI | agent-06/transcript-ai-workspace-overhaul | PENDING export, search, Copy Prompt and BYOK |
-| 07 Settings/MCP/RTL | agent-07/settings-localization-overhaul | PENDING persistence, permissions and direction |
+| 06 Transcript/AI | agent-06/transcript-ai-workspace-overhaul; PR #93 | PENDING export, search, Copy Prompt and BYOK |
+| 07 Settings/MCP/RTL | agent-07/settings-localization-overhaul; PR #96 | PENDING persistence, permissions and direction |
 
 Potential baseline defect for Agent 01 and view owners: AppShell and several views still use native HTML select widgets; global CSS provides colors and borders but no global native-arrow suppression. PR #89 explicitly says new components still need adoption. Reproduce through the browser-native-control test; do not add blanket allowlist exceptions. This is source-based baseline evidence, not a rejection of a later SHA.
 
@@ -60,3 +60,16 @@ Potential baseline defect for Agent 01 and view owners: AppShell and several vie
 6. Record concrete run, artifact, commit and failure links before giving GO.
 
 **Merge readiness: BLOCKED.** No unmeasured speed claim or old green run is release proof.
+
+## Source-reviewed cross-agent integration findings (2026-11-11)
+
+The following are **unresolved integration dependencies**, not successful/failed live browser tests:
+
+- PR #90, reviewed head da78cd386809750311574eef4ab2ce9025295260: AppShell project and locale dropdowns remain native. Owns migration of these controls after Agent 01 component PR #89. See QA comment on #90.
+- PR #91, reviewed head e799779503bca12773002a60b34cc3f16d786290: three Research selectors and Library sort selector remain native, with selection checkboxes requiring visual review. See QA comment on #91.
+- PR #92, reviewed head f566e69e844df3cb1c786887df3e748050c87020: metadata-only bootstrap is explicitly opt-in; PR #90 has not yet adopted it. Until full transcripts are hydrated on demand in an integrated candidate, dashboard payload improvements are not proven. See QA comment on #92.
+- PR #93, reviewed head 6a476808cb3efdb6fbef513bf2cba25c4076e4ab: Transcript/AI selectors remain native. See QA comment on #93.
+- PR #95, reviewed head 3554b13cf671314552002fe6cf077ef08c86388f: Dashboard and Jobs view changes present; real queue/cancel/retry parity and layout require exact-head test and screenshot evidence. No acceptance issued.
+- PR #96, reviewed head 49fff93b53b28602c032926d280a2f5b132c6b9c: Settings watch interval selector remains native; verify saved values and MCP authorization remain unchanged. See QA comment on #96.
+
+GitHub Actions jobs for Agent 08 were queued when checked; no completed PASS had been observed. The QA PR is #94 and remains draft. Read the latest PR head and its check-run list, because this report is not a substitute for exact-commit CI evidence.
