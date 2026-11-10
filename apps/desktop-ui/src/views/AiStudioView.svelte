@@ -76,7 +76,7 @@
   function chooseMode(next: AiMode) {
     if (mode === next) return;
     mode = next;
-    invalidateRun();
+    invalidatePrompt();
     status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK runs only when you choose Run with API.';
   }
 
