@@ -28,6 +28,7 @@
   let workspaceGeneration = 0;
   let switchingProject = false;
   const pendingViews = new Set<ViewId>();
+  let viewLoadErrors: Partial<Record<ViewId, string>> = {};
   let ResearchView: typeof import('./views/ResearchView.svelte')['default'] | undefined;
   let JobsView: typeof import('./views/JobsView.svelte')['default'] | undefined;
   let TranscriptView: typeof import('./views/TranscriptView.svelte')['default'] | undefined;
@@ -50,6 +51,7 @@
         (view === 'transcript' && TranscriptView) || (view === 'ai' && AiStudioView) ||
         (view === 'library' && LibraryView) || (view === 'settings' && SettingsView)) return;
     pendingViews.add(view);
+    viewLoadErrors = { ...viewLoadErrors, [view]: '' };
     try {
       switch (view) {
         case 'research': ResearchView = (await import('./views/ResearchView.svelte')).default; break;
@@ -60,7 +62,10 @@
         case 'settings': SettingsView = (await import('./views/SettingsView.svelte')).default; break;
       }
     } catch (cause) {
-      operationalError = cause instanceof Error ? cause.message : 'Unable to load this workspace.';
+      viewLoadErrors = {
+        ...viewLoadErrors,
+        [view]: cause instanceof Error ? cause.message : 'Unable to load this workspace.'
+      };
     } finally {
       pendingViews.delete(view);
     }
@@ -405,7 +410,9 @@
     {#if operationalError}
       <ErrorState title={$translator('error.backgroundTitle')} message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
-    {#if activeView === 'dashboard'}
+    {#if viewLoadErrors[activeView]}
+      <ErrorState title={$translator('error.bootTitle')} message={viewLoadErrors[activeView] || ''} onRetry={() => ensureView(activeView)} />
+    {:else if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
       {#if ResearchView}
