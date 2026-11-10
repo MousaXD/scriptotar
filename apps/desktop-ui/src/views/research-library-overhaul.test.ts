@@ -103,9 +103,10 @@ describe('Research workspace', () => {
     const source = researchItems(1);
     source[0].thumbnail = 'https://example.org/broken-image.png';
     mountResearch(source);
-    const image = screen.getByRole('img', { hidden: true });
-    await fireEvent.error(image);
-    expect(screen.queryByRole('img', { hidden: true })).not.toBeInTheDocument();
+    const image = document.querySelector('.research-thumbnail');
+    expect(image).not.toBeNull();
+    await fireEvent.error(image!);
+    expect(document.querySelector('.research-thumbnail')).toBeNull();
     expect(screen.getByTestId('research-r-0')).toHaveTextContent('YouTube');
   });
 
