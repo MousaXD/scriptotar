@@ -169,7 +169,8 @@
       data = prepareData(next);
       if (firstBootstrap) {
         startupMark('scriptotar.bootstrap-ready');
-        if (typeof performance !== 'undefined' && typeof performance.measure === 'function') {
+        if (typeof performance !== 'undefined' && typeof performance.mark === 'function' &&
+            typeof performance.measure === 'function') {
           performance.measure('scriptotar.bootstrap', 'scriptotar.bootstrap-start', 'scriptotar.bootstrap-ready');
         }
       }
