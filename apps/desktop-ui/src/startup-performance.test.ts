@@ -80,6 +80,38 @@ describe('progressive desktop startup', () => {
     expect(screen.queryByText('STALE JOB FROM OTHER PROJECT')).not.toBeInTheDocument();
   });
 
+  it('lets the new project refresh while the previous project poll is still pending', async () => {
+    const stalled = deferred<Job[]>();
+    let notify: ((id: string) => void) | undefined;
+    const latestJob: Job = { ...mockBootstrap.jobs[0], id: 'new-project-job', title: 'NEW PROJECT JOB' };
+    const listJobs = vi.fn()
+      .mockImplementationOnce(() => stalled.promise)
+      .mockResolvedValueOnce([latestJob]);
+    const api = createMockClient({
+      listJobs,
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    notify?.('j-1');
+    await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
+    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+
+    notify?.('new-project-job');
+    await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('NEW PROJECT JOB')).toBeInTheDocument();
+
+    stalled.resolve([{ ...mockBootstrap.jobs[0], id: 'old-project-job', title: 'OLD PROJECT JOB' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByText('OLD PROJECT JOB')).not.toBeInTheDocument();
+    expect(screen.getByText('NEW PROJECT JOB')).toBeInTheDocument();
+  });
+
   it('does not show a different project when bootstrap returns an invalid active ID', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), activeProjectId: 'missing-project' })
