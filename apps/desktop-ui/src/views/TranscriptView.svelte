@@ -26,22 +26,33 @@
   let selectedLoading = false;
   let selectedLoadError = '';
   let selectedGeneration = 0;
+  const SEGMENT_BATCH = 140;
+  let visibleCount = SEGMENT_BATCH;
 
-  $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectedId = transcripts[0].id;
+  $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectTranscript(transcripts[0].id);
+  $: if (transcripts.length === 0 && selectedId) selectTranscript('');
   $: if (selectedId && selectedId !== selectedLoadId) void loadSelected(selectedId);
-  $: matchingSegments = selected ? selected.segments.filter((segment) => segment.text.toLowerCase().includes(query.trim().toLowerCase())) : [];
-  $: if (query !== previousQuery) { previousQuery = query; searchCursor = 0; }
+  $: matchingSegments = selected && query.trim() ? selected.segments.filter((segment) => segment.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) : [];
+  $: readingSegments = query.trim() ? matchingSegments : (selected?.segments ?? []);
+  $: visibleSegments = readingSegments.slice(0, visibleCount);
+  $: if (query !== previousQuery) { previousQuery = query; searchCursor = 0; visibleCount = SEGMENT_BATCH; }
   $: if (searchCursor >= matchingSegments.length) searchCursor = Math.max(0, matchingSegments.length - 1);
 
   async function loadSelected(id: string) {
     selectedLoadId = id;
+    visibleCount = SEGMENT_BATCH;
     // Never display content from a previously selected transcript while a new one loads.
     selected = undefined;
     selectedLoading = true;
     selectedLoadError = '';
     const generation = ++selectedGeneration;
     try {
+      const expected = transcripts.find((item) => item.id === id);
+      if (!expected) throw new Error($translator('transcript.unavailable'));
       const transcript = await api.getTranscript(id);
+      if (transcript.id !== id || transcript.projectId !== expected.projectId) {
+        throw new Error('Loaded transcript did not match the selected project and transcript ID.');
+      }
       if (generation === selectedGeneration && selectedId === id) selected = transcript;
     } catch (cause) {
       if (generation === selectedGeneration && selectedId === id) {
@@ -152,13 +163,25 @@
   async function jumpToSegment(segmentId: string) {
     query = '';
     searchCursor = 0;
+    const index = selected?.segments.findIndex((segment) => segment.id === segmentId) ?? -1;
+    if (index >= 0) visibleCount = Math.max(visibleCount, index + 1);
     await scrollToSegment(segmentId);
   }
 
   async function jumpSearch(delta: number) {
     if (matchingSegments.length === 0) return;
     searchCursor = (searchCursor + delta + matchingSegments.length) % matchingSegments.length;
+    visibleCount = Math.max(visibleCount, searchCursor + 1);
     await scrollToSegment(matchingSegments[searchCursor].id);
+  }
+
+  function showNextSegments() {
+    visibleCount = Math.min(readingSegments.length, visibleCount + SEGMENT_BATCH);
+  }
+
+  function onReaderScroll(event: Event) {
+    const target = event.currentTarget as HTMLElement;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 500) showNextSegments();
   }
 
   function selectTranscript(id: string) {
@@ -168,6 +191,7 @@
     status = '';
     actionError = '';
     searchCursor = 0;
+    visibleCount = SEGMENT_BATCH;
   }
 
   function searchShortcut(event: KeyboardEvent) {
