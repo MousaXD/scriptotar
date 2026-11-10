@@ -99,6 +99,16 @@ describe('Research workspace', () => {
     expect(details.closest('details')).toHaveAttribute('open');
   });
 
+  it('replaces broken thumbnails with a visible local fallback', async () => {
+    const source = researchItems(1);
+    source[0].thumbnail = 'https://example.org/broken-image.png';
+    mountResearch(source);
+    const image = screen.getByRole('img', { hidden: true });
+    await fireEvent.error(image);
+    expect(screen.queryByRole('img', { hidden: true })).not.toBeInTheDocument();
+    expect(screen.getByTestId('research-r-0')).toHaveTextContent('YouTube');
+  });
+
   it('handles scan failures without silently swallowing backend errors', async () => {
     const onScan = vi.fn().mockRejectedValue(new Error('Provider unavailable'));
     mountResearch([], { onScan });
