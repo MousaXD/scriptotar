@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { floatingPosition } from './floatingPosition';
   export let label: string;
   export let triggerLabel = 'More options';
   export let disabled = false;
@@ -7,6 +8,7 @@
   let trigger: HTMLButtonElement;
   let panel: HTMLDivElement;
   let open = false;
+  $: if (disabled && open) close();
   function close(restore = false) {
     open = false;
     if (restore) void tick().then(() => trigger?.focus());
@@ -34,7 +36,8 @@
   <button type="button" bind:this={trigger} {disabled} aria-haspopup="dialog"
     aria-expanded={open} on:click={toggle}><slot name="trigger">{triggerLabel}</slot></button>
   {#if open}
-    <div class="panel" role="dialog" aria-label={label} tabindex="-1" bind:this={panel}>
+    <div class="panel" role="dialog" aria-label={label} tabindex="-1" bind:this={panel}
+      use:floatingPosition={{ anchor: trigger, align: 'end', maxHeight: 420 }}>
       <slot />
     </div>
   {/if}
@@ -46,6 +49,6 @@
   button:hover:not(:disabled) { background: var(--surface-3); }
   button:disabled { opacity: .55; cursor: not-allowed; }
   button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-  .panel { position: absolute; z-index: 45; inset-block-start: calc(100% + 4px); inset-inline-end: 0; width: max-content; max-width: min(440px, 90vw); min-width: 200px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); }
+  .panel { position: fixed; z-index: 45; width: max-content; max-width: min(440px, 90vw); min-width: 200px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); }
   .panel:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 </style>

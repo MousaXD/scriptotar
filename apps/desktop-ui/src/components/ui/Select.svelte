@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { floatingPosition } from './floatingPosition';
 
   export type SelectOption = { value: string; label: string; disabled?: boolean };
   export let label: string;
@@ -24,6 +25,7 @@
   $: controlId = id || uid;
   $: selected = options.find((option) => option.value === value);
   $: selectedIndex = options.findIndex((option) => option.value === value);
+  $: if (disabled && open) close();
 
   function enabled(start: number, direction: number): number {
     if (!options.length) return -1;
@@ -39,6 +41,7 @@
     active = selectedIndex >= 0 && !options[selectedIndex].disabled ? selectedIndex : enabled(0, 1);
     open = true;
     await tick();
+    if (!open) return;
     listbox?.focus();
     scrollActive();
   }
@@ -124,7 +127,7 @@
     <div id={controlId + '-options'} class="options" role="listbox" tabindex="0"
       aria-label={label} aria-required={required}
       aria-activedescendant={active >= 0 ? controlId + '-option-' + active : undefined}
-      bind:this={listbox} on:keydown={listKeys}>
+      bind:this={listbox} use:floatingPosition={{ anchor: trigger, matchWidth: true }} on:keydown={listKeys}>
       {#each options as option, i (option.value)}
         <button id={controlId + '-option-' + i} type="button" role="option" tabindex="-1"
           class:highlighted={i === active} class:selected={option.value === value}
@@ -145,7 +148,7 @@
   .trigger.invalid { border-color: var(--danger); }
   .trigger svg { flex: 0 0 auto; color: var(--muted); }
   .placeholder { color: var(--muted); }
-  .options { position: absolute; z-index: 40; inset-block-start: 100%; inset-inline: 0; min-width: 100%; max-height: min(320px, 45vh); overflow-y: auto; display: grid; padding: 4px; margin-block-start: 3px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); outline: none; }
+  .options { position: fixed; z-index: 40; min-width: 0; max-height: min(320px, 45vh); overflow-y: auto; display: grid; padding: 4px; margin: 0; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); outline: none; }
   .options:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
   .options button { display: block; min-height: 40px; width: 100%; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: start; padding: 8px 10px; font-size: var(--text-sm); cursor: pointer; }
   .options button.highlighted, .options button:hover:not(:disabled) { background: var(--surface-3); }
