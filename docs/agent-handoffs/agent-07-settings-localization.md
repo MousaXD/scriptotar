@@ -6,7 +6,7 @@
 - Agent branch: `agent-07/settings-localization-overhaul`
 - Initial baseline and merge-base: `f741244634b5143602a21a554094a498a0005b11`
 - Pull request: [#96](https://github.com/MousaXD/scriptotar/pull/96) (draft pending validation)
-- Last implementation/test commit before this handoff: `a87dac1818e59d2ec40164ddef8827ca2b7c079a`
+- Last implementation/test commit before handoff update: `f934841403bf8989fd05df35f4ef5bee624cdba1`
 - No edits to `main` or any other agent-owned view, global CSS, Rust MCP code, API client, or shared control implementation.
 
 ## Completed
@@ -19,7 +19,7 @@
 2. MCP security UX:
    - Kept all permission fields, approved paths/programs, default-deny, explicit powerful-access acknowledgement, connection methods, error display, URL secrecy warning, disconnect/revocation, and connection state.
    - Kept a saved policy separate from the editable draft; normalize approved line entries before comparing. Unsaved permissions visibly block connection/step advancement, with an explicit Discard permission changes action.
-   - Acknowledgement resets when scope/permissions change. Backend still owns authorization and sensitive confirmation; no bypass or relaxation.
+   - Acknowledgement resets when scope/permissions change. Existing file-read/powerful grants automatically reveal the advanced permission and warning panel on reopen. Backend still owns authorization and sensitive confirmation; no bypass or relaxation.
    - Added failure visibility for background connection status refresh and retry for initial load failures. Existing public URL/tunnel identifiers and path input retain LTR direction.
 3. Localization and RTL:
    - Added 85 typed `mcp.*` English/Arabic message pairs plus Settings Save/Discard translations. MCP wizard now uses the Svelte translator directly and opts out of fragile DOM text rewriting.
