@@ -15,6 +15,8 @@ describe('visual and semantic regression contract', () => {
     expect(palette).toContain('--font-arabic:');
     expect(palette).toContain('--color-surface:');
     expect(theme).toContain('prefers-color-scheme: light');
+    expect(app).toContain('inset-inline-start: -13px');
+    expect(app).toContain('inset-inline-end: 42px');
   });
 
   it('never leaves a visually native closed select in migrated or legacy controls', () => {

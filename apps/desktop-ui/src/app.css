@@ -1,7 +1,7 @@
 :root {
   font-family: var(--font-ui);
-  color: #edf3f7;
-  background: #080c10;
+  color: var(--text);
+  background: var(--bg);
   font-synthesis: none;
   --bg: #0d1116;
   --sidebar: #11171d;
@@ -19,7 +19,7 @@
   --warn: #f0c879;
   --danger: #ff8d8d;
   --info: #8fc7ff;
-  --radius: 14px;
+  --radius: var(--radius-lg);
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--bg); color: var(--text); }
@@ -54,8 +54,8 @@ kbd { color: var(--faint); background: #0a1015; border: 1px solid var(--border);
 .sidebar nav button { position: relative; display: grid; grid-template-columns: 1fr auto; align-items: center; min-height: 42px; padding: 0 10px; border: 1px solid transparent; border-radius: 9px; color: var(--muted); background: transparent; text-align: left; }
 .sidebar nav button:hover { color: var(--text); background: #101820; }
 .sidebar nav button.active { color: var(--text); background: #14221d; border-color: #244335; }
-.sidebar nav button.active::before { content: ""; position: absolute; left: -13px; width: 3px; height: 22px; border-radius: 9px; background: var(--accent-strong); }
-.activity-count { position: absolute; right: 42px; min-width: 20px; padding: 2px 6px; border-radius: 999px; color: var(--accent-ink); background: var(--accent); text-align: center; font-size: 12px; }
+.sidebar nav button.active::before { content: ""; position: absolute; inset-inline-start: -13px; width: 3px; height: 22px; border-radius: 9px; background: var(--accent-strong); }
+.activity-count { position: absolute; inset-inline-end: 42px; min-width: 20px; padding: 2px 6px; border-radius: 999px; color: var(--accent-ink); background: var(--accent); text-align: center; font-size: 12px; }
 .sidebar-foot { margin-top: auto; display: flex; gap: 9px; align-items: center; padding: 12px 8px 4px; color: var(--muted); }
 .sidebar-foot strong, .sidebar-foot small { display: block; }
 .sidebar-foot strong { color: var(--text); font-size: 12px; }
