@@ -186,6 +186,8 @@ async function runWorkspace(browser, width, locale, theme) {
     await page.goto(origin, { waitUntil: 'domcontentloaded' });
     await page.locator('#workspace-main').waitFor({ timeout: 15000 });
     const shellMs = performance.now() - navigationStart;
+    await page.locator('#workspace-main h1').first().waitFor({ timeout: 15000 });
+    const usefulWorkspaceMs = performance.now() - navigationStart;
     const actualDir = await page.locator('html').getAttribute('dir');
     const expectedDir = locale === 'ar' ? 'rtl' : 'ltr';
     if (actualDir !== expectedDir) recordFailure(label, 'Expected ' + expectedDir + ', got ' + actualDir);
@@ -197,8 +199,9 @@ async function runWorkspace(browser, width, locale, theme) {
       await page.locator('#workspace-main h1').first().waitFor({ timeout: 5000 });
       await checkOverflow(page, label + '/' + view.name);
       await checkNativeControls(page, label + '/' + view.name);
-      await checkSwitchesAndPopovers(page, label + '/' + view.name);
+      // Capture the unmodified workspace before test interactions alter focus or scroll.
       await screenshot(page, label + '-' + view.name);
+      await checkSwitchesAndPopovers(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
       if (view.name === 'library') {
         const search = page.locator('.library-toolbar input').first();
@@ -214,9 +217,17 @@ async function runWorkspace(browser, width, locale, theme) {
       }
     }
     await checkKeyboard(page, label);
+    // Same-context reload is a warm *browser* check, not a cold/warm installed Tauri run.
+    const warmStart = performance.now();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('#workspace-main').waitFor({ timeout: 15000 });
+    const warmShellMs = performance.now() - warmStart;
+    await page.locator('#workspace-main h1').first().waitFor({ timeout: 15000 });
+    const warmUsefulWorkspaceMs = performance.now() - warmStart;
     if (pageErrors.length) recordFailure(label + '/pageerrors', pageErrors.join('; '));
     results.push({ label, width, locale, theme, mode: 'browser-mock-client',
-      shellMs, navigation: samples, jsHeapBytes: await page.evaluate(() =>
+      shellMs, usefulWorkspaceMs, warmShellMs, warmUsefulWorkspaceMs,
+      navigation: samples, jsHeapBytes: await page.evaluate(() =>
         performance.memory?.usedJSHeapSize ?? null) });
   } catch (error) {
     recordFailure(label, error);
@@ -285,9 +296,9 @@ try {
 }
 const report = {
   generatedAt: new Date().toISOString(),
-  sha: process.env.GITHUB_SHA || 'local-unpinned',
+  sha: process.env.QA_TESTED_SHA || process.env.GITHUB_SHA || 'local-unpinned',
   baselineSha: 'f741244634b5143602a21a554094a498a0005b11',
-  scope: 'Chromium browser / production Vite bundle / built-in mock client; NOT installed Tauri',
+  scope: 'Chromium browser / production Vite bundle / built-in mock client; driver wall-clock metrics, NOT native Tauri',
   screenshotCount, failures, results
 };
 await writeFile(resolve(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
