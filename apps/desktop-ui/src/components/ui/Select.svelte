@@ -147,7 +147,7 @@
   .placeholder { color: var(--muted); }
   .options { position: absolute; z-index: 40; inset-block-start: 100%; inset-inline: 0; min-width: 100%; max-height: min(320px, 45vh); overflow-y: auto; display: grid; padding: 4px; margin-block-start: 3px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); outline: none; }
   .options:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-  .options button { display: block; min-height: 38px; width: 100%; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: start; padding: 8px 10px; font-size: var(--text-sm); cursor: pointer; }
+  .options button { display: block; min-height: 40px; width: 100%; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: start; padding: 8px 10px; font-size: var(--text-sm); cursor: pointer; }
   .options button.highlighted, .options button:hover:not(:disabled) { background: var(--surface-3); }
   .options button.selected { color: var(--accent-strong); font-weight: 700; }
   .options button:disabled { opacity: .5; cursor: not-allowed; }

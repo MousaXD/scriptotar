@@ -33,10 +33,10 @@
   .heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   label { font-size: var(--text-sm); color: var(--text); font-weight: 600; }
   output { font: 600 var(--text-sm) var(--font-technical); color: var(--muted); }
-  .track-wrapper { position: relative; height: 24px; display: flex; align-items: center; }
+  .track-wrapper { position: relative; height: 40px; display: flex; align-items: center; }
   .track { position: absolute; inset-inline: 0; height: 5px; border-radius: var(--radius-pill); background: var(--surface-3); overflow: hidden; }
   .fill { height: 100%; background: var(--accent-strong); }
-  input { position: absolute; inset: 0; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; appearance: none; -webkit-appearance: none; }
+  input { position: absolute; inset: 0; width: 100%; height: 40px; margin: 0; background: transparent; cursor: pointer; appearance: none; -webkit-appearance: none; }
   input::-webkit-slider-runnable-track { background: transparent; height: 5px; }
   input::-moz-range-track { background: transparent; height: 5px; }
   input::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; height: 17px; width: 17px; margin-top: -6px; border: 3px solid var(--surface); border-radius: 50%; background: var(--accent-strong); box-shadow: 0 0 0 1px var(--border-strong); }
