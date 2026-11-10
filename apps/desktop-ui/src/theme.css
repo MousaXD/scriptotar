@@ -41,6 +41,20 @@
   :root[data-theme='system'] .metric-grid article,
   :root[data-theme='system'] .thumbnail-placeholder,
   :root[data-theme='system'] .kind-icon { border-color: var(--border); background: var(--surface-2); }
+  /* Legacy workspace markup still has a few dark-only colors; protect readable system-light contrast. */
+  :root[data-theme='system'] .research-row,
+  :root[data-theme='system'] .segment p,
+  :root[data-theme='system'] .result-copy { color: var(--text); }
+  :root[data-theme='system'] .transcript-list button.active,
+  :root[data-theme='system'] .mode-switch button,
+  :root[data-theme='system'] .mode-switch button.active,
+  :root[data-theme='system'] .toggle-grid label,
+  :root[data-theme='system'] .state-panel,
+  :root[data-theme='system'] .export-stack button,
+  :root[data-theme='system'] .timestamp { color: var(--text); background: var(--surface-2); border-color: var(--border); }
+  :root[data-theme='system'] .mode-switch button.active,
+  :root[data-theme='system'] .transcript-list button.active { background: var(--surface-3); }
+  :root[data-theme='system'] .timestamp { color: var(--info); }
   :root[data-theme='system'] .progress-track { background: var(--surface-3); }
   :root[data-theme='system'] .research-row.table-head { background: var(--surface-2); }
   :root[data-theme='system'] .state-completed { color: #176a47; border-color: #a8cdbb; background: #e7f4ed; }
