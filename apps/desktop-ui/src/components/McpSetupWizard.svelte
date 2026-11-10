@@ -179,24 +179,24 @@
     <div class="wizard-pane" data-testid="mcp-step-permissions">
       <h3>{$translator('mcp.permissionsHeading')}</h3>
       <p>{$translator('mcp.permissionsHelp')}</p>
-      <label class="switch"><input type="checkbox" bind:checked={permissions.enabled}/><strong>{$translator('mcp.enable')}</strong></label>
+      <label class="switch"><input type="checkbox" bind:checked={permissions.enabled} on:change={() => acknowledge = false}/><strong>{$translator('mcp.enable')}</strong></label>
       <div class="permission-grid">
-        <label><input type="checkbox" bind:checked={permissions.readData}/> {$translator('mcp.readData')}</label>
-        <label><input type="checkbox" bind:checked={permissions.searchCreators}/> {$translator('mcp.searchCreators')}</label>
-        <label><input type="checkbox" bind:checked={permissions.downloadVideos}/> {$translator('mcp.downloadVideos')}</label>
-        <label><input type="checkbox" bind:checked={permissions.writeData}/> {$translator('mcp.writeData')}</label>
+        <label><input type="checkbox" bind:checked={permissions.readData} on:change={() => acknowledge = false}/> {$translator('mcp.readData')}</label>
+        <label><input type="checkbox" bind:checked={permissions.searchCreators} on:change={() => acknowledge = false}/> {$translator('mcp.searchCreators')}</label>
+        <label><input type="checkbox" bind:checked={permissions.downloadVideos} on:change={() => acknowledge = false}/> {$translator('mcp.downloadVideos')}</label>
+        <label><input type="checkbox" bind:checked={permissions.writeData} on:change={() => acknowledge = false}/> {$translator('mcp.writeData')}</label>
       </div>
       <button class="button secondary" on:click={() => advanced = !advanced}>{advanced ? $translator('mcp.hide') : $translator('mcp.show')} {$translator('mcp.advanced')}</button>
       {#if advanced}
         <div class="advanced-permissions">
           <div class="permission-grid">
-            <label><input type="checkbox" bind:checked={permissions.readFiles}/> {$translator('mcp.readFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.writeFiles}/> {$translator('mcp.writeFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.overwriteFiles}/> {$translator('mcp.overwriteFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.executeCommands}/> {$translator('mcp.executeCommands')}</label>
+            <label><input type="checkbox" bind:checked={permissions.readFiles} on:change={() => acknowledge = false}/> {$translator('mcp.readFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.writeFiles} on:change={() => acknowledge = false}/> {$translator('mcp.writeFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.overwriteFiles} on:change={() => acknowledge = false}/> {$translator('mcp.overwriteFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.executeCommands} on:change={() => acknowledge = false}/> {$translator('mcp.executeCommands')}</label>
           </div>
-          <label class="field"><span>{$translator('mcp.allowedPaths')}</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
-          <label class="field"><span>{$translator('mcp.allowedPrograms')}</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
+          <label class="field"><span>{$translator('mcp.allowedPaths')}</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} on:input={() => acknowledge = false} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
+          <label class="field"><span>{$translator('mcp.allowedPrograms')}</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} on:input={() => acknowledge = false} placeholder="/usr/bin/git"></textarea></label>
           <p class="warning"><strong>{$translator('mcp.powerfulTitle')}</strong> {$translator('mcp.powerfulWarning')}</p>
         </div>
       {/if}
