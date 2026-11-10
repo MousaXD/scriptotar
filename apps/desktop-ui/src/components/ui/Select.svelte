@@ -126,7 +126,7 @@
       aria-activedescendant={active >= 0 ? controlId + '-option-' + active : undefined}
       bind:this={listbox} on:keydown={listKeys}>
       {#each options as option, i (option.value)}
-        <button id={controlId + '-option-' + i} type="button" role="option"
+        <button id={controlId + '-option-' + i} type="button" role="option" tabindex="-1"
           class:highlighted={i === active} class:selected={option.value === value}
           aria-selected={option.value === value} disabled={option.disabled}
           on:mouseenter={() => { if (!option.disabled) active = i; }}
