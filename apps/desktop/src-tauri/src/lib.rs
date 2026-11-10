@@ -18,7 +18,7 @@ use std::{
 
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiTranscript, UiWatchlistStatus,
+    UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -494,10 +494,35 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
     })
 }
 
+/// Retains the original full-data payload for existing callers. New callers
+/// can opt into summary mode and fetch details via get_transcript on demand.
+#[derive(Debug, serde::Serialize)]
+#[serde(untagged)]
+enum BootstrapResponse {
+    Full(BootstrapData),
+    Summary(BootstrapData<UiTranscriptSummary>),
+}
+
 #[tauri::command]
-async fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
+async fn bootstrap_app(
+    summary: Option<bool>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<BootstrapResponse, String> {
     let services = state.inner().clone();
-    on_blocking_worker(move || services.bootstrap().map_err(command_error)).await
+    on_blocking_worker(move || {
+        if summary.unwrap_or(false) {
+            services
+                .bootstrap_summary()
+                .map(BootstrapResponse::Summary)
+                .map_err(command_error)
+        } else {
+            services
+                .bootstrap()
+                .map(BootstrapResponse::Full)
+                .map_err(command_error)
+        }
+    })
+    .await
 }
 
 #[tauri::command]
