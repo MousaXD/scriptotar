@@ -89,6 +89,47 @@ async function checkNativeControls(page, label) {
     }), allowlist.nativeSelectors);
   for (const issue of issues) recordFailure(label + '/native-control', JSON.stringify(issue));
 }
+async function checkSwitchesAndPopovers(page, label) {
+  const switches = page.locator('input[role="switch"], label.switch input[type="checkbox"]');
+  const issues = await switches.evaluateAll((elements) => elements.flatMap((element) => {
+    if (!(element instanceof HTMLElement) || !element.getClientRects().length) return [];
+    const appearance = getComputedStyle(element).appearance;
+    const hit = element.closest('label')?.getBoundingClientRect() ?? element.getBoundingClientRect();
+    const problems = [];
+    if (appearance !== 'none') problems.push('native switch appearance=' + appearance);
+    if (hit.height < 32) problems.push('switch hit target height=' + hit.height);
+    return problems.map((problem) => ({
+      control: element.getAttribute('aria-label') || element.outerHTML.slice(0, 120), problem
+    }));
+  }));
+  for (const issue of issues) recordFailure(label + '/switch', JSON.stringify(issue));
+  const first = switches.first();
+  if (await first.count() && await first.isVisible() && await first.isEnabled()) {
+    const before = await first.isChecked();
+    await first.focus();
+    await page.keyboard.press('Space');
+    if (await first.isChecked() === before) {
+      recordFailure(label + '/switch-keyboard', 'Space did not toggle focused switch');
+    }
+    await page.keyboard.press('Space');
+  }
+  const popovers = page.locator('[aria-haspopup="dialog"]');
+  for (let index = 0; index < await popovers.count(); index += 1) {
+    const trigger = popovers.nth(index);
+    if (!await trigger.isVisible() || !await trigger.isEnabled()) continue;
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    if (await trigger.getAttribute('aria-expanded') !== 'true') {
+      recordFailure(label + '/popover', 'Keyboard Enter did not open the popover');
+      continue;
+    }
+    await page.keyboard.press('Escape');
+    if (await trigger.getAttribute('aria-expanded') !== 'false') {
+      recordFailure(label + '/popover', 'Escape did not close the popover');
+    }
+    break;
+  }
+}
 async function checkKeyboard(page, label) {
   await page.locator('#workspace-main').focus();
   await page.keyboard.press('Control+k');
@@ -156,6 +197,7 @@ async function runWorkspace(browser, width, locale, theme) {
       await page.locator('#workspace-main h1').first().waitFor({ timeout: 5000 });
       await checkOverflow(page, label + '/' + view.name);
       await checkNativeControls(page, label + '/' + view.name);
+      await checkSwitchesAndPopovers(page, label + '/' + view.name);
       await screenshot(page, label + '-' + view.name);
       samples.push({ view: view.name, navigationMs });
       if (view.name === 'library') {
