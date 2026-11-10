@@ -187,6 +187,12 @@
   function selectTranscript(id: string) {
     if (selectedId !== id) selected = undefined;
     selectedId = id;
+    if (!id) {
+      selectedLoadId = '';
+      selectedGeneration += 1;
+      selectedLoading = false;
+      selectedLoadError = '';
+    }
     query = '';
     status = '';
     actionError = '';
