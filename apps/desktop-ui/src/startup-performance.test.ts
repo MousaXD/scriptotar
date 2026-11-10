@@ -136,8 +136,9 @@ describe('progressive desktop startup', () => {
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
-    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Project')).toHaveValue('p-creator-lab');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Project')).toBeDisabled();
   });
 
   it('renders an RTL shell and localized skeleton while Arabic bootstrap is pending', async () => {
