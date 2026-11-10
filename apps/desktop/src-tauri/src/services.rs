@@ -146,6 +146,12 @@ impl AppServices {
         })
     }
 
+    /// Reuse the already migrated and recovered database handle for Tauri's
+    /// operational commands. This avoids a second SQLite open/migration pass.
+    pub fn operational_store(&self) -> SqliteStore {
+        self.store.clone()
+    }
+
     pub fn schema_version(&self) -> RepositoryResult<u32> {
         self.store.schema_version()
     }
