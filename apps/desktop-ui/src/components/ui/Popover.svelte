@@ -8,6 +8,7 @@
   let trigger: HTMLButtonElement;
   let panel: HTMLDivElement;
   let open = false;
+  const uid = 'scriptotar-popover-' + Math.random().toString(36).slice(2);
   $: if (disabled && open) close();
   function close(restore = false) {
     open = false;
@@ -33,10 +34,10 @@
 
 <svelte:window on:pointerdown={outside} on:keydown={key} />
 <div class="popover" bind:this={root} on:focusout={blur}>
-  <button type="button" bind:this={trigger} {disabled} aria-haspopup="dialog"
-    aria-expanded={open} on:click={toggle}><slot name="trigger">{triggerLabel}</slot></button>
+  <button type="button" bind:this={trigger} {disabled} aria-haspopup="dialog" aria-label={triggerLabel}
+    aria-expanded={open} aria-controls={open ? uid : undefined} on:click={toggle}><slot name="trigger">{triggerLabel}</slot></button>
   {#if open}
-    <div class="panel" role="dialog" aria-label={label} tabindex="-1" bind:this={panel}
+    <div id={uid} class="panel" role="dialog" aria-label={label} tabindex="-1" bind:this={panel}
       use:floatingPosition={{ anchor: trigger, align: 'end', maxHeight: 420 }}>
       <slot />
     </div>

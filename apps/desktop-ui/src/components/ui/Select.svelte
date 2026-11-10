@@ -112,13 +112,14 @@
 
 <svelte:window on:pointerdown={outside} />
 <div class="field" bind:this={root} on:focusout={blur}>
-  <label for={controlId}>{label}{#if required}<span class="required" aria-hidden="true"> *</span>{/if}</label>
+  <label id={controlId + '-label'} for={controlId}>{label}{#if required}<span class="required" aria-hidden="true"> *</span>{/if}</label>
   <button type="button" id={controlId} class:invalid class="trigger"
     bind:this={trigger} {disabled} aria-haspopup="listbox" aria-expanded={open}
     aria-controls={open ? controlId + '-options' : undefined}
     aria-invalid={invalid || undefined} aria-describedby={description ? controlId + '-help' : undefined}
+    aria-labelledby={controlId + '-label ' + controlId + '-value'}
     on:click={() => open ? close(true) : void show()} on:keydown={triggerKey}>
-    <span class:placeholder={!selected}>{selected?.label || placeholder}</span>
+    <span id={controlId + '-value'} class:placeholder={!selected}>{selected?.label || placeholder}</span>
     <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </button>
   {#if name}<input type="hidden" {name} {value} {disabled} />{/if}

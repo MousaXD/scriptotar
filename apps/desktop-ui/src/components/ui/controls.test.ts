@@ -19,7 +19,8 @@ describe('shared workstation controls', () => {
       options: [{ value: 'one', label: 'One' }, { value: 'locked', label: 'Locked', disabled: true }, { value: 'two', label: 'Two' }],
       onChange
     } });
-    const trigger = screen.getAllByRole('button')[0];
+    const trigger = screen.getByRole('button', { name: 'Project One' });
+    expect(trigger).toHaveAccessibleName('Project One');
     await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     const menu = await screen.findByRole('listbox', { name: 'Project' });
     expect(document.activeElement).toBe(menu);
@@ -88,6 +89,11 @@ describe('shared workstation controls', () => {
     const fast = screen.getByRole('radio', { name: 'Fast' }) as HTMLInputElement;
     expect(fast.name).toBeTruthy();
     expect(accurate).toHaveAttribute('name', fast.name);
+    render(RadioGroup, { props: {
+      label: 'Mode', value: 'manual',
+      options: [{ value: 'manual', label: 'Manual' }, { value: 'auto', label: 'Automatic' }]
+    } });
+    expect(screen.getByRole('radio', { name: 'Manual' })).not.toHaveAttribute('name', fast.name);
   });
 
   it('offers a labeled input with validation and description, including RTL', async () => {
@@ -107,6 +113,7 @@ describe('shared workstation controls', () => {
     await fireEvent.click(trigger);
     const panel = screen.getByRole('dialog', { name: 'Export format' });
     expect(panel).toBeInTheDocument();
+    expect(trigger.getAttribute('aria-controls')).toBe(panel.id);
     expect(document.activeElement).toBe(panel);
     await fireEvent.keyDown(panel, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
