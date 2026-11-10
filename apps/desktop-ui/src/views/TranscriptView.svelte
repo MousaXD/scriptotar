@@ -31,6 +31,11 @@
 
   $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectTranscript(transcripts[0].id);
   $: if (transcripts.length === 0 && selectedId) selectTranscript('');
+  // A project switch may replace a summary without changing its ID; never keep old project content.
+  $: if (selected && !transcripts.some((item) => item.id === selected.id && item.projectId === selected.projectId)) {
+    selected = undefined;
+    selectedLoadId = '';
+  }
   $: if (selectedId && selectedId !== selectedLoadId) void loadSelected(selectedId);
   $: matchingSegments = selected && query.trim() ? selected.segments.filter((segment) => segment.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) : [];
   $: readingSegments = query.trim() ? matchingSegments : (selected?.segments ?? []);
