@@ -220,6 +220,7 @@
     if (switchingProject || creatingProject || !data) return false;
     if (id === data.activeProjectId) return true;
     const generation = ++workspaceGeneration;
+    let inconsistentResponse = false;
     switchingProject = true;
     switchError = '';
     invalidateTranscriptSearch();
@@ -228,6 +229,7 @@
       const next = await api.selectProject(id);
       if (generation !== workspaceGeneration) return false;
       if (next.activeProjectId !== id || !next.projects.some((project) => project.id === id)) {
+        inconsistentResponse = true;
         throw new Error('The selected project did not match the backend response.');
       }
       data = prepareData(next);
@@ -236,6 +238,12 @@
     } catch (cause) {
       if (generation === workspaceGeneration) {
         switchError = cause instanceof Error ? cause.message : 'Unable to switch projects.';
+        if (inconsistentResponse) {
+          // An inconsistent backend snapshot leaves the active project unknowable.
+          // Fail closed rather than letting stale data remain actionable.
+          data = null;
+          error = switchError;
+        }
       }
       return false;
     } finally {
