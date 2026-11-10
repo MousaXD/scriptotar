@@ -206,11 +206,12 @@
 </script>
 <svelte:window onkeydown={searchShortcut} />
 
-<section class="view-head" data-i18n-ignore><div><span class="eyebrow">{$translator('transcript.eyebrow')}</span><h1>{$translator('transcript.heading')}</h1><p>{$translator('transcript.description')}</p></div></section>
+<section class="view-head" data-i18n-ignore><div><h1>{$translator('transcript.heading')}</h1></div></section>
 {#if transcripts.length === 0}
   <EmptyState title={$translator('transcript.emptyTitle')} message={$translator('transcript.emptyMessage')} />
 {:else if !selected}
   <section class="panel transcript-loading" aria-busy={selectedLoading} data-i18n-ignore>
+    {#if selectedLoading}<div class="transcript-skeleton" aria-hidden="true" data-testid="transcript-loading-skeleton"><span></span><span></span><span></span></div>{/if}
     <strong role="status">{$translator(selectedLoading ? 'transcript.loading' : 'transcript.unavailable')}</strong>
     {#if selectedLoadError}
       <p role="alert">{selectedLoadError}</p>
@@ -227,7 +228,7 @@
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">
     {#if listOpen}
       <aside class="panel transcript-list" data-i18n-ignore aria-label={$translator('transcript.list')}>
-        <div class="rail-head"><span class="eyebrow">{$translator('transcript.listEyebrow')}</span><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
+        <div class="rail-head"><strong>{$translator('transcript.list')}</strong><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
         <div class="transcript-list-scroll">
           {#each transcripts as transcript}
             <button class:active={transcript.id === selected.id} aria-current={transcript.id === selected.id ? 'true' : undefined} on:click={() => selectTranscript(transcript.id)}>
@@ -240,7 +241,7 @@
 
     <section class="panel transcript-reader">
       <div class="reader-head" data-i18n-ignore>
-        <div class="reader-title"><span class="eyebrow">{selected.platform}</span><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.source}</p></div>
+        <div class="reader-title"><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.platform}</p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
           <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
@@ -269,23 +270,26 @@
         {/if}
       </div>
 
-      <div class="transcript-content" dir={selected.direction} data-testid="transcript-content" data-i18n-ignore class:rtl={selected.direction === 'rtl'}>
+      <div class="transcript-content" dir={selected.direction} data-testid="transcript-content" data-i18n-ignore class:rtl={selected.direction === 'rtl'} on:scroll={onReaderScroll}>
         {#if query && matchingSegments.length === 0}
           <p class="no-match">{$translator('transcript.noMatches')}</p>
         {:else}
-          {#each (query ? matchingSegments : selected.segments) as segment}
+          {#each visibleSegments as segment (segment.id)}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
               <button class="timestamp" aria-label={$translator('transcript.jumpTo', { time: time(segment.startSeconds) })} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
               <p>{segment.text}</p>
             </article>
           {/each}
+          {#if visibleCount < readingSegments.length}
+            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label="Show more transcript segments">Show more ({visibleCount} / {readingSegments.length})</button>
+          {/if}
         {/if}
       </div>
     </section>
 
     {#if detailsOpen}
       <aside class="panel details-panel" data-i18n-ignore>
-        <div class="rail-head"><div><span class="eyebrow">{$translator('transcript.details')}</span><h3>{$translator('transcript.metadata')}</h3></div><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
+        <div class="rail-head"><h3>{$translator('transcript.details')}</h3><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
         <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div></dl>
         <button class="button secondary folder-unavailable" disabled title={$translator('transcript.folderHelp')}>{$translator('transcript.folderUnavailable')}</button>
       </aside>
