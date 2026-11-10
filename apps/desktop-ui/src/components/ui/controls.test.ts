@@ -85,6 +85,9 @@ describe('shared workstation controls', () => {
     expect(checkboxChanged).toHaveBeenCalledWith(true);
     expect(switchChanged).toHaveBeenCalledWith(false);
     expect(accurate).toBeChecked();
+    const fast = screen.getByRole('radio', { name: 'Fast' }) as HTMLInputElement;
+    expect(fast.name).toBeTruthy();
+    expect(accurate).toHaveAttribute('name', fast.name);
   });
 
   it('offers a labeled input with validation and description, including RTL', async () => {

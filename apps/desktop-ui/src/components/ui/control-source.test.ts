@@ -32,5 +32,7 @@ describe('visual and semantic regression contract', () => {
     expect(sliderSource).toContain('::-moz-range-thumb');
     expect(checkboxSource).toContain('type="checkbox"');
     expect(switchSource).toContain('role="switch"');
+    expect(app).toContain("input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])");
+    expect(sliderSource).toContain('border: 0; border-radius: 0');
   });
 });

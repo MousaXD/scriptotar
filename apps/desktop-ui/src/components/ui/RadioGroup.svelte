@@ -5,6 +5,9 @@
   export let value = '';
   export let disabled = false;
   export let name: string | undefined = undefined;
+  // Native keyboard arrow navigation requires one shared name per radio group.
+  const fallbackName = 'scriptotar-radio-' + Math.random().toString(36).slice(2);
+  $: inputName = name || fallbackName;
   export let onChange: ((value: string) => void) | undefined = undefined;
   function change(event: Event) { value = (event.currentTarget as HTMLInputElement).value; onChange?.(value); }
 </script>
@@ -14,7 +17,7 @@
   <div class="group">
     {#each options as option (option.value)}
       <label class:unavailable={option.disabled}>
-        <input type="radio" {name} value={option.value} bind:group={value}
+        <input type="radio" name={inputName} value={option.value} bind:group={value}
           disabled={disabled || option.disabled} on:change={change} />
         <span>{option.label}</span>
       </label>
