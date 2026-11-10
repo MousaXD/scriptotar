@@ -250,7 +250,7 @@
       <div class="project-control">
         <label for="project-select">{$translator('project.label')}</label>
         <select id="project-select" value={activeProjectId} on:change={changeProject} disabled={busy || projects.length === 0} aria-busy={busy}>
-          {#if projects.length === 0}<option value="">{$translator('boot.loading')}</option>{/if}
+          {#if projects.length === 0}<option value="">{busy ? $translator('boot.loading') : '—'}</option>{/if}
           {#each projects as project}<option value={project.id}>{project.name}</option>{/each}
         </select>
       </div>
