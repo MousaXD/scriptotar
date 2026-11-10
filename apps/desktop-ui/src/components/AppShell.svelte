@@ -9,10 +9,11 @@
   export let activeProjectId: string;
   export let projects: Project[];
   export let activeJobs = 0;
+  export let busy = false;
   export let globalSearch = '';
   export let searchResults: WorkspaceSearchResult[] = [];
   export let onNavigate: (view: ViewId) => void;
-  export let onProjectChange: (id: string) => Promise<void> | void;
+  export let onProjectChange: (id: string) => Promise<boolean | void> | boolean | void;
   export let onSearchSelect: (result: WorkspaceSearchResult) => Promise<void> | void;
 
   type NavItem = { id: ViewId; label: string; icon: IconName; shortcut: string };
@@ -56,8 +57,7 @@
         $translator('search.project'),
         `${project.name} ${project.description || ''} project`,
         async () => {
-          await onProjectChange(project.id);
-          closePalette();
+          if ((await onProjectChange(project.id)) !== false) closePalette();
         }
       ))
     : [];
@@ -249,7 +249,8 @@
     <header class="topbar" data-i18n-ignore>
       <div class="project-control">
         <label for="project-select">{$translator('project.label')}</label>
-        <select id="project-select" value={activeProjectId} on:change={changeProject}>
+        <select id="project-select" value={activeProjectId} on:change={changeProject} disabled={busy || projects.length === 0} aria-busy={busy}>
+          {#if projects.length === 0}<option value="">{$translator('boot.loading')}</option>{/if}
           {#each projects as project}<option value={project.id}>{project.name}</option>{/each}
         </select>
       </div>
