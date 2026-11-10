@@ -237,9 +237,13 @@ async function runBootState(browser, locale, theme, state) {
     window.__TAURI__ = {
       core: {
         invoke: (command) => {
-          if (command === 'bootstrap') {
+          if (command === 'bootstrap_app') {
             return mode === 'loading' ? new Promise(() => {}) :
               Promise.reject(new Error('QA injected bootstrap failure'));
+          }
+          if (command === 'get_watchlist_statuses') return Promise.resolve([]);
+          if (command === 'get_migration_status') {
+            return Promise.resolve({ state: 'no_legacy_db', message: 'QA fixture', candidates: [] });
           }
           return Promise.reject(new Error('QA fixture only: ' + command));
         }
