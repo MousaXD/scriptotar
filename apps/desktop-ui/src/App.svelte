@@ -39,6 +39,11 @@
   let SettingsView: typeof import('./views/SettingsView.svelte')['default'] | undefined;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
+  function startupMark(name: string): void {
+    if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
+      performance.mark(name);
+    }
+  }
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
   $: searchResults = data && globalSearch.trim() ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
@@ -114,7 +119,7 @@
     for (const run of snapshot.aiRuns) {
       if (match(run.title, run.task, run.provider, run.model)) results.push({ id: `ai:${run.id}`, kind: 'AI run', title: run.title, subtitle: `${run.task} · ${run.provider || 'Local prompt'}`, view: 'ai', projectId: snapshot.activeProjectId, targetId: run.id });
     }
-    return results.slice(0, 10);
+    return results;
   }
 
   function scheduleTranscriptSearch(rawQuery: string, projectId: string) {
@@ -148,13 +153,21 @@
   }
 
   async function load(showLoading = true) {
+    const firstBootstrap = !data && showLoading;
     const generation = ++workspaceGeneration;
+    if (firstBootstrap) startupMark('scriptotar.bootstrap-start');
     if (showLoading && !data) loading = true;
     if (!data) error = '';
     try {
       const next = await api.bootstrap();
       if (generation !== workspaceGeneration) return;
       data = prepareData(next);
+      if (firstBootstrap) {
+        startupMark('scriptotar.bootstrap-ready');
+        if (typeof performance !== 'undefined' && typeof performance.measure === 'function') {
+          performance.measure('scriptotar.bootstrap', 'scriptotar.bootstrap-start', 'scriptotar.bootstrap-ready');
+        }
+      }
       operationalError = '';
     } catch (cause) {
       if (generation !== workspaceGeneration) return;
@@ -383,6 +396,7 @@
   }
 
   onMount(() => {
+    startupMark('scriptotar.shell-mounted');
     let disposed = false;
     let unsubscribeJobs: (() => void) | undefined;
     void load();
