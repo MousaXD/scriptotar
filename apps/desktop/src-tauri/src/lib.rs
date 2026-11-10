@@ -907,12 +907,7 @@ pub fn run_installed_backend_smoke() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or_else(|| "SCRIPTOTAR_DATA_DIR is required for installed backend smoke".to_owned())?;
 
-    let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3")).map_err(command_error)?;
-    store.run_integration_migrations().map_err(command_error)?;
-    store
-        .recover_interrupted_watchlist_refreshes()
-        .map_err(command_error)?;
-
+    // AppServices performs database open, migrations and recovery once.
     let services = AppServices::new(&data_dir).map_err(command_error)?;
     services.schema_version().map_err(command_error)?;
     services.bootstrap().map_err(command_error)?;
@@ -936,15 +931,14 @@ pub fn run() {
             } else {
                 Some(migration::prepare_startup(&data_dir))
             };
-            let operational_store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
-            operational_store.run_integration_migrations()?;
-            operational_store.recover_interrupted_watchlist_refreshes()?;
-
             let app_handle = app.handle().clone();
             let job_notifier = Arc::new(move |job_id: Uuid| {
                 let _ = app_handle.emit("scriptotar://job-changed", job_id.to_string());
             });
             let services = AppServices::new_with_job_notifier(&data_dir, job_notifier)?;
+            // AppServices already safely opened, migrated and recovered this store.
+            // Share its handle rather than repeating startup database work.
+            let operational_store = services.operational_store();
             if matches!(preparation, Some(migration::Preparation::Ready)) {
                 complete_prepared_migration(&services, &data_dir);
             }
