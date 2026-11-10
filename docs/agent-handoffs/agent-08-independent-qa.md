@@ -7,7 +7,7 @@
 
 ## Independent QA infrastructure
 
-Added Chromium GUI QA workflow, immutable pinned Actions, production frontend build/check/tests, 116 real rendered screenshots across seven workspaces plus MCP, 1440/1100/760 widths, EN/AR, dark/system-light, empty library and synthetic loading/error states. Added browser-level native select/range, keyboard focus, modal focus trapping, RTL, overflow and exception checks. Added measured browser-navigation and initial-shell timings and optional JS heap metrics. Added narrow genuine-native input allowlist and manual-only exact-SHA screenshot hash baseline approval with comparison gate.
+Added Chromium GUI QA workflow, immutable pinned Actions, production frontend build/check/tests, 140 real rendered screenshots across seven workspaces plus MCP, 1440/1100/760 widths, EN/AR, dark/system-light, empty library and synthetic loading/error states. Added browser-level native select/range, keyboard focus, modal focus trapping, RTL, overflow and exception checks. Added measured browser cold/warm shell, useful-workspace and navigation timings and optional JS heap metrics. Added narrow genuine-native input allowlist and manual-only exact-SHA screenshot hash baseline approval with comparison gate.
 
 Instructions: apps/desktop-ui/qa/README.md. None of these files changes application functionality, production code or security policy.
 
@@ -22,7 +22,7 @@ Until a human has inspected the new screenshots and approved the image manifest,
 | Gate | Current state |
 | --- | --- |
 | Frontend typecheck, Vitest, production build | NOT VERIFIED on QA/integrated HEAD |
-| Rendered screenshots, themes, locales, responsive widths and states | 116 cases implemented; CI evidence NOT YET AVAILABLE |
+| Rendered screenshots, themes, locales, responsive widths and states | 140 cases implemented; CI evidence NOT YET AVAILABLE |
 | Browser native controls, keyboard, dialogs, focus, RTL and overflow | Assertions authored; actual run NOT YET AVAILABLE |
 | Approved pixel/image regression comparison | BLOCKED: no approved manifest |
 | Browser performance timings and browser heap | Instrumentation authored; values NOT YET AVAILABLE |
