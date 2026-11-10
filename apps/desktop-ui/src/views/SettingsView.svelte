@@ -59,10 +59,11 @@
     status = '';
     saveError = '';
     try {
-      await api.saveSettings(draft);
-      savedSnapshot = structuredClone(draft);
-      persistAppearance(draft.appearance);
-      await onSaved(structuredClone(draft));
+      const next = structuredClone(draft);
+      await api.saveSettings(next);
+      savedSnapshot = structuredClone(next);
+      persistAppearance(next.appearance);
+      await onSaved(structuredClone(next));
       status = $translator('settings.saved');
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : $translator('settings.saveFailed');
