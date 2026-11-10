@@ -9,6 +9,7 @@
   let step: 1 | 2 | 3 = 1;
   let method: Method = 'cloudflare';
   let permissions: McpPermissions | null = null;
+  let savedPermissions: McpPermissions | null = null;
   let connection: McpConnectionStatus | null = null;
   let busy = false;
   let error = '';
@@ -22,21 +23,36 @@
   let customHostname = '';
   let advanced = false;
   let copyStatus = '';
+  let pollError = '';
+  let loading = true;
   let timer: ReturnType<typeof setInterval> | undefined;
 
-  const powerful = (p: McpPermissions) => p.writeFiles || p.overwriteFiles || p.executeCommands;
 
-  async function refresh() {
-    try {
-      connection = await api.mcpConnectionStatus();
-    } catch {
-      // The UI keeps its last meaningful state when background status polling fails.
-    }
+  const powerful = (p: McpPermissions) => p.writeFiles || p.overwriteFiles || p.executeCommands;
+  const readLines = (text: string) => text.split('\n').map((x) => x.trim()).filter(Boolean);
+  $: permissionDraft = permissions && {
+    ...permissions, allowedPaths: readLines(approvedPaths), allowedPrograms: readLines(approvedPrograms)
+  };
+  $: permissionDirty = Boolean(savedPermissions && permissionDraft &&
+    JSON.stringify(savedPermissions) !== JSON.stringify(permissionDraft));
+
+  function discardPermissions() {
+    if (!savedPermissions || busy) return;
+    permissions = structuredClone(savedPermissions);
+    approvedPaths = savedPermissions.allowedPaths.join('\n');
+    approvedPrograms = savedPermissions.allowedPrograms.join('\n');
+    acknowledge = false;
+    error = '';
+    notice = '';
   }
 
-  onMount(() => {
-    void Promise.all([api.getMcpPermissions(), api.mcpConnectionStatus()]).then(([policy, status]) => {
-      permissions = policy;
+  async function load() {
+    loading = true;
+    error = '';
+    try {
+      const [policy, status] = await Promise.all([api.getMcpPermissions(), api.mcpConnectionStatus()]);
+      savedPermissions = structuredClone(policy);
+      permissions = structuredClone(policy);
       approvedPaths = policy.allowedPaths.join('\n');
       approvedPrograms = policy.allowedPrograms.join('\n');
       connection = status;
@@ -44,23 +60,37 @@
         step = 3;
         if (status.mode !== 'none') method = status.mode;
       }
-    }).catch((err) => { error = err instanceof Error ? err.message : String(err); });
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function refresh() {
+    try {
+      connection = await api.mcpConnectionStatus();
+      pollError = '';
+    } catch {
+      pollError = 'Connection status could not be refreshed. Showing the last known state.';
+    }
+  }
+
+  onMount(() => {
+    void load();
     timer = setInterval(() => { void refresh(); }, 3000);
     return () => { if (timer) clearInterval(timer); };
   });
 
   async function savePermissions() {
-    if (!permissions || busy) return;
+    if (!permissionDraft || busy) return;
     busy = true;
     error = '';
     notice = '';
     try {
-      const next: McpPermissions = {
-        ...permissions,
-        allowedPaths: approvedPaths.split('\n').map((x) => x.trim()).filter(Boolean),
-        allowedPrograms: approvedPrograms.split('\n').map((x) => x.trim()).filter(Boolean)
-      };
+      const next: McpPermissions = structuredClone(permissionDraft);
       permissions = await api.saveMcpPermissions(next, next.enabled && powerful(next) && acknowledge);
+      savedPermissions = structuredClone(permissions);
       approvedPaths = permissions.allowedPaths.join('\n');
       approvedPrograms = permissions.allowedPrograms.join('\n');
       acknowledge = false;
@@ -75,7 +105,7 @@
   }
 
   async function connect() {
-    if (!permissions?.enabled || busy) return;
+    if (!permissions?.enabled || permissionDirty || busy) return;
     busy = true;
     error = '';
     notice = '';
@@ -137,12 +167,13 @@
 
   <div class="steps" aria-label="MCP setup steps">
     <button class:current={step === 1} on:click={() => step = 1}><span>1</span> Permissions</button>
-    <button class:current={step === 2} disabled={!permissions} on:click={() => step = 2}><span>2</span> Connection</button>
-    <button class:current={step === 3} disabled={!connection || connection.mode === 'none'} on:click={() => step = 3}><span>3</span> Connect in ChatGPT</button>
+    <button class:current={step === 2} disabled={!permissions || permissionDirty} on:click={() => step = 2}><span>2</span> Connection</button>
+    <button class:current={step === 3} disabled={!connection || connection.mode === 'none' || permissionDirty} on:click={() => step = 3}><span>3</span> Connect in ChatGPT</button>
   </div>
 
   {#if !permissions || !connection}
     <p class="hint">Loading Scriptotar's MCP configuration…</p>
+    {#if !loading && error}<button class="button secondary" on:click={load}>Retry loading MCP settings</button>{/if}
   {:else if step === 1}
     <div class="wizard-pane" data-testid="mcp-step-permissions">
       <h3>Step 1 · Set your local permissions</h3>
@@ -163,15 +194,17 @@
             <label><input type="checkbox" bind:checked={permissions.overwriteFiles}/> Overwrite existing files</label>
             <label><input type="checkbox" bind:checked={permissions.executeCommands}/> Execute approved programs</label>
           </div>
-          <label class="field"><span>Approved directories (one absolute path per line)</span><textarea rows="2" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
-          <label class="field"><span>Approved executables (one absolute path per line)</span><textarea rows="2" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
+          <label class="field"><span>Approved directories (one absolute path per line)</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
+          <label class="field"><span>Approved executables (one absolute path per line)</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
           <p class="warning"><strong>Powerful access:</strong> approved executables use your operating-system account's privileges, so permitting a shell or interpreter is not a security sandbox.</p>
         </div>
       {/if}
       {#if permissions.enabled && powerful(permissions)}
         <label class="switch"><input type="checkbox" bind:checked={acknowledge}/> I approve powerful file and command access on this computer</label>
       {/if}
-      <button class="button primary" disabled={busy || (permissions.enabled && powerful(permissions) && !acknowledge)} on:click={savePermissions}>{busy ? 'Saving…' : 'Save permissions & continue'}</button>
+      {#if permissionDirty}<p class="permission-unsaved" role="status">Unsaved permission changes</p>{/if}
+      {#if permissionDirty}<button class="button secondary" disabled={busy} on:click={discardPermissions}>Discard permission changes</button>{/if}
+      <button class="button primary" disabled={busy || !permissionDirty || (permissions.enabled && powerful(permissions) && !acknowledge)} on:click={savePermissions}>{busy ? 'Saving…' : 'Save permissions & continue'}</button>
     </div>
   {:else if step === 2}
     <div class="wizard-pane" data-testid="mcp-step-connection">
@@ -186,16 +219,17 @@
         {#if !connection.cloudflareAvailable}<p class="warning">cloudflared is missing from this installation. Install the MCP-enabled release with bundled tunnel tools.</p>{/if}
       {:else if method === 'openai'}
         <p class="hint">Create a tunnel and restricted key in <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">OpenAI Platform</a>. Choose only Tunnels Read + Use for the runtime key.</p>
-        <label class="field"><span>OpenAI tunnel ID</span><input autocomplete="off" placeholder="tunnel_0123456789abcdef0123456789abcdef" bind:value={tunnelId}/></label>
-        <label class="field"><span>Restricted API key (leave blank to reuse saved key)</span><input type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." bind:value={apiKey}/></label>
+        <label class="field"><span>OpenAI tunnel ID</span><input dir="ltr" autocomplete="off" placeholder="tunnel_0123456789abcdef0123456789abcdef" bind:value={tunnelId}/></label>
+        <label class="field"><span>Restricted API key (leave blank to reuse saved key)</span><input type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="sk-..." bind:value={apiKey}/></label>
         <label class="switch"><input type="checkbox" bind:checked={rememberKey}/> Remember key in the OS keyring (never plain-text settings)</label>
         {#if !connection.openaiAvailable}<p class="warning">OpenAI tunnel-client is missing from this installation.</p>{/if}
       {:else}
-        <label class="field"><span>Your public HTTPS hostname</span><input placeholder="https://mcp.example.com" spellcheck="false" bind:value={customHostname}/></label>
+        <label class="field"><span>Your public HTTPS hostname</span><input dir="ltr" placeholder="https://mcp.example.com" spellcheck="false" bind:value={customHostname}/></label>
         <p class="hint">Configure your Cloudflare named tunnel's origin to <code>http://127.0.0.1:39761</code>. Scriptotar adds a new 64-character secret path to your hostname automatically.</p>
       {/if}
       {#if !permissions.enabled}<p class="warning">Enable MCP in step 1 before connecting.</p>{/if}
-      <button class="button primary" disabled={busy || !permissions.enabled || (method === 'cloudflare' && !connection.cloudflareAvailable) || (method === 'openai' && !connection.openaiAvailable)} on:click={connect}>{busy ? 'Connecting…' : 'Connect'}</button>
+      {#if permissionDirty}<p class="warning">Save permission changes before connecting.</p>{/if}
+      <button class="button primary" disabled={busy || permissionDirty || !permissions.enabled || (method === 'cloudflare' && !connection.cloudflareAvailable) || (method === 'openai' && !connection.openaiAvailable)} on:click={connect}>{busy ? 'Connecting…' : 'Connect'}</button>
     </div>
   {:else}
     <div class="wizard-pane" data-testid="mcp-step-finish">
@@ -203,10 +237,10 @@
       <p class="connection-state" data-state={connection.state}>{connection.state === 'ready' ? 'Gateway ready' : connection.state === 'connecting' ? 'Establishing connection…' : 'Connection needs attention'} · {connection.detail}</p>
       {#if connection.mode === 'openai'}
         <p>In ChatGPT, add a <strong>custom MCP server</strong>, choose <strong>Tunnel</strong>, and select this tunnel ID:</p>
-        <div class="url-copy"><code>{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>Copy ID</button>{/if}</div>
+        <div class="url-copy"><code dir="ltr">{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>Copy ID</button>{/if}</div>
       {:else if connection.publicUrl}
         <p>In ChatGPT, add a <strong>custom MCP server</strong> and choose <strong>Server URL</strong>. Paste this exact URL:</p>
-        <div class="url-copy"><code data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>Copy URL</button></div>
+        <div class="url-copy"><code dir="ltr" data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>Copy URL</button></div>
         <p class="warning">Treat this URL like a password. Do not share it, publish it, or paste it into support chats. Stop disconnects the tunnel and revokes the secret.</p>
       {/if}
       {#if connection.mode === 'manual'}<p class="hint">A local gateway is running, but Scriptotar cannot verify your separately managed HTTPS tunnel. Check it before sharing the URL.</p>{/if}
@@ -218,6 +252,7 @@
     </div>
   {/if}
   {#if notice}<p class="message" role="status">{notice}</p>{/if}
+  {#if pollError}<p class="warning" role="status">{pollError}</p>{/if}
   {#if error}<p class="warning" role="alert">{error}</p>{/if}
 </section>
 
@@ -235,6 +270,7 @@
   .steps span { display: inline-flex; justify-content: center; align-items: center; border-radius: 50%; border: 1px solid var(--border); width: 19px; height: 19px; margin-right: 5px; }
   .wizard-pane { display: grid; align-content: start; gap: 12px; }
   .wizard-pane h3 { margin: 0; font-size: 14px; }
+  .permission-unsaved { color: var(--warn); font-weight: 600; font-size: 12px; }
   .wizard-pane > button, .wizard-pane > a.button { justify-self: start; }
   .switch { display: flex; gap: 9px; align-items: center; font-size: 12px; }
   .permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
@@ -255,8 +291,9 @@
   .url-copy button { flex-shrink: 0; }
   .warning { color: var(--warn); line-height: 1.6; font-size: 11px; }
   .message { color: var(--accent); font-size: 11px; }
-  .connection-state { border-left: 3px solid var(--accent); padding: 8px 12px; }
+  .connection-state { border-inline-start: 3px solid var(--accent); padding: 8px 12px; }
   .danger { color: var(--warn); }
   .external { text-decoration: none; }
   @media(max-width: 1000px) { .method-grid { grid-template-columns: 1fr; } .permission-grid { grid-template-columns: 1fr; } }
+  @media(max-width: 640px) { .wizard-head { flex-wrap: wrap; } .steps button { flex: 1 1 auto; } .url-copy { flex-wrap: wrap; } }
 </style>
