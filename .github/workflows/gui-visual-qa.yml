@@ -24,11 +24,21 @@ jobs:
     name: Chromium rendered UI, controls and timings
     runs-on: ubuntu-22.04
     timeout-minutes: 30
+    env:
+      QA_TESTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     defaults:
       run:
         working-directory: apps/desktop-ui
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned checkout v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify tested source is the exact recorded SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$QA_TESTED_SHA"
+          printf 'QA tested immutable source SHA: %s\n' "$actual"
+        working-directory: .
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned setup-node v4
         with:
           node-version: '22'
@@ -55,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: scriptotar-gui-qa-${{ github.sha }}
+          name: scriptotar-gui-qa-${{ github.event.pull_request.head.sha || github.sha }}
           path: apps/desktop-ui/qa/evidence/
           if-no-files-found: warn
           retention-days: 14
