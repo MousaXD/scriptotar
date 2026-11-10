@@ -157,7 +157,7 @@
 <section id="settings-mcp" class="panel wizard" data-testid="mcp-permissions" data-i18n-ignore>
   <header class="wizard-head">
     <div>
-      <span class="eyebrow">Connect Scriptotar to ChatGPT</span>
+      <span class="eyebrow">{$translator('mcp.setup')}</span>
       <h2>{$translator('mcp.heading')}</h2>
       <p>{$translator('mcp.intro')}</p>
     </div>
@@ -240,7 +240,7 @@
         <p>{$translator('mcp.finishPrefix')} <strong>{$translator('mcp.customServer')}</strong>, {$translator('mcp.choose')} <strong>{$translator('mcp.tunnel')}</strong> {$translator('mcp.tunnelSuffix')}</p>
         <div class="url-copy"><code dir="ltr">{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>{$translator('mcp.copyId')}</button>{/if}</div>
       {:else if connection.publicUrl}
-        <p>{$translator('mcp.finishPrefix')} <strong>{$translator('mcp.customServer')}</strong> and choose <strong>{$translator('mcp.serverUrl')}</strong>{$translator('mcp.urlSuffix')}</p>
+        <p>{$translator('mcp.finishPrefix')} <strong>{$translator('mcp.customServer')}</strong> {$translator('mcp.choose')} <strong>{$translator('mcp.serverUrl')}</strong>{$translator('mcp.urlSuffix')}</p>
         <div class="url-copy"><code dir="ltr" data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>{$translator('mcp.copyUrl')}</button></div>
         <p class="warning">{$translator('mcp.secretWarning')}</p>
       {/if}
@@ -260,8 +260,8 @@
 <style>
   .wizard { display: grid; gap: 16px; }
   .wizard-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
-  .wizard-head h2 { font-size: 20px; margin: 4px 0 6px; }
-  .wizard-head p, .wizard-pane > p { font-size: 12px; line-height: 1.6; color: var(--muted); }
+  .wizard-head h2 { font-size: 20px; margin: 0; }
+  .wizard-head p, .wizard-pane > p { font-size: 12px; line-height: 1.5; color: var(--muted); }
   .wizard-status { border: 1px solid var(--border); padding: 6px 9px; border-radius: 20px; white-space: nowrap; font-size: 10px; color: var(--muted); }
   .wizard-status.connected { border-color: var(--accent); color: var(--accent); }
   .steps { display: flex; gap: 6px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
