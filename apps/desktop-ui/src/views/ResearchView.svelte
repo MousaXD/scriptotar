@@ -23,6 +23,7 @@
   let sort: 'views' | 'likes' | 'comments' | 'date' | 'rate' = 'views';
   let page = 1;
   let selected = new Set<string>();
+  let failedThumbnails = new Set<string>();
   let profileUrl = '';
   let limit = 25;
   let scanning = false;
@@ -207,8 +208,8 @@
         <div class="research-row" role="row" data-testid={'research-' + item.id}>
           <label class="check-only"><input type="checkbox" checked={selected.has(item.id)} on:change={() => toggle(item.id)} aria-label={'Select ' + item.title} /></label>
           <div class="media-cell" role="cell">
-            {#if item.thumbnail}
-              <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={(event) => { event.currentTarget.hidden = true; }} />
+            {#if item.thumbnail && !failedThumbnails.has(item.id)}
+              <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={() => failedThumbnails = new Set([...failedThumbnails, item.id])} />
             {:else}
               <div class="thumbnail-placeholder" aria-hidden="true">{item.platform.slice(0, 1)}</div>
             {/if}
