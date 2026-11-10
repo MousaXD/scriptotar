@@ -204,26 +204,28 @@
 </script>
 
 <section class="view-head ai-head">
-  <div><span class="eyebrow">Optional AI layer</span><h1>AI Studio</h1><p>Build portable prompts with no key, or use your own provider credentials for a direct run.</p></div>
+  <h1>AI Studio</h1>
   <div class="mode-switch compact-mode" role="group" aria-label="AI mode">
-    <button class:active={mode === 'copy'} on:click={() => chooseMode('copy')}><strong>Copy Prompt</strong><span>No API key · nothing sent</span></button>
-    <button class:active={mode === 'byok'} on:click={() => chooseMode('byok')}><strong>BYOK</strong><span>Use your own provider key</span></button>
+    <button type="button" class:active={mode === 'copy'} aria-pressed={mode === 'copy'} on:click={() => chooseMode('copy')}>Copy Prompt</button>
+    <button type="button" class:active={mode === 'byok'} aria-pressed={mode === 'byok'} on:click={() => chooseMode('byok')}>BYOK</button>
   </div>
 </section>
 
 <section class="panel ai-setup">
-  <div class="setup-heading"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.configure')}</span><h2>Prompt setup</h2></div><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
-  <div class="ai-config-grid">
+  <div class="setup-heading"><h2>Prompt setup</h2><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
+  <div class="ai-config-grid" class:byok-mode={mode === 'byok'}>
     <label><span>Task</span><select bind:value={task} on:change={invalidatePrompt}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
     <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" value={provider} disabled={mode === 'copy'} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} on:input={invalidatePrompt} /></label>
+    {#if mode === 'byok'}
+      <label><span>Provider</span><select aria-label="AI provider" value={provider} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
+      <label><span>Model</span><input bind:value={model} on:input={invalidatePrompt} /></label>
+    {/if}
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
       <label><span>API key · session only</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" placeholder="Paste key for this run" /></label>
       {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
-      <p>Keys are not persisted by this frontend. The Rust host will own secure storage and endpoint policy.</p>
+      <p>Session-only credentials. Nothing is saved by this frontend.</p>
     </div>
   {/if}
 </section>
@@ -253,12 +255,12 @@
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
     {/if}
-    {#if sourceLoading}<p class="status-copy" aria-live="polite">Loading transcript source…</p>{/if}
+    {#if sourceLoading}<div class="source-loading-skeleton" role="status" aria-label="Loading transcript source"><span></span><span></span></div>{/if}
     {#if sourceError}
       <p class="status-copy" role="alert">{sourceError}</p>
       <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>Retry transcript load</button>
     {/if}
-    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} placeholder="Paste or load transcript/research text…"></textarea>
+    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} dir="auto" placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
   <section class="panel brief-panel">
@@ -274,7 +276,7 @@
 
   <section class="panel ai-prompt">
     <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
-    <textarea bind:value={prompt} placeholder="Build a prompt to preview it here…"></textarea>
+    <textarea bind:value={prompt} dir="auto" placeholder="Build a prompt to preview it here…"></textarea>
     {#if mode === 'byok'}<p class="prompt-note">Edits here are available for copying, but BYOK builds its request from the source and brief fields above.</p>{/if}
   </section>
 </div>
@@ -283,8 +285,8 @@
   <span class="status-copy" role="status" aria-live="polite">{status}</span>
   <div class="ai-actions">
     <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
-    <button class="button primary" disabled={building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
-    <button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button>
+    <button class="button primary" disabled={busy || building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
+    {#if mode === 'byok'}<button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || provider === 'Local (coming later)'} on:click={runAi}>{busy ? 'Running…' : 'Run with API'}</button>{/if}
   </div>
 </div>
 
@@ -298,7 +300,7 @@
         <button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button>
       </div>
     </div>
-    <div class="result-copy">{result}</div>
+    <div class="result-copy" dir="auto">{result}</div>
   </section>
 {/if}
 
