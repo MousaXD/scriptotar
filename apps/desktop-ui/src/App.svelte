@@ -7,12 +7,7 @@
   import AppShell from './components/AppShell.svelte';
   import ErrorState from './components/ErrorState.svelte';
   import DashboardView from './views/DashboardView.svelte';
-  import ResearchView from './views/ResearchView.svelte';
-  import JobsView from './views/JobsView.svelte';
-  import TranscriptView from './views/TranscriptView.svelte';
-  import AiStudioView from './views/AiStudioView.svelte';
-  import LibraryView from './views/LibraryView.svelte';
-  import SettingsView from './views/SettingsView.svelte';
+  import WorkspaceSkeleton from './components/WorkspaceSkeleton.svelte';
 
   export let api: ScriptotarApi = getApi();
   let data: BootstrapData | null = null;
@@ -30,12 +25,56 @@
   let transcriptSearchTimer: number | undefined;
   let transcriptSearchGeneration = 0;
   let transcriptSearchKey = '';
+  let workspaceGeneration = 0;
+  let switchingProject = false;
+  const pendingViews = new Set<ViewId>();
+  let ResearchView: typeof import('./views/ResearchView.svelte')['default'] | undefined;
+  let JobsView: typeof import('./views/JobsView.svelte')['default'] | undefined;
+  let TranscriptView: typeof import('./views/TranscriptView.svelte')['default'] | undefined;
+  let AiStudioView: typeof import('./views/AiStudioView.svelte')['default'] | undefined;
+  let LibraryView: typeof import('./views/LibraryView.svelte')['default'] | undefined;
+  let SettingsView: typeof import('./views/SettingsView.svelte')['default'] | undefined;
 
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId) || data?.projects[0];
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
-  $: searchResults = data ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
+  $: searchResults = data && globalSearch.trim() ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
   $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
+  $: if (data) void ensureView(activeView);
+
+  // The initial dashboard stays in the entry bundle. Inactive workspaces are loaded on demand.
+  // Keep promises single-flight, including when a user navigates rapidly between views.
+  async function ensureView(view: ViewId): Promise<void> {
+    if (view === 'dashboard' || pendingViews.has(view)) return;
+    if ((view === 'research' && ResearchView) || (view === 'jobs' && JobsView) ||
+        (view === 'transcript' && TranscriptView) || (view === 'ai' && AiStudioView) ||
+        (view === 'library' && LibraryView) || (view === 'settings' && SettingsView)) return;
+    pendingViews.add(view);
+    try {
+      switch (view) {
+        case 'research': ResearchView = (await import('./views/ResearchView.svelte')).default; break;
+        case 'jobs': JobsView = (await import('./views/JobsView.svelte')).default; break;
+        case 'transcript': TranscriptView = (await import('./views/TranscriptView.svelte')).default; break;
+        case 'ai': AiStudioView = (await import('./views/AiStudioView.svelte')).default; break;
+        case 'library': LibraryView = (await import('./views/LibraryView.svelte')).default; break;
+        case 'settings': SettingsView = (await import('./views/SettingsView.svelte')).default; break;
+      }
+    } catch (cause) {
+      operationalError = cause instanceof Error ? cause.message : 'Unable to load this workspace.';
+    } finally {
+      pendingViews.delete(view);
+    }
+  }
+
+  function invalidateTranscriptSearch(): void {
+    transcriptSearchGeneration += 1;
+    transcriptSearchKey = '';
+    transcriptSearchIds = [];
+    if (transcriptSearchTimer !== undefined) {
+      window.clearTimeout(transcriptSearchTimer);
+      transcriptSearchTimer = undefined;
+    }
+  }
 
   function prepareData(next: BootstrapData): BootstrapData {
     const appearance = loadAppearance(next.settings.appearance);
@@ -102,27 +141,45 @@
   }
 
   async function load(showLoading = true) {
-    if (showLoading) loading = true;
-    error = '';
-    try { data = prepareData(await api.bootstrap()); }
-    catch (cause) { error = cause instanceof Error ? cause.message : 'Unable to load the desktop workspace.'; }
-    finally { if (showLoading) loading = false; }
+    const generation = ++workspaceGeneration;
+    if (showLoading && !data) loading = true;
+    if (!data) error = '';
+    try {
+      const next = await api.bootstrap();
+      if (generation !== workspaceGeneration) return;
+      data = prepareData(next);
+      operationalError = '';
+    } catch (cause) {
+      if (generation !== workspaceGeneration) return;
+      const message = cause instanceof Error ? cause.message : 'Unable to load the desktop workspace.';
+      if (data) operationalError = message;
+      else error = message;
+    } finally {
+      if (generation === workspaceGeneration) loading = false;
+    }
   }
 
   async function refresh() { await load(false); }
 
   async function refreshJobs() {
-    if (!data || jobRefreshInFlight) return;
+    if (!data || jobRefreshInFlight || switchingProject) return;
+    const generation = workspaceGeneration;
+    const snapshot = data;
     jobRefreshInFlight = true;
     try {
-      const previousStates = new Map(data.jobs.map((job) => [job.id, job.state]));
+      const previousStates = new Map(snapshot.jobs.map((job) => [job.id, job.state]));
       const jobs = await api.listJobs();
+      if (generation !== workspaceGeneration || !data || data.activeProjectId !== snapshot.activeProjectId) return;
       const crossedTerminalBoundary = jobs.some((job) => {
         const previous = previousStates.get(job.id);
         return previous !== undefined && activeStates.has(previous) && !activeStates.has(job.state);
       });
       if (crossedTerminalBoundary) await refresh();
       else data = { ...data, jobs };
+    } catch (cause) {
+      if (generation === workspaceGeneration) {
+        operationalError = cause instanceof Error ? cause.message : 'Unable to refresh jobs.';
+      }
     } finally {
       jobRefreshInFlight = false;
     }
@@ -137,40 +194,75 @@
   }
 
   async function refreshOperationalStatus() {
-    if (!data || operationalRefreshInFlight) return;
+    if (!data || operationalRefreshInFlight || switchingProject) return;
+    const generation = workspaceGeneration;
+    const projectId = data.activeProjectId;
     operationalRefreshInFlight = true;
     try {
       const [watchlistStatuses, migrationStatus] = await Promise.all([
         api.getWatchlistStatuses(),
         api.getMigrationStatus()
       ]);
-      if (data) data = { ...data, watchlistStatuses, migrationStatus };
+      if (generation !== workspaceGeneration || !data || data.activeProjectId !== projectId) return;
+      data = { ...data, watchlistStatuses, migrationStatus };
       operationalError = '';
     } catch (cause) {
-      operationalError = cause instanceof Error
-        ? cause.message
-        : 'Could not refresh background operation status.';
+      if (generation === workspaceGeneration) {
+        operationalError = cause instanceof Error
+          ? cause.message
+          : 'Could not refresh background operation status.';
+      }
     } finally {
       operationalRefreshInFlight = false;
     }
   }
 
-  async function selectProject(id: string) {
+  async function selectProject(id: string): Promise<boolean> {
+    if (switchingProject || !data) return false;
+    if (id === data.activeProjectId) return true;
+    const generation = ++workspaceGeneration;
+    switchingProject = true;
     switchError = '';
+    invalidateTranscriptSearch();
+    globalSearch = '';
     try {
-      data = prepareData(await api.selectProject(id));
+      const next = await api.selectProject(id);
+      if (generation !== workspaceGeneration) return false;
+      if (next.activeProjectId !== id) throw new Error('The selected project did not match the backend response.');
+      data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
+      return true;
     } catch (cause) {
-      switchError = cause instanceof Error ? cause.message : 'Unable to switch projects.';
-      if (data) data = { ...data };
+      if (generation === workspaceGeneration) {
+        switchError = cause instanceof Error ? cause.message : 'Unable to switch projects.';
+      }
+      return false;
+    } finally {
+      if (generation === workspaceGeneration) switchingProject = false;
     }
   }
 
   async function createProject(name: string) {
+    if (switchingProject) return;
+    const generation = ++workspaceGeneration;
+    switchingProject = true;
     switchError = '';
-    data = prepareData(await api.createProject(name));
-    selectedTranscriptId = data.transcripts[0]?.id || '';
-    activeView = 'dashboard';
+    invalidateTranscriptSearch();
+    globalSearch = '';
+    try {
+      const next = await api.createProject(name);
+      if (generation !== workspaceGeneration) return;
+      data = prepareData(next);
+      selectedTranscriptId = data.transcripts[0]?.id || '';
+      activeView = 'dashboard';
+    } catch (cause) {
+      if (generation === workspaceGeneration) {
+        switchError = cause instanceof Error ? cause.message : 'Unable to create project.';
+      }
+      throw cause;
+    } finally {
+      if (generation === workspaceGeneration) switchingProject = false;
+    }
   }
 
   async function enqueueLocal(path: string) {
@@ -213,7 +305,7 @@
   async function openLibraryItem(item: LibraryItem) {
     if (!data) return;
     if (item.kind === 'Project') {
-      if (item.projectId !== data.activeProjectId) await selectProject(item.projectId);
+      if (item.projectId !== data.activeProjectId && !(await selectProject(item.projectId))) return;
       activeView = 'dashboard';
       return;
     }
@@ -229,7 +321,7 @@
 
   async function openSearchResult(result: WorkspaceSearchResult) {
     if (!data) return;
-    if (result.projectId && result.projectId !== data.activeProjectId) await selectProject(result.projectId);
+    if (result.projectId && result.projectId !== data.activeProjectId && !(await selectProject(result.projectId))) return;
     if (result.kind === 'Transcript' && result.targetId) selectedTranscriptId = result.targetId;
     activeView = result.view;
     globalSearch = '';
@@ -290,12 +382,12 @@
 </script>
 <svelte:window onkeydown={keyNav} />
 
-{#if loading}
-  <div class="boot-screen" aria-busy="true"><div class="boot-mark">S</div><div><strong>{$translator('boot.opening')}</strong><span>{$translator('boot.loading')}</span></div></div>
-{:else if error}
-  <div class="boot-screen error-boot"><ErrorState title={$translator('error.bootTitle')} message={error} onRetry={() => load()} /></div>
-{:else if data && activeProject}
-  <AppShell {activeView} activeProjectId={data.activeProjectId} projects={data.projects} {activeJobs} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+  {#if loading || switchingProject}
+    <WorkspaceSkeleton />
+  {:else if error}
+    <ErrorState title={$translator('error.bootTitle')} message={error} onRetry={() => load()} />
+  {:else if data && activeProject}
     {#if switchError}
       <ErrorState title={$translator('error.projectTitle')} message={switchError} />
     {/if}
@@ -305,19 +397,45 @@
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
+      {#if ResearchView}
       <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={async (profileUrl, limit) => { data = prepareData(await api.saveWatchlist({ profileUrl, limit })); }} />
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {:else if activeView === 'jobs'}
+      {#if JobsView}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {:else if activeView === 'transcript'}
+      {#if TranscriptView}
       <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {:else if activeView === 'ai'}
+      {#if AiStudioView}
       {#key data.activeProjectId}
         <AiStudioView {api} transcripts={data.transcripts} />
       {/key}
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {:else if activeView === 'library'}
+      {#if LibraryView}
       <LibraryView items={data.library.filter((item) => item.projectId === data?.activeProjectId)} onOpen={openLibraryItem} />
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {:else if activeView === 'settings'}
+      {#if SettingsView}
       <SettingsView settings={data.settings} migrationStatus={data.migrationStatus} {api} onSaved={settingsSaved} onMigrationStatus={migrationStatusChanged} />
+      {:else}
+        <WorkspaceSkeleton />
+      {/if}
     {/if}
-  </AppShell>
-{/if}
+  {:else}
+    <ErrorState title={$translator('error.bootTitle')} message="The workspace has no available project." onRetry={() => load()} />
+  {/if}
+</AppShell>
