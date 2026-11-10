@@ -1160,8 +1160,12 @@ impl BootstrapTranscript for UiTranscript {
 
     fn library_item(&self) -> UiLibraryItem {
         transcript_library_item(
-            &self.id, &self.project_id, &self.title, &self.source,
-            &self.platform, &self.created_at,
+            &self.id,
+            &self.project_id,
+            &self.title,
+            &self.source,
+            &self.platform,
+            &self.created_at,
         )
     }
 }
@@ -1177,8 +1181,12 @@ impl BootstrapTranscript for UiTranscriptSummary {
 
     fn library_item(&self) -> UiLibraryItem {
         transcript_library_item(
-            &self.id, &self.project_id, &self.title, &self.source,
-            &self.platform, &self.created_at,
+            &self.id,
+            &self.project_id,
+            &self.title,
+            &self.source,
+            &self.platform,
+            &self.created_at,
         )
     }
 }
@@ -1901,11 +1909,7 @@ mod tests {
         let source_id = Uuid::new_v4();
         let media_id = Uuid::new_v4();
         let transcript_id = Uuid::new_v4();
-        let timestamp = format!(
-            "2026-11-10T00:{:02}:{:02}Z",
-            ordinal / 60,
-            ordinal % 60
-        );
+        let timestamp = format!("2026-11-10T00:{:02}:{:02}Z", ordinal / 60, ordinal % 60);
         let locator = format!("/mock/source-{ordinal}.mp4");
         connection
             .execute(
