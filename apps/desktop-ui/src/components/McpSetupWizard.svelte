@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { translator } from '../i18n/translate';
   import type { ScriptotarApi } from '../api/client';
   import type { McpConnectionStatus, McpPermissions } from '../types';
 
@@ -72,7 +73,7 @@
       connection = await api.mcpConnectionStatus();
       pollError = '';
     } catch {
-      pollError = 'Connection status could not be refreshed. Showing the last known state.';
+      pollError = $translator('mcp.statusUnavailable');
     }
   }
 
@@ -95,7 +96,7 @@
       approvedPrograms = permissions.allowedPrograms.join('\n');
       acknowledge = false;
       await refresh();
-      notice = 'Saved on this computer. ChatGPT cannot change these permissions.';
+      notice = $translator('mcp.savedNotice');
       step = 2;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -119,7 +120,7 @@
       else connection = await api.mcpConnectManual(customHostname.trim());
       apiKey = ''; // Never keep a key in the DOM after IPC completes.
       step = 3;
-      notice = 'Connection started. Complete the connector setup in ChatGPT, then test a read-only tool call.';
+      notice = $translator('mcp.connectedNotice');
     } catch (err) {
       apiKey = '';
       error = err instanceof Error ? err.message : String(err);
@@ -135,7 +136,7 @@
     try {
       connection = await api.mcpDisconnect();
       step = 2;
-      notice = 'Disconnected. Any old public URL secret was revoked.';
+      notice = $translator('mcp.disconnectedNotice');
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -146,108 +147,108 @@
   async function copyUrl(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      copyStatus = 'URL copied. Keep this secret link private.';
+      copyStatus = $translator('mcp.copiedNotice');
     } catch {
-      copyStatus = 'Select the URL and copy it manually.';
+      copyStatus = $translator('mcp.copyFailed');
     }
   }
 </script>
 
-<section id="settings-mcp" class="panel wizard" data-testid="mcp-permissions">
+<section id="settings-mcp" class="panel wizard" data-testid="mcp-permissions" data-i18n-ignore>
   <header class="wizard-head">
     <div>
       <span class="eyebrow">Connect Scriptotar to ChatGPT</span>
-      <h2>MCP setup wizard</h2>
-      <p>Review permissions, choose a connection, and copy the ChatGPT setup details. No terminal commands required.</p>
+      <h2>{$translator('mcp.heading')}</h2>
+      <p>{$translator('mcp.intro')}</p>
     </div>
-    {#if connection?.state === 'ready'}<span class="wizard-status connected">Local connection ready</span>
-    {:else if connection?.state === 'connecting'}<span class="wizard-status">Connecting…</span>
-    {:else}<span class="wizard-status">Not connected</span>{/if}
+    {#if connection?.state === 'ready'}<span class="wizard-status connected">{$translator('mcp.ready')}</span>
+    {:else if connection?.state === 'connecting'}<span class="wizard-status">{$translator('mcp.connecting')}</span>
+    {:else}<span class="wizard-status">{$translator('mcp.notConnected')}</span>{/if}
   </header>
 
-  <div class="steps" aria-label="MCP setup steps">
-    <button class:current={step === 1} on:click={() => step = 1}><span>1</span> Permissions</button>
-    <button class:current={step === 2} disabled={!permissions || permissionDirty} on:click={() => step = 2}><span>2</span> Connection</button>
-    <button class:current={step === 3} disabled={!connection || connection.mode === 'none' || permissionDirty} on:click={() => step = 3}><span>3</span> Connect in ChatGPT</button>
+  <div class="steps" aria-label={$translator('mcp.steps')}>
+    <button class:current={step === 1} aria-current={step === 1 ? 'step' : undefined} on:click={() => step = 1}><span>1</span> {$translator('mcp.permissions')}</button>
+    <button class:current={step === 2} aria-current={step === 2 ? 'step' : undefined} disabled={!permissions || permissionDirty} on:click={() => step = 2}><span>2</span> {$translator('mcp.connection')}</button>
+    <button class:current={step === 3} aria-current={step === 3 ? 'step' : undefined} disabled={!connection || connection.mode === 'none' || permissionDirty} on:click={() => step = 3}><span>3</span> {$translator('mcp.finish')}</button>
   </div>
 
   {#if !permissions || !connection}
-    <p class="hint">Loading Scriptotar's MCP configuration…</p>
-    {#if !loading && error}<button class="button secondary" on:click={load}>Retry loading MCP settings</button>{/if}
+    <p class="hint">{$translator('mcp.loading')}</p>
+    {#if !loading && error}<button class="button secondary" on:click={load}>{$translator('mcp.retryLoad')}</button>{/if}
   {:else if step === 1}
     <div class="wizard-pane" data-testid="mcp-step-permissions">
-      <h3>Step 1 · Set your local permissions</h3>
-      <p>These permissions are enforced by Scriptotar for every MCP request, even if ChatGPT approves it.</p>
-      <label class="switch"><input type="checkbox" bind:checked={permissions.enabled}/><strong>Enable Scriptotar MCP</strong></label>
+      <h3>{$translator('mcp.permissionsHeading')}</h3>
+      <p>{$translator('mcp.permissionsHelp')}</p>
+      <label class="switch"><input type="checkbox" bind:checked={permissions.enabled}/><strong>{$translator('mcp.enable')}</strong></label>
       <div class="permission-grid">
-        <label><input type="checkbox" bind:checked={permissions.readData}/> Read projects, jobs and transcripts</label>
-        <label><input type="checkbox" bind:checked={permissions.searchCreators}/> Search public creators</label>
-        <label><input type="checkbox" bind:checked={permissions.downloadVideos}/> Download videos and transcribe media</label>
-        <label><input type="checkbox" bind:checked={permissions.writeData}/> Create projects</label>
+        <label><input type="checkbox" bind:checked={permissions.readData}/> {$translator('mcp.readData')}</label>
+        <label><input type="checkbox" bind:checked={permissions.searchCreators}/> {$translator('mcp.searchCreators')}</label>
+        <label><input type="checkbox" bind:checked={permissions.downloadVideos}/> {$translator('mcp.downloadVideos')}</label>
+        <label><input type="checkbox" bind:checked={permissions.writeData}/> {$translator('mcp.writeData')}</label>
       </div>
-      <button class="button secondary" on:click={() => advanced = !advanced}>{advanced ? 'Hide' : 'Show'} advanced file and command permissions</button>
+      <button class="button secondary" on:click={() => advanced = !advanced}>{advanced ? $translator('mcp.hide') : $translator('mcp.show')} {$translator('mcp.advanced')}</button>
       {#if advanced}
         <div class="advanced-permissions">
           <div class="permission-grid">
-            <label><input type="checkbox" bind:checked={permissions.readFiles}/> Read approved text files</label>
-            <label><input type="checkbox" bind:checked={permissions.writeFiles}/> Create approved text files</label>
-            <label><input type="checkbox" bind:checked={permissions.overwriteFiles}/> Overwrite existing files</label>
-            <label><input type="checkbox" bind:checked={permissions.executeCommands}/> Execute approved programs</label>
+            <label><input type="checkbox" bind:checked={permissions.readFiles}/> {$translator('mcp.readFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.writeFiles}/> {$translator('mcp.writeFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.overwriteFiles}/> {$translator('mcp.overwriteFiles')}</label>
+            <label><input type="checkbox" bind:checked={permissions.executeCommands}/> {$translator('mcp.executeCommands')}</label>
           </div>
-          <label class="field"><span>Approved directories (one absolute path per line)</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
-          <label class="field"><span>Approved executables (one absolute path per line)</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
-          <p class="warning"><strong>Powerful access:</strong> approved executables use your operating-system account's privileges, so permitting a shell or interpreter is not a security sandbox.</p>
+          <label class="field"><span>{$translator('mcp.allowedPaths')}</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
+          <label class="field"><span>{$translator('mcp.allowedPrograms')}</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} placeholder="/usr/bin/git"></textarea></label>
+          <p class="warning"><strong>{$translator('mcp.powerfulTitle')}</strong> {$translator('mcp.powerfulWarning')}</p>
         </div>
       {/if}
       {#if permissions.enabled && powerful(permissions)}
-        <label class="switch"><input type="checkbox" bind:checked={acknowledge}/> I approve powerful file and command access on this computer</label>
+        <label class="switch"><input type="checkbox" bind:checked={acknowledge}/> {$translator('mcp.approve')}</label>
       {/if}
-      {#if permissionDirty}<p class="permission-unsaved" role="status">Unsaved permission changes</p>{/if}
-      {#if permissionDirty}<button class="button secondary" disabled={busy} on:click={discardPermissions}>Discard permission changes</button>{/if}
-      <button class="button primary" disabled={busy || !permissionDirty || (permissions.enabled && powerful(permissions) && !acknowledge)} on:click={savePermissions}>{busy ? 'Saving…' : 'Save permissions & continue'}</button>
+      {#if permissionDirty}<p class="permission-unsaved" role="status">{$translator('mcp.unsaved')}</p>{/if}
+      {#if permissionDirty}<button class="button secondary" disabled={busy} on:click={discardPermissions}>{$translator('mcp.discard')}</button>{/if}
+      <button class="button primary" disabled={busy || !permissionDirty || (permissions.enabled && powerful(permissions) && !acknowledge)} on:click={savePermissions}>{busy ? $translator('mcp.saving') : $translator('mcp.savePermissions')}</button>
     </div>
   {:else if step === 2}
     <div class="wizard-pane" data-testid="mcp-step-connection">
-      <h3>Step 2 · Choose how to connect</h3>
+      <h3>{$translator('mcp.connectionHeading')}</h3>
       <div class="method-grid">
-        <label class:chosen={method === 'cloudflare'}><input type="radio" name="mcp-method" value="cloudflare" bind:group={method}/><strong>Cloudflare Quick Tunnel</strong><span>One-click temporary HTTPS URL. No Cloudflare account or API key needed.</span></label>
-        <label class:chosen={method === 'openai'}><input type="radio" name="mcp-method" value="openai" bind:group={method}/><strong>OpenAI Secure Tunnel</strong><span>Private connection through OpenAI, with no public-facing endpoint.</span></label>
-        <label class:chosen={method === 'manual'}><input type="radio" name="mcp-method" value="manual" bind:group={method}/><strong>My own HTTPS hostname</strong><span>Use a named Cloudflare tunnel or an existing HTTPS reverse proxy.</span></label>
+        <label class:chosen={method === 'cloudflare'}><input type="radio" name="mcp-method" value="cloudflare" bind:group={method}/><strong>{$translator('mcp.cloudflare')}</strong><span>{$translator('mcp.cloudflareDesc')}</span></label>
+        <label class:chosen={method === 'openai'}><input type="radio" name="mcp-method" value="openai" bind:group={method}/><strong>{$translator('mcp.openai')}</strong><span>{$translator('mcp.openaiDesc')}</span></label>
+        <label class:chosen={method === 'manual'}><input type="radio" name="mcp-method" value="manual" bind:group={method}/><strong>{$translator('mcp.manual')}</strong><span>{$translator('mcp.manualDesc')}</span></label>
       </div>
       {#if method === 'cloudflare'}
-        <p class="hint">Scriptotar starts the bundled cloudflared tool and gives you a secret URL to paste into ChatGPT. The hostname changes every time you reconnect. <strong>Anyone with the entire URL can request permitted tools.</strong></p>
-        {#if !connection.cloudflareAvailable}<p class="warning">cloudflared is missing from this installation. Install the MCP-enabled release with bundled tunnel tools.</p>{/if}
+        <p class="hint">{$translator('mcp.cloudflareHint')} <strong>{$translator('mcp.cloudflareWarning')}</strong></p>
+        {#if !connection.cloudflareAvailable}<p class="warning">{$translator('mcp.cloudflareMissing')}</p>{/if}
       {:else if method === 'openai'}
-        <p class="hint">Create a tunnel and restricted key in <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">OpenAI Platform</a>. Choose only Tunnels Read + Use for the runtime key.</p>
-        <label class="field"><span>OpenAI tunnel ID</span><input dir="ltr" autocomplete="off" placeholder="tunnel_0123456789abcdef0123456789abcdef" bind:value={tunnelId}/></label>
-        <label class="field"><span>Restricted API key (leave blank to reuse saved key)</span><input type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="sk-..." bind:value={apiKey}/></label>
-        <label class="switch"><input type="checkbox" bind:checked={rememberKey}/> Remember key in the OS keyring (never plain-text settings)</label>
-        {#if !connection.openaiAvailable}<p class="warning">OpenAI tunnel-client is missing from this installation.</p>{/if}
+        <p class="hint">{$translator('mcp.openaiPrefix')} <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">{$translator('mcp.openaiPlatform')}</a>{$translator('mcp.openaiSuffix')}</p>
+        <label class="field"><span>{$translator('mcp.tunnelId')}</span><input dir="ltr" autocomplete="off" placeholder="tunnel_0123456789abcdef0123456789abcdef" bind:value={tunnelId}/></label>
+        <label class="field"><span>{$translator('mcp.restrictedKey')}</span><input type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="sk-..." bind:value={apiKey}/></label>
+        <label class="switch"><input type="checkbox" bind:checked={rememberKey}/> {$translator('mcp.rememberKey')}</label>
+        {#if !connection.openaiAvailable}<p class="warning">{$translator('mcp.openaiMissing')}</p>{/if}
       {:else}
-        <label class="field"><span>Your public HTTPS hostname</span><input dir="ltr" placeholder="https://mcp.example.com" spellcheck="false" bind:value={customHostname}/></label>
-        <p class="hint">Configure your Cloudflare named tunnel's origin to <code>http://127.0.0.1:39761</code>. Scriptotar adds a new 64-character secret path to your hostname automatically.</p>
+        <label class="field"><span>{$translator('mcp.hostname')}</span><input dir="ltr" placeholder="https://mcp.example.com" spellcheck="false" bind:value={customHostname}/></label>
+        <p class="hint">{$translator('mcp.manualPrefix')} <code>http://127.0.0.1:39761</code>{$translator('mcp.manualSuffix')}</p>
       {/if}
-      {#if !permissions.enabled}<p class="warning">Enable MCP in step 1 before connecting.</p>{/if}
-      {#if permissionDirty}<p class="warning">Save permission changes before connecting.</p>{/if}
-      <button class="button primary" disabled={busy || permissionDirty || !permissions.enabled || (method === 'cloudflare' && !connection.cloudflareAvailable) || (method === 'openai' && !connection.openaiAvailable)} on:click={connect}>{busy ? 'Connecting…' : 'Connect'}</button>
+      {#if !permissions.enabled}<p class="warning">{$translator('mcp.disabledWarning')}</p>{/if}
+      {#if permissionDirty}<p class="warning">{$translator('mcp.saveFirst')}</p>{/if}
+      <button class="button primary" disabled={busy || permissionDirty || !permissions.enabled || (method === 'cloudflare' && !connection.cloudflareAvailable) || (method === 'openai' && !connection.openaiAvailable)} on:click={connect}>{busy ? $translator('mcp.connecting') : $translator('mcp.connect')}</button>
     </div>
   {:else}
     <div class="wizard-pane" data-testid="mcp-step-finish">
-      <h3>Step 3 · Add Scriptotar to ChatGPT</h3>
-      <p class="connection-state" data-state={connection.state}>{connection.state === 'ready' ? 'Gateway ready' : connection.state === 'connecting' ? 'Establishing connection…' : 'Connection needs attention'} · {connection.detail}</p>
+      <h3>{$translator('mcp.finishHeading')}</h3>
+      <p class="connection-state" data-state={connection.state} dir="auto">{connection.state === 'ready' ? $translator('mcp.gatewayReady') : connection.state === 'connecting' ? $translator('mcp.establishing') : $translator('mcp.needsAttention')} · {connection.detail}</p>
       {#if connection.mode === 'openai'}
-        <p>In ChatGPT, add a <strong>custom MCP server</strong>, choose <strong>Tunnel</strong>, and select this tunnel ID:</p>
-        <div class="url-copy"><code dir="ltr">{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>Copy ID</button>{/if}</div>
+        <p>{$translator('mcp.finishPrefix')} <strong>{$translator('mcp.customServer')}</strong>, {$translator('mcp.choose')} <strong>{$translator('mcp.tunnel')}</strong> {$translator('mcp.tunnelSuffix')}</p>
+        <div class="url-copy"><code dir="ltr">{connection.tunnelId}</code>{#if connection.tunnelId}<button class="button secondary" on:click={() => copyUrl(connection?.tunnelId || '')}>{$translator('mcp.copyId')}</button>{/if}</div>
       {:else if connection.publicUrl}
-        <p>In ChatGPT, add a <strong>custom MCP server</strong> and choose <strong>Server URL</strong>. Paste this exact URL:</p>
-        <div class="url-copy"><code dir="ltr" data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>Copy URL</button></div>
-        <p class="warning">Treat this URL like a password. Do not share it, publish it, or paste it into support chats. Stop disconnects the tunnel and revokes the secret.</p>
+        <p>{$translator('mcp.finishPrefix')} <strong>{$translator('mcp.customServer')}</strong> and choose <strong>{$translator('mcp.serverUrl')}</strong>{$translator('mcp.urlSuffix')}</p>
+        <div class="url-copy"><code dir="ltr" data-testid="mcp-public-url">{connection.publicUrl}</code><button class="button secondary" on:click={() => copyUrl(connection?.publicUrl || '')}>{$translator('mcp.copyUrl')}</button></div>
+        <p class="warning">{$translator('mcp.secretWarning')}</p>
       {/if}
-      {#if connection.mode === 'manual'}<p class="hint">A local gateway is running, but Scriptotar cannot verify your separately managed HTTPS tunnel. Check it before sharing the URL.</p>{/if}
-      <p class="hint">After adding Scriptotar, test <code>list_projects</code> first. Keep Scriptotar running for connections and tool calls.</p>
-      <a class="button secondary external" href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer">Open ChatGPT Plugins</a>
-      {#if connection.state === 'error'}<button class="button secondary" on:click={() => step = 2}>Edit connection</button>{/if}
-      <button class="button secondary danger" disabled={busy} on:click={disconnect}>{busy ? 'Stopping…' : 'Disconnect & revoke URL'}</button>
+      {#if connection.mode === 'manual'}<p class="hint">{$translator('mcp.manualWarning')}</p>{/if}
+      <p class="hint">{$translator('mcp.testPrefix')} <code>list_projects</code> {$translator('mcp.testSuffix')}</p>
+      <a class="button secondary external" href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer">{$translator('mcp.openPlugins')}</a>
+      {#if connection.state === 'error'}<button class="button secondary" on:click={() => step = 2}>{$translator('mcp.editConnection')}</button>{/if}
+      <button class="button secondary danger" disabled={busy} on:click={disconnect}>{busy ? $translator('mcp.stopping') : $translator('mcp.disconnect')}</button>
       {#if copyStatus}<p role="status">{copyStatus}</p>{/if}
     </div>
   {/if}
