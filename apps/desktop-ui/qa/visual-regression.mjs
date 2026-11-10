@@ -130,6 +130,35 @@ async function checkSwitchesAndPopovers(page, label) {
     break;
   }
 }
+async function checkCustomSelectKeyboard(page, label) {
+  const triggers = page.locator('[aria-haspopup="listbox"]');
+  for (let index = 0; index < await triggers.count(); index += 1) {
+    const trigger = triggers.nth(index);
+    if (!await trigger.isVisible() || !await trigger.isEnabled()) continue;
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+    const expanded = await trigger.getAttribute('aria-expanded');
+    if (expanded !== 'true') {
+      recordFailure(label + '/custom-select', 'Enter failed to open the accessible listbox');
+      break;
+    }
+    const listbox = page.getByRole('listbox').first();
+    try {
+      await listbox.waitFor({ timeout: 3000 });
+      await page.keyboard.press('ArrowDown');
+      await page.keyboard.press('Escape');
+      if (await trigger.getAttribute('aria-expanded') !== 'false') {
+        recordFailure(label + '/custom-select', 'Escape failed to close the listbox');
+      }
+      if (!await trigger.evaluate((element) => document.activeElement === element)) {
+        recordFailure(label + '/custom-select', 'Focus was not returned to the select trigger');
+      }
+    } catch (error) {
+      recordFailure(label + '/custom-select', error);
+    }
+    break;
+  }
+}
 async function checkKeyboard(page, label) {
   await page.locator('#workspace-main').focus();
   await page.keyboard.press('Control+k');
@@ -191,6 +220,10 @@ async function runWorkspace(browser, width, locale, theme) {
     const actualDir = await page.locator('html').getAttribute('dir');
     const expectedDir = locale === 'ar' ? 'rtl' : 'ltr';
     if (actualDir !== expectedDir) recordFailure(label, 'Expected ' + expectedDir + ', got ' + actualDir);
+    const computedDirection = await page.evaluate(() => getComputedStyle(document.body).direction);
+    if (computedDirection !== expectedDir) {
+      recordFailure(label + '/rtl', 'Body direction differs from selected locale: ' + computedDirection);
+    }
     const activeTheme = await page.locator('html').getAttribute('data-theme');
     if (activeTheme !== theme) recordFailure(label, 'Theme mismatch: ' + activeTheme);
     const samples = [];
@@ -202,6 +235,7 @@ async function runWorkspace(browser, width, locale, theme) {
       // Capture the unmodified workspace before test interactions alter focus or scroll.
       await screenshot(page, label + '-' + view.name);
       await checkSwitchesAndPopovers(page, label + '/' + view.name);
+      await checkCustomSelectKeyboard(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
       if (view.name === 'research') {
         const search = page.locator('#workspace-main .search-field input').first();
