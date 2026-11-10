@@ -14,17 +14,17 @@ button, input, select, textarea, a {
   outline-offset: 2px;
 }
 :where(button, input, select, textarea):disabled { cursor: not-allowed; opacity: .55; }
-:where(input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea) {
+input:not([type='checkbox']):not([type='radio']):not([type='range']), select, textarea {
   color: var(--text);
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
 }
-:where(input:not([type='checkbox']):not([type='radio']):not([type='range']), select) {
+input:not([type='checkbox']):not([type='radio']):not([type='range']), select {
   min-height: var(--control-height);
   padding-inline: 12px;
 }
-:where(select:not([multiple])) {
+select:not([multiple]) {
   appearance: none;
   padding-inline-end: 36px;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%2394a1ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -33,7 +33,7 @@ button, input, select, textarea, a {
   background-position: right 12px center;
 }
 :root[dir='rtl'] select:not([multiple]) { background-position: left 12px center; }
-:where(input[type='checkbox'], input[type='radio'], input[type='range']) { accent-color: var(--color-signal-strong); }
+input[type='checkbox'], input[type='radio'], input[type='range'] { accent-color: var(--color-signal-strong); }
 :where(button, input, select, textarea)::placeholder { color: var(--muted); opacity: 1; }
 :where(.button) { min-height: var(--control-height); }
 .technical, kbd, code, .timestamp { font-family: var(--font-technical); font-variant-numeric: tabular-nums; }

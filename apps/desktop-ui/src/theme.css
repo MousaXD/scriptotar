@@ -30,12 +30,12 @@
   :root[data-theme='system'] .topbar { border-color: var(--border); background: var(--bg); }
   :root[data-theme='system'] .panel { border-color: var(--border); background: var(--surface); box-shadow: none; }
   :root[data-theme='system'] input,
-  :root[data-theme='system'] select,
   :root[data-theme='system'] textarea,
   :root[data-theme='system'] .global-search,
   :root[data-theme='system'] .search-field,
   :root[data-theme='system'] .segmented,
   :root[data-theme='system'] kbd { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+  :root[data-theme='system'] select { color: var(--text); border-color: var(--border); background-color: var(--surface-2); }
   :root[data-theme='system'] .button.secondary { color: var(--text); background: var(--surface-2); }
   :root[data-theme='system'] .activity-button { color: var(--muted); background: var(--surface); }
   :root[data-theme='system'] .metric-grid article,

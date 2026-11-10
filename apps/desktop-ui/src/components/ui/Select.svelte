@@ -14,8 +14,7 @@
   export let description: string | undefined = undefined;
   export let onChange: ((next: string) => void) | undefined = undefined;
 
-  let sequence = 0;
-  // Module scope counter is unnecessary for app data; each mount only needs a DOM-unique ID.
+  // Each mounted control needs a unique DOM ID for its listbox and description.
   let trigger: HTMLButtonElement;
   let listbox: HTMLDivElement;
   let root: HTMLDivElement;
@@ -142,7 +141,7 @@
   label { color: var(--text); font-size: var(--text-sm); font-weight: 600; }
   .required { color: var(--danger); }
   .trigger { width: 100%; min-height: var(--control-height); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); text-align: start; font-size: var(--text-sm); }
-  .trigger:hover:not(:disabled) { border-color: var(--text-muted); }
+  .trigger:hover:not(:disabled) { border-color: var(--color-text-muted); }
   .trigger.invalid { border-color: var(--danger); }
   .trigger svg { flex: 0 0 auto; color: var(--muted); }
   .placeholder { color: var(--muted); }
