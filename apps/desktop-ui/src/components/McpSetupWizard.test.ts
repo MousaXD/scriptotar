@@ -90,7 +90,7 @@ describe('local MCP connection setup wizard', () => {
     const api = await setup();
     const save = vi.spyOn(api, 'saveMcpPermissions');
     setLocale('ar');
-    expect(screen.getByRole('heading', { name: 'الخطوة 1 · الأذونات المحلية' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'الخطوة 1 · الأذونات المحلية' })).toBeInTheDocument();
     await fireEvent.click(screen.getByLabelText('تفعيل MCP في Scriptotar'));
     await fireEvent.click(screen.getByLabelText('قراءة المشاريع والمهام والنصوص المفرغة'));
     expect(screen.getByText('تغييرات أذونات غير محفوظة')).toBeInTheDocument();
@@ -99,4 +99,17 @@ describe('local MCP connection setup wizard', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, readData: true }), false);
     expect(screen.getByRole('heading', { name: 'الخطوة 2 · اختر طريقة الاتصال' })).toBeInTheDocument();
   });
+  it('invalidates powerful-access approval if the approved scope changes before save', async () => {
+    await setup();
+    await fireEvent.click(screen.getByLabelText('Enable Scriptotar MCP'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show advanced file and command permissions' }));
+    await fireEvent.click(screen.getByLabelText('Execute approved programs'));
+    await fireEvent.click(screen.getByLabelText(/I approve powerful file and command access/));
+    expect(screen.getByRole('button', { name: 'Save permissions & continue' })).toBeEnabled();
+    await fireEvent.input(screen.getByPlaceholderText('/home/user/Documents/Scriptotar'), {
+      target: { value: '/tmp/scriptotar-workspace' }
+    });
+    expect(screen.getByRole('button', { name: 'Save permissions & continue' })).toBeDisabled();
+  });
+
 });
