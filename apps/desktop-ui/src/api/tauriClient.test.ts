@@ -21,6 +21,7 @@ describe('Tauri client command contract', () => {
 
     await api.backendHealth();
     await api.bootstrap();
+    await api.bootstrapSummary();
     await api.getWatchlistStatuses();
     await api.getMigrationStatus();
     await api.retryLegacyMigration();
@@ -78,6 +79,7 @@ describe('Tauri client command contract', () => {
 
     expect(invokeMock).toHaveBeenCalledWith('backend_health');
     expect(invokeMock).toHaveBeenCalledWith('bootstrap_app');
+    expect(invokeMock).toHaveBeenCalledWith('bootstrap_app', { summary: true });
     expect(invokeMock).toHaveBeenCalledWith('get_watchlist_statuses');
     expect(invokeMock).toHaveBeenCalledWith('get_migration_status');
     expect(invokeMock).toHaveBeenCalledWith('retry_legacy_migration');
