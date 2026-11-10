@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod project_jobs;
 
 use std::{
@@ -34,7 +35,6 @@ use crate::dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
     UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment, UiTranscriptSummary,
 };
-use project_jobs::summarize_project_jobs;
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
@@ -513,10 +513,10 @@ impl AppServices {
     ) -> RepositoryResult<BootstrapData<T>> {
         let started = Instant::now();
         let projects = self.store.list_projects()?;
-        let all_jobs = self.store.list_jobs(None)?;
-        // Precompute project counts and latest updates once. Repeatedly filtering all
-        // jobs for every project makes bootstrap CPU work quadratic in workspace size.
-        let project_job_summaries = summarize_project_jobs(&all_jobs);
+        // Keep active project jobs ordered as before; fetch other project counters
+        // as a compact grouped SQL query rather than pulling every historical job.
+        let all_jobs = self.store.list_jobs(Some(active_project))?;
+        let project_job_summaries = self.store.project_job_summaries()?;
         let ui_transcripts = T::list_for(&self.store, active_project)?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
@@ -592,7 +592,7 @@ impl AppServices {
             .map(|project| {
                 let summary = project_job_summaries.get(&project.id);
                 let updated_at = summary
-                    .and_then(|summary| summary.latest_updated_at)
+                    .and_then(|summary| summary.latest_updated_at.as_deref())
                     .unwrap_or(&project.created_at)
                     .to_owned();
                 UiProject {
