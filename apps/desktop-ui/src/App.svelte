@@ -35,6 +35,7 @@
   let transcriptSearchKey = '';
   let workspaceGeneration = 0;
   let switchingProject = false;
+  let creatingProject = false;
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   function startupMark(name: string): void {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
@@ -212,7 +213,7 @@
   }
 
   async function selectProject(id: string): Promise<boolean> {
-    if (switchingProject || !data) return false;
+    if (switchingProject || creatingProject || !data) return false;
     if (id === data.activeProjectId) return true;
     const generation = ++workspaceGeneration;
     switchingProject = true;
@@ -237,25 +238,29 @@
   }
 
   async function createProject(name: string) {
-    if (switchingProject) return;
+    if (switchingProject || creatingProject) return;
+    const hadActiveProject = Boolean(activeProject);
     const generation = ++workspaceGeneration;
-    switchingProject = true;
+    creatingProject = true;
     switchError = '';
     invalidateTranscriptSearch();
     globalSearch = '';
     try {
       const next = await api.createProject(name);
       if (generation !== workspaceGeneration) return;
+      if (!next.projects.some((project) => project.id === next.activeProjectId)) {
+        throw new Error('The created project was not available in the backend response.');
+      }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
       activeView = 'dashboard';
     } catch (cause) {
-      if (generation === workspaceGeneration) {
+      if (generation === workspaceGeneration && !hadActiveProject) {
         switchError = cause instanceof Error ? cause.message : 'Unable to create project.';
       }
       throw cause;
     } finally {
-      if (generation === workspaceGeneration) switchingProject = false;
+      if (generation === workspaceGeneration) creatingProject = false;
     }
   }
 
@@ -399,7 +404,7 @@
 </script>
 <svelte:window onkeydown={keyNav} />
 
-<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject || creatingProject} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
   {#if loading || switchingProject}
     <WorkspaceSkeleton />
   {:else if error}
