@@ -74,9 +74,19 @@ test('approved hashes pass unchanged and reject modified screenshot bytes', asyn
   await withEvidence(async (dir) => {
     const screenshots = await populate(dir);
     await mkdir(join(dir, 'qa', 'baselines'), { recursive: true });
-    await writeFile(join(dir, 'qa', 'baselines', 'manifest.json'),
-      JSON.stringify({ approvedSourceSha: sha, screenshots }));
+    const manifestPath = join(dir, 'qa', 'baselines', 'manifest.json');
+    const manifest = {
+      approvedSourceSha: sha, reviewStatus: 'PENDING_MANUAL_REVIEW',
+      reviewedBy: null, reviewedAt: null, screenshots
+    };
+    await writeFile(manifestPath, JSON.stringify(manifest));
     let result = run(dir);
+    assert.notEqual(result.status, 0, 'An unreviewed baseline must be rejected');
+    manifest.reviewStatus = 'APPROVED';
+    manifest.reviewedBy = 'Agent 00';
+    manifest.reviewedAt = '2026-11-11T00:00:00Z';
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    result = run(dir);
     assert.equal(result.status, 0, result.stdout + result.stderr);
     let comparison = JSON.parse(await readFile(join(dir, 'qa', 'evidence', 'comparison.json'), 'utf8'));
     assert.equal(comparison.comparison, 'PASS');
