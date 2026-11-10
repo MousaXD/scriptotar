@@ -37,6 +37,10 @@ describe('Transcript reader workspace', () => {
     await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'Transcript segment 349' } });
     expect(content).toHaveTextContent('Transcript segment 349');
     expect(content.querySelectorAll('article.segment')).toHaveLength(1);
+
+    await fireEvent.click(content.querySelector('button.timestamp')!);
+    await waitFor(() => expect(content.querySelectorAll('article.segment')).toHaveLength(350));
+    expect(screen.getByRole('textbox')).toHaveValue('');
   });
 
   it('keeps the source direction and ignores an older source response after switching', async () => {
