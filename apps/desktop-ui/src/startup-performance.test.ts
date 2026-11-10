@@ -80,14 +80,18 @@ describe('progressive desktop startup', () => {
     expect(screen.queryByText('STALE JOB FROM OTHER PROJECT')).not.toBeInTheDocument();
   });
 
-  it('shows an in-shell recovery error rather than an empty screen if no project is available', async () => {
+  it('allows creating a project from an otherwise empty workspace', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), projects: [], activeProjectId: '' })
     });
+    const createProject = vi.spyOn(api, 'createProject');
     render(App, { props: { api } });
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('no available project');
+    expect(await screen.findByRole('heading', { name: 'Create your first project' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'My First Workspace' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    await waitFor(() => expect(createProject).toHaveBeenCalledWith('My First Workspace'));
+    expect(await screen.findByRole('heading', { name: 'My First Workspace' })).toBeInTheDocument();
   });
 });
