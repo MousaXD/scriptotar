@@ -4,14 +4,14 @@
 **Assigned branch:** `agent-01/design-system-controls-overhaul`
 **PR:** https://github.com/MousaXD/scriptotar/pull/89 (draft)
 **Audited base:** `f741244634b5143602a21a554094a498a0005b11`
-**Latest implementation commit (before handoff):** `3710e861416be8e0adbfc8727061fb8ed7790bdb`
+**Final implementation commit (before the handoff report update):** `3b256265007dd49a88ad7794b5d4e75e316d2c5a`
 **Coordinator:** Agent 00
 
 ## Work completed
 
-1. Preserved the existing design contract but flattened global workstation chrome: removed all radial/linear gradients from `app.css` and `theme.css`, replaced the sidebar/topbar/panel backgrounds with semantic surfaces, lowered default card elevation, strengthened muted text contrast, and removed 9–10px annotation type from the application CSS.
+1. Preserved the existing design contract but flattened global workstation chrome: removed all radial/linear gradients from `app.css` and `theme.css`, replaced the sidebar/topbar/panel backgrounds with semantic surfaces, lowered default card elevation, strengthened muted text contrast, and removed 9–10px annotation type from the application CSS. Corrected legacy dark-only backgrounds and text in system-light mode.
 2. Rebuilt semantic design tokens for neutral work surfaces, deliberate control dimensions, spacing, radii, type hierarchy and focus. Light system mode and dark mode now use shared tokens. UI and Arabic font stacks work offline and have an explicit fallback policy.
-3. Added seven independently reusable Svelte controls under `src/components/ui/`: `Select`, `Slider`, `Checkbox`, `Switch`, `RadioGroup`, `TextField`, `Popover`. No backend settings, localization catalog or existing view behavior was changed.
+3. Added seven independently reusable Svelte controls under `src/components/ui/`: `Select`, `Slider`, `Checkbox`, `Switch`, `RadioGroup`, `TextField`, `Popover`. New sliders and select options have at least 40px interaction targets. No backend settings, localization catalog or existing view behavior was changed.
 4. Styled the legacy native controls at the global CSS layer, including a closed-selector chevron, checkbox/radio/range accent fallback, visible focus ring, disabled states and RTL arrow placement. **This is a fallback only; an operating-system popup cannot be completely themed from CSS.**
 5. Added `controls.test.ts` for keyboard and accessible interaction and `control-source.test.ts` plus `raw-modules.d.ts` for regression checks on flat surfaces, tokens, focusable selectors, and cross-engine slider styling.
 6. Published `src/design/CONTROL_MIGRATION.md`, including the 20 existing native selectors in the audited app shell and view files and the migration contract for other agents.
@@ -40,9 +40,9 @@ No `main`, workspaces, AppShell, Rust services, shared API contracts or localiza
 ## Tests and CI evidence
 
 New checks are authored but not yet confirmed as passed. GitHub Actions Desktop UI run:
-https://github.com/MousaXD/scriptotar/actions/runs/42924312254
+https://github.com/MousaXD/scriptotar/actions/runs/42924792651
 
-At report creation this run was **queued** for the implementation commit. Other workflows on intermediate heads were mostly cancelled by newer-push concurrency; cancellation is not a pass.
+At this report update this run was **pending** for the final implementation commit. Other workflows on intermediate heads were mostly cancelled by newer-push concurrency; cancellation is not a pass.
 
 The required `npm ci`, `npm run check`, `npm run test`, `npm run build` and installed-app visual checks cannot be claimed as passed until exact-PR-head CI and packaged Windows/Linux WebView verification finish.
 
