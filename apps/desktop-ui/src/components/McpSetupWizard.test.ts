@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { setLocale } from '../i18n';
 import McpSetupWizard from './McpSetupWizard.svelte';
 import { createMockClient } from '../api/mockClient';
 
@@ -20,6 +21,8 @@ async function enableReadOnly() {
 }
 
 describe('local MCP connection setup wizard', () => {
+  afterEach(() => setLocale('en'));
+
   it('defaults to deny, reviews permissions then connects via Cloudflare and revokes URL', async () => {
     const api = await enableReadOnly();
     const connect = vi.spyOn(api, 'mcpConnectCloudflare');
@@ -67,5 +70,33 @@ describe('local MCP connection setup wizard', () => {
     await fireEvent.input(screen.getByPlaceholderText('https://mcp.example.com'), { target: { value: 'https://mcp.example.com' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
     expect(await screen.findByTestId('mcp-public-url')).toHaveTextContent('https://mcp.example.com/mcp/p/');
+  });
+
+  it('shows unsaved permissions, disables next step and allows discarding without a backend write', async () => {
+    const api = await setup();
+    const save = vi.spyOn(api, 'saveMcpPermissions');
+    const enabled = screen.getByLabelText('Enable Scriptotar MCP');
+    expect(enabled).not.toBeChecked();
+    await fireEvent.click(enabled);
+    expect(screen.getByText('Unsaved permission changes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /2 Connection/ })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Discard permission changes' }));
+    expect(enabled).not.toBeChecked();
+    expect(save).not.toHaveBeenCalled();
+    expect(screen.queryByText('Unsaved permission changes')).not.toBeInTheDocument();
+  });
+
+  it('renders Arabic permissions directly and preserves policy values when language changes', async () => {
+    const api = await setup();
+    const save = vi.spyOn(api, 'saveMcpPermissions');
+    setLocale('ar');
+    expect(screen.getByRole('heading', { name: 'الخطوة 1 · الأذونات المحلية' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByLabelText('تفعيل MCP في Scriptotar'));
+    await fireEvent.click(screen.getByLabelText('قراءة المشاريع والمهام والنصوص المفرغة'));
+    expect(screen.getByText('تغييرات أذونات غير محفوظة')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'حفظ الأذونات والمتابعة' }));
+    await screen.findByTestId('mcp-step-connection');
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, readData: true }), false);
+    expect(screen.getByRole('heading', { name: 'الخطوة 2 · اختر طريقة الاتصال' })).toBeInTheDocument();
   });
 });
