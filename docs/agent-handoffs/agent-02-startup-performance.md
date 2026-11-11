@@ -123,3 +123,31 @@ Agent 08 left a source-verified [comment on PR #90](https://github.com/MousaXD/s
 **Full overhaul / merge verdict: BLOCKED** by verified Rust supply-chain vulnerability [#97](https://github.com/MousaXD/scriptotar/issues/97) and outstanding shared-select/packaged cold-warm startup certification dependencies. PR #90 is open and ready for Agent 00 review, but **must not be merged as a release-ready integration** on the strength of frontend tests alone.
 
 This documentation-only commit changes the SHA and triggers a new CI run; the code and tests are unchanged from the fully verified 11/12 source head above. Check the *new* SHA's check status before formal merge-gate approval.
+
+## Agent 02 final continuation — keyboard integration and create/refresh atomicity
+
+**Source verification:** The connected GitHub repository, assigned `agent-02/frontend-startup-performance` branch, open PR #90, original base `f741244634b5143602a21a554094a498a0005b11`, and this handoff were re-verified at `c58d6bb18d8682a9cfa99fd15ddaf189fe9c38ab` before any work. Local `pwd` was `/`, not a Git checkout; the GitHub connector was used to update the **existing** branch, without recreating a worktree, touching `main`, or changing another agent's files.
+
+### Additional audit findings and fixes
+1. **Custom listbox keyboard conflict:** `App.svelte` global `D/R/J/T/A/L/,` shortcuts previously ignored native inputs and modal dialogs but not non-modal ARIA listboxes/options/comboboxes. Letter typeahead inside the future shared `Select` (Agent 01 PR #89) could unexpectedly navigate behind the selector. The shortcut guard now also excludes `[role="listbox"]`, `[role="option"]`, and `[role="combobox"]`, without disabling normal workspace shortcuts.
+2. **Project creation vs. background refresh:** `refresh()`, `refreshJobs()`, `refreshOperationalStatus()`, and watchlist save could run while `creatingProject` was true, advancing `workspaceGeneration` and discarding a successful `api.createProject()` result. The frontend now blocks those old-project refresh/save operations until creation completes. This prevents a stale dashboard after a successful mutation.
+3. **Integration/visual verification:** Reviewed all changed frontend files, native selector dependency, accessibility of the workspace skeleton, keyboard/RTL patterns, responsive breakpoints and design tokens. All skeleton CSS variables are declared in the existing tokens/base design files. No speculative UX rewrite or duplicate shared control was introduced.
+
+### New tests and exact-code validation
+`startup-performance.test.ts` now has **14** tests (previously 12): ARIA-listbox typeahead must not navigate; ordinary window shortcuts still work; a job event arriving while a project creation API request is pending cannot block/revert the completed creation.
+
+**Exact-code commit:** `b082ee19817dfc2c641b38931efd5c26bf8794a7` (the final code changes in `App.svelte` and the owned startup test).
+
+GitHub [Desktop UI run #42936758820](https://github.com/MousaXD/scriptotar/actions/runs/42936758820) was inspected directly and **completed successfully** on that SHA:
+
+- Install dependencies: success
+- `npm run check`: **0 errors, 0 warnings**
+- `npm run test`: **13 files / 92 tests passed**, including **14/14 dedicated startup tests**
+- `npm run build`: success; 252.34 kB JS / 77.67 kB gzip, 74.34 kB CSS / 13.62 kB gzip. Bundle sizes are measured production-build outputs, **not** a benchmark or claim of reduced packaged startup time.
+
+The existing [issue #97](https://github.com/MousaXD/scriptotar/issues/97) remains open for the out-of-scope RustSec `libsqlite3-sys` supply-chain vulnerability. Agent 01's [PR #89](https://github.com/MousaXD/scriptotar/pull/89) remains unmerged/draft; its `Select.svelte` is absent from this independent baseline. Once Agent 00 approves integration, the AppShell owner must adopt that shared selector and preserve project/language semantics, and Agent 08 must certify exact integrated keyboard, RTL, visuals and packaged startup timings. Agent 03's optional summary/bootstrap API similarly requires coordinated Agent 06 transcript hydration.
+
+### Final disposition
+**READY FOR AGENT 00 REVIEW — Agent 02 frontend scope.** All independently executable source and tests are pushed, and the code-bearing commit passed all frontend checks. **BLOCKED FOR INTEGRATED MERGE / RELEASE** until security issue #97, shared selector integration and Agent 08 packaged-performance acceptance are resolved. No assertions, security gates or old features were removed or weakened.
+
+This final handoff is a documentation-only commit after the green code run; CI on its new SHA must be checked independently for merge-gate certification. Avoid additional no-op documentation commits that supersede running checks.
