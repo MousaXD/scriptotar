@@ -32,9 +32,13 @@
   $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectTranscript(transcripts[0].id);
   $: if (transcripts.length === 0 && selectedId) selectTranscript('');
   // A project switch may replace a summary without changing its ID; never keep old project content.
-  $: if (selected && !transcripts.some((item) => item.id === selected.id && item.projectId === selected.projectId)) {
-    selected = undefined;
-    selectedLoadId = '';
+  $: {
+    const currentSelection = selected;
+    if (currentSelection && !transcripts.some((item) => item.id === currentSelection.id && item.projectId === currentSelection.projectId)) {
+      selected = undefined;
+      selectedLoadId = '';
+      selectedGeneration += 1;
+    }
   }
   $: if (selectedId && selectedId !== selectedLoadId) void loadSelected(selectedId);
   $: matchingSegments = selected && query.trim() ? selected.segments.filter((segment) => segment.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) : [];
@@ -58,7 +62,11 @@
       if (transcript.id !== id || transcript.projectId !== expected.projectId) {
         throw new Error('Loaded transcript did not match the selected project and transcript ID.');
       }
-      if (generation === selectedGeneration && selectedId === id) selected = transcript;
+      if (generation === selectedGeneration && selectedId === id && transcripts.some((item) => item.id === id && item.projectId === expected.projectId)) {
+        selected = transcript;
+      } else if (generation === selectedGeneration && selectedId === id) {
+        selectedLoadId = '';
+      }
     } catch (cause) {
       if (generation === selectedGeneration && selectedId === id) {
         selected = undefined;
