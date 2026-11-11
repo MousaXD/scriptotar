@@ -311,8 +311,6 @@
   .mode-switch button { padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); text-align: center; font-size: 13px; font-weight: 650; }
   .mode-switch button:hover { border-color: var(--border-strong); }
   .mode-switch button.active { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 8%, var(--surface)); }
-  .mode-switch strong { font-size: 12px; }
-  .mode-switch span { color: var(--muted); font-size: 9px; }
 
   .ai-setup { display: grid; gap: 14px; margin-bottom: 12px; padding: 15px; }
   .setup-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
@@ -322,7 +320,6 @@
   .ai-config-grid.byok-mode { grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 1fr) repeat(2, minmax(0, 1fr)); }
   .ai-config-grid label, .ai-brief-grid label, .byok-strip label, .source-picker { display: grid; gap: 5px; }
   .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span, .source-picker span { color: var(--muted); font-size: 12px; }
-  .disabled-field { opacity: .55; }
   .byok-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent-strong) 4%, transparent); }
   .byok-strip p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; }
   .timer-badge-group, .result-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
