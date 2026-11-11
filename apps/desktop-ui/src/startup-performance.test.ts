@@ -365,8 +365,53 @@ describe('progressive desktop startup', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('did not become active');
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
     expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('rejects an existing different project as the result of createProject', async () => {
+    const api = createMockClient({
+      createProject: async () => ({
+        ...structuredClone(mockBootstrap),
+        activeProjectId: 'p-client-a'
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Actually New Project' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
+    expect(screen.queryByRole('heading', { name: 'Client A' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('rejects a fresh project with an unexpected name in the create response', async () => {
+    const api = createMockClient({
+      createProject: async () => ({
+        ...structuredClone(mockBootstrap),
+        projects: [...structuredClone(mockBootstrap.projects), {
+          ...structuredClone(mockBootstrap.projects[0]),
+          id: 'new-but-wrong-name',
+          name: 'Unexpected Project'
+        }],
+        activeProjectId: 'new-but-wrong-name'
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Correct Project' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
+    expect(screen.queryByRole('heading', { name: 'Unexpected Project' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
