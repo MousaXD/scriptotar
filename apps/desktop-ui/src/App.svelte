@@ -411,7 +411,7 @@
     let unsubscribeJobs: (() => void) | undefined;
     void load();
     void api
-      .subscribeJobChanges(() => scheduleJobRefresh())
+      .subscribeJobChanges(() => { if (!disposed) scheduleJobRefresh(); })
       .then((unsubscribe) => {
         if (disposed) unsubscribe();
         else unsubscribeJobs = unsubscribe;
@@ -425,9 +425,11 @@
     const operationalPoll = window.setInterval(() => void refreshOperationalStatus(), 15000);
     return () => {
       disposed = true;
+      // All pending IPC responses are now obsolete, including an unresolved bootstrap.
+      workspaceGeneration += 1;
+      invalidateTranscriptSearch();
       unsubscribeJobs?.();
       if (jobRefreshTimer !== undefined) window.clearTimeout(jobRefreshTimer);
-      if (transcriptSearchTimer !== undefined) window.clearTimeout(transcriptSearchTimer);
       window.clearInterval(jobReconcile);
       window.clearInterval(operationalPoll);
     };
