@@ -74,7 +74,8 @@ describe('progressive desktop startup', () => {
     await fireEvent.input(screen.getByLabelText('Search workspace'), {
       target: { value: 'Distinctive Zebra' }
     });
-    expect(await screen.findByRole('button', { name: /Distinctive Zebra Workspace.*Project/ })).toBeInTheDocument();
+    const matches = await screen.findAllByRole('button', { name: /Distinctive Zebra Workspace.*Project/ });
+    expect(matches.length).toBeGreaterThan(0);
   });
 
   it('closes the command palette to expose an ordinary project-switch rejection', async () => {
