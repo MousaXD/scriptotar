@@ -1942,7 +1942,7 @@ mod tests {
                 ],
             )
             .unwrap();
-        let language = if ordinal % 2 == 0 { "ar" } else { "en" };
+        let language = if ordinal.is_multiple_of(2) { "ar" } else { "en" };
         let segments = serde_json::json!([{
             "index": 0,
             "start": 0.0,
