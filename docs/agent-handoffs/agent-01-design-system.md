@@ -244,3 +244,33 @@ The baseline inventory of **20 native selects** in AppShell and other owners' wo
 ### Final independent owner-scope verdict
 
 **READY FOR AGENT 00 REVIEW** of Agent 01's code and tests. The full source audit found no additional reproducible Agent 01 defect; prior input-type isolation and CSS `:where` specificity corrections have passed exact-commit frontend tests and builds. **BLOCKED FOR MERGE / RELEASE** until RustSec and integration/visual requirements pass. Preserve the existing draft PR. This handoff-only commit advances HEAD and therefore requires rechecking exact-new-head workflow status before merge.
+
+
+## Continued accessibility and RTL audit — exact source validation (2026-11-11)
+
+**Assigned repository and branch:** `MousaXD/scriptotar`, `agent-01/design-system-controls-overhaul`. Existing **draft PR #89** remains the sole PR and is based on `main`. The current container is at `/` with **no Git working tree**, so branch, Git history, PR and files were verified using GitHub API rather than claiming local checkout/test results.
+
+### Audit scope, defects, and fixes
+
+The independent review rechecked all seven controls, their CSS and interaction tests, float positioning geometry, global tokens and dark/light/RTL semantics. It identified and corrected **two additional in-ownership accessibility and RTL defects**:
+
+1. **Checkbox / Switch descriptive text was included in the wrapped label's accessible name.** In `Checkbox.svelte` and `Switch.svelte`, each instance now gives its visible label an ID and uses `aria-labelledby` for the control name. The optional help text receives a separate ID referenced by `aria-describedby`, so the accessible description does not contaminate the control name. No click, keyboard, checked-state, disabled-state, or `onChange` behavior was removed. `controls.test.ts` now asserts independent accessible names/descriptions and clicks through both labels. Commit: `c1a587f387145d98fbf26ecf3030e83c42d97cc2`.
+2. **Global workspace text and mobile sidebar rules used LTR physical properties.** Six `text-align: left` rules were converted to `text-align: start` in `app.css` for navigation, list and workspace controls; the activity indicator uses `margin-inline-end`, and mobile sidebar border clearing uses `border-inline-end`. Added CSS source regression checks. Commit: `5b4808d1a0390cf5aa824796e21d938264ef73c2`.
+
+Both changes preserve the appearance/functionality of LTR and improve Arabic/RTL correctness. No worktree, files or scripts belonging to other agents were touched; no security assertion or test was weakened.
+
+### Verified validation evidence
+
+The [Desktop UI #42943822806](https://github.com/MousaXD/scriptotar/actions/runs/42943822806) workflow **passed** on the combined source fix `5b4808d1a0390cf5aa824796e21d938264ef73c2`. The actual job log shows **svelte-check: 0 errors and 0 warnings**, **15 test files / 91 tests passed**, and a successful production build (1.45 seconds). [Security hygiene #42943822863](https://github.com/MousaXD/scriptotar/actions/runs/42943822863) also **passed** on that exact source commit.
+
+The same source HEAD's CI #42943822895, MCP E2E #42943823223, Tauri migration #42943822832, Linux package #42943822817 and Windows installer #42943822846 were queued/in-progress at the final evidence check; their success is **not claimed** here. The previous fully checked HEAD `c8099b54f43ab183ba5d34482943caa515f5d567` had **six passing workflows**, while Tauri migration #42939176518 failed **only the Rust advisory supply-chain job**.
+
+### Explicit cross-agent security and integration dependencies
+
+**Release blocker:** `libsqlite3-sys 0.30.1` with **RUSTSEC-2026-0459 / CVE-2026-119375** (RustSec indicates `>=0.39.0` patched) is in `Cargo.lock`, outside Agent 01. Agent 00 must assign a compatible Rust/SQLite dependency upgrade to the Rust/database/security owner and require the unmodified Rust advisory audit to pass; **do not ignore the advisory or modify the audit threshold**.
+
+**View integration:** 20 original native selectors in other owners' AppShell/workspace views require coordinated migration to the shared Select component to remove OS-default opened-menu appearance, with original handlers, localization and security intact. Agent 07 owns translations. Agent 08 must review installed Windows/Linux WebView visuals, Arabic RTL, overflow/transformed-ancestor popovers, keyboard focus and screen-reader behavior; JSDOM tests and installed-package smoke cannot certify those visual/assistive-technology aspects.
+
+### Final scoped verdict
+
+**READY FOR AGENT 00 REVIEW** of Agent 01's source, tests and design-system contract: the identified defects are committed, the exact-source frontend quality gate passed, and all changes remain within ownership. **BLOCKED FOR MERGE/RELEASE** until the non-owned RustSec vulnerability and cross-agent installed-app certification are resolved. Keep the existing PR draft. This handoff-only update advances the PR HEAD, which must be validated again under the coordinator's exact-head CI rule.
