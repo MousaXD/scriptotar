@@ -220,6 +220,26 @@ describe('shared workstation controls', () => {
     expect(onInput).toHaveBeenCalledWith('https://example.com');
   });
 
+  it('keeps the parent Popover open when an inner control handles Escape', async () => {
+    render(Popover, { props: { label: 'Advanced options', triggerLabel: 'Advanced' } });
+    const trigger = screen.getByRole('button', { name: 'Advanced' });
+    await fireEvent.click(trigger);
+    const panel = screen.getByRole('dialog', { name: 'Advanced options' });
+
+    // A nested listbox handles Escape before the event bubbles to the window.
+    const nestedEscape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    nestedEscape.preventDefault();
+    panel.dispatchEvent(nestedEscape);
+    expect(nestedEscape.defaultPrevented).toBe(true);
+    expect(panel).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    // An unhandled Escape still dismisses the outer Popover and restores focus.
+    await fireEvent.keyDown(panel, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('provides a non-modal menu with Escape dismissal and focus restoration', async () => {
     render(Popover, { props: { label: 'Export format', triggerLabel: 'Export' } });
     const trigger = screen.getByRole('button', { name: 'Export' });

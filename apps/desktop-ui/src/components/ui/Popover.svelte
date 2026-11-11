@@ -22,7 +22,8 @@
     panel?.focus();
   }
   function key(event: KeyboardEvent) {
-    if (event.key === 'Escape' && open) { event.preventDefault(); close(true); }
+    // A nested listbox/dialog may consume Escape to dismiss only its own layer.
+    if (event.key === 'Escape' && open && !event.defaultPrevented) { event.preventDefault(); close(true); }
   }
   function outside(event: PointerEvent) {
     if (open && root && event.target instanceof Node && !root.contains(event.target)) close();
