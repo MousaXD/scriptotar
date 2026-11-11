@@ -7,6 +7,7 @@ import selectSource from './Select.svelte?raw';
 import sliderSource from './Slider.svelte?raw';
 import checkboxSource from './Checkbox.svelte?raw';
 import switchSource from './Switch.svelte?raw';
+import popoverSource from './Popover.svelte?raw';
 import textFieldSource from './TextField.svelte?raw';
 
 describe('visual and semantic regression contract', () => {
@@ -35,6 +36,10 @@ describe('visual and semantic regression contract', () => {
     expect(selectSource).toContain('role="listbox"');
     expect(selectSource).toContain('aria-activedescendant');
     expect(selectSource).toContain('function listKeys(');
+  });
+
+  it('keeps popover width limits consistent with viewport-aware placement', () => {
+    expect(popoverSource).toContain('min-width: min(200px, 90vw)');
   });
 
   it('keeps invalid text-field borders visible in the system-light theme', () => {

@@ -35,6 +35,30 @@ describe('floating control placement', () => {
     anchor.remove(); panel.remove();
   });
 
+  it('accounts for popover minimum width near a narrow viewport edge', () => {
+    const previousWidth = window.innerWidth;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 240 });
+    const anchor = document.createElement('button');
+    const panel = document.createElement('div');
+    document.body.append(anchor, panel);
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      top: 50, bottom: 90, left: 208, right: 232, width: 24, height: 40, x: 208, y: 50,
+      toJSON: () => ({})
+    });
+    Object.defineProperty(panel, 'scrollWidth', { configurable: true, value: 90 });
+    let action: ReturnType<typeof floatingPosition> | undefined;
+    try {
+      action = floatingPosition(panel, { anchor, align: 'end' });
+      expect(panel.style.width).toBe('200px');
+      expect(Number.parseFloat(panel.style.left)).toBeGreaterThanOrEqual(8);
+      expect(Number.parseFloat(panel.style.left) + Number.parseFloat(panel.style.width)).toBeLessThanOrEqual(232);
+    } finally {
+      action?.destroy();
+      anchor.remove(); panel.remove();
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth });
+    }
+  });
+
   it('uses the logical inline-start anchor in RTL without exceeding the viewport', () => {
     const anchor = document.createElement('button');
     const panel = document.createElement('div');

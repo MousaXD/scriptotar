@@ -50,6 +50,6 @@
   button:hover:not(:disabled) { background: var(--surface-3); }
   button:disabled { opacity: .55; cursor: not-allowed; }
   button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
-  .panel { position: fixed; z-index: 45; width: max-content; max-width: min(440px, 90vw); min-width: 200px; padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); }
+  .panel { position: fixed; z-index: 45; width: max-content; max-width: min(440px, 90vw); min-width: min(200px, 90vw); padding: 12px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-overlay); color: var(--text); }
   .panel:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 </style>

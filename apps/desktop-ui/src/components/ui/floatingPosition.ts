@@ -21,7 +21,8 @@ export function floatingPosition(node: HTMLElement, initial: FloatingOptions) {
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
     const maxWidth = Math.max(0, viewportWidth - MARGIN * 2);
-    const intrinsicWidth = Math.max(node.scrollWidth, rect.width, 160);
+    // Non-matched popovers must account for the panel's 200px visual minimum.
+    const intrinsicWidth = Math.max(node.scrollWidth, rect.width, matchWidth ? 160 : 200);
     // Content popovers have a 440px visual cap; match-width selects may be wider.
     // Keep geometry in sync with the panel's CSS max-width when near the viewport edge.
     const width = matchWidth
