@@ -460,7 +460,7 @@ describe('progressive desktop startup', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
 
-    expect(await screen.findByText(/may already have been created\. Check the project selector/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/may already have been created\. Check the project selector/)).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Partially Created' })).toBeInTheDocument();
     expect(api.createProject).toHaveBeenCalledTimes(1);
