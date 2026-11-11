@@ -81,6 +81,48 @@ describe('Research workspace', () => {
     await waitFor(() => expect(screen.getByText('Selected: 0')).toBeInTheDocument());
   });
 
+  it('batches selection across five pages below the backend 200-ID limit', async () => {
+    const onQueue = vi.fn().mockResolvedValue(undefined);
+    mountResearch(researchItems(201), { onQueue });
+    for (let page = 0; page < 5; page++) {
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Select page' }));
+      if (page < 4) await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    }
+    expect(screen.getByText('Selected: 201')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue selected (201)' }));
+    await waitFor(() => expect(onQueue).toHaveBeenCalledTimes(2));
+    expect(onQueue.mock.calls[0][0]).toHaveLength(200);
+    expect(onQueue.mock.calls[1][0]).toHaveLength(1);
+    expect(new Set(onQueue.mock.calls.flatMap(([ids]) => ids)).size).toBe(201);
+    await waitFor(() => expect(screen.getByText('Selected: 0')).toBeInTheDocument());
+  });
+
+  it('retains unsubmitted selections and exposes partial failure after the first batch', async () => {
+    const onQueue = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Queue disk unavailable'));
+    mountResearch(researchItems(201), { onQueue });
+    for (let page = 0; page < 5; page++) {
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Select page' }));
+      if (page < 4) await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    }
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue selected (201)' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Queue disk unavailable');
+    expect(screen.getByRole('alert')).toHaveTextContent('200 submitted; remaining selection preserved');
+    expect(screen.getByText('Selected: 1')).toBeInTheDocument();
+    expect(onQueue).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: 'Queue selected (1)' })).toBeEnabled();
+  });
+
+  it('submits profile text to backend validation instead of silently blocking non-scheme input', async () => {
+    const onScan = vi.fn().mockResolvedValue(undefined);
+    mountResearch([], { onScan });
+    const field = screen.getByRole('textbox', { name: 'Creator profile URL' });
+    await fireEvent.input(field, { target: { value: 'youtube.com/@creator' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Scan profile' }));
+    await waitFor(() => expect(onScan).toHaveBeenCalledWith('youtube.com/@creator', 25));
+  });
+
   it('keeps watchlist failures and retry timing visible while grouping normal diagnostics', async () => {
     mountResearch([], {
       watchlistStatuses: [{
