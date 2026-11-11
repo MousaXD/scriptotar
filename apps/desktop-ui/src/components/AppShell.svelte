@@ -63,7 +63,9 @@
       const keywords = `${project.name} ${project.description || ''} project`;
       if (!keywords.toLocaleLowerCase().includes(query)) continue;
       matches.push(command(`project:${project.id}`, project.name, meta, keywords, async () => {
-        if ((await onProjectChange(project.id)) !== false) closePalette();
+        await onProjectChange(project.id);
+        // Close even on a rejected switch, so the existing in-workspace error is visible.
+        closePalette();
       }));
       if (matches.length >= 8) break;
     }
