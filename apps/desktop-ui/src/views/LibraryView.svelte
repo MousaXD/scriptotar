@@ -164,7 +164,7 @@
   .library-search { min-width: 0; }
   .library-search input { width: 100%; }
   .sort-select { display: flex; align-items: center; gap: 9px; color: var(--color-text-muted); font-size: var(--text-sm); }
-  .sort-select select { min-width: 155px; }
+  .sort-select :global(.field) { min-width: 155px; }
   .kind-tabs { display: flex; align-items: center; gap: 3px; overflow-x: auto; padding: 8px 12px; border-bottom: 1px solid var(--color-border); }
   .kind-tabs button { display: inline-flex; gap: 9px; align-items: center; justify-content: center; min-height: 38px; padding: 0 11px; white-space: nowrap; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-muted); font-size: var(--text-sm); cursor: pointer; }
   .kind-tabs button:hover { color: var(--color-text); background: var(--color-surface-raised); }
@@ -202,7 +202,7 @@
   }
   @media (max-width: 640px) {
     .library-toolbar { grid-template-columns: 1fr; }
-    .sort-select select { flex: 1; min-width: 0; }
+    .sort-select :global(.field) { flex: 1; min-width: 0; }
     .library-list .library-item { grid-template-columns: 32px minmax(0, 1fr) 14px; gap: 9px; }
     .library-list .library-meta { display: none; }
     .library-head { flex-wrap: wrap; }

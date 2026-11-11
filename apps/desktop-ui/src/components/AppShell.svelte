@@ -444,7 +444,7 @@
     .nav-group button.active::before { inset-inline-start: 9px; inset-block-start: auto; bottom: -5px; width: 22px; height: 3px; }
     .topbar { position: static; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 8px 10px; }
     .project-control { grid-template-columns: 1fr; }
-    .project-control label { display: none; }
+    .project-control :global(.field > label) { display: none; }
     .command-trigger { grid-column: 1 / -1; grid-row: 2; }
     .command-trigger kbd { display: none; }
     .workspace { padding: 20px 12px 36px; }

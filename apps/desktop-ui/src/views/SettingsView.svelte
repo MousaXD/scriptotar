@@ -282,8 +282,6 @@
   .output-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .watch-settings { display: grid; gap: 14px; min-width: min(560px, 100%); }
   .watch-toggle { display: flex; gap: 10px; align-items: start; }
-  .watch-toggle span { display: grid; gap: 3px; }
-  .watch-toggle small { color: var(--muted); line-height: 1.4; }
   .migration-section { border-color: color-mix(in srgb, var(--info) 18%, var(--border)); }
   .migration-status { display: grid; gap: 10px; min-width: min(600px, 100%); padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface-2) 42%, transparent); }
   .migration-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
