@@ -6,14 +6,14 @@
 - Agent branch: `agent-07/settings-localization-overhaul`
 - Initial baseline and merge-base: `f741244634b5143602a21a554094a498a0005b11`
 - Pull request: [#96](https://github.com/MousaXD/scriptotar/pull/96) (draft pending validation)
-- Last implementation/test commit audited: `a23f616e178ac142c378eea4679a70ee2574dbd4`
+- Last implementation/test commit audited: `33edcfa4acf1ddeebb70388c7b64d1cec4a7b002`
 - No edits to `main` or any other agent-owned view, global CSS, Rust MCP code, API client, or shared control implementation.
 
 ## Completed
 
 1. Settings UX:
    - Reordered Settings with Interface, Transcription, Media, Storage, Local behavior, and Watchlists as primary preferences; MCP and legacy migration under Advanced.
-   - Reduced duplicated eyebrows/long paragraphs and avoided repeating migration state labels; preserved the legacy snapshot safety explanation, candidate selection, retry flow, and result details.
+   - Reduced duplicated eyebrows/long paragraphs, simplified the wizard heading and increased small Settings/MCP control text for readability, and avoided repeating migration state labels; preserved the legacy snapshot safety explanation, candidate selection, retry flow, and result details.
    - Added persistent settings baseline, explicit unsaved state and Discard changes. Save is disabled while clean/busy; the successful backend save resets dirty state even when parent props update later.
    - Snapshot settings before asynchronous save so UI edits during an in-flight save are not misrepresented as persisted. Appearance remains applied only after the backend confirms save.
 2. MCP security UX:
@@ -44,7 +44,7 @@
 ## Validation and merge gate
 
 - **Verified pass at code SHA `556d8afc21791ee4b011e66f721b0ba8be73b562`**: Desktop UI `npm run check` (0 errors, 0 warnings), `npm run test` (88/88 tests, 14/14 test files), and `npm run build`; Security hygiene success. This check preceded later targeted bug-fix tests and is not evidence for the final branch HEAD.
-- **Final audited implementation SHA `a23f616e178ac142c378eea4679a70ee2574dbd4`**: submitted with additional UI/a11y/i18n regression tests; exact-HEAD GitHub Actions checks were queued when this report was updated. Verify checks again after this documentation commit.
+- **Final audited implementation SHA `33edcfa4acf1ddeebb70388c7b64d1cec4a7b002`**: submitted with additional UI/a11y/i18n regression tests; exact-HEAD GitHub Actions checks were queued when this report was updated. Verify checks again after this documentation commit.
 - Previous HEAD `f5a60768…`: Windows installer and Linux package checks passed. MCP E2E Rust/HTTP/stdio stages and Tauri migration Rust-side integration passed before the same frontend type error interrupted the runs; no claim of full workflow success.
 - **External release blocker (outside Agent 07 ownership)**: Tauri migration integration Supply chain `cargo audit` flags `libsqlite3-sys 0.30.1`, [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459), `CVE-2026-119375` (medium 6.8); advisory recommends `>=0.39.0`. Rust dependencies/`Cargo.lock` are owned elsewhere. Do not suppress or ignore this advisory to turn the check green; Agent 00 should assign a compatible, audited dependency update and full regression test.
 - Manual packaged-app/visual gates not proven by jsdom: keyboard/screen-reader review, narrow-window visual layout, real Arabic RTL, and actual migration recovery. Native HTML controls and responsive CSS were reviewed statically and unit-tested where practical.
