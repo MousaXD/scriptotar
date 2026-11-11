@@ -215,3 +215,32 @@ Other integration dependencies remain: the owners of AppShell/Research/AI/Settin
 **Ownership dependencies and gate:** Agent 00 must assign the RustSec SQLite upgrade and associated migration compatibility review to its Rust/database/security owner. Owners of the 20 legacy native selectors must migrate their own views without removing persisted handlers. Agent 08 must provide actual installed Windows/Linux WebView dark/light, Arabic RTL, keyboard/focus and popup evidence. Agent 07 owns translations. Do not bypass any test.
 
 **Source verdict:** **READY FOR AGENT 00 REVIEW** — all confirmed Agent 01 code defects corrected and the new frontend checks passed. **Integration/release verdict:** **BLOCKED** by the non-owned RustSec dependency and final visual/integration acceptance; keep existing PR #89 draft. This handoff update itself creates a newer HEAD, which requires exact-head CI confirmation.
+
+
+## 2026-11-11 final validation — full matrix at audited HEAD
+
+**Verified implementation HEAD:** `9af950d05cae4ec259e09ebbfe77e037bfdc3693` on the assigned `agent-01/design-system-controls-overhaul` branch, open draft PR #89, based on `main` at `f741244634b5143602a21a554094a498a0005b11`. Repository `MousaXD/scriptotar`; the container working directory `/` has no local checkout. GitHub comparison shows **26 commits ahead, 0 behind**; **18 changed files**, all Agent 01 owned. No main changes, other-agent files or branches, security tests, or security configuration were touched.
+
+### Exact-commit completed Actions matrix
+
+| Workflow | Result |
+| --- | --- |
+| [Desktop UI #42937070351](https://github.com/MousaXD/scriptotar/actions/runs/42937070351) | **PASS** |
+| [CI #42937070827](https://github.com/MousaXD/scriptotar/actions/runs/42937070827) | **PASS** |
+| [Scriptotar MCP E2E #42937071383](https://github.com/MousaXD/scriptotar/actions/runs/42937071383) | **PASS** |
+| [Security hygiene #42937070339](https://github.com/MousaXD/scriptotar/actions/runs/42937070339) | **PASS** |
+| [Linux Tauri Package #42937070527](https://github.com/MousaXD/scriptotar/actions/runs/42937070527) | **PASS** |
+| [Windows Tauri Installer #42937070474](https://github.com/MousaXD/scriptotar/actions/runs/42937070474) | **PASS** |
+| [Tauri migration integration #42937070307](https://github.com/MousaXD/scriptotar/actions/runs/42937070307) | **FAIL — Rust advisory, outside ownership** |
+
+Desktop UI job logs confirm `svelte-check` **0 errors, 0 warnings**, **15 passing test files / 90 passing tests**, and a successful production build. In the failing integration workflow, **Svelte frontend, Rust workspace, Python sidecar, Rust ↔ sidecar integration, and integrated Tauri build all passed**; only `Supply chain → Rust advisories` failed. This is not a frontend regression.
+
+### Outstanding security and integration blockers
+
+`cargo audit` found **RUSTSEC-2026-0459** / **CVE-2026-119375** for `libsqlite3-sys 0.30.1` (RustSec: `>=0.39.0` patched). The existing `Cargo.lock`, Rust SQLite/database compatibility and supply-chain dependencies are owned outside Agent 01. **Agent 00 must delegate a tested dependency upgrade to the assigned Rust/database/security owner. Do not suppress, ignore or weaken the audit.**
+
+The baseline inventory of **20 native selects** in AppShell and other owners' workspace views still requires coordinated migration for consistent opened dropdowns. Agent 08 must independently certify actual Windows/Linux WebView screenshots, responsive/RTL Arabic layout, keyboard and assistive-technology behavior; passing JSDOM/source tests and package smoke do not constitute that visual/accessibility certification.
+
+### Final independent owner-scope verdict
+
+**READY FOR AGENT 00 REVIEW** of Agent 01's code and tests. The full source audit found no additional reproducible Agent 01 defect; prior input-type isolation and CSS `:where` specificity corrections have passed exact-commit frontend tests and builds. **BLOCKED FOR MERGE / RELEASE** until RustSec and integration/visual requirements pass. Preserve the existing draft PR. This handoff-only commit advances HEAD and therefore requires rechecking exact-new-head workflow status before merge.
