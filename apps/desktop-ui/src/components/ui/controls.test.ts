@@ -134,9 +134,12 @@ describe('shared workstation controls', () => {
     // The highlighted option disappears; fall back to the current enabled selection.
     await rerender({ ...initial, options: [{ value: 'a', label: 'Alpha' }] });
     expect(menu.getAttribute('aria-activedescendant')).toMatch(/option-0$/);
+    expect(within(menu).getByRole('option', { name: 'Alpha' })).toHaveClass('highlighted');
     await fireEvent.keyDown(menu, { key: 'Enter' });
-    expect(onChange).toHaveBeenCalledWith('a');
+    // Native-select semantics: selecting Alpha again is a no-op, not a change.
+    expect(onChange).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    expect(screen.getByRole('combobox', { name: 'Workspace' })).toHaveTextContent('Alpha');
   });
 
   it('preserves accessible native slider keyboard semantics and exposes value', async () => {
