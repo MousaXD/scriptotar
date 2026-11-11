@@ -6,7 +6,7 @@
 - Agent branch: `agent-07/settings-localization-overhaul`
 - Initial baseline and merge-base: `f741244634b5143602a21a554094a498a0005b11`
 - Pull request: [#96](https://github.com/MousaXD/scriptotar/pull/96) (draft pending validation)
-- Last implementation/test commit audited: `33edcfa4acf1ddeebb70388c7b64d1cec4a7b002`
+- Last implementation/test commit audited: `c929cd88c90554e1ef14a904f768f63329e16bf3`
 - No edits to `main` or any other agent-owned view, global CSS, Rust MCP code, API client, or shared control implementation.
 
 ## Completed
@@ -44,7 +44,7 @@
 ## Validation and merge gate
 
 - **Verified pass at code SHA `556d8afc21791ee4b011e66f721b0ba8be73b562`**: Desktop UI `npm run check` (0 errors, 0 warnings), `npm run test` (88/88 tests, 14/14 test files), and `npm run build`; Security hygiene success. This check preceded later targeted bug-fix tests and is not evidence for the final branch HEAD.
-- **Final audited implementation SHA `33edcfa4acf1ddeebb70388c7b64d1cec4a7b002`**: submitted with additional UI/a11y/i18n regression tests; exact-HEAD GitHub Actions checks were queued when this report was updated. Verify checks again after this documentation commit.
+- **Previously audited implementation SHA `33edcfa4acf1ddeebb70388c7b64d1cec4a7b002`**: submitted with additional UI/a11y/i18n regression tests; exact-HEAD GitHub Actions checks were queued when this report was updated. Verify checks again after this documentation commit.
 - Previous HEAD `f5a60768…`: Windows installer and Linux package checks passed. MCP E2E Rust/HTTP/stdio stages and Tauri migration Rust-side integration passed before the same frontend type error interrupted the runs; no claim of full workflow success.
 - **External release blocker (outside Agent 07 ownership)**: Tauri migration integration Supply chain `cargo audit` flags `libsqlite3-sys 0.30.1`, [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459), `CVE-2026-119375` (medium 6.8); advisory recommends `>=0.39.0`. Rust dependencies/`Cargo.lock` are owned elsewhere. Do not suppress or ignore this advisory to turn the check green; Agent 00 should assign a compatible, audited dependency update and full regression test.
 - Manual packaged-app/visual gates not proven by jsdom: keyboard/screen-reader review, narrow-window visual layout, real Arabic RTL, and actual migration recovery. Native HTML controls and responsive CSS were reviewed statically and unit-tested where practical.
@@ -56,3 +56,15 @@
 - Other agents needing translations should request keys for their views; this agent exclusively owns `i18n/messages.ts` and `i18n.ts` dictionaries.
 - Existing DOM translation for other agents' views remains in place to avoid cross-agent conflicts; this PR replaces fragile translation specifically within the owned MCP wizard.
 - Release QA should verify backend MCP authorization remains fail-closed, run packaged-app checks, and visually review RTL/keyboard behavior.
+
+## Final remediation and certification — 2026-11-11
+
+- **Final production/test implementation commit:** `c929cd88c90554e1ef14a904f768f63329e16bf3` on existing PR #96; the subsequent handoff-only commit does not change application or test code. Obtain the documentation commit's exact SHA from PR #96 head.
+- **Failure diagnosis:** [Desktop UI #42986151972](https://github.com/MousaXD/scriptotar/actions/runs/42986151972) showed 90/91 passing and an English success-notice assertion evaluated synchronously after switching from Arabic. The UI was correctly rendering Arabic, so the test now awaits the reactive English notice instead of weakening Arabic assertions.
+- **Warning diagnosis:** Removed the unused `.wizard-head p` CSS selector in `McpSetupWizard.svelte`; [Desktop UI #43017156814](https://github.com/MousaXD/scriptotar/actions/runs/43017156814) confirms **0 Svelte errors, 0 Svelte warnings**, **14/14 files, 93/93 tests**, and a successful production build at `c929cd88c90554e1ef14a904f768f63329e16bf3`.
+- **Regression found and fixed:** MCP policy saves formerly replaced the entire editable policy when an asynchronous backend response returned. The wizard now snapshots the requested policy, records the persisted response, preserves any newer unsaved edits, keeps the workflow on the permission step, clears sensitive approval, and blocks connection until those newer changes are saved. Added a controlled pending-save test.
+- **Settings persistence regression test:** Validates that editing a second setting while Save is in progress leaves it visibly unsaved and preserves the original value in the submitted snapshot.
+- **Accessibility:** MCP setup steps now expose an explicitly named `role="group"`, with keyboard focus and `aria-current` test coverage. Original permission-gating, LTR identifiers and paths, label retranslation, RTL, copy/revocation, error states, legacy migration controls and dictionary key/placeholder parity remain covered or statically reviewed.
+- **Exact-code-head CI:** [Desktop UI](https://github.com/MousaXD/scriptotar/actions/runs/43017156814) **PASS**; Security hygiene workflow **PASS**. [MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/43017157019), [CI](https://github.com/MousaXD/scriptotar/actions/runs/43017157336), [Tauri migration](https://github.com/MousaXD/scriptotar/actions/runs/43017156802), Linux package and Windows installer were still in progress at this handoff update. They must be inspected at the ultimate PR HEAD.
+- **External blocks:** Issue #97 / `RUSTSEC-2026-0459` / `CVE-2026-119375` is owned by the Rust security agent; no dependencies were changed and no advisory ignored or suppressed. Independently validate a packaged app's Arabic RTL, narrow screen layouts, assistive technology, and real migration recovery before release. Agent 00 handles shared Select/Switch integration and any cross-agent dictionary consolidation.
+- **Scoped verdict:** **GO for Agent 07 frontend remediation at code commit `c929cd88c90554e1ef14a904f768f63329e16bf3`**, subject to exact-final-HEAD and integration checks. **BLOCKED for merge/release** until the unrelated supply-chain advisory and remaining integration/manual acceptance gates are independently cleared. PR stays draft. No merge or direct `main` edits.
