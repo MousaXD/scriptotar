@@ -1,64 +1,67 @@
-# Agent 06 — Transcript & AI Studio UX handoff
+# Agent 06 — Transcript Reader & AI Studio UX Overhaul
 
-**Repository:** MousaXD/scriptotar  
-**Assigned branch:** `agent-06/transcript-ai-workspace-overhaul`  
-**Baseline:** `f741244634b5143602a21a554094a498a0005b11`  
-**PR:** https://github.com/MousaXD/scriptotar/pull/93  
-**Coordinator:** Agent 00  
-**State:** Draft / implementation prepared; exact-head CI and installed-WebView verification outstanding
+**Repository:** [MousaXD/scriptotar](https://github.com/MousaXD/scriptotar)  
+**Exclusive branch:** `agent-06/transcript-ai-workspace-overhaul`  
+**Initial baseline:** `f741244634b5143602a21a554094a498a0005b11` (`main`)  
+**Existing PR:** [#93](https://github.com/MousaXD/scriptotar/pull/93) (draft; Agent 00 owns merger)  
+**Last source-code commit before this handoff refresh:** `2d9f0d3bfbd01d98a23d2eed5d51291b3dc5096d`  
+**Final branch HEAD:** refer to PR head, which includes this handoff-only commit  
+**Verdict:** **BLOCKED for full integration/release** pending exact-head CI and cross-agent dependencies. Scoped frontend source fixes are implemented.
 
-## Scope and implemented changes
+## Ownership and continuity
 
-Only `TranscriptView.svelte`, `AiStudioView.svelte`, the dedicated UI test file and this handoff were changed.
+Verified branch, PR, committed history, prior handoff and baseline. No local Git checkout exists in this runtime; GitHub repository operations were performed on the existing remote branch. No new branch, duplicate PR, main edits, releases, or merges. Compare against baseline changes only:
 
-**Transcript workspace**
-- Removed redundant heading subtext/rail chrome; made transcript title, body text and timestamps easier to read.
-- Preserved list/details toggles and their local UI state, search previous/next controls, copy, timestamp navigation and every export format (TXT, timestamped TXT, SRT, VTT, JSON).
-- Fetches exact selected transcript; rejects returned IDs or project IDs that mismatch the selected summary.
-- Ignores older asynchronous fetch results and resets selected load state when transcript lists become empty.
-- Renders the first 140 segments, then extends in 140-segment batches on scroll or explicit show-more action to bound initial DOM work. Search filters the entire selected transcript and can find matches beyond the first batch.
-- Shows a small skeleton while the selected transcript is loading. Keeps source-language RTL/LTR direction on reader content; does not invent playback.
+- `apps/desktop-ui/src/views/TranscriptView.svelte`
+- `apps/desktop-ui/src/views/AiStudioView.svelte`
+- `apps/desktop-ui/src/views/TranscriptAiWorkspace.test.ts`
+- `docs/agent-handoffs/agent-06-transcript-ai.md`
 
-**AI Studio**
-- Simplified Copy Prompt/BYOK mode switch with pressed-state semantics, removed repetitive explanatory chrome and concealed provider/model settings when not in BYOK mode.
-- Keeps manual-first exact transcript choice and visible source ID/lineage; clears a removed transcript instead of leaving stale text ready for a request.
-- Provider requests are generation-guarded. Input changes invalidate old runs, immediately unlock the UI for a newer request, and prevent older responses or finalizers from corrupting newer state.
-- Mode changes also invalidate pending prompt builds to prevent the wrong-mode prompt surfacing.
-- Redacts submitted keys, bearer header values and common secret-bearing URL parameters from surfaced error messages.
-- Improved textarea/result legibility, source-loading skeleton and direction detection for Arabic/English typed content.
-- Copy Prompt continues to build locally without forwarding API keys/base URLs; BYOK remains an explicit action, credentials remain transient frontend state.
+## Transcript — completed and audited
 
-## Dedicated regression coverage
+- Prioritized transcript text/heading over decorative chrome; improved reading scale, spacing and responsive content flow.
+- Preserved source metadata in the collapsible details rail using existing localized `ai.sourceLabel`. Preserved transcript list rail, persisted rail visibility, all original metadata, timestamp navigation, keyboard search, next/previous matches, copy text, and TXT/timestamped TXT/SRT/VTT/JSON exports.
+- Initial render capped at 140 segments, expanding in batches on scrolling or an explicit button. Full-transcript search still finds distant segments; jumping from a filtered match restores context. This reduces initial DOM work, not constant-memory virtualization; a distant jump can render preceding segments.
+- Exact ID/project validation for transcript loading, current-project verification at response time, stale-result generation guards, cancellation of orphaned displayed state, and handling of same-ID source migrations between projects.
+- Small loading skeleton with reduced-motion support; retained `dir=rtl/ltr` and content display for English/Arabic.
+- Did not invent media playback, local artifact paths, or unsafe file URLs.
 
-New: `apps/desktop-ui/src/views/TranscriptAiWorkspace.test.ts`
+## AI Studio — completed and audited
 
-- Long transcript initial bounded rendering; expansion and late search matches.
-- Source switch while an older transcript response remains pending.
-- Rejection of cross-project transcript responses.
-- Arabic transcript direction and timestamp controls.
-- A second BYOK request remaining busy when the older request completes.
+- Clear Copy Prompt/BYOK mode switching with `aria-pressed`, readable source/brief/prompt/result hierarchy, and provider/model settings displayed only in BYOK mode.
+- Existing manual-first source picker and exact transcript ID/project lineage; removed-source selection and same-ID moved-project selections reset to manual, clear stale source text, and cannot continue displaying “Exact loaded source”.
+- Mode changes preserve previously built prompts and cancel stale in-flight prompt generation. Edits to source/brief invalidate old prompts; earlier provider responses and `finally` blocks cannot replace or unlock a newer in-flight run.
+- Local prompt building sends no key or provider URL. BYOK remains opt-in, keys transient in memory, no additional persistence; unused compatible-provider base URLs are excluded for non-compatible providers.
+- Prompt preview editing never silently becomes the BYOK request: the existing copy-only/edit-warning contract remains. Local provider remains explicitly unavailable.
+- UI error redaction covers submitted keys, URL-encoded variants, bearer headers and common URL credentials. This is defense in depth; Rust security boundaries remain authoritative.
+- Reduced-motion source skeleton, readable text, RTL-safe source/prompt/result direction; avoided new app-level rerender work.
 
-Existing `ai-source-selection.test.ts`, `gui-overhaul.test.ts`, `App.test.ts` and other frontend tests must also pass. All formats/export flows are preserved in the implementation; browser download integration has **not** been independently exercised by the new tests.
+## Audit defects found and fixed this continuation
 
-## Validation status and acceptance gates
+1. **Svelte compiler blocker:** TypeScript callback attempted to capture possibly-undefined `selected` — fixed with locally narrowed selection; removed three obsolete CSS selectors. First evidence: [Desktop UI #42924945243](https://github.com/MousaXD/scriptotar/actions/runs/42924945243), which failed before these fixes.
+2. **Same-ID project switching:** transcript reader now revalidates current project on resolution; AI Studio clears source selection and gates exact lineage on both source ID and project.
+3. **AI prompt loss:** switching Copy Prompt/BYOK previously dropped an already prepared prompt. Retained completed prompt while invalidating only in-flight builds/runs.
+4. **Export/source parity:** added explicit tests for all five export buttons; moved source metadata from the simplified header into the preserved details rail.
+5. **Long-transcript late matches:** retained access to full context after search/timestamp navigation; whitespace-only search no longer triggers a no-results state.
+6. **Test assertion correctness:** updated new asynchronous assertions without removing expectations or weakening safeguards.
+7. **Race/visibility fix:** selected source lineage cannot show “Exact loaded source” after a reset to manual even if legacy reactivity has not yet recomputed its derived reference.
 
-- GitHub PR creation and isolated branch commits: completed.
-- `npm run check`, `npm run test`, `npm run build`: **not locally executed** because the available workspace has no checkout and cannot resolve GitHub/npm hosts. GitHub Actions is the planned authoritative exact-head gate; older runs cancelled by superseding commits are not evidence of a pass.
-- Real installed Windows/Linux WebView interaction, narrow screens, Arabic RTL, assistive technology, export downloads and actual provider calls: **not yet certified**. Provider calls require deliberate authorized test credentials; fixtures are not live-provider validation.
-- Long-transcript progressive rendering bounds initial DOM but is **not true constant-memory virtualization**. Jumping to distant search matches can mount up to that index. Measure with real large transcripts before release.
-- Error redaction is defensive UI hygiene, not a replacement for the host security review.
+## Tests / CI evidence — distinguish SHAs
 
-## Ownership, dependencies and safety
+- [Desktop UI #42985339925](https://github.com/MousaXD/scriptotar/actions/runs/42985339925) on earlier source SHA `6f44bdd63b31ec690644ede4290fdd1cd9887c34`: **PASS**, Svelte/TS checks, **83/83 frontend tests**, Vite production build. This is **not** proof of the later test additions.
+- Expanded tests on SHA `865c9707b73f16b8e24a65e1ea2e786c1ea43651`: [MCP E2E #42986137027](https://github.com/MousaXD/scriptotar/actions/runs/42986137027) reached frontend test stage and reported **86/87 passed, 1 failure** — exact-lineage remained visible after a project swap. Fixed at source SHA `2d9f0d3`; **do not claim later tests passed without the new run evidence**.
+- Current dedicated suite has **nine tests**: long transcript paging and late search, old response isolation, wrong-project rejection, same-ID move, all five exports, Arabic RTL/timestamps/source metadata, prompt preservation across modes, AI source invalidation, and overlapping BYOK runs. Existing app, GUI, AI source, i18n, keyboard and backend bridge tests also remain enabled.
+- No local `npm run check`, `npm run test`, `npm run build` because this runtime does not have a checkout or external network access. GitHub Actions is the actual validation environment.
+- Exact-head CI following the source and handoff changes must be checked before upgrading the scoped readiness verdict. Do not count cancelled predecessor runs.
+- Real installed WebView screenshots, zoom/clipping, Arabic RTL, keyboard/screen-reader and production/provider calls are **not** verified by jsdom or installer smoke alone.
 
-- **Agent 01:** swap to shared controls/design tokens once the design system is available; do not edit global CSS here.
-- **Agent 03 / Agent 00:** approve any future backend media playback, source/AI contract or credential handling changes. None are introduced here.
-- **Agent 07:** add Arabic/English dictionary strings for the new “Show more” control and review AI Studio's existing untranslated static copy.
-- No backend APIs, shared translations, auth, provider transport, schema, security code, main branch or production data changed.
-- Agent 00 is the only merge authority. Do not merge without passing exact-head UI checks, review and integrated-app acceptance.
+## Remaining dependencies and blockers — Agent 00 ownership
 
-## Follow-up
+1. **Shared controls — Agent 01 PR #89:** the styled `Select` component only exists on `agent-01/design-system-controls-overhaul`, not this branch or `main`. Agent 06's native transcript picker and AI Studio task/rate/provider/source selectors must migrate within these two view files **after Agent 00 integrates the shared component**, preserving option values, `onChange` side effects, source selection, RTL and keyboard operation. Importing it now would intentionally break this standalone branch; copying it would duplicate Agent 01 ownership. Contract: `apps/desktop-ui/src/design/CONTROL_MIGRATION.md` on Agent 01's branch. Agent 08 flagged this on PR #93.
+2. **Localization — Agent 07:** supply shared Arabic/English translations for new “Show more” transcript control and remaining untranslated static AI Studio controls; Agent 06 must not modify shared translation dictionaries.
+3. **Security — Rust/database/security owner:** integrated RustSec gate flags **RUSTSEC-2026-0459 / CVE-2026-119375** in `libsqlite3-sys` (bundled SQLite); see [Tauri integration #42924945201](https://github.com/MousaXD/scriptotar/actions/runs/42924945201). Do not waive or suppress advisory checks.
+4. **Installed app acceptance — Agent 08 / Agent 00:** verify narrow Windows/Linux WebViews, focus, RTL, styled dropdown opening/placement, export downloads and accessibility after control migration. Backend media playback remains explicitly out of scope; Agent 03/00 security review required for any future contract.
 
-1. Record exact-head Desktop UI Svelte/TypeScript checks, Vitest and Vite build outcomes; fix any regression on this branch.
-2. Exercise all exports, copy/keyboard flows, Arabic/English and narrow installed WebViews.
-3. Review combined UI with Agent 01's design-system changes and Agent 07 localization without editing their owned files.
-4. Update this handoff with verified final HEAD and CI references before requesting merge.
+## Final verdict
+
+**BLOCKED**, not merge/release-approved. Agent 06's owned UX and race fixes are committed on its original branch with expanded tests. Exact-head CI and the explicit Agent 01 Select + Agent 07 translation + Agent 08 installed-GUI dependencies remain required. Agent 00 alone merges or changes integration scope.
