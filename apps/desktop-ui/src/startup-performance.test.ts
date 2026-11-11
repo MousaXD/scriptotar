@@ -242,6 +242,48 @@ describe('progressive desktop startup', () => {
     expect(document.documentElement.dir).toBe('rtl');
   });
 
+  it('does not let a job event invalidate project creation while the mutation is pending', async () => {
+    const creating = deferred<BootstrapData>();
+    const listJobs = vi.fn(async () => structuredClone(mockBootstrap.jobs));
+    let notify: ((id: string) => void) | undefined;
+    const api = createMockClient({
+      createProject: async () => creating.promise,
+      listJobs,
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await waitFor(() => expect(notify).toBeTypeOf('function'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Protected Project' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    expect(screen.getByRole('heading', { name: 'Create project' })).toBeInTheDocument();
+
+    notify?.('queued-while-creating');
+    await new Promise((resolve) => setTimeout(resolve, 170));
+    expect(listJobs).not.toHaveBeenCalled();
+
+    const project = {
+      ...structuredClone(mockBootstrap.projects[0]),
+      id: 'p-protected',
+      name: 'Protected Project'
+    };
+    creating.resolve({
+      ...structuredClone(mockBootstrap),
+      projects: [...structuredClone(mockBootstrap.projects), project],
+      activeProjectId: project.id
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Protected Project' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Project')).toHaveValue('p-protected');
+  });
+
   it('fails closed on a malformed project creation result instead of exposing the old project', async () => {
     const api = createMockClient({
       createProject: async () => ({
