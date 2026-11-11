@@ -97,6 +97,28 @@ describe('progressive desktop startup', () => {
     expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
   });
 
+  it('keeps the command palette closed while another modal owns keyboard focus', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    const modal = document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-label', 'Project confirmation');
+    document.body.appendChild(modal);
+    try {
+      await fireEvent.keyDown(modal, { key: 'k', ctrlKey: true });
+      expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+    } finally {
+      modal.remove();
+    }
+
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+  });
+
   it('closes the command palette to expose an ordinary project-switch rejection', async () => {
     const api = createMockClient();
     vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project switch denied'));
