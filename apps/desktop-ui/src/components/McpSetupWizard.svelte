@@ -91,14 +91,25 @@
     notice = '';
     try {
       const next: McpPermissions = structuredClone(permissionDraft);
-      permissions = await api.saveMcpPermissions(next, next.enabled && powerful(next) && acknowledge);
-      savedPermissions = structuredClone(permissions);
-      approvedPaths = permissions.allowedPaths.join('\n');
-      approvedPrograms = permissions.allowedPrograms.join('\n');
+      const persisted = await api.saveMcpPermissions(next, next.enabled && powerful(next) && acknowledge);
+      // A user can edit the draft while an IPC save is pending. Never replace those
+      // newer changes with the older request when the backend responds.
+      const currentDraft = permissions && {
+        ...permissions, allowedPaths: readLines(approvedPaths), allowedPrograms: readLines(approvedPrograms)
+      };
+      const changedDuringSave = JSON.stringify(currentDraft) !== JSON.stringify(next);
+      savedPermissions = structuredClone(persisted);
+      if (!changedDuringSave) {
+        permissions = structuredClone(persisted);
+        approvedPaths = persisted.allowedPaths.join('\n');
+        approvedPrograms = persisted.allowedPrograms.join('\n');
+        step = 2;
+      } else {
+        step = 1; // Leave the new, unsaved scope visible and block connection.
+      }
       acknowledge = false;
       await refresh();
       notice = 'saved';
-      step = 2;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
