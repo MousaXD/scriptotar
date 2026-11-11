@@ -84,6 +84,10 @@ async function checkOverflow(page, label) {
     };
   });
   if (!data.mainVisible) recordFailure(label, 'Workspace shell absent');
+  if (data.headingTop !== null && data.topbarBottom !== null && data.headingTop < data.topbarBottom - 2) {
+    recordFailure(label, 'Workspace heading is obscured by the toolbar: heading top=' +
+      data.headingTop + ', topbar bottom=' + data.topbarBottom);
+  }
   if (data.scrollWidth > data.innerWidth + 2) {
     const offenders = await page.evaluate(() => {
       const viewport = window.innerWidth;
