@@ -54,7 +54,7 @@ describe('desktop workstation', () => {
     const chooseLocalMedia = vi.spyOn(api, 'chooseLocalMedia');
     const enqueueLocalMedia = vi.spyOn(api, 'enqueueLocalMedia');
     await ready(api);
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Choose video' }));
     await waitFor(() => expect(chooseLocalMedia).toHaveBeenCalledTimes(1));
     expect(screen.getByText('/mock/selected-video.mp4')).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe('desktop workstation', () => {
 
   it('renders persisted job states including failure and interruption', async () => {
     await ready();
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     expect(screen.getByTestId('job-transcribing')).toBeInTheDocument();
     expect(screen.getByTestId('job-failed')).toBeInTheDocument();
     expect(screen.getByTestId('job-interrupted')).toBeInTheDocument();
@@ -90,7 +90,7 @@ describe('desktop workstation', () => {
     const api = createMockClient();
     const getTranscript = vi.spyOn(api, 'getTranscript');
     await ready(api);
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open transcript' }));
     expect(await screen.findByRole('heading', { name: 'Transcript workspace' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
