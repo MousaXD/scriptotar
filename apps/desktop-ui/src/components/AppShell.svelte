@@ -193,6 +193,9 @@
 
   function globalShortcut(event: KeyboardEvent) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      // A modal owns keyboard focus until it is dismissed. Do not stack the
+      // global command palette over a confirmation or settings dialog.
+      if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
       event.preventDefault();
       void openPalette();
       return;
