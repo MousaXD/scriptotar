@@ -3,7 +3,7 @@
 **Branch:** `agent-03/rust-bootstrap-optimization`
 **PR:** https://github.com/MousaXD/scriptotar/pull/92 (draft until exact-HEAD certification)
 **Baseline:** `f741244634b5143602a21a554094a498a0005b11`
-**Latest implementation SHA before this report revision:** `7363aefe238a6befefda5cd4fb38f587458f8a75`
+**Latest implementation and benchmark SHA before this report revision:** `e0cae0e3a6d57605fcfc09a6331ddfca7e13faa0`
 **Handoff status:** Implementation pushed; CI certification and frontend adoption pending. The PR head is the authoritative final SHA after documentation edits.
 
 ## Findings and changes
@@ -37,7 +37,28 @@ cd apps/desktop-ui && npm ci && npm run check && npm run test && npm run build
 SCRIPTOTAR_PROFILE_STARTUP=1 # set in the launching process environment
 ```
 
-**Observed before/after timings:** Not yet verified. CI was queued when this report was created, and the current environment has no Rust toolchain or network git clone access. Do not invent measured speed-ups or treat queued CI as PASS; use the exact-head Actions logs and fixture output when workers execute.
+### Measured, reproducible SQL-only before/after
+
+An independent Python 3 SQLite `SELECT + fetchall` microbenchmark was executed against **disposable, synthetic** local databases containing the same relevant table structures and original indexes. Each project has 6,000-word transcript text and 500 repeated segment phrases per transcript, two projects total, and four jobs per transcript in each project. Times are medians of eight **warm** runs; the first iteration is excluded. The Python source for reproducing the methodology is in `crates/scriptotar-db/benchmarks/bootstrap_sql_profile.py` (stdlib only).
+
+| Transcripts per project | Full transcript SQL median | Metadata-only SQL median | Full string data fetched | Metadata string data fetched | Old all-jobs SQL median | New grouped-jobs SQL median |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 | 0.039 ms | 0.008 ms | 123,408 characters | 136 characters | 0.022 ms | 0.006 ms |
+| 128 | 9.519 ms | 1.185 ms | 7,898,988 characters | 9,142 characters | 1.283 ms | 0.200 ms |
+| 1,024 | 93.239 ms | 12.557 ms | 63,196,668 characters | 75,518 characters | 12.122 ms | 1.915 ms |
+
+**Interpretation and limits:** This is a controlled SQLite/Python SQL-path comparison, **not** timings of Rust Tauri bootstrap, on-disk migrations, recovery, actual WebView IPC, or user data. The production Rust integration fixture also records wall times and serialized JSON bytes (2/128 transcripts), but those numbers are captured in test stdout and need a `--nocapture` execution before publication. SQLite `EXPLAIN QUERY PLAN` for both transcript queries uses `idx_sources_project_created`, `idx_media_source` and `idx_transcripts_media`; both currently use a temporary B-tree for `ORDER BY t.created_at DESC`. The grouped-jobs query scans the pre-existing `idx_jobs_project_created`. No index is added without a measured improvement for this query plan.
+
+### Exact-HEAD CI status and defects identified during self-audit
+
+At the time of this report revision the current source HEAD was `e0cae0e3a6d57605fcfc09a6331ddfca7e13faa0`, with eight GitHub Actions workflows started or queued. Completed outcomes on **older commits do not certify this HEAD**:
+
+- Earlier `c658d5f7f46265a275d4e5c14e19c5547b986e70`: Rust foundation failed rustfmt (two whitespace-formatting diffs) and CI/MCP/Linux installed smoke failed `E0716` because a test borrowed from a temporary `Vec<Job>`. Both defects were corrected without suppressing checks.
+- Later `b2e168d1e0d4cdcf02e75fb4217d1d80c9c90e92`: `CI`, `Desktop UI` and `Security hygiene` completed successfully; Rust foundation passed rustfmt + workspace cargo check but failed strict Clippy on an `ordinal % 2 == 0` test fixture. That fixture now uses `ordinal.is_multiple_of(2)`. Other concurrent runs were cancelled on newer pushes and cannot count as passes.
+- An older Tauri supply-chain job failed `cargo audit` on `RUSTSEC-2026-0459`, `libsqlite3-sys 0.30.1` / bundled SQLite CVE-2026-119375. Dependency lockfile is outside Agent 03 exclusive ownership; no advisory suppression or unapproved dependency change was made. Agent 00/dependency owner must triage and obtain an exact-integrated-SHA security PASS.
+- The current container checkout is not a Git worktree and has no Rust toolchain or GitHub DNS access. Rustfmt, Cargo check/Clippy and tests are executed by GitHub Actions for the branch. The Python/SQLite microbenchmark was run locally using disposable fixtures. A source-level recheck confirmed the expected 34 registered/dispatched/wired native IPC handlers and 36 public TypeScript methods, with no missing binding/mock/test evidence.
+
+**Current readiness:** **BLOCKED** pending an exact-final-head full CI pass, integrated UI adoption, agent-owned shared test review, and Agent 00/08 certification. No production user dataset was touched.
 
 ## Safety and compatibility notes
 
@@ -47,6 +68,6 @@ No changes to migration definitions, SQL durability settings, project selection,
 
 **Agent 08:** Independently inspect the shared, one-line `tests/test_api_surface_contract.py` inventory update, validate frontend and Rust contracts, check source-level and installed-app startup scenarios, and capture exact-SHA before/after data. This is the sole change outside strictly agent-owned sources.
 
-**Remaining work:** End-to-end adoption, actual CI benchmark output, SQLite `EXPLAIN QUERY PLAN` evidence for large datasets, SQL-level paginated research/library/job lists, connection/migration profiling on realistic user-sized fixtures, and exact integrated release certification. No claim that these are complete.
+**Remaining work:** End-to-end UI adoption, native Rust fixture numbers with `--nocapture`, SQL-level paginated research/library/job lists, connection/migration timings on realistic user-sized fixtures, vulnerability-owner disposition, exact-current-head CI and integrated release certification. The synthetic SQL-only `EXPLAIN QUERY PLAN` and medians above are available but do not replace these gates.
 
 **Release gate:** NO-GO until all applicable exact-commit workflow jobs pass and Agent 00 / independent QA certify the combined branch.
