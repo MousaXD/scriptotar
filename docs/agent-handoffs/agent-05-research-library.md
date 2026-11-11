@@ -74,7 +74,7 @@ Existing App.test.ts and gui-overhaul.test.ts also exercise Research sorting, wa
 
 ## Independent continuation audit — 2026-11-11
 
-**Owned code SHA audited:** 4e0fd6a924d3a6e51fb7deaee139ab9d8444720b (handoff commit follows).
+**Owned code SHA audited:** d113f895af7f05f1f49ed4be5761dd969bc457c4 (handoff update follows).
 
 Following review of all owned files and Agent 08's PR #91 feedback, these additional defects were resolved without changing file ownership:
 
@@ -101,3 +101,10 @@ At e799779503bca12773002a60b34cc3f16d786290:
 3. **Agent 08 / Agent 00:** Installed Windows/Linux WebView accessibility, focus/keyboard, visual appearance, popup clipping, narrow layout and Arabic RTL still require independent QA. JSDOM success does not certify screenshots.
 
 **Final verdict: BLOCKED for Agent 00 merger** pending latest exact-head CI, integration of Agent 01 custom selectors, Rust dependency advisory remediation, and installed-app QA. All additional Agent 05 fixes remain within the original two views, one dedicated test, and this report.
+
+
+### Exact-head continuation validation and accessibility correction
+
+At handoff HEAD 90e194042e26a68a3dea45ff793b351471440746, Desktop UI workflow #42986232895 completed successfully: npm run check, npm run test (13 test files / **90 tests**, including **12 dedicated Research/Library tests**) and npm run build. Svelte check reported **zero errors and one accessibility warning** for an incorrectly assigned table cell role on a strong element in ResearchView. This warning has now been corrected by placing the bold metric text inside a neutral div with role=cell, committed as d113f895af7f05f1f49ed4be5761dd969bc457c4. **Do not claim the warning is resolved in CI until the latest SHA is rerun.**
+
+Integration supply-chain Rust security advisory remains outside Agent 05 ownership; shared Select migration still depends on Agent 01 PR #89. Maintain the BLOCKED release verdict until the latest SHA has current checks and cross-agent QA.
