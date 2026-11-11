@@ -61,7 +61,8 @@
     const matches: PaletteItem[] = [];
     for (const project of source) {
       const keywords = `${project.name} ${project.description || ''} project`;
-      if (!keywords.toLocaleLowerCase().includes(query)) continue;
+      // Match the same label-plus-keywords text as the original palette filter.
+      if (!`${project.name} ${keywords}`.toLocaleLowerCase().includes(query)) continue;
       matches.push(command(`project:${project.id}`, project.name, meta, keywords, async () => {
         await onProjectChange(project.id);
         // Close even on a rejected switch, so the existing in-workspace error is visible.
