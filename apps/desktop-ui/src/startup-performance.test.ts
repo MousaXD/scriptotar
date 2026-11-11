@@ -139,6 +139,9 @@ describe('progressive desktop startup', () => {
     expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.getByLabelText('Project')).toBeDisabled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(screen.queryByText('The selected project did not match the backend response.')).not.toBeInTheDocument();
   });
 
   it('renders an RTL shell and localized skeleton while Arabic bootstrap is pending', async () => {
@@ -153,6 +156,27 @@ describe('progressive desktop startup', () => {
     bootstrap.resolve(structuredClone(mockBootstrap));
     expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
     expect(document.documentElement.dir).toBe('rtl');
+  });
+
+  it('fails closed on a malformed project creation result instead of exposing the old project', async () => {
+    const api = createMockClient({
+      createProject: async () => ({
+        ...structuredClone(mockBootstrap),
+        projects: [],
+        activeProjectId: 'missing-created-project'
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Uncertain Workspace' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('created project was not available');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('allows creating a project from an otherwise empty workspace', async () => {
