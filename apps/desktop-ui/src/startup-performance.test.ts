@@ -143,6 +143,29 @@ describe('progressive desktop startup', () => {
     expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
   });
 
+  it('prevents the browser shortcut when the command palette shortcut repeats', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(await screen.findByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+
+    for (const modifier of ['ctrlKey', 'metaKey'] as const) {
+      const repeat = new KeyboardEvent('keydown', {
+        key: 'k',
+        [modifier]: true,
+        bubbles: true,
+        cancelable: true
+      });
+      window.dispatchEvent(repeat);
+      expect(repeat.defaultPrevented).toBe(true);
+      expect(screen.getByRole('dialog', { name: 'Command palette' })).toBeInTheDocument();
+    }
+
+    await fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+  });
+
   it('keeps the command palette closed while another modal owns keyboard focus', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
