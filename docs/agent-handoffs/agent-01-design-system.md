@@ -125,3 +125,22 @@ The required `npm ci`, `npm run check`, `npm run test`, `npm run build` and inst
 **Revalidation:** [Desktop UI #42929149805](https://github.com/MousaXD/scriptotar/actions/runs/42929149805) is the source-fix rerun for `a63c9e500f788f1ebbdd81014ea73965e9e85a78`. At the last check it was **queued**, as were the other workflows on that commit (the Linux package showed pending). Do not infer that tests passed from their source presence or from the unrelated successful Windows build steps.
 
 **Current verdict: BLOCKED.** Source-level fixes are committed; exact-head Svelte/type check, component tests, production build, packaged-app behavior, WebView visuals and the integration owners' migration of legacy selectors remain necessary. The next handoff-only commit itself also needs fresh exact-head CI according to the coordinator's merge gate.
+
+## Final continuation checkpoint — selector affordance and latest validation
+
+**Last source-fix commit before this handoff update:** `bfe3fc16f47dd72e56a0bb0aa1b91c0e90154a0e`.
+
+The independent accessibility audit also found that the legacy native-select chevron's dark-theme SVG stroke (`#94a1ad`) was reused against the system-light field surface (`#f4f6f7`). Static contrast calculated to approximately **2.43:1**, below the 3:1 non-text affordance target. Source commit `bfe3fc16f47dd72e56a0bb0aa1b91c0e90154a0e` overrides the light-theme selector arrow with `#586b76` (approximately **5.13:1** against that field surface) while preserving the dark SVG and the original native select's keyboard/functionality. Source-contract test coverage and the in-ownership control migration document were updated in the same commit.
+
+The newest source-commit workflows were launched; at this checkpoint all seven required runs were **queued or pending**:
+- [Desktop UI #42929889740](https://github.com/MousaXD/scriptotar/actions/runs/42929889740)
+- [CI #42929889807](https://github.com/MousaXD/scriptotar/actions/runs/42929889807)
+- [Security hygiene #42929889603](https://github.com/MousaXD/scriptotar/actions/runs/42929889603)
+- [Scriptotar MCP E2E #42929889701](https://github.com/MousaXD/scriptotar/actions/runs/42929889701)
+- [Linux Tauri Package #42929889683](https://github.com/MousaXD/scriptotar/actions/runs/42929889683)
+- [Windows Tauri Installer #42929889665](https://github.com/MousaXD/scriptotar/actions/runs/42929889665)
+- [Tauri migration integration #42929889725](https://github.com/MousaXD/scriptotar/actions/runs/42929889725)
+
+**Accurate conclusion:** CI on previous head failed at Svelte/type checks and the identified errors were corrected; there is **no green exact-head validation yet** for the updated source. The repository did not have a local checkout in this execution environment; only GitHub Actions can certify the npm quality gates and installed OS tests. This handoff update is itself a new commit and therefore requires an exact-new-head validation per Agent 00's rule.
+
+**Verdict: BLOCKED**, not ready for Agent 00 merge/release. Code corrections within Agent 01's ownership are complete to the extent a source review can determine. Pending exact-head workflow results, screen-reader/Windows/Linux WebView checks, translation integration and migration of the 20 pre-existing native selectors remain external release gates. No branch was merged and `main` was not modified.
