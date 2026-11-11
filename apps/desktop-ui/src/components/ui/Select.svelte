@@ -25,10 +25,23 @@
   let root: HTMLDivElement;
   let open = false;
   let active = -1;
+  // Preserve the highlighted option by value when an async options refresh
+  // reorders/removes items while the listbox is open.
+  let previousOptions = options;
   const uid = 'scriptotar-select-' + Math.random().toString(36).slice(2);
   $: controlId = id || uid;
   $: selected = options.find((option) => option.value === value);
   $: selectedIndex = options.findIndex((option) => option.value === value);
+  $: if (options !== previousOptions) {
+    const previousActiveValue = previousOptions[active]?.value;
+    previousOptions = options;
+    if (open) {
+      const preserved = options.findIndex((option) => option.value === previousActiveValue && !option.disabled);
+      active = preserved >= 0
+        ? preserved
+        : selectedIndex >= 0 && !options[selectedIndex].disabled ? selectedIndex : enabled(0, 1);
+    }
+  }
   $: if (disabled && open) close();
 
   function enabled(start: number, direction: number): number {

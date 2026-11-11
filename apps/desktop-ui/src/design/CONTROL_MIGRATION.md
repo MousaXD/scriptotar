@@ -17,7 +17,7 @@ Import from `src/components/ui/<Name>.svelte`:
 
 | Component | Props / integration API | Interaction contract |
 | --- | --- | --- |
-| `Select` | `label`, `options: {value,label,disabled?}[]`, `bind:value`, `onChange?`, `name?`, `required?`, `invalid?`, `description?` | Select-only combobox trigger and listbox; required/invalid states available even when closed; Up/Down/Home/End, Enter/Space, Escape, Tab, disabled-option skipping and outside dismissal |
+| `Select` | `label`, `options: {value,label,disabled?}[]`, `bind:value`, `onChange?`, `name?`, `required?`, `invalid?`, `description?` | Select-only combobox and listbox; closed required/invalid states; Up/Down/Home/End, Enter/Space, Escape, Tab; disabled-option skipping; preserves active option by value across asynchronous option refreshes |
 | `Slider` | `label`, `bind:value`, `min`, `max`, `step`, `format?`, `onChange?` | Native range semantics and keyboard, branded track/thumb on WebKit/Firefox |
 | `Checkbox` | `label`, `bind:checked`, `description?`, `onChange?` | Native checkbox semantics and spacebar |
 | `Switch` | `label`, `bind:checked`, `description?`, `onChange?` | Checkbox input with `role=switch` |

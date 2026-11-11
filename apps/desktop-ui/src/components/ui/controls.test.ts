@@ -81,6 +81,38 @@ describe('shared workstation controls', () => {
     expect(trigger).toHaveAccessibleName('Workspace');
   });
 
+  it('preserves or repairs the active option when a live options list changes', async () => {
+    const onChange = vi.fn();
+    const initial = {
+      label: 'Workspace', value: 'a', onChange,
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+        { value: 'c', label: 'Charlie' }
+      ]
+    };
+    const { rerender } = render(Select, { props: initial });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Workspace' }));
+    const menu = screen.getByRole('listbox', { name: 'Workspace' });
+    await fireEvent.keyDown(menu, { key: 'End' });
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/option-2$/);
+
+    // An asynchronous refresh reorders options; keep Charlie highlighted by value.
+    await rerender({ ...initial, options: [
+      { value: 'c', label: 'Charlie' },
+      { value: 'a', label: 'Alpha' }
+    ] });
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/option-0$/);
+    expect(within(menu).getByRole('option', { name: 'Charlie' })).toHaveClass('highlighted');
+
+    // The highlighted option disappears; fall back to the current enabled selection.
+    await rerender({ ...initial, options: [{ value: 'a', label: 'Alpha' }] });
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/option-0$/);
+    await fireEvent.keyDown(menu, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('a');
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+  });
+
   it('preserves accessible native slider keyboard semantics and exposes value', async () => {
     const onChange = vi.fn();
     render(Slider, { props: { label: 'Volume', min: 0, max: 10, step: 1, value: 4, onChange } });
