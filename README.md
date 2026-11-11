@@ -4,7 +4,7 @@ Research creators, transcribe videos on your device, and turn source material in
 
 Built with **Rust · Tauri v2 · Svelte 5 · Faster Whisper**. Available as Windows and Linux desktop packages, with an Arabic/English interface and optional MCP integration for assistants.
 
-**Current source version: Scriptotar Next 1.3.0, a preview candidate.** Published downloads may have a different version. See [Releases](https://github.com/MousaXD/scriptotar/releases), [Changelog](CHANGELOG.md), and [release readiness](docs/releases/NEXT_1.3.0_RELEASE_READINESS.md).
+**Current source version: Scriptotar Next 1.4.0, an unpublished preview candidate.** Published downloads may have a different version. See [Releases](https://github.com/MousaXD/scriptotar/releases), [Changelog](CHANGELOG.md), and [release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
 
 [Features](#features) · [Install](#installation) · [First transcription](#your-first-transcription) · [AI Studio](#ai-studio) · [MCP setup](#mcp-setup) · [Troubleshooting](#troubleshooting) · [Development](#development)
 
@@ -91,7 +91,7 @@ Install the downloaded Debian package from its directory:
 sudo apt install ./Scriptotar-Next-latest-amd64.deb
 ```
 
-Candidate build artifacts use versioned names such as `Scriptotar-Next-1.3.0-x64-setup.exe` and `Scriptotar-Next-1.3.0-amd64.deb`. A successful CI build does not mean those candidate assets have been publicly released.
+Candidate build artifacts use versioned names such as `Scriptotar-Next-1.4.0-x64-setup.exe` and `Scriptotar-Next-1.4.0-amd64.deb`. A successful CI build does not mean those candidate assets have been publicly released.
 
 Next currently has no macOS, AppImage, or Flatpak distribution. See [distribution and runtime details](docs/NEXT_DISTRIBUTION.md).
 
@@ -291,7 +291,7 @@ Unit/fixture tests, compiled-app flows, installed-package checks, live-provider 
 
 - [E2E coverage and boundaries](docs/E2E-COVERAGE-1.3.0.md)
 - [Local real-provider evidence](docs/evidence/2026-11-08-local-live-platforms.json)
-- [Release readiness](docs/releases/NEXT_1.3.0_RELEASE_READINESS.md) and [publisher contract](sidecars/transcription/RELEASE-PUBLISHING.md)
+- [Release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md) and [publisher contract](sidecars/transcription/RELEASE-PUBLISHING.md)
 - [Version policy](docs/VERSIONING.md) and [changelog](CHANGELOG.md)
 - [Security and private reporting](SECURITY.md)
 

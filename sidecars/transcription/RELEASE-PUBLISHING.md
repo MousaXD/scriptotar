@@ -25,7 +25,7 @@ Keep this approval disabled while a known distribution/compliance blocker remain
 - `Linux Tauri Package` (`linux-tauri.yml`), including `Build and validate Tauri deb`;
 - `Scriptotar MCP E2E` (`mcp-e2e.yml`), including the `mcp` job.
 
-These five workflow gates are defined in `scripts/release_ci_gate.py`. They do not replace the separate live-provider, real-model, hardware, or manual acceptance record. A hosted YouTube access failure and a local full-canary pass remain distinct evidence; neither should be silently relabeled to satisfy release review. See [source-access diagnostics](../../docs/SOURCE_ACCESS.md) and the [1.3.0 readiness record](../../docs/releases/NEXT_1.3.0_RELEASE_READINESS.md).
+These five workflow gates are defined in `scripts/release_ci_gate.py`. They do not replace the separate live-provider, real-model, hardware, or manual acceptance record. A hosted YouTube access failure and a local full-canary pass remain distinct evidence; neither should be silently relabeled to satisfy release review. See [source-access diagnostics](../../docs/SOURCE_ACCESS.md) and the [1.3.0 readiness record](../../docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
 
 The exact-SHA gate queries GitHub Actions by workflow file, `main`, `push` event, and exact commit SHA, then independently rechecks each selected run's `headSha`. If more than one push run exists for the same workflow and SHA, the newest run is authoritative. Runs for another SHA are ignored, and an older green run cannot replace a newer failing run for the same SHA.
 

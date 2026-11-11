@@ -1,15 +1,15 @@
 # Scriptotar versioning and release identity
 
-Scriptotar Next **1.3.0** is the current Rust/Tauri/Svelte desktop preview candidate. This is the source/package identity, not a claim that 1.3.0 has been published. See the [candidate readiness record](releases/NEXT_1.3.0_RELEASE_READINESS.md).
+Scriptotar Next **1.4.0** is the current Rust/Tauri/Svelte desktop preview candidate. This is the source/package identity, not a claim that 1.4.0 has been published. See the [candidate readiness record](releases/NEXT_1.4.0_RELEASE_READINESS.md).
 
 ## Current product versions
 
 | Product line / component | Current version | Role |
 | --- | --- | --- |
-| Scriptotar desktop application | `1.3.0` | Primary cross-platform desktop application. |
-| Scriptotar Rust workspace | `1.3.0` | Rust crate/application version used by the codebase. |
-| Scriptotar Svelte package | `1.3.0` | Frontend package identity. |
-| Scriptotar transcription sidecar | `1.3.0` | Packaged sidecar/runtime component. |
+| Scriptotar desktop application | `1.4.0` | Primary cross-platform desktop application. |
+| Scriptotar Rust workspace | `1.4.0` | Rust crate/application version used by the codebase. |
+| Scriptotar Svelte package | `1.4.0` | Frontend package identity. |
+| Scriptotar transcription sidecar | `1.4.0` | Packaged sidecar/runtime component. |
 | Sidecar protocol | `1` | Wire-protocol compatibility version. |
 | Scriptotar Classic (Archived) | `1.3.0` | Historical legacy Python/Tkinter line (archived in `archive/legacy-python/`). |
 
@@ -40,8 +40,8 @@ tauri-next-latest
 Versioned package jobs stage files such as:
 
 ```text
-Scriptotar-Next-1.3.0-x64-setup.exe
-Scriptotar-Next-1.3.0-amd64.deb
+Scriptotar-Next-1.4.0-x64-setup.exe
+Scriptotar-Next-1.4.0-amd64.deb
 ```
 
 The rolling GitHub prerelease renames the public assets to:
@@ -89,6 +89,6 @@ For a Next change:
 
 ## Classic and Next version identities
 
-Classic and Next both currently use `1.3.0`, but identify separate product lines. Classic is the archived Python/Tkinter application; Next is the current Rust/Tauri preview. Matching numbers do not combine their package filenames, data directories, support statements, or release channels.
+Next `1.4.0` and archived Classic `1.3.0` identify separate product lines. Classic is the historical Python/Tkinter application; Next is the current Rust/Tauri preview. Their package filenames, data directories, support statements and release channels remain separate.
 
 The repository's version-identity regression test exists to catch accidental drift across these declared source files and the top-level documentation.
