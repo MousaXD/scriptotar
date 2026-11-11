@@ -337,6 +337,27 @@ describe('progressive desktop startup', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
+  it('fails closed when a watchlist save returns a different active project', async () => {
+    const api = createMockClient({
+      saveWatchlist: async () => ({
+        ...structuredClone(mockBootstrap),
+        activeProjectId: 'p-client-a'
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Research' }));
+    await screen.findByRole('heading', { name: 'Research' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creator profile URL' }), {
+      target: { value: 'https://example.com/creator' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save watchlist' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('watchlist response did not match the active project');
+    expect(screen.queryByRole('heading', { name: 'Research' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
   it('allows creating a project from an otherwise empty workspace', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), projects: [], activeProjectId: '' })
