@@ -183,6 +183,63 @@ describe('progressive desktop startup', () => {
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
   });
 
+  it('fails closed if a project switch changes the backend before its response fails', async () => {
+    const api = createMockClient();
+    const actualSelect = api.selectProject.bind(api);
+    vi.spyOn(api, 'selectProject').mockImplementationOnce(async (projectId) => {
+      await actualSelect(projectId);
+      throw new Error('Transport interrupted after selecting the project');
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('The active project could not be verified');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Project')).toBeDisabled();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+  });
+
+  it('fails closed if a rejected project switch cannot verify the backend state', async () => {
+    const api = createMockClient();
+    const actualBootstrap = api.bootstrap.bind(api);
+    vi.spyOn(api, 'bootstrap')
+      .mockImplementationOnce(actualBootstrap)
+      .mockRejectedValueOnce(new Error('Connection unavailable while verifying'));
+    vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project switch was rejected'));
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('The active project could not be verified');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+  });
+
+  it('fails closed when project creation commits but its response is lost', async () => {
+    const api = createMockClient();
+    const actualCreate = api.createProject.bind(api);
+    vi.spyOn(api, 'createProject').mockImplementationOnce(async (name) => {
+      await actualCreate(name);
+      throw new Error('Transport interrupted after creating the project');
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Durable Workspace' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The active project could not be verified');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Durable Workspace' })).toBeInTheDocument();
+  });
+
   it('does not schedule job refreshes from an event after unmount', async () => {
     let notify: ((id: string) => void) | undefined;
     const listJobs = vi.fn(async () => [] as Job[]);
