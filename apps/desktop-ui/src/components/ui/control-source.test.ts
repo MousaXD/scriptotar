@@ -7,6 +7,7 @@ import selectSource from './Select.svelte?raw';
 import sliderSource from './Slider.svelte?raw';
 import checkboxSource from './Checkbox.svelte?raw';
 import switchSource from './Switch.svelte?raw';
+import textFieldSource from './TextField.svelte?raw';
 
 describe('visual and semantic regression contract', () => {
   it('keeps the foundational app surfaces flat and token-driven', () => {
@@ -34,6 +35,14 @@ describe('visual and semantic regression contract', () => {
     expect(selectSource).toContain('role="listbox"');
     expect(selectSource).toContain('aria-activedescendant');
     expect(selectSource).toContain('function listKeys(');
+  });
+
+  it('keeps invalid text-field borders visible in the system-light theme', () => {
+    expect(theme).toContain(":root[data-theme='system'] input:where(");
+    // Global theme selectors include :root[data-theme], so TextField needs an
+    // additional local class to win regardless of CSS extraction order.
+    expect(textFieldSource).toContain(".field input[aria-invalid='true'] { border-color: var(--danger); }");
+    expect(textFieldSource).not.toContain("!important");
   });
 
   it('brands the slider across WebKit and Firefox while keeping real inputs', () => {
