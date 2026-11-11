@@ -150,6 +150,7 @@ describe('local MCP connection setup wizard', () => {
     step.focus();
     expect(step).toHaveFocus();
     expect(step).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('group', { name: 'MCP setup steps' })).toBeInTheDocument();
     const first = screen.getByRole('button', { name: /1 Permissions/ });
     first.focus();
     expect(first).toHaveFocus();
