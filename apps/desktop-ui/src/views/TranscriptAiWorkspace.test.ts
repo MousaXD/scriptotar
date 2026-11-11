@@ -144,6 +144,7 @@ describe('Transcript reader workspace', () => {
     expect(content).toHaveAttribute('dir', 'rtl');
     expect(content).toHaveTextContent('أول ثلاث ثواني');
     expect(content.querySelectorAll('button.timestamp')).toHaveLength(2);
+    expect(screen.getByText('local://arabic-hook.mp4')).toBeInTheDocument();
   });
 });
 
