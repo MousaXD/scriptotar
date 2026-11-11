@@ -13,6 +13,7 @@
   let pace: 'slow' | 'normal' | 'fast' = 'normal';
   // An explicit choice prevents accidentally treating the first workspace transcript as the source.
   let selectedTranscriptId = 'manual';
+  let sourceSelectionProjectId = '';
   let sourceEdited = false;
   let sourceText = '';
   let sourceLoadGeneration = 0;
@@ -42,7 +43,7 @@
 
   $: selectedTranscript = transcripts.find((transcript) => transcript.id === selectedTranscriptId);
   // Project/source changes must not leave an orphaned transcript ready for a BYOK request.
-  $: if (selectedTranscriptId !== 'manual' && !selectedTranscript) void loadSource('manual');
+  $: if (selectedTranscriptId !== 'manual' && (!selectedTranscript || selectedTranscript.projectId !== sourceSelectionProjectId)) void loadSource('manual');
   $: sourceWords = countWords(sourceText);
   $: sourceChars = sourceText.length;
   $: sourceSpeakingSeconds = Math.ceil(sourceWords / paceWordsPerSec[pace]);
@@ -52,7 +53,7 @@
   $: briefFields = [topic, audience, cta, voice].filter((value) => value.trim()).length;
 
   function payload() {
-    return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
+    return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl: provider === 'OpenAI-compatible' ? baseUrl : undefined, apiKey: mode === 'byok' ? apiKey : undefined };
   }
 
   function invalidatePrompt() {
@@ -76,7 +77,10 @@
   function chooseMode(next: AiMode) {
     if (mode === next) return;
     mode = next;
-    invalidatePrompt();
+    // Preserve an already prepared prompt, but discard any older in-flight build.
+    promptGeneration += 1;
+    building = false;
+    invalidateRun();
     status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK runs only when you choose Run with API.';
   }
 
@@ -89,6 +93,7 @@
     invalidatePrompt();
     sourceEdited = false;
     selectedTranscriptId = id;
+    sourceSelectionProjectId = id === 'manual' ? '' : transcripts.find((transcript) => transcript.id === id)?.projectId ?? '';
     sourceError = '';
     status = 'Source changed. Build a prompt for the current context.';
     const generation = ++sourceLoadGeneration;
@@ -106,7 +111,14 @@
       if (transcript.id !== id || transcript.projectId !== expected.projectId) {
         throw new Error('Loaded transcript did not match the selected project and source ID.');
       }
-      if (generation === sourceLoadGeneration && selectedTranscriptId === id) sourceText = transcript.text;
+      if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
+        const current = transcripts.find((item) => item.id === id);
+        if (!current || current.projectId !== sourceSelectionProjectId) {
+          void loadSource('manual');
+        } else {
+          sourceText = transcript.text;
+        }
+      }
     } catch (cause) {
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
         sourceError = cause instanceof Error ? cause.message : 'Could not load transcript source.';
