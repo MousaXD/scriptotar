@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createMockClient, mockBootstrap } from './api/mockClient';
@@ -75,6 +75,24 @@ describe('progressive desktop startup', () => {
       target: { value: 'Distinctive Zebra' }
     });
     expect(await screen.findByRole('button', { name: /Distinctive Zebra Workspace.*Project/ })).toBeInTheDocument();
+  });
+
+  it('closes the command palette to expose an ordinary project-switch rejection', async () => {
+    const api = createMockClient();
+    vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project switch denied'));
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    await fireEvent.input(screen.getByLabelText('Search workspace'), {
+      target: { value: 'Client A' }
+    });
+    const palette = await screen.findByRole('dialog', { name: 'Command palette' });
+    const projectCommand = within(palette).getAllByRole('button', { name: /Client A.*Project/ })[0];
+    await fireEvent.click(projectCommand);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Project switch denied');
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
   });
 
   it('does not schedule job refreshes from an event after unmount', async () => {
