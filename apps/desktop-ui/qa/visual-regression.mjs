@@ -69,6 +69,7 @@ async function checkOverflow(page, label) {
   const data = await page.evaluate(() => {
     const sidebar = document.querySelector('.app-frame .sidebar')?.getBoundingClientRect();
     const topbar = document.querySelector('.app-frame .topbar')?.getBoundingClientRect();
+    const heading = document.querySelector('#workspace-main h1')?.getBoundingClientRect();
     return {
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
