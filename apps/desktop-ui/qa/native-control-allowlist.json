@@ -1,0 +1,7 @@
+{
+  "description": "Only explicit genuine OS-owned inputs may use native appearance. See DESIGN.md.",
+  "nativeSelectors": [
+    "input[type='file']",
+    "input[type='color']"
+  ]
+}
