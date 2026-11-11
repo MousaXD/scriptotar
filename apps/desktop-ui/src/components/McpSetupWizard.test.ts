@@ -98,7 +98,7 @@ describe('local MCP connection setup wizard', () => {
     await fireEvent.click(screen.getByLabelText('Read projects, jobs and transcripts'));
     await fireEvent.click(screen.getByRole('button', { name: 'Save permissions & continue' }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
-    expect(screen.getByRole('button', { name: 'Save permissions & continue' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
 
     // The user changes a different grant while the first save is still in flight.
     await fireEvent.click(screen.getByLabelText('Search public creators'));
