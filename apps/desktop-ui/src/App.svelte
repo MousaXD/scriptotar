@@ -263,7 +263,7 @@
   async function createProject(name: string) {
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
-    const priorProjectId = data?.activeProjectId || '';
+    const priorProjectIds = new Set(data?.projects.map((project) => project.id) || []);
     const generation = ++workspaceGeneration;
     let inconsistentResponse = false;
     creatingProject = true;
@@ -273,13 +273,16 @@
     try {
       const next = await api.createProject(name);
       if (generation !== workspaceGeneration) return;
-      if (!next.projects.some((project) => project.id === next.activeProjectId)) {
+      const createdProject = next.projects.find((project) => project.id === next.activeProjectId);
+      if (!createdProject) {
         inconsistentResponse = true;
         throw new Error('The created project was not available in the backend response.');
       }
-      if (next.activeProjectId === priorProjectId) {
+      if (priorProjectIds.has(createdProject.id) || createdProject.name !== name.trim()) {
+        // A successful creation must identify a *new* project with the requested name;
+        // do not mistake another existing project for the result of this mutation.
         inconsistentResponse = true;
-        throw new Error('The created project did not become active in the backend response.');
+        throw new Error('The created project did not match the backend response.');
       }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
