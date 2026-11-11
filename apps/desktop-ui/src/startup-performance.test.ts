@@ -78,6 +78,25 @@ describe('progressive desktop startup', () => {
     expect(matches.length).toBeGreaterThan(0);
   });
 
+  it('reserves listbox typeahead letters for the focused custom selector', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    const listbox = document.createElement('div');
+    listbox.setAttribute('role', 'listbox');
+    listbox.setAttribute('tabindex', '0');
+    screen.getByRole('main').appendChild(listbox);
+    listbox.focus();
+    await fireEvent.keyDown(listbox, { key: 'r' });
+
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Research' })).not.toBeInTheDocument();
+
+    listbox.remove();
+    await fireEvent.keyDown(window, { key: 'r' });
+    expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
+  });
+
   it('closes the command palette to expose an ordinary project-switch rejection', async () => {
     const api = createMockClient();
     vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project switch denied'));
