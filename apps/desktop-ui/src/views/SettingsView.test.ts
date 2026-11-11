@@ -53,6 +53,28 @@ describe('Settings UX', () => {
     expect(screen.getByText(/تم حفظ الإعدادات/)).toBeInTheDocument();
   });
 
+  it('does not treat edits made during an in-flight save as persisted', async () => {
+    const { api } = setup();
+    let completeSave: (() => void) | undefined;
+    const save = vi.spyOn(api, 'saveSettings').mockImplementation(
+      () => new Promise<void>((resolve) => { completeSave = resolve; })
+    );
+    const theme = screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement;
+    const device = screen.getByRole('combobox', { name: 'Device' }) as HTMLSelectElement;
+    const originalDevice = device.value;
+    const changedDevice = originalDevice === 'cpu' ? 'auto' : 'cpu';
+    await fireEvent.change(theme, { target: { value: theme.value === 'dark' ? 'system' : 'dark' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+
+    await fireEvent.change(device, { target: { value: changedDevice } });
+    completeSave?.();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled());
+    expect(device).toHaveValue(changedDevice);
+    expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ device: originalDevice }));
+  });
+
   it('switches interface language to Arabic without changing transcription language', async () => {
     const { api } = setup();
     const save = vi.spyOn(api, 'saveSettings');
