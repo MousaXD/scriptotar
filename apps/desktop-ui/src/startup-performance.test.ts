@@ -437,6 +437,35 @@ describe('progressive desktop startup', () => {
     expect(document.documentElement.dir).toBe('rtl');
   });
 
+  it('warns against duplicate creation when a rejected request already persisted a project', async () => {
+    const newlyCreated = {
+      ...structuredClone(mockBootstrap.projects[0]),
+      id: 'p-partially-created',
+      name: 'Partially Created'
+    };
+    const api = createMockClient({
+      bootstrap: vi.fn()
+        .mockResolvedValueOnce(structuredClone(mockBootstrap))
+        .mockResolvedValueOnce({
+          ...structuredClone(mockBootstrap),
+          projects: [...structuredClone(mockBootstrap.projects), newlyCreated]
+        }),
+      createProject: vi.fn().mockRejectedValueOnce(new Error('Failed to activate project'))
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Partially Created' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByText(/may already have been created\. Check the project selector/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Partially Created' })).toBeInTheDocument();
+    expect(api.createProject).toHaveBeenCalledTimes(1);
+  });
+
   it('does not let a job event invalidate project creation while the mutation is pending', async () => {
     const creating = deferred<BootstrapData>();
     const listJobs = vi.fn(async () => structuredClone(mockBootstrap.jobs));
