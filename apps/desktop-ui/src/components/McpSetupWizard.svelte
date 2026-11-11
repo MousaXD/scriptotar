@@ -260,7 +260,7 @@
   .wizard { display: grid; gap: 16px; }
   .wizard-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
   .wizard-head h2 { font-size: 20px; margin: 0; }
-  .wizard-head p, .wizard-pane > p { font-size: 12px; line-height: 1.5; color: var(--muted); }
+  .wizard-pane > p { font-size: 12px; line-height: 1.5; color: var(--muted); }
   .wizard-status { border: 1px solid var(--border); padding: 6px 9px; border-radius: 20px; white-space: nowrap; font-size: 12px; color: var(--muted); }
   .wizard-status.connected { border-color: var(--accent); color: var(--accent); }
   .steps { display: flex; gap: 6px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
