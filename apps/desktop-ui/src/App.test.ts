@@ -266,7 +266,8 @@ describe('desktop workstation', () => {
   it('persists and reapplies the system appearance choice', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
-    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'system' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Theme' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'System' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe('system'));
     expect(document.documentElement.dataset.theme).toBe('system');

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { locale, setLocale, type AppLocale } from '../i18n';
   import McpSetupWizard from '../components/McpSetupWizard.svelte';
+  import Select from '../components/ui/Select.svelte';
+  import Switch from '../components/ui/Switch.svelte';
   import { translator } from '../i18n/translate';
   import type { AppSettings, MigrationStatus } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -42,8 +44,8 @@
     candidates: []
   });
 
-  function changeLocale(event: Event) {
-    setLocale((event.currentTarget as HTMLSelectElement).value as AppLocale);
+  function changeLocale(next: string) {
+    setLocale(next as AppLocale);
   }
 
   function discardChanges() {
@@ -149,21 +151,84 @@
   </aside>
 
   <div class="settings-stack">
-    <section id="settings-interface" data-i18n-ignore class="panel settings-section"><div><span class="eyebrow">{$translator('settings.interfaceEyebrow')}</span><h2>{$translator('settings.interfaceHeading')}</h2></div><div class="settings-grid"><label><span>{$translator('settings.theme')}</span><select aria-label={$translator('settings.theme')} bind:value={draft.appearance}><option value="dark">{$translator('settings.themeDark')}</option><option value="system">{$translator('settings.themeSystem')}</option></select></label><label data-i18n-ignore><span>{$translator('language.label')}</span><select aria-label={$translator('settings.languageControl')} value={$locale} on:change={changeLocale}><option value="en">{$translator('language.english')}</option><option value="ar">{$translator('language.arabic')}</option></select></label></div></section>
+    <section id="settings-interface" data-i18n-ignore class="panel settings-section">
+      <div><span class="eyebrow">{$translator('settings.interfaceEyebrow')}</span><h2>{$translator('settings.interfaceHeading')}</h2></div>
+      <div class="settings-grid">
+        <Select label={$translator('settings.theme')} value={draft.appearance}
+          options={[{ value: 'dark', label: $translator('settings.themeDark') }, { value: 'system', label: $translator('settings.themeSystem') }]}
+          onChange={(next) => { draft.appearance = next as typeof draft.appearance; }} />
+        <Select label={$translator('settings.languageControl')} value={$locale}
+          options={[{ value: 'en', label: $translator('language.english') }, { value: 'ar', label: $translator('language.arabic') }]}
+          onChange={changeLocale} />
+      </div>
+    </section>
 
-    <section id="settings-transcription" data-i18n-ignore class="panel settings-section"><div><span class="eyebrow">{$translator('settings.nav.transcription')}</span><h2>{$translator('settings.transcriptionHeading')}</h2></div><div class="settings-grid"><label><span>{$translator('settings.whisperModel')}</span><select bind:value={draft.whisperModel}><option>small</option><option>medium</option><option>turbo</option><option>large-v3</option></select></label><label><span>{$translator('settings.device')}</span><select bind:value={draft.device}><option value="auto">{$translator('settings.autoOption')}</option><option value="cpu">cpu</option><option value="cuda">cuda</option></select></label><label><span>{$translator('settings.language')}</span><select bind:value={draft.language}><option value="auto">{$translator('settings.autoOption')}</option><option value="Arabic">{$translator('settings.arabicOption')}</option><option value="English">{$translator('settings.englishOption')}</option></select></label></div></section>
+    <section id="settings-transcription" data-i18n-ignore class="panel settings-section">
+      <div><span class="eyebrow">{$translator('settings.nav.transcription')}</span><h2>{$translator('settings.transcriptionHeading')}</h2></div>
+      <div class="settings-grid">
+        <Select label={$translator('settings.whisperModel')} value={draft.whisperModel}
+          options={['small', 'medium', 'turbo', 'large-v3'].map((value) => ({ value, label: value }))}
+          onChange={(next) => { draft.whisperModel = next as typeof draft.whisperModel; }} />
+        <Select label={$translator('settings.device')} value={draft.device}
+          options={[{ value: 'auto', label: $translator('settings.autoOption') }, { value: 'cpu', label: 'cpu' }, { value: 'cuda', label: 'cuda' }]}
+          onChange={(next) => { draft.device = next as typeof draft.device; }} />
+        <Select label={$translator('settings.language')} value={draft.language}
+          options={[
+            { value: 'auto', label: $translator('settings.autoOption') },
+            { value: 'Arabic', label: $translator('settings.arabicOption') },
+            { value: 'English', label: $translator('settings.englishOption') }
+          ]} onChange={(next) => { draft.language = next as typeof draft.language; }} />
+      </div>
+    </section>
 
-    <section id="settings-media" data-i18n-ignore class="panel settings-section"><div><span class="eyebrow">{$translator('settings.mediaEyebrow')}</span><h2>{$translator('settings.mediaHeading')}</h2></div><div class="settings-grid"><label><span>{$translator('settings.quality')}</span><select bind:value={draft.quality}><option>720p</option><option>1080p</option><option value="Best">{$translator('settings.bestQuality')}</option><option value="Audio only">{$translator('settings.audioOnly')}</option></select></label><label><span>{$translator('settings.browserCookies')}</span><select bind:value={draft.cookies}><option value="none">{$translator('settings.noneOption')}</option><option value="firefox">firefox</option><option>chrome</option><option>chromium</option><option>brave</option></select></label><label><span>{$translator('settings.durationLimit')}</span><select bind:value={draft.maxDuration}><option value="30 min">{$translator('settings.thirtyMinutes')}</option><option value="60 min">{$translator('settings.sixtyMinutes')}</option><option value="2 hours">{$translator('settings.twoHours')}</option><option value="Unlimited">{$translator('settings.unlimited')}</option></select></label></div></section>
+    <section id="settings-media" data-i18n-ignore class="panel settings-section">
+      <div><span class="eyebrow">{$translator('settings.mediaEyebrow')}</span><h2>{$translator('settings.mediaHeading')}</h2></div>
+      <div class="settings-grid">
+        <Select label={$translator('settings.quality')} value={draft.quality}
+          options={[
+            { value: '720p', label: '720p' }, { value: '1080p', label: '1080p' },
+            { value: 'Best', label: $translator('settings.bestQuality') },
+            { value: 'Audio only', label: $translator('settings.audioOnly') }
+          ]} onChange={(next) => { draft.quality = next as typeof draft.quality; }} />
+        <Select label={$translator('settings.browserCookies')} value={draft.cookies}
+          options={[
+            { value: 'none', label: $translator('settings.noneOption') },
+            ...['firefox', 'chrome', 'chromium', 'brave'].map((value) => ({ value, label: value }))
+          ]} onChange={(next) => { draft.cookies = next as typeof draft.cookies; }} />
+        <Select label={$translator('settings.durationLimit')} value={draft.maxDuration}
+          options={[
+            { value: '30 min', label: $translator('settings.thirtyMinutes') },
+            { value: '60 min', label: $translator('settings.sixtyMinutes') },
+            { value: '2 hours', label: $translator('settings.twoHours') },
+            { value: 'Unlimited', label: $translator('settings.unlimited') }
+          ]} onChange={(next) => { draft.maxDuration = next as typeof draft.maxDuration; }} />
+      </div>
+    </section>
 
     <section id="settings-storage" data-i18n-ignore class="panel settings-section"><div><span class="eyebrow">{$translator('settings.nav.storage')}</span><h2>{$translator('settings.storageHeading')}</h2></div><div class="output-picker"><span class="field-label">{$translator('settings.outputDirectory')}</span><code dir={draft.outputDirectory ? 'ltr' : 'auto'}>{draft.outputDirectory || $translator('settings.applicationDefault')}</code><div class="output-actions"><button class="button secondary" disabled={busy} on:click={chooseOutputDirectory}>{$translator('settings.chooseOutput')}</button><button class="button secondary" disabled={busy || draft.outputDirectory === null} on:click={restoreDefaultOutput}>{$translator('settings.restoreDefault')}</button></div></div></section>
 
-    <section id="settings-local" data-i18n-ignore class="panel settings-section"><div><span class="eyebrow">{$translator('settings.localEyebrow')}</span><h2>{$translator('settings.localHeading')}</h2></div><div class="toggle-grid"><label><input type="checkbox" bind:checked={draft.copyLocalSource}/><span><strong>{$translator('settings.copySource')}</strong><small>{$translator('settings.copySourceHelp')}</small></span></label><label><input type="checkbox" bind:checked={draft.translate}/><span><strong>{$translator('settings.translateSpeech')}</strong><small>{$translator('settings.translateHelp')}</small></span></label><label><input type="checkbox" bind:checked={draft.batched}/><span><strong>{$translator('settings.batched')}</strong><small>{$translator('settings.batchedHelp')}</small></span></label><label><input type="checkbox" bind:checked={draft.keepFailed}/><span><strong>{$translator('settings.keepFailed')}</strong><small>{$translator('settings.keepFailedHelp')}</small></span></label></div></section>
+    <section id="settings-local" data-i18n-ignore class="panel settings-section">
+      <div><span class="eyebrow">{$translator('settings.localEyebrow')}</span><h2>{$translator('settings.localHeading')}</h2></div>
+      <div class="toggle-grid">
+        <Switch label={$translator('settings.copySource')} description={$translator('settings.copySourceHelp')} bind:checked={draft.copyLocalSource} />
+        <Switch label={$translator('settings.translateSpeech')} description={$translator('settings.translateHelp')} bind:checked={draft.translate} />
+        <Switch label={$translator('settings.batched')} description={$translator('settings.batchedHelp')} bind:checked={draft.batched} />
+        <Switch label={$translator('settings.keepFailed')} description={$translator('settings.keepFailedHelp')} bind:checked={draft.keepFailed} />
+      </div>
+    </section>
 
     <section id="settings-watchlists" data-i18n-ignore class="panel settings-section">
       <div><span class="eyebrow">{$translator('settings.watchEyebrow')}</span><h2>{$translator('settings.watchHeading')}</h2></div>
       <div class="watch-settings">
-        <label class="watch-toggle"><input type="checkbox" bind:checked={draft.autoWatch}/><span><strong>{$translator('settings.watchAutomatic')}</strong><small>{$translator('settings.watchAutomaticHelp')}</small></span></label>
-        <label><span>{$translator('settings.watchInterval')}</span><select aria-label={$translator('settings.watchControl')} bind:value={draft.watchInterval} disabled={!draft.autoWatch}><option value="30 min">{$translator('settings.thirtyMinutes')}</option><option value="60 min">{$translator('settings.sixtyMinutes')}</option><option value="2 hours">{$translator('settings.twoHours')}</option><option value="6 hours">{$translator('settings.sixHours')}</option></select></label>
+        <div class="watch-toggle"><Switch label={$translator('settings.watchAutomatic')}
+          description={$translator('settings.watchAutomaticHelp')} bind:checked={draft.autoWatch} /></div>
+        <Select label={$translator('settings.watchControl')} value={draft.watchInterval} disabled={!draft.autoWatch}
+          options={[
+            { value: '30 min', label: $translator('settings.thirtyMinutes') },
+            { value: '60 min', label: $translator('settings.sixtyMinutes') },
+            { value: '2 hours', label: $translator('settings.twoHours') },
+            { value: '6 hours', label: $translator('settings.sixHours') }
+          ]} onChange={(next) => { draft.watchInterval = next as typeof draft.watchInterval; }} />
       </div>
     </section>
 

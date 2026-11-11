@@ -18,20 +18,25 @@ function setup() {
   return { api, onSaved };
 }
 
+async function chooseSetting(name: string, option: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name }));
+  await fireEvent.click(screen.getByRole('option', { name: option }));
+}
+
 describe('Settings UX', () => {
   afterEach(() => setLocale('en'));
 
   it('starts clean, protects unsaved changes, and discards without saving', async () => {
     const { api } = setup();
     const save = vi.spyOn(api, 'saveSettings');
-    const theme = screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement;
-    const original = theme.value;
+    const theme = screen.getByRole('combobox', { name: 'Theme' });
+    const original = mockBootstrap.settings.appearance;
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
-    await fireEvent.change(theme, { target: { value: original === 'dark' ? 'system' : 'dark' } });
+    await chooseSetting('Theme', original === 'dark' ? 'System' : 'Dark');
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
     await fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }));
-    expect(theme.value).toBe(original);
+    expect(theme).toHaveTextContent(original === 'dark' ? 'Dark' : 'System');
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
     expect(save).not.toHaveBeenCalled();
   });
@@ -39,9 +44,8 @@ describe('Settings UX', () => {
   it('persists the selected appearance only on Save', async () => {
     const { api, onSaved } = setup();
     const save = vi.spyOn(api, 'saveSettings');
-    const theme = screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement;
-    const next = theme.value === 'system' ? 'dark' : 'system';
-    await fireEvent.change(theme, { target: { value: next } });
+    const next = mockBootstrap.settings.appearance === 'system' ? 'dark' : 'system';
+    await chooseSetting('Theme', next === 'dark' ? 'Dark' : 'System');
     expect(save).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ appearance: next })));
@@ -49,7 +53,7 @@ describe('Settings UX', () => {
     await waitFor(() => expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled();
     expect(screen.getByText(/Settings saved/)).toBeInTheDocument();
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Settings interface language' }), { target: { value: 'ar' } });
+    await chooseSetting('Settings interface language', 'Arabic');
     expect(screen.getByText(/تم حفظ الإعدادات/)).toBeInTheDocument();
   });
 
@@ -59,18 +63,17 @@ describe('Settings UX', () => {
     const save = vi.spyOn(api, 'saveSettings').mockImplementation(
       () => new Promise<void>((resolve) => { completeSave = resolve; })
     );
-    const theme = screen.getByRole('combobox', { name: 'Theme' }) as HTMLSelectElement;
-    const device = screen.getByRole('combobox', { name: 'Device' }) as HTMLSelectElement;
-    const originalDevice = device.value;
+    const device = screen.getByRole('combobox', { name: 'Device' });
+    const originalDevice = mockBootstrap.settings.device;
     const changedDevice = originalDevice === 'cpu' ? 'auto' : 'cpu';
-    await fireEvent.change(theme, { target: { value: theme.value === 'dark' ? 'system' : 'dark' } });
+    await chooseSetting('Theme', mockBootstrap.settings.appearance === 'dark' ? 'System' : 'Dark');
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
 
-    await fireEvent.change(device, { target: { value: changedDevice } });
+    await chooseSetting('Device', changedDevice === 'auto' ? 'Automatic' : 'cpu');
     completeSave?.();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled());
-    expect(device).toHaveValue(changedDevice);
+    expect(device).toHaveTextContent(changedDevice === 'auto' ? 'Automatic' : 'cpu');
     expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ device: originalDevice }));
   });
@@ -78,11 +81,10 @@ describe('Settings UX', () => {
   it('switches interface language to Arabic without changing transcription language', async () => {
     const { api } = setup();
     const save = vi.spyOn(api, 'saveSettings');
-    const select = screen.getByRole('combobox', { name: 'Settings interface language' });
-    await fireEvent.change(select, { target: { value: 'ar' } });
+    await chooseSetting('Settings interface language', 'Arabic');
     expect(screen.getByRole('heading', { name: 'الإعدادات' })).toBeInTheDocument();
     expect(document.documentElement.dir).toBe('rtl');
-    expect(screen.getByRole('combobox', { name: 'لغة الواجهة في الإعدادات' })).toHaveValue('ar');
+    expect(screen.getByRole('combobox', { name: 'لغة الواجهة في الإعدادات' })).toHaveTextContent('العربية');
     expect(save).not.toHaveBeenCalled();
   });
 

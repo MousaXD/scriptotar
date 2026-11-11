@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import { createMockClient } from './api/mockClient';
@@ -17,6 +17,11 @@ async function ready() {
 async function readyWithApi(api: ReturnType<typeof createMockClient>) {
   render(App, { props: { api } });
   await screen.findByRole('heading', { name: 'Creator Lab' });
+}
+
+async function chooseSettingOption(label: string, option: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: label }));
+  await fireEvent.click(screen.getByRole('option', { name: option }));
 }
 
 async function chooseArabicInterface() {
@@ -88,7 +93,7 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
 
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
-    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'system' } });
+    await chooseSettingOption('Theme', 'System');
 
     await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
   });
@@ -97,7 +102,7 @@ describe('Creator Control Room GUI', () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
 
-    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+    await chooseSettingOption('Settings interface language', 'Arabic');
 
     await waitFor(() => expect(document.documentElement.dir).toBe('rtl'));
     expect(window.localStorage.getItem('scriptotar.uiLanguage')).toBe('ar');
@@ -231,30 +236,24 @@ describe('Creator Control Room GUI', () => {
     const saveSettings = vi.spyOn(api, 'saveSettings');
     await readyWithApi(api);
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+    await chooseSettingOption('Settings interface language', 'Arabic');
 
     expect(await screen.findByRole('heading', { name: 'الإعدادات' })).toBeInTheDocument();
     const theme = screen.getByRole('combobox', { name: 'السمة' });
-    await fireEvent.change(theme, { target: { value: 'system' } });
-    expect(theme).toHaveValue('system');
-    expect(screen.getByRole('option', { name: 'النظام' })).toHaveValue('system');
+    await chooseSettingOption('السمة', 'النظام');
+    expect(theme).toHaveTextContent('النظام');
 
-    const qualityLabel = screen.getByText('الجودة').closest('label');
-    const quality = qualityLabel?.querySelector('select');
-    expect(quality).not.toBeNull();
-    await fireEvent.change(quality!, { target: { value: 'Best' } });
-    expect(quality).toHaveValue('Best');
-    expect(screen.getByRole('option', { name: 'أفضل جودة' })).toHaveValue('Best');
+    const quality = screen.getByRole('combobox', { name: 'الجودة' });
+    await chooseSettingOption('الجودة', 'أفضل جودة');
+    expect(quality).toHaveTextContent('أفضل جودة');
 
-    const language = screen.getByText('اللغة').closest('label')?.querySelector('select');
-    expect(language).not.toBeNull();
-    await fireEvent.change(language!, { target: { value: 'Arabic' } });
-    expect(within(language!).getByRole('option', { name: 'العربية' })).toHaveValue('Arabic');
+    const language = screen.getByRole('combobox', { name: 'اللغة' });
+    await chooseSettingOption('اللغة', 'العربية');
+    expect(language).toHaveTextContent('العربية');
 
-    const duration = screen.getByText('حد المدة الآمن').closest('label')?.querySelector('select');
-    expect(duration).not.toBeNull();
-    await fireEvent.change(duration!, { target: { value: '2 hours' } });
-    expect(within(duration!).getByRole('option', { name: 'ساعتان' })).toHaveValue('2 hours');
+    const duration = screen.getByRole('combobox', { name: 'حد المدة الآمن' });
+    await chooseSettingOption('حد المدة الآمن', 'ساعتان');
+    expect(duration).toHaveTextContent('ساعتان');
 
     await fireEvent.click(screen.getByRole('button', { name: 'حفظ التغييرات' }));
     await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({
