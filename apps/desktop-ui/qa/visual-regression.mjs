@@ -82,7 +82,31 @@ async function checkOverflow(page, label) {
   });
   if (!data.mainVisible) recordFailure(label, 'Workspace shell absent');
   if (data.scrollWidth > data.innerWidth + 2) {
-    recordFailure(label, 'Horizontal page overflow: ' + data.scrollWidth + ' > ' + data.innerWidth);
+    const offenders = await page.evaluate(() => {
+      const viewport = window.innerWidth;
+      return [...document.body.querySelectorAll('*')].flatMap((node) => {
+        if (!(node instanceof HTMLElement)) return [];
+        const box = node.getBoundingClientRect();
+        if (!box.width || !box.height || (box.right <= viewport + 2 && box.left >= -2)) return [];
+        // Inner content within an intentional scroll region is not page overflow.
+        let parent = node.parentElement;
+        while (parent && parent !== document.body) {
+          const style = getComputedStyle(parent);
+          if (['auto', 'scroll', 'hidden', 'clip'].includes(style.overflowX) &&
+              parent.scrollWidth > parent.clientWidth + 2) return [];
+          parent = parent.parentElement;
+        }
+        const selector = node.tagName.toLowerCase() +
+          (node.id ? '#' + node.id : '') +
+          (typeof node.className === 'string' ? '.' + node.className.trim().replace(/\\s+/g, '.') : '');
+        return [{ selector: selector.slice(0, 180),
+          left: Math.round(box.left), right: Math.round(box.right), width: Math.round(box.width),
+          scrollWidth: node.scrollWidth, clientWidth: node.clientWidth,
+          text: (node.textContent || '').trim().slice(0, 70) }];
+      }).slice(0, 20);
+    });
+    recordFailure(label, 'Horizontal page overflow: ' + data.scrollWidth +
+      ' > ' + data.innerWidth + ' offenders=' + JSON.stringify(offenders));
   }
   if (data.innerWidth <= 760 && data.mobileShell) {
     if (data.mobileShell.sidebarWidth < data.innerWidth - 2 ||
