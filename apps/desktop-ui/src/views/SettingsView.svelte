@@ -14,7 +14,7 @@
 
   let savedSnapshot = structuredClone(settings);
   let draft = structuredClone(savedSnapshot);
-  let status = '';
+  let status: '' | 'saved' | 'outputSelected' | 'outputReset' = '';
   let saveError = '';
   let migrationBusy = false;
   let busy = false;
@@ -64,7 +64,7 @@
       savedSnapshot = structuredClone(next);
       persistAppearance(next.appearance);
       await onSaved(structuredClone(next));
-      status = $translator('settings.saved');
+      status = 'saved';
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : $translator('settings.saveFailed');
     } finally {
@@ -81,7 +81,7 @@
       const selected = await api.chooseOutputDirectory();
       if (selected) {
         draft.outputDirectory = selected;
-        status = $translator('settings.outputSelected');
+        status = 'outputSelected';
       }
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : $translator('settings.outputFailed');
@@ -92,7 +92,7 @@
 
   function restoreDefaultOutput() {
     draft.outputDirectory = null;
-    status = $translator('settings.outputReset');
+    status = 'outputReset';
     saveError = '';
   }
 
@@ -192,7 +192,7 @@
   </div>
 </div>
 
-{#if status}<p class="status-copy settings-status" aria-live="polite" data-i18n-ignore>{status}</p>{/if}
+{#if status}<p class="status-copy settings-status" aria-live="polite" data-i18n-ignore>{status === 'saved' ? $translator('settings.saved') : status === 'outputSelected' ? $translator('settings.outputSelected') : $translator('settings.outputReset')}</p>{/if}
 {#if saveError}<p class="status-copy settings-status" role="alert" data-i18n-ignore>{saveError}</p>{/if}
 
 <style>
