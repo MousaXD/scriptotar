@@ -33,6 +33,6 @@ The SQLite remediation source in PR #98 contains `rusqlite 0.41.0` and `libsqlit
 
 ## Release protection
 
-`.github/workflows/tauri-next-release.yml` is the sole rolling release writer. The workflow requires exact-commit push CI on `main`, matching validated native artifacts, and explicit `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED=true`. Do **not** set this approval as a CI workaround, publish a stable tag or move `tauri-next-latest` as part of integration. An unpublished 1.4.0 source-version bump is **not** a release.
+`.github/workflows/tauri-next-release.yml` is the sole rolling release writer. The workflow requires exact-commit push CI on `main`, matching validated native artifacts, and explicit **both** `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED=true` and `SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED=true`. Do **not** set this approval as a CI workaround, publish a stable tag or move `tauri-next-latest` as part of integration. An unpublished 1.4.0 source-version bump is **not** a release.
 
 **Promotion decision:** keep PR #99 draft and `main` untouched until the final source commit passes the mandatory gates and Agent 08 independently certifies the screenshots, keyboard/accessibility, responsiveness and native startup evidence.
