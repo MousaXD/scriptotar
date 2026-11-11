@@ -225,9 +225,31 @@
     }
   }
 
+  async function reconcileFailedProjectMutation(previousProjectId: string, generation: number, message: string) {
+    try {
+      // A backend command can commit the active-project change before a later
+      // bootstrap/transport error rejects its response. Never assume that a
+      // rejected mutation left the backend on the previous project.
+      const snapshot = await api.bootstrap();
+      if (generation !== workspaceGeneration) return;
+      const hasValidActiveProject = snapshot.projects.length === 0
+        ? snapshot.activeProjectId === ''
+        : snapshot.projects.some((project) => project.id === snapshot.activeProjectId);
+      if (!hasValidActiveProject || snapshot.activeProjectId !== previousProjectId) {
+        throw new Error('The active project changed after the failed operation.');
+      }
+      data = prepareData(snapshot);
+    } catch {
+      if (generation !== workspaceGeneration) return;
+      data = null;
+      error = `${message} The active project could not be verified. Retry loading the workspace.`;
+    }
+  }
+
   async function selectProject(id: string): Promise<boolean> {
     if (switchingProject || creatingProject || !data) return false;
     if (id === data.activeProjectId) return true;
+    const previousProjectId = data.activeProjectId;
     const generation = ++workspaceGeneration;
     let inconsistentResponse = false;
     switchingProject = true;
@@ -252,6 +274,8 @@
           // Fail closed rather than letting stale data remain actionable.
           data = null;
           error = switchError;
+        } else {
+          await reconcileFailedProjectMutation(previousProjectId, generation, switchError);
         }
       }
       return false;
@@ -263,6 +287,7 @@
   async function createProject(name: string) {
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
+    const previousProjectId = data?.activeProjectId || '';
     const priorProjectIds = new Set(data?.projects.map((project) => project.id) || []);
     const generation = ++workspaceGeneration;
     let inconsistentResponse = false;
@@ -294,8 +319,9 @@
           // A malformed successful mutation can leave the backend's active project unknown.
           data = null;
           error = message;
-        } else if (!hadActiveProject) {
-          switchError = message;
+        } else {
+          if (!hadActiveProject) switchError = message;
+          await reconcileFailedProjectMutation(previousProjectId, generation, message);
         }
       }
       throw cause;
