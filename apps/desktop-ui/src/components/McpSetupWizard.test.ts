@@ -86,6 +86,32 @@ describe('local MCP connection setup wizard', () => {
     expect(screen.queryByText('Unsaved permission changes')).not.toBeInTheDocument();
   });
 
+  it('keeps newer permission edits unsaved when an earlier backend save completes', async () => {
+    const api = await setup();
+    const initiallySaved = await api.getMcpPermissions();
+    let completeSave: ((policy: typeof initiallySaved) => void) | undefined;
+    const save = vi.spyOn(api, 'saveMcpPermissions').mockImplementation(
+      () => new Promise((resolve) => { completeSave = resolve; })
+    );
+
+    await fireEvent.click(screen.getByLabelText('Enable Scriptotar MCP'));
+    await fireEvent.click(screen.getByLabelText('Read projects, jobs and transcripts'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save permissions & continue' }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(screen.getByRole('button', { name: 'Save permissions & continue' })).toBeDisabled();
+
+    // The user changes a different grant while the first save is still in flight.
+    await fireEvent.click(screen.getByLabelText('Search public creators'));
+    completeSave?.({ ...initiallySaved, enabled: true, readData: true });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save permissions & continue' })).toBeEnabled());
+    expect(screen.getByLabelText('Search public creators')).toBeChecked();
+    expect(screen.getByText('Unsaved permission changes')).toBeInTheDocument();
+    expect(screen.getByTestId('mcp-step-permissions')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /2 Connection/ })).toBeDisabled();
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ searchCreators: false }), false);
+  });
+
   it('renders Arabic permissions directly and preserves policy values when language changes', async () => {
     const api = await setup();
     const save = vi.spyOn(api, 'saveMcpPermissions');
