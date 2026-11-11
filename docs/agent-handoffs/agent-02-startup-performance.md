@@ -3,7 +3,7 @@
 ## Ownership / source verification
 - Repository: `MousaXD/scriptotar` (verified via connected GitHub account)
 - Original assigned branch: `agent-02/frontend-startup-performance`; **resumed** rather than recreated during this audit
-- PR: https://github.com/MousaXD/scriptotar/pull/90 (draft)
+- PR: https://github.com/MousaXD/scriptotar/pull/90 (**ready for Agent 00 review; not merged**)
 - Original main baseline: `f741244634b5143602a21a554094a498a0005b11`; main not modified or merged
 - Latest audited **code** commit: `3036cd308d7bc245fd51be28b1f16140322966d3`
 - This report is a subsequent documentation commit; use PR #90's live HEAD SHA as the authoritative final branch commit.
@@ -94,3 +94,5 @@ Existing `App.test.ts`, `gui-overhaul.test.ts`, `project-management.test.ts`, an
 **READY FOR AGENT 00 REVIEW (frontend scope)** — all owned changes are committed/pushed; 90/90 frontend tests, Svelte checks and Vite production build have passed on the previously exact-head PR commit. **NOT APPROVED FOR RELEASE OR MERGE** until pending repository-wide gates and Agent 08 packaged acceptance are independently verified.
 
 This handoff update alone creates a new documentation-only HEAD; the code remains identical to the fully passed commit above. Use the newest head's CI results for formal branch-protection checks.
+
+**PR status verified:** `ready for review` (not draft), open, unmerged, same branch; latest reviewed exact-code-and-documentation HEAD `3533f3a3169174276a55eb14fa15b5cc6b7d14a3` passed Desktop UI before this administrative status correction; latest branch-only documentation commit will require new CI. `main` remains at the original baseline SHA. Agent 00 must not merge while repository-wide and packaged acceptance gates are incomplete.
