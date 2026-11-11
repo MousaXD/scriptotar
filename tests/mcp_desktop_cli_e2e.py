@@ -102,7 +102,8 @@ with tempfile.TemporaryDirectory(prefix='scriptotar-mcp-desktop-e2e-') as raw:
             assert reply['result'].get('isError') is True, reply
 
         identity = rpc('initialize', {'protocolVersion':'2025-11-25'})['result']['serverInfo']
-        assert identity['name'] == 'scriptotar' and identity['version'] == '1.3.0', identity
+        expected_version = json.loads((ROOT / 'apps/desktop/src-tauri/tauri.conf.json').read_text(encoding='utf-8'))['version']
+        assert identity['name'] == 'scriptotar' and identity['version'] == expected_version, identity
         denied(call('list_projects'))
         denied(call('download_video', project_id=str(uuid.uuid4()), url='https://youtube.com/watch?v=123'))
 

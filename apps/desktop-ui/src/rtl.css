@@ -46,3 +46,26 @@ html[dir='rtl'] .transcript-content[dir='rtl'] {
   direction: rtl;
   text-align: right;
 }
+
+/* Keep structured Settings controls aligned in RTL without mirroring technical values. */
+html[dir='rtl'] .settings-nav a,
+html[dir='rtl'] .settings-section label,
+html[dir='rtl'] .wizard-pane,
+html[dir='rtl'] .wizard-head {
+  text-align: start;
+}
+
+html[dir='rtl'] .wizard .steps span {
+  margin-inline-start: 0;
+  margin-inline-end: 5px;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+html[dir='rtl'] .wizard textarea[dir='ltr'],
+html[dir='rtl'] .wizard input[dir='ltr'],
+html[dir='rtl'] .wizard code[dir='ltr'] {
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: isolate;
+}

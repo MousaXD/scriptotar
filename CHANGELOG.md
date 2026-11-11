@@ -1,5 +1,21 @@
 # Changelog
 
+## Scriptotar Next 1.4.0 — 2026-11-11 (integration candidate; unpublished)
+
+The 1.4.0 candidate brings together the eight-agent GUI/performance overhaul and the SQLite security remediation. It is a **draft integration build, not certified for merge or distribution**.
+
+### Experience and startup
+- Refined the desktop design system, typography and accessible custom controls; integrated styled selectors across the shell, Research, Library, Transcript, AI Studio and Settings, with keyboard and RTL behavior retained.
+- Reworked the Dashboard, Jobs, Research, Library, Transcript and AI Studio workspaces; simplified Settings and MCP permissions and improved Arabic/English localization.
+- Adopted shell-first loading and a metadata-only transcript bootstrap with exact, on-demand transcript hydration. Existing full-detail retrieval, export, project safety and fail-closed recovery remain required.
+- Added Chromium screenshot, native-control, keyboard, RTL and browser-performance QA tooling and strengthened application regression tests. Browser timings must not be treated as native cold-start results.
+
+### Dependency security and release limitations
+- Updated bundled SQLite using `rusqlite 0.41.0` and `libsqlite3-sys 0.39.1` for RUSTSEC-2026-0459, retaining WAL, migrations, backups and legacy recovery tests.
+- Aligned Next 1.4.0 across Tauri, Rust, Svelte, sidecar and lockfiles. Archived Classic 1.3.0 and sidecar protocol version 1 are unchanged.
+- Exact-final-commit Rust/SQLite, MCP, Windows/Linux packaged app, visual screenshot, native performance and independent QA gates are still pending. Existing live YouTube access challenges and manual hardware/provider checks are not waived.
+- Publishing remains disabled until an approved exact-`main` build passes every release gate. See [1.4.0 release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
+
 ## Scriptotar Next 1.3.0 — 2026-11-08 (release candidate; unpublished)
 
 - Bumped the integrated owner-overhaul candidate from 1.2.0 to 1.3.0 at the owner's request before promotion to `main`.

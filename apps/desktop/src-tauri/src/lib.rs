@@ -18,7 +18,7 @@ use std::{
 
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiTranscript, UiWatchlistStatus,
+    UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -494,10 +494,35 @@ fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth,
     })
 }
 
+/// Retains the original full-data payload for existing callers. New callers
+/// can opt into summary mode and fetch details via get_transcript on demand.
+#[derive(Debug, serde::Serialize)]
+#[serde(untagged)]
+enum BootstrapResponse {
+    Full(BootstrapData),
+    Summary(BootstrapData<UiTranscriptSummary>),
+}
+
 #[tauri::command]
-async fn bootstrap_app(state: tauri::State<'_, AppServices>) -> Result<BootstrapData, String> {
+async fn bootstrap_app(
+    summary: Option<bool>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<BootstrapResponse, String> {
     let services = state.inner().clone();
-    on_blocking_worker(move || services.bootstrap().map_err(command_error)).await
+    on_blocking_worker(move || {
+        if summary.unwrap_or(false) {
+            services
+                .bootstrap_summary()
+                .map(BootstrapResponse::Summary)
+                .map_err(command_error)
+        } else {
+            services
+                .bootstrap()
+                .map(BootstrapResponse::Full)
+                .map_err(command_error)
+        }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -882,12 +907,7 @@ pub fn run_installed_backend_smoke() -> Result<(), String> {
         .map(PathBuf::from)
         .ok_or_else(|| "SCRIPTOTAR_DATA_DIR is required for installed backend smoke".to_owned())?;
 
-    let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3")).map_err(command_error)?;
-    store.run_integration_migrations().map_err(command_error)?;
-    store
-        .recover_interrupted_watchlist_refreshes()
-        .map_err(command_error)?;
-
+    // AppServices performs database open, migrations and recovery once.
     let services = AppServices::new(&data_dir).map_err(command_error)?;
     services.schema_version().map_err(command_error)?;
     services.bootstrap().map_err(command_error)?;
@@ -911,15 +931,14 @@ pub fn run() {
             } else {
                 Some(migration::prepare_startup(&data_dir))
             };
-            let operational_store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
-            operational_store.run_integration_migrations()?;
-            operational_store.recover_interrupted_watchlist_refreshes()?;
-
             let app_handle = app.handle().clone();
             let job_notifier = Arc::new(move |job_id: Uuid| {
                 let _ = app_handle.emit("scriptotar://job-changed", job_id.to_string());
             });
             let services = AppServices::new_with_job_notifier(&data_dir, job_notifier)?;
+            // AppServices already safely opened, migrated and recovered this store.
+            // Share its handle rather than repeating startup database work.
+            let operational_store = services.operational_store();
             if matches!(preparation, Some(migration::Preparation::Ready)) {
                 complete_prepared_migration(&services, &data_dir);
             }

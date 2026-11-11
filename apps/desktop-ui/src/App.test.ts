@@ -16,6 +16,11 @@ async function ready(api = createMockClient()) {
   return api;
 }
 
+async function chooseProject(name: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Project' }));
+  await fireEvent.click(screen.getByRole('option', { name }));
+}
+
 function bootstrapWithMigration(migrationStatus: MigrationStatus) {
   return {
     ...structuredClone(mockBootstrap),
@@ -29,10 +34,10 @@ describe('desktop workstation', () => {
     const selectProject = vi.spyOn(api, 'selectProject');
     await ready(api);
     const select = screen.getByLabelText('Project');
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith('p-client-a'));
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
-    expect(select).toHaveValue('p-client-a');
+    expect(select).toHaveTextContent('Client A');
   });
 
   it('keeps the previous project usable when project switching fails', async () => {
@@ -40,11 +45,11 @@ describe('desktop workstation', () => {
     vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project unavailable'));
     await ready(api);
     const select = screen.getByLabelText('Project');
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('alert')).toHaveTextContent('Project unavailable');
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
-    await waitFor(() => expect(select).toHaveValue('p-creator-lab'));
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await waitFor(() => expect(select).toHaveTextContent('Creator Lab'));
+    await chooseProject('Client A');
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
@@ -54,7 +59,7 @@ describe('desktop workstation', () => {
     const chooseLocalMedia = vi.spyOn(api, 'chooseLocalMedia');
     const enqueueLocalMedia = vi.spyOn(api, 'enqueueLocalMedia');
     await ready(api);
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Choose video' }));
     await waitFor(() => expect(chooseLocalMedia).toHaveBeenCalledTimes(1));
     expect(screen.getByText('/mock/selected-video.mp4')).toBeInTheDocument();
@@ -64,7 +69,7 @@ describe('desktop workstation', () => {
 
   it('renders persisted job states including failure and interruption', async () => {
     await ready();
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     expect(screen.getByTestId('job-transcribing')).toBeInTheDocument();
     expect(screen.getByTestId('job-failed')).toBeInTheDocument();
     expect(screen.getByTestId('job-interrupted')).toBeInTheDocument();
@@ -90,7 +95,7 @@ describe('desktop workstation', () => {
     const api = createMockClient();
     const getTranscript = vi.spyOn(api, 'getTranscript');
     await ready(api);
-    await fireEvent.click(screen.getByRole('button', { name: /Jobs/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open transcript' }));
     expect(await screen.findByRole('heading', { name: 'Transcript workspace' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
@@ -109,8 +114,9 @@ describe('desktop workstation', () => {
   it('filters and sorts research results', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Research/ }));
-    const sort = screen.getByLabelText('Research sort');
-    await fireEvent.change(sort, { target: { value: 'date' } });
+    const sort = screen.getByRole('combobox', { name: 'Research sort' });
+    await fireEvent.click(sort);
+    await fireEvent.click(screen.getByRole('option', { name: 'Newest' }));
     expect(screen.getAllByTestId(/research-r-/)[0]).toHaveAttribute('data-testid', 'research-r-2');
     const filter = screen.getByLabelText('Filter research');
     await fireEvent.input(filter, { target: { value: 'caption pacing' } });
@@ -260,7 +266,8 @@ describe('desktop workstation', () => {
   it('persists and reapplies the system appearance choice', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
-    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'system' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Theme' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'System' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(window.localStorage.getItem(APPEARANCE_STORAGE_KEY)).toBe('system'));
     expect(document.documentElement.dataset.theme).toBe('system');

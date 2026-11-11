@@ -68,7 +68,8 @@ with tempfile.TemporaryDirectory() as directory:
 
         initialized = rpc('initialize', {'protocolVersion': '2025-11-25'})['result']
         assert initialized['protocolVersion'] == '2025-11-25'
-        assert initialized['serverInfo']['version'] == '1.3.0', initialized
+        expected_version = json.loads(pathlib.Path('apps/desktop/src-tauri/tauri.conf.json').read_text(encoding='utf-8'))['version']
+        assert initialized['serverInfo']['version'] == expected_version, initialized
         assert rpc('ping')['result'] == {}
         tools = rpc('tools/list')['result']['tools']
         expected = {

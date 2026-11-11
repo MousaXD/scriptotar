@@ -16,6 +16,14 @@ async function ready(api: ScriptotarApi = createMockClient()) {
   await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
 }
 
+async function chooseSource(name: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Transcript source' }));
+  await fireEvent.click(screen.getByRole('option', { name }));
+}
+async function chooseProvider(name: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'AI provider' }));
+  await fireEvent.click(screen.getByRole('option', { name }));
+}
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((complete) => { resolve = complete; });
@@ -27,16 +35,16 @@ describe('AI source selection', () => {
     await ready();
 
     const selector = screen.getByLabelText('Transcript source');
-    expect(selector).toHaveValue('manual');
+    expect(selector).toHaveTextContent('Manual / pasted text');
     expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument();
 
-    await fireEvent.change(selector, { target: { value: 't-ar' } });
+    await chooseSource('Hook breakdown — Arabic sample');
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Hook breakdown — Arabic sample');
     await waitFor(() => expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Exact loaded source'));
 
-    await fireEvent.change(selector, { target: { value: 't-en' } });
+    await chooseSource('Caption pacing breakdown');
 
-    expect(selector).toHaveValue('t-en');
+    expect(selector).toHaveTextContent('Caption pacing breakdown');
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Caption pacing breakdown');
     await waitFor(() => expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue(
       mockBootstrap.transcripts.find((transcript) => transcript.id === 't-en')?.text
@@ -47,9 +55,9 @@ describe('AI source selection', () => {
     await ready();
 
     const selector = screen.getByLabelText('Transcript source');
-    await fireEvent.change(selector, { target: { value: 'manual' } });
+    await chooseSource('Manual / pasted text');
 
-    expect(selector).toHaveValue('manual');
+    expect(selector).toHaveTextContent('Manual / pasted text');
     expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument();
     expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue('');
   });
@@ -61,7 +69,7 @@ describe('AI source selection', () => {
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
 
-    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: 't-ar' } });
+    await chooseSource('Hook breakdown — Arabic sample');
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Source unavailable');
     expect(screen.getByPlaceholderText('Paste or load transcript/research text…')).toHaveValue('');
@@ -70,7 +78,7 @@ describe('AI source selection', () => {
 
   it('marks an edited excerpt as modified instead of claiming it is an exact copy', async () => {
     await ready();
-    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: 't-ar' } });
+    await chooseSource('Hook breakdown — Arabic sample');
     await waitFor(() => expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Exact loaded source'));
 
     await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), {
@@ -109,9 +117,9 @@ describe('AI source selection', () => {
     await ready(api);
 
     const selector = screen.getByLabelText('Transcript source');
-    await fireEvent.change(selector, { target: { value: 't-ar' } });
+    await chooseSource('Hook breakdown — Arabic sample');
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Loading exact source');
-    await fireEvent.change(selector, { target: { value: 't-en' } });
+    await chooseSource('Caption pacing breakdown');
 
     const textarea = screen.getByPlaceholderText('Paste or load transcript/research text…');
     await waitFor(() => expect(textarea).toHaveValue(mockBootstrap.transcripts[1].text));
@@ -119,7 +127,7 @@ describe('AI source selection', () => {
       oldResponse.resolve(structuredClone(mockBootstrap.transcripts[0]));
       await oldResponse.promise;
     });
-    expect(selector).toHaveValue('t-en');
+    expect(selector).toHaveTextContent('Caption pacing breakdown');
     expect(textarea).toHaveValue(mockBootstrap.transcripts[1].text);
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Caption pacing breakdown');
   });
@@ -154,7 +162,7 @@ describe('AI source selection', () => {
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'session-only-key' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
     expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled();
-    await fireEvent.change(screen.getByLabelText('AI provider'), { target: { value: 'Anthropic' } });
+    await chooseProvider('Anthropic');
     await fireEvent.click(screen.getByRole('button', { name: /Copy Prompt/ }));
     await act(async () => {
       providerResponse.resolve('STALE_PROVIDER_OUTPUT');
@@ -183,7 +191,7 @@ describe('AI source selection', () => {
     api.getTranscript = async () => ({ ...mockBootstrap.transcripts[0], projectId: 'p-client-a' });
     await ready(api);
 
-    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: 't-ar' } });
+    await chooseSource('Hook breakdown — Arabic sample');
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
     expect(screen.getByRole('button', { name: 'Build prompt' })).toBeDisabled();
   });
@@ -235,7 +243,7 @@ describe('AI source selection', () => {
     await ready(api);
 
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
-    await fireEvent.change(screen.getByLabelText('AI provider'), { target: { value: 'OpenAI-compatible' } });
+    await chooseProvider('OpenAI-compatible');
     await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'do-not-forward-secret' } });
     await fireEvent.input(screen.getByPlaceholderText('https://…'), { target: { value: 'https://example.com/v1' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));

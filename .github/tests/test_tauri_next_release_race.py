@@ -89,6 +89,12 @@ class WorkflowRaceContractTests(unittest.TestCase):
         self.assertIn("cancel-in-progress: false", self.workflow)
         self.assertNotIn("group: tauri-next-release-${{", self.workflow)
 
+    def test_1_4_0_release_needs_explicit_version_approval(self) -> None:
+        publish_condition = next(line for line in self.workflow.splitlines()
+                                 if "if: github.event_name == 'workflow_run'" in line)
+        self.assertIn("vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true'", publish_condition)
+        self.assertIn("vars.SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED == 'true'", publish_condition)
+
     def test_staging_identity_is_unique_for_duplicates_and_retries(self) -> None:
         self.assertIn("github.run_id", self.workflow)
         self.assertIn("github.run_attempt", self.workflow)

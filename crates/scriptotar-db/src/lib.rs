@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -13,6 +14,13 @@ use scriptotar_core::{
 use uuid::Uuid;
 
 pub const LATEST_SCHEMA_VERSION: u32 = 5;
+
+/// Per-project job counts and lexicographically latest persisted update.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectJobStats {
+    pub item_count: usize,
+    pub latest_updated_at: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct SqliteStore {
@@ -40,6 +48,33 @@ impl SqliteStore {
         let connection = self.connection()?;
         connection
             .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .map_err(storage_error)
+    }
+
+    /// Compute project counters in SQLite without transferring every job
+    /// across the DB boundary. MAX matches the prior string comparison.
+    pub fn project_job_summaries(&self) -> RepositoryResult<HashMap<Uuid, ProjectJobStats>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT project_id, COUNT(*), MAX(updated_at)
+                 FROM jobs GROUP BY project_id",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                let project = Uuid::parse_str(&row.get::<_, String>(0)?)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok((
+                    project,
+                    ProjectJobStats {
+                        item_count: row.get::<_, i64>(1)? as usize,
+                        latest_updated_at: row.get(2)?,
+                    },
+                ))
+            })
+            .map_err(storage_error)?;
+        rows.collect::<Result<HashMap<_, _>, _>>()
             .map_err(storage_error)
     }
 

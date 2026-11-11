@@ -19,6 +19,16 @@ async function readyWithApi(api: ReturnType<typeof createMockClient>) {
   await screen.findByRole('heading', { name: 'Creator Lab' });
 }
 
+async function chooseSettingOption(label: string, option: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: label }));
+  await fireEvent.click(screen.getByRole('option', { name: option }));
+}
+
+async function chooseArabicInterface() {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Interface language' }));
+  await fireEvent.click(screen.getByRole('option', { name: 'ع' }));
+}
+
 describe('Creator Control Room GUI', () => {
   it('persists the compact sidebar preference', async () => {
     await ready();
@@ -83,7 +93,7 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
 
     expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
-    await fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'system' } });
+    await chooseSettingOption('Theme', 'System');
 
     await waitFor(() => expect(screen.getByText('Unsaved changes')).toBeInTheDocument());
   });
@@ -92,7 +102,7 @@ describe('Creator Control Room GUI', () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Settings/ }));
 
-    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+    await chooseSettingOption('Settings interface language', 'Arabic');
 
     await waitFor(() => expect(document.documentElement.dir).toBe('rtl'));
     expect(window.localStorage.getItem('scriptotar.uiLanguage')).toBe('ar');
@@ -150,7 +160,7 @@ describe('Creator Control Room GUI', () => {
   it('localizes Library controls in Arabic without changing creator or transcript titles', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: 'Library' }));
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'المكتبة' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'نوع عناصر المكتبة' })).toBeInTheDocument();
@@ -175,7 +185,8 @@ describe('Creator Control Room GUI', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Transcript could not be read');
     expect(screen.getByRole('button', { name: 'Retry loading' })).toBeInTheDocument();
     const picker = screen.getByRole('combobox', { name: 'Choose transcript' });
-    await fireEvent.change(picker, { target: { value: 't-en' } });
+    await fireEvent.click(picker);
+    await fireEvent.click(screen.getByRole('option', { name: 'Caption pacing breakdown' }));
 
     expect(await screen.findByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
     expect(getTranscript).toHaveBeenCalledWith('t-en');
@@ -184,7 +195,7 @@ describe('Creator Control Room GUI', () => {
 
   it('localizes the dashboard while preserving the current project name', async () => {
     await ready();
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByText('المهام الحالية')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'أحدث النصوص المفرغة' })).toBeInTheDocument();
@@ -196,8 +207,8 @@ describe('Creator Control Room GUI', () => {
 
   it('keeps the native media queue workflow usable in Arabic', async () => {
     await ready();
-    await fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'مرشحات المهام' })).toBeInTheDocument();
@@ -212,7 +223,7 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Transcripts' }));
     const content = await screen.findByTestId('transcript-content');
     const before = content.textContent;
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'مساحة النصوص المفرغة' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'نسخ النص' })).toBeInTheDocument();
@@ -225,30 +236,24 @@ describe('Creator Control Room GUI', () => {
     const saveSettings = vi.spyOn(api, 'saveSettings');
     await readyWithApi(api);
     await fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
-    await fireEvent.change(screen.getByLabelText('Settings interface language'), { target: { value: 'ar' } });
+    await chooseSettingOption('Settings interface language', 'Arabic');
 
     expect(await screen.findByRole('heading', { name: 'الإعدادات' })).toBeInTheDocument();
     const theme = screen.getByRole('combobox', { name: 'السمة' });
-    await fireEvent.change(theme, { target: { value: 'system' } });
-    expect(theme).toHaveValue('system');
-    expect(screen.getByRole('option', { name: 'النظام' })).toHaveValue('system');
+    await chooseSettingOption('السمة', 'النظام');
+    expect(theme).toHaveTextContent('النظام');
 
-    const qualityLabel = screen.getByText('الجودة').closest('label');
-    const quality = qualityLabel?.querySelector('select');
-    expect(quality).not.toBeNull();
-    await fireEvent.change(quality!, { target: { value: 'Best' } });
-    expect(quality).toHaveValue('Best');
-    expect(screen.getByRole('option', { name: 'أفضل جودة' })).toHaveValue('Best');
+    const quality = screen.getByRole('combobox', { name: 'الجودة' });
+    await chooseSettingOption('الجودة', 'أفضل جودة');
+    expect(quality).toHaveTextContent('أفضل جودة');
 
-    const language = screen.getByText('اللغة').closest('label')?.querySelector('select');
-    expect(language).not.toBeNull();
-    await fireEvent.change(language!, { target: { value: 'Arabic' } });
-    expect(within(language!).getByRole('option', { name: 'العربية' })).toHaveValue('Arabic');
+    const language = screen.getByRole('combobox', { name: 'اللغة' });
+    await chooseSettingOption('اللغة', 'العربية');
+    expect(language).toHaveTextContent('العربية');
 
-    const duration = screen.getByText('حد المدة الآمن').closest('label')?.querySelector('select');
-    expect(duration).not.toBeNull();
-    await fireEvent.change(duration!, { target: { value: '2 hours' } });
-    expect(within(duration!).getByRole('option', { name: 'ساعتان' })).toHaveValue('2 hours');
+    const duration = screen.getByRole('combobox', { name: 'حد المدة الآمن' });
+    await chooseSettingOption('حد المدة الآمن', 'ساعتان');
+    expect(duration).toHaveTextContent('ساعتان');
 
     await fireEvent.click(screen.getByRole('button', { name: 'حفظ التغييرات' }));
     await waitFor(() => expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({

@@ -133,6 +133,9 @@ export interface Transcript {
   segments: TranscriptSegment[];
 }
 
+/** Metadata only; open a transcript with getTranscript(id) to load its body. */
+export type TranscriptSummary = Omit<Transcript, 'text' | 'segments'>;
+
 export interface AiRun {
   id: string;
   task: string;
@@ -213,3 +216,8 @@ export interface BootstrapData {
   watchlistStatuses: WatchlistStatus[];
   migrationStatus: MigrationStatus;
 }
+
+/** Opt-in staged startup response. Never assume text or segments are loaded. */
+export type BootstrapSummaryData = Omit<BootstrapData, 'transcripts'> & {
+  transcripts: TranscriptSummary[];
+};

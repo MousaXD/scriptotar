@@ -27,7 +27,7 @@ describe('project management and entity navigation', () => {
 
     await waitFor(() => expect(createProject).toHaveBeenCalledWith('Campaign Lab'));
     expect(await screen.findByRole('heading', { name: 'Campaign Lab' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Project')).toHaveValue('p-created-1');
+    expect(screen.getByLabelText('Project')).toHaveTextContent('Campaign Lab');
   });
 
   it('keeps project creation open and shows backend validation errors', async () => {

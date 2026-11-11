@@ -1,81 +1,50 @@
-html {
-  font-family: var(--font-ui);
-  background: var(--color-canvas);
-}
-
-body {
-  font-family: var(--font-ui);
-  font-size: var(--text-md);
-  text-rendering: optimizeLegibility;
-}
-
-button,
-input,
-select,
-textarea {
-  font-family: inherit;
-}
-
-button,
-input,
-select,
-textarea,
-a {
-  transition:
-    border-color var(--motion-fast) var(--ease-standard),
+/* Unmigrated native controls retain behavior and a deliberate visual baseline.
+   Use src/components/ui/Select.svelte for consistent *open* menus. */
+html { font-family: var(--font-ui); background: var(--color-canvas); }
+body { font-family: var(--font-ui); font-size: var(--text-md); line-height: var(--line-normal); text-rendering: optimizeLegibility; }
+button, input, select, textarea { font: inherit; }
+button, input, select, textarea, a {
+  transition: border-color var(--motion-fast) var(--ease-standard),
     background-color var(--motion-fast) var(--ease-standard),
     color var(--motion-fast) var(--ease-standard),
-    opacity var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
+    opacity var(--motion-fast) var(--ease-standard);
 }
-
-button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-a:focus-visible,
-[tabindex]:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+:where(button, input, select, textarea, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-signal-strong);
+  outline-offset: 2px;
 }
-
-button:active:not(:disabled) {
-  transform: translateY(1px);
+:where(button, input, select, textarea):disabled { cursor: not-allowed; opacity: .55; }
+input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])), select, textarea {
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
 }
-
-input,
-select {
+input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])), select {
   min-height: var(--control-height);
+  padding-inline: 12px;
 }
-
-.button {
-  min-height: var(--control-height);
+select:not([multiple]) {
+  appearance: none;
+  padding-inline-end: 36px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%2394a1ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: 14px 14px;
+  background-position: right 12px center;
 }
-
-.technical,
-kbd,
-code,
-.timestamp {
-  font-family: var(--font-technical);
-  font-variant-numeric: tabular-nums;
-}
-
+:root[dir='rtl'] select:not([multiple]) { background-position: left 12px center; }
+input[type='checkbox'], input[type='radio'], input[type='range'] { accent-color: var(--color-signal-strong); }
+:where(button, input, select, textarea)::placeholder { color: var(--muted); opacity: 1; }
+:where(.button) { min-height: var(--control-height); }
+.technical, kbd, code, .timestamp { font-family: var(--font-technical); font-variant-numeric: tabular-nums; }
 .sr-only {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  padding: 0 !important;
-  margin: -1px !important;
-  overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
-  white-space: nowrap !important;
+  position: absolute !important; width: 1px !important; height: 1px !important;
+  padding: 0 !important; margin: -1px !important; overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important;
   border: 0 !important;
 }
-
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     scroll-behavior: auto !important;
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;

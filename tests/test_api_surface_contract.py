@@ -49,7 +49,7 @@ class ApiSurfaceContractTests(unittest.TestCase):
 
     def test_every_frontend_method_has_an_implementation_and_contract_invocation(self):
         names = methods()
-        self.assertEqual(len(names), 35, "Update coverage inventory when frontend APIs change")
+        self.assertEqual(len(names), 36, "Update coverage inventory when frontend APIs change")
         # The exact invoked command mapping is covered above.
         for name in names:
             self.assertRegex(TAURI, rf'(?m)^\s+{name}:', f'Missing frontend binding: {name}')

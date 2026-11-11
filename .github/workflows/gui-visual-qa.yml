@@ -1,0 +1,86 @@
+name: GUI Visual and Performance QA
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop-ui/**'
+      - '.github/workflows/gui-visual-qa.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop-ui/**'
+      - '.github/workflows/gui-visual-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gui-visual-qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rendered-ui:
+    name: Chromium rendered UI, controls and timings
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      QA_TESTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    defaults:
+      run:
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned checkout v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify tested source is the exact recorded SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$QA_TESTED_SHA"
+          printf 'QA tested immutable source SHA: %s\n' "$actual"
+        working-directory: .
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned setup-node v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Validate QA runner and baseline-tool JavaScript syntax
+        run: |
+          node --check qa/visual-regression.mjs
+          node --check qa/verify-snapshots.mjs
+          node --check qa/approve-baseline.mjs
+          node --check qa/compare-browser-metrics.mjs
+          node --check qa/tooling.nodecheck.mjs
+      - name: Independent QA evidence-verifier unit tests
+        run: node --test qa/tooling.nodecheck.mjs
+      - name: Install locked application dependencies
+        run: npm ci
+      - name: Typecheck and application regression tests
+        run: |
+          npm run check
+          npm run test
+      - name: Build the production UI under test
+        run: npm run build
+      - name: Install pinned browser test runner without modifying the lockfile
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.56.1
+          # GitHub's base Ubuntu runner ships the shared Chromium libraries; installing
+          # optional extra APT font packages here makes real GUI checks depend on
+          # unrelated Ubuntu/Azure mirror DNS. Chromium launch and all 140 browser
+          # scenarios below remain mandatory, so missing libs still fail closed.
+          npx playwright install chromium
+          printf 'Arabic fallback font: '
+          fc-match -f '%{family}\n' 'sans-serif:lang=ar'
+      - name: Render every workspace and exercise keyboard, RTL, controls and states
+        run: node qa/visual-regression.mjs
+      - name: Compare screenshots with approved baseline, if one exists
+        if: always()
+        run: node qa/verify-snapshots.mjs
+      - name: Archive real screenshots and measured browser timings
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scriptotar-gui-qa-${{ github.event.pull_request.head.sha || github.sha }}
+          path: apps/desktop-ui/qa/evidence/
+          if-no-files-found: warn
+          retention-days: 14
