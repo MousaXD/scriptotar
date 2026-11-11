@@ -20,6 +20,11 @@ describe('visual and semantic regression contract', () => {
     expect(theme).toContain("stroke='%23586b76'");
     expect(app).toContain('inset-inline-start: -13px');
     expect(app).toContain('inset-inline-end: 42px');
+    // All workspaces must align text to the inline start in both LTR and Arabic RTL.
+    expect(app).not.toContain('text-align: left;');
+    expect(app).toContain('text-align: start;');
+    expect(app).toContain('margin-inline-end: 7px;');
+    expect(app).toContain('border-inline-end: 0;');
   });
 
   it('never leaves a visually native closed select in migrated or legacy controls', () => {
