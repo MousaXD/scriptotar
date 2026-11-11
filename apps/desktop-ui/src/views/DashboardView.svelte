@@ -64,12 +64,14 @@
       {$translator('queue.addJob')}
     </button>
     <button type="button" class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
+    <button type="button" class="text-button" on:click={() => onNavigate('jobs')}>{$translator('home.jobs')}</button>
     <button type="button" class="text-button" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button>
   </div>
 </header>
 
 {#if projectFormOpen}
   <section class="project-create" aria-label={$translator('project.createTitle')} data-i18n-ignore>
+    <h2>{$translator('project.createTitle')}</h2>
     <form on:submit|preventDefault={createProject}>
       <label for="dashboard-project-name">{$translator('project.name')}</label>
       <input id="dashboard-project-name" bind:value={projectName} maxlength="120" autocomplete="off" disabled={projectCreating} placeholder={$translator('project.namePlaceholder')} />
@@ -110,7 +112,7 @@
       <button type="button" class="text-button" on:click={() => onNavigate('transcript')}>{$translator('home.open')}</button>
     </div>
     {#if transcripts.length}
-      <div class="transcript-list">
+      <div class="dashboard-transcripts">
         {#each transcripts.slice(0, 6) as transcript (transcript.id)}
           <button type="button" class="transcript-item" on:click={() => onOpenTranscript(transcript.id)}>
             <span class="transcript-copy">
@@ -172,6 +174,7 @@
   .header-actions { justify-content: flex-end; }
   .header-actions .text-button { min-height: var(--control-height); padding-inline: var(--space-2); }
   .project-create { margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+  .project-create h2 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
   .project-create form { display: grid; gap: var(--space-2); max-width: 600px; }
   .project-create label { color: var(--color-text-muted); font-size: var(--text-sm); }
   .project-create input { width: 100%; }
@@ -187,7 +190,7 @@
   .attention-indicator, .active-indicator { padding: 3px 7px; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 650; }
   .attention-indicator { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
   .active-indicator { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 10%, transparent); }
-  .dashboard-jobs { min-width: 0; }
+  .dashboard-jobs, .dashboard-transcripts { display: grid; min-width: 0; }
   .transcript-item, .creator-item, .ai-item { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-width: 0; min-height: 58px; padding: var(--space-2) var(--space-1); border: 0; border-block-start: 1px solid var(--color-border); background: transparent; text-align: start; }
   .transcript-item:first-child, .creator-item:first-child, .ai-item:first-child { border-block-start: 0; }
   .transcript-item:hover, .creator-item:hover, .ai-item:hover { background: var(--color-surface-raised); }

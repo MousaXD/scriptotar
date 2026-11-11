@@ -28,12 +28,24 @@ describe('dashboard creator workflow', () => {
     const { onNavigate, onCreateProject } = setup();
     await fireEvent.click(screen.getAllByRole('button', { name: 'Add transcription job' })[0]);
     expect(onNavigate).toHaveBeenCalledWith('jobs');
+    await fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
+    expect(onNavigate).toHaveBeenCalledWith('jobs');
     await fireEvent.click(screen.getAllByRole('button', { name: 'New research scan' })[0]);
     expect(onNavigate).toHaveBeenCalledWith('research');
     await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
     await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Second project' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith('Second project'));
+  });
+
+  it('keeps project creation visible after the backend rejects the name', async () => {
+    const { onCreateProject } = setup();
+    onCreateProject.mockRejectedValueOnce(new Error('Duplicate project'));
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Duplicate' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Duplicate project');
+    expect(screen.getByRole('heading', { name: 'Create project' })).toBeInTheDocument();
   });
 
   it('places failed jobs ahead of active jobs with diagnostics and active progress', () => {

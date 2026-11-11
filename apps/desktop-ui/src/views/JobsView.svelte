@@ -212,6 +212,7 @@
       <div class="selected-source">
         {#if localPath}
           <strong dir="auto" title={localPath}>{displayName(localPath)}</strong>
+          <code class="selected-path" dir="ltr" title={localPath}>{localPath}</code>
         {:else}
           <span>{nativeDropAvailable ? $translator('queue.dropEmpty') : $translator('queue.noVideo')}</span>
         {/if}
@@ -290,7 +291,8 @@
   .source-block { display: flex; flex-direction: column; min-width: 0; gap: var(--space-2); }
   .source-block + .source-block { border-inline-start: 1px solid var(--color-border); padding-inline-start: var(--space-4); }
   .source-block h3, .url-form label { display: block; margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); font-weight: 650; }
-  .selected-source { display: flex; align-items: center; min-width: 0; flex: 1; min-height: var(--control-height); }
+  .selected-source { display: flex; align-items: flex-start; flex-direction: column; justify-content: center; gap: var(--space-1); min-width: 0; flex: 1; min-height: var(--control-height); }
+  .selected-path { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-faint); font-family: var(--font-technical); font-size: var(--text-xs); text-align: start; }
   .selected-source strong, .selected-source span { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
   .selected-source span { color: var(--color-text-muted); }
   .capture-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: auto; }

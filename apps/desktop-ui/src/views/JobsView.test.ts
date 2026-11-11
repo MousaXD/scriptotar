@@ -23,6 +23,7 @@ describe('jobs workspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Choose video' }));
     await waitFor(() => expect(onChooseLocal).toHaveBeenCalledOnce());
     expect(screen.getByText('recording.mp4')).toBeInTheDocument();
+    expect(screen.getByText('/safe/recording.mp4')).toHaveAttribute('dir', 'ltr');
     await fireEvent.click(screen.getByRole('button', { name: 'Queue selected' }));
     await waitFor(() => expect(onEnqueueLocal).toHaveBeenCalledWith('/safe/recording.mp4'));
     expect(screen.queryByText('recording.mp4')).not.toBeInTheDocument();
