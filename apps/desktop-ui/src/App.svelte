@@ -130,6 +130,7 @@
   async function load(showLoading = true) {
     const firstBootstrap = !data && showLoading;
     const generation = ++workspaceGeneration;
+    let inconsistentResponse = false;
     if (firstBootstrap) startupMark('scriptotar.bootstrap-start');
     if (showLoading && !data) loading = true;
     if (!data) error = '';
@@ -138,6 +139,7 @@
       if (generation !== workspaceGeneration) return;
       if ((next.projects.length === 0 && next.activeProjectId !== '') ||
           (next.projects.length > 0 && !next.projects.some((project) => project.id === next.activeProjectId))) {
+        inconsistentResponse = true;
         throw new Error('The backend did not identify an active project.');
       }
       data = prepareData(next);
@@ -153,7 +155,12 @@
     } catch (cause) {
       if (generation !== workspaceGeneration) return;
       const message = cause instanceof Error ? cause.message : 'Unable to load the desktop workspace.';
-      if (data) operationalError = message;
+      if (inconsistentResponse) {
+        // The backend no longer identifies a trustworthy active workspace.
+        // Unlike a transient refresh failure, stale project data is not safe to use.
+        data = null;
+        error = message;
+      } else if (data) operationalError = message;
       else error = message;
     } finally {
       if (generation === workspaceGeneration) loading = false;
