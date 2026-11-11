@@ -36,6 +36,7 @@
   let workspaceGeneration = 0;
   let switchingProject = false;
   let creatingProject = false;
+  let savingWatchlist = false;
   const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
   function startupMark(name: string): void {
     if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
@@ -167,7 +168,7 @@
     }
   }
 
-  async function refresh() { if (!switchingProject && !creatingProject) await load(false); }
+  async function refresh() { if (!switchingProject && !creatingProject && !savingWatchlist) await load(false); }
 
   async function refreshJobs() {
     if (!data || jobRefreshGeneration === workspaceGeneration || switchingProject || creatingProject) return;
@@ -247,7 +248,7 @@
   }
 
   async function selectProject(id: string): Promise<boolean> {
-    if (switchingProject || creatingProject || !data) return false;
+    if (switchingProject || creatingProject || savingWatchlist || !data) return false;
     if (id === data.activeProjectId) return true;
     const previousProjectId = data.activeProjectId;
     const generation = ++workspaceGeneration;
@@ -285,6 +286,7 @@
   }
 
   async function createProject(name: string) {
+    if (savingWatchlist) throw new Error('Finish saving the watchlist before creating a project.');
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
     const previousProjectId = data?.activeProjectId || '';
@@ -332,19 +334,27 @@
 
   async function saveWatchlist(profileUrl: string, limit: number) {
     if (!data || switchingProject || creatingProject) return;
+    if (savingWatchlist) throw new Error('A watchlist save is already in progress.');
+    // The backend resolves the active project inside save_watchlist(), after URL
+    // validation. Keep project selection stable until that write completes.
+    savingWatchlist = true;
     const generation = workspaceGeneration;
     const projectId = data.activeProjectId;
-    const next = await api.saveWatchlist({ profileUrl, limit });
-    if (generation !== workspaceGeneration || switchingProject || creatingProject ||
-        data?.activeProjectId !== projectId) return;
-    if (next.activeProjectId !== projectId || !next.projects.some((project) => project.id === projectId)) {
-      // The write may have changed the backend's active project unexpectedly.
-      // Do not keep issuing operations against a workspace that may no longer be active.
-      error = 'The watchlist response did not match the active project. Reload the workspace.';
-      data = null;
-      throw new Error(error);
+    try {
+      const next = await api.saveWatchlist({ profileUrl, limit });
+      if (generation !== workspaceGeneration || switchingProject || creatingProject ||
+          data?.activeProjectId !== projectId) return;
+      if (next.activeProjectId !== projectId || !next.projects.some((project) => project.id === projectId)) {
+        // The write may have changed the backend's active project unexpectedly.
+        // Do not keep issuing operations against a workspace that may no longer be active.
+        error = 'The watchlist response did not match the active project. Reload the workspace.';
+        data = null;
+        throw new Error(error);
+      }
+      data = prepareData(next);
+    } finally {
+      savingWatchlist = false;
     }
-    data = prepareData(next);
   }
 
   async function createFirstProject(event: SubmitEvent) {
@@ -488,7 +498,7 @@
 </script>
 <svelte:window onkeydown={keyNav} />
 
-<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject || creatingProject} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject || creatingProject || savingWatchlist} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
   {#if loading || switchingProject}
     <WorkspaceSkeleton />
   {:else if error}
