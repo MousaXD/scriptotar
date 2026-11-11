@@ -117,7 +117,8 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async backendHealth() { return {schema_version: 1}; },
     async bootstrap() { return snapshot(); },
     async bootstrapSummary() {
-      const full = snapshot();
+      // Delegate through the public method so test overrides exercise the same startup contract.
+      const full = await this.bootstrap();
       return {
         ...full,
         transcripts: full.transcripts.map(({

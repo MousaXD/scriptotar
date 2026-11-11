@@ -4,7 +4,7 @@
   import { locale } from './i18n';
   import { getApi, type ScriptotarApi } from './api';
   import { applyAppearance, loadAppearance } from './appearance';
-  import type { AppSettings, BootstrapData, Job, LibraryItem, MigrationStatus, ViewId, WorkspaceSearchResult } from './types';
+  import type { AppSettings, BootstrapSummaryData, Job, LibraryItem, MigrationStatus, ViewId, WorkspaceSearchResult } from './types';
   import AppShell from './components/AppShell.svelte';
   import ErrorState from './components/ErrorState.svelte';
   import DashboardView from './views/DashboardView.svelte';
@@ -17,7 +17,7 @@
   import SettingsView from './views/SettingsView.svelte';
 
   export let api: ScriptotarApi = getApi();
-  let data: BootstrapData | null = null;
+  let data: BootstrapSummaryData | null = null;
   let loading = true;
   let error = '';
   let switchError = '';
@@ -59,14 +59,14 @@
     }
   }
 
-  function prepareData(next: BootstrapData): BootstrapData {
+  function prepareData(next: BootstrapSummaryData): BootstrapSummaryData {
     const appearance = loadAppearance(next.settings.appearance);
     applyAppearance(appearance);
     return { ...next, settings: { ...next.settings, appearance } };
   }
 
   function buildSearchResults(
-    snapshot: BootstrapData,
+    snapshot: BootstrapSummaryData,
     rawQuery: string,
     transcriptMatches: Set<string>
   ): WorkspaceSearchResult[] {
@@ -136,7 +136,7 @@
     if (showLoading && !data) loading = true;
     if (!data) error = '';
     try {
-      const next = await api.bootstrap();
+      const next = await api.bootstrapSummary();
       if (generation !== workspaceGeneration) return;
       if ((next.projects.length === 0 && next.activeProjectId !== '') ||
           (next.projects.length > 0 && !next.projects.some((project) => project.id === next.activeProjectId))) {
@@ -231,7 +231,7 @@
       // A backend command can commit the active-project change before a later
       // bootstrap/transport error rejects its response. Never assume that a
       // rejected mutation left the backend on the previous project.
-      const snapshot = await api.bootstrap();
+      const snapshot = await api.bootstrapSummary();
       if (generation !== workspaceGeneration) return;
       const hasValidActiveProject = snapshot.projects.length === 0
         ? snapshot.activeProjectId === ''

@@ -1,13 +1,13 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
-  import type { Transcript, TranscriptSegment } from '../types';
+  import type { Transcript, TranscriptSegment, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import EmptyState from '../components/EmptyState.svelte';
   import Icon from '../components/Icon.svelte';
 
   export let api: ScriptotarApi;
-  export let transcripts: Transcript[];
+  export let transcripts: TranscriptSummary[];
   export let selectedId = '';
 
   const LIST_KEY = 'scriptotar.transcriptListOpen';

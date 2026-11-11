@@ -21,6 +21,25 @@ beforeEach(() => {
 });
 
 describe('progressive desktop startup', () => {
+  it('uses metadata-only bootstrap for the startup list while preserving detail hydration', async () => {
+    const api = createMockClient();
+    const summary = vi.spyOn(api, 'bootstrapSummary');
+    const detail = vi.spyOn(api, 'getTranscript');
+    render(App, { props: { api } });
+
+    expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(summary).toHaveBeenCalledTimes(1);
+    const snapshot = await summary.mock.results[0].value;
+    expect(snapshot.transcripts.length).toBeGreaterThan(0);
+    expect(snapshot.transcripts[0]).not.toHaveProperty('text');
+    expect(snapshot.transcripts[0]).not.toHaveProperty('segments');
+    expect(detail).not.toHaveBeenCalled();
+
+    const full = await api.getTranscript(snapshot.transcripts[0].id);
+    expect(full).toHaveProperty('text');
+    expect(full).toHaveProperty('segments');
+  });
+
   it('renders the shell and allows navigation before a slow bootstrap finishes', async () => {
     const bootstrap = deferred<BootstrapData>();
     const api = createMockClient({ bootstrap: () => bootstrap.promise });

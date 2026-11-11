@@ -1,12 +1,12 @@
 <script lang="ts">
-  import type { AiRun, Creator, Job, Project, Transcript } from '../types';
+  import type { AiRun, Creator, Job, Project, TranscriptSummary } from '../types';
   import { translator } from '../i18n/translate';
   import JobRow from '../components/JobRow.svelte';
 
   export let project: Project;
   export let creators: Creator[];
   export let jobs: Job[];
-  export let transcripts: Transcript[];
+  export let transcripts: TranscriptSummary[];
   export let aiRuns: AiRun[];
   export let onNavigate: (view: 'research' | 'jobs' | 'transcript' | 'ai') => void;
   export let onCreateProject: (name: string) => Promise<void>;

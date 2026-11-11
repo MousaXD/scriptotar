@@ -1,10 +1,10 @@
 <script lang="ts">
   import { translator } from '../i18n/translate';
-  import type { AiMode, AiProvider, Transcript } from '../types';
+  import type { AiMode, AiProvider, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import { countWords, formatSpeakingDuration } from '../utils/textUtils';
   export let api: ScriptotarApi;
-  export let transcripts: Transcript[] = [];
+  export let transcripts: TranscriptSummary[] = [];
 
   let mode: AiMode = 'copy';
   let provider: AiProvider = 'OpenAI';
@@ -262,7 +262,7 @@
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
-        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
+        <span>TranscriptSummary ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
       </div>
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
