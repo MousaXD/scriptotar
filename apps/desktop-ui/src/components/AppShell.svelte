@@ -379,7 +379,7 @@
   .collapsed .local-status { justify-content: center; padding-inline: 0; }
 
   .workspace-shell { min-width: 0; }
-  .topbar { min-height: var(--topbar-height); grid-template-columns: minmax(170px, 230px) minmax(240px, 620px) auto; gap: var(--space-3); padding: 10px var(--space-5); border-color: var(--color-border); background: color-mix(in srgb, var(--color-canvas) 86%, transparent); }
+  .topbar { min-height: var(--topbar-height); grid-template-columns: minmax(170px, 230px) minmax(240px, 620px) auto; gap: var(--space-3); padding: 10px var(--space-5); border-color: var(--color-border); background: var(--color-canvas); }
   .project-control { min-width: 0; }
   .project-control :global(.field > label) { color: var(--color-text-faint); font-size: 9px; }
   .project-control :global(.field .trigger) { min-width: 0; border-color: transparent; background: transparent; font-weight: 650; }
