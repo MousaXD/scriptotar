@@ -5,7 +5,7 @@
 - Original assigned branch: `agent-02/frontend-startup-performance`; **resumed** rather than recreated during this audit
 - PR: https://github.com/MousaXD/scriptotar/pull/90 (draft)
 - Original main baseline: `f741244634b5143602a21a554094a498a0005b11`; main not modified or merged
-- Latest audited **code** commit: `4e9a71648e751fbb10331bdec1d3edd432c695c5`
+- Latest audited **code** commit: `17af40b1338b9a467c8711e244be494cd1c6b797`
 - This report is a subsequent documentation commit; use PR #90's live HEAD SHA as the authoritative final branch commit.
 - Connected workspace is not a local Git checkout (`pwd=/`, `git rev-parse` reports not a repository). Direct clone failed because `github.com` could not be resolved. Source was verified/updated through GitHub's authenticated contents and PR APIs. No pretend local test results.
 
@@ -52,6 +52,24 @@ Existing `App.test.ts`, `gui-overhaul.test.ts`, `project-management.test.ts`, an
 - **Agent 06:** transcript/AI workspaces must handle metadata-only snapshots before the summary contract can be adopted.
 - **Agent 08:** independent current-head tests/build, packaged-app measurements, keyboard/RTL/accessibility and cross-PR regression verdict.
 - No other agent branches were merged or edited.
+
+## Follow-up audit (11 November 2026)
+
+**Verification:** Resumed the existing `agent-02/frontend-startup-performance` branch and PR #90, with no duplicate PR, branch recreation or main changes. GitHub reported branch/pr HEAD `d87f6568aadebfc985cc2f16dbe5e577f2e2cbc8` before this audit, matching the existing handoff. Runtime working directory `/` is not a Git checkout; `git ls-remote https://github.com/MousaXD/scriptotar.git` fails DNS resolution, so no claim of local npm tests or packaged benchmark is possible.
+
+**Independent file audit:** reviewed `App.svelte`, `AppShell.svelte`, `WorkspaceSkeleton.svelte`, `main.ts`, and the complete startup test file, comparing the PR patches against `main`. Checked shell visibility during slow/failing bootstrap, keyboard search/palette, RTL localization, dark/system preferences, responsive skeleton widths, fail-closed project selection, unmount, and stale job/status requests.
+
+**Additional defects corrected in owned files:**
+- **Large project lists:** the command palette previously allocated one command and callback for every project on each query change, even though at most eight project commands can be shown. It now scans in order and stops after the first eight matches, preserving matching/filter order and the existing visible result limit. Search can still find a distinctive project at the end of the list.
+- **Unmount lifecycle:** asynchronous subscription callbacks could enqueue a job-refresh timer after App was destroyed. The event listener now checks disposal, the generation advances at teardown, and pending transcript searches are invalidated so late IPC results cannot update an unmounted component.
+- **Project-switch error visibility:** choosing a project through the command palette left the dialog open on an ordinary backend rejection, hiding the in-workspace error behind the dialog. The palette now closes after completion, restoring the original behavior and revealing existing error feedback.
+- **Test selector precision:** project results can appear both as project commands and workspace search hits. The new large-list test accepts either/both rather than asserting a unique match.
+
+**Additional regression tests:** a project near the end of 76 entries is found by palette search; a post-unmount job event cannot schedule polling; a rejected project command closes the palette and leaves the previous project usable. Existing tests and assertions were not changed or weakened.
+
+**Current code SHA:** `17af40b1338b9a467c8711e244be494cd1c6b797`. Exact-code Desktop UI run: https://github.com/MousaXD/scriptotar/actions/runs/42929401580 — **queued** at inspection. Final documentation commit creates another GitHub Actions event; use PR HEAD and its associated checks for actual release certification.
+
+**Verdict remains BLOCKED.** The previous 36-failure run was on the superseded lazy-view implementation, and the fix cannot be called green without a completed exact-head CI run. The user-requested Svelte checks, Vitest, production build, packaged-app startup performance and Agent 08 independent validation remain unverified for this branch.
 
 ## Readiness verdict
 **BLOCKED — NOT READY FOR AGENT 00 REVIEW/MERGE** until the latest exact-head Desktop UI tests/build and required integrated/packaged gates are genuinely green. Code regression fixes have been pushed and tests added, but queued CI is not passing CI. PR #90 remains a draft; main is unchanged.
