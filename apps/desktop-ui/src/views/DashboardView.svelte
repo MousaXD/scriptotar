@@ -12,15 +12,17 @@
   export let onCreateProject: (name: string) => Promise<void>;
   export let onOpenTranscript: (id: string) => void;
 
-  const activeStates = new Set(['queued','preparing','downloading','transcribing','processing']);
+  const activeStates = new Set(['queued', 'preparing', 'downloading', 'transcribing', 'processing']);
   let projectFormOpen = false;
   let projectName = '';
   let projectCreating = false;
   let projectError = '';
 
   $: active = jobs.filter((job) => activeStates.has(job.state));
-  $: attention = jobs.filter((job) => ['failed', 'interrupted'].includes(job.state));
-  $: currentJobs = [...attention, ...active.filter((job) => !attention.some((item) => item.id === job.id))].slice(0, 5);
+  $: attention = jobs.filter((job) => job.state === 'failed' || job.state === 'interrupted');
+  // Keep in-flight work visible even when a project has a large failure backlog.
+  $: attentionPreview = attention.slice(0, 6 - Math.min(active.length, 2));
+  $: currentJobs = [...attentionPreview, ...active.slice(0, 6 - attentionPreview.length)];
 
   function openProjectForm() {
     projectError = '';
@@ -54,144 +56,163 @@
   }
 </script>
 
-<section class="view-head home-head" data-i18n-ignore>
-  <div>
-    <span class="eyebrow">{$translator('home.overview')}</span>
-    <h1>{project.name}</h1>
-    <p>{project.description || $translator('home.description')}</p>
+<header class="dashboard-header" data-i18n-ignore>
+  <div class="project-heading">
+    <h1 dir="auto">{project.name}</h1>
+    {#if project.description}<p dir="auto">{project.description}</p>{/if}
   </div>
-  <div class="home-actions">
-    <button class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
-    <button class="button secondary" on:click={() => onNavigate('jobs')}>{$translator('home.jobs')}</button>
-    <button class="button primary" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button>
+  <div class="header-actions">
+    <button type="button" class="button primary" on:click={() => onNavigate('jobs')}>
+      {$translator('queue.addJob')}
+    </button>
+    <button type="button" class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
+    <button type="button" class="text-button" on:click={() => onNavigate('jobs')}>{$translator('home.jobs')}</button>
+    <button type="button" class="text-button" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button>
   </div>
-</section>
+</header>
 
 {#if projectFormOpen}
-  <section class="panel project-create-panel" data-i18n-ignore aria-label={$translator('project.createTitle')}>
-    <div class="panel-head">
-      <div><span class="eyebrow">{$translator('project.label')}</span><h2>{$translator('project.createTitle')}</h2></div>
-    </div>
-    <form class="project-create-form" on:submit|preventDefault={createProject}>
-      <label>
-        <span>{$translator('project.name')}</span>
-        <input
-          bind:value={projectName}
-          maxlength="120"
-          autocomplete="off"
-          disabled={projectCreating}
-          placeholder={$translator('project.namePlaceholder')}
-          aria-label={$translator('project.name')}
-        />
-      </label>
-      {#if projectError}<p class="project-error" role="alert">{projectError}</p>{/if}
+  <section class="project-create" aria-label={$translator('project.createTitle')} data-i18n-ignore>
+    <h2>{$translator('project.createTitle')}</h2>
+    <form on:submit|preventDefault={createProject}>
+      <label for="dashboard-project-name">{$translator('project.name')}</label>
+      <input id="dashboard-project-name" bind:value={projectName} maxlength="120" autocomplete="off" disabled={projectCreating} placeholder={$translator('project.namePlaceholder')} />
+      {#if projectError}<p role="alert" class="project-error">{projectError}</p>{/if}
       <div class="project-form-actions">
-        <button class="button secondary" type="button" disabled={projectCreating} on:click={closeProjectForm}>{$translator('project.cancel')}</button>
-        <button class="button primary" type="submit" disabled={projectCreating}>{projectCreating ? $translator('project.creating') : $translator('project.create')}</button>
+        <button type="button" class="button secondary" on:click={closeProjectForm} disabled={projectCreating}>{$translator('project.cancel')}</button>
+        <button type="submit" class="button primary" disabled={projectCreating}>{projectCreating ? $translator('project.creating') : $translator('project.create')}</button>
       </div>
     </form>
   </section>
 {/if}
 
-<div class="home-grid">
-  <section class="panel work-panel">
-    <div class="panel-head">
-      <div><span class="eyebrow">{$translator('home.activity')}</span><h2>{$translator('home.currentJobs')}</h2></div>
-      <button class="text-button" on:click={() => onNavigate('jobs')}>{$translator('home.openQueue')}</button>
-    </div>
-    {#if currentJobs.length === 0}
-      <button class="quiet-empty" data-i18n-ignore on:click={() => onNavigate('jobs')}>
-        <strong>{$translator('home.jobs')}</strong>
-        <span>{$translator('home.openQueue')}</span>
-      </button>
-    {:else}
-      <div class="job-stack">
-        {#each currentJobs as job}<JobRow {job} compact />{/each}
+<div class="workspace-primary" data-i18n-ignore>
+  <section class="workspace-section jobs-section" aria-label={$translator('home.currentJobs')}>
+    <div class="section-heading">
+      <div class="heading-with-count">
+        <h2>{$translator('home.currentJobs')}</h2>
+        {#if attention.length > 0}<span class="attention-indicator">{$translator('home.needsAttention', { count: attention.length })}</span>{/if}
+        {#if active.length > 0}<span class="active-indicator">{active.length} {$translator('queue.filterActive')}</span>{/if}
       </div>
+      <button type="button" class="text-button" on:click={() => onNavigate('jobs')}>{$translator('home.openQueue')}</button>
+    </div>
+    {#if currentJobs.length}
+      <div class="dashboard-jobs">
+        {#each currentJobs as job (job.id)}<JobRow {job} compact />{/each}
+      </div>
+    {:else}
+      <button type="button" class="empty-action" on:click={() => onNavigate('jobs')}>
+        <strong>{$translator('queue.emptyTitle')}</strong>
+        <span>{$translator('queue.addJob')}</span>
+      </button>
     {/if}
   </section>
 
-  <section class="panel output-panel" data-i18n-ignore>
-    <div class="panel-head">
-      <div><span class="eyebrow">{$translator('home.transcriptLibrary')}</span><h2>{$translator('home.recentTranscripts')}</h2></div>
-      <button class="text-button" on:click={() => onNavigate('transcript')}>{$translator('home.open')}</button>
+  <section class="workspace-section transcript-section" aria-label={$translator('home.recentTranscripts')}>
+    <div class="section-heading">
+      <h2>{$translator('home.recentTranscripts')}</h2>
+      <button type="button" class="text-button" on:click={() => onNavigate('transcript')}>{$translator('home.open')}</button>
     </div>
-    <div class="recent-stack">
-      {#each transcripts.slice(0, 4) as transcript}
-        <button on:click={() => onOpenTranscript(transcript.id)}>
-          <span><strong>{transcript.title}</strong><small>{transcript.language} · {$translator('home.seconds', { count: Math.round(transcript.durationSeconds) })}</small></span>
-          <span aria-hidden="true">›</span>
-        </button>
-      {/each}
-      {#if transcripts.length === 0}
-        <button class="quiet-empty" on:click={() => onNavigate('jobs')}><strong>{$translator('home.transcript')}</strong><span>{$translator('home.jobsLink')}</span></button>
-      {/if}
-    </div>
-  </section>
-
-  <section class="panel creator-panel" data-i18n-ignore>
-    <div class="panel-head"><div><span class="eyebrow">{$translator('home.signals')}</span><h2>{$translator('home.recentCreators')}</h2></div></div>
-    <div class="creator-stack">
-      {#each creators.slice(0, 4) as creator}
-        <button class="creator-row" on:click={() => onNavigate('research')}>
-          {#if creator.avatar}<img class="creator-avatar" src={creator.avatar} alt="" />{:else}<span class="avatar-fallback">{creator.name.slice(0,1)}</span>{/if}
-          <span><strong>{creator.name}</strong><small>{creator.handle} · {creator.platform}</small></span>
-          {#if creator.watchlisted}<span class="watch-chip">{$translator('home.watching')}</span>{/if}
-        </button>
-      {/each}
-    </div>
-  </section>
-
-  <section class="panel ai-panel" data-i18n-ignore>
-    <div class="panel-head"><div><span class="eyebrow">{$translator('nav.ai')}</span><h2>{$translator('home.recentWork')}</h2></div><button class="text-button" on:click={() => onNavigate('ai')}>{$translator('home.create')}</button></div>
-    <div class="recent-stack">
-      {#each aiRuns.slice(0, 4) as run}
-        <button on:click={() => onNavigate('ai')}><span><strong>{run.title}</strong><small>{run.task} · {run.mode === 'copy' ? $translator('home.copyPrompt') : run.provider}</small></span><span aria-hidden="true">›</span></button>
-      {/each}
-    </div>
+    {#if transcripts.length}
+      <div class="dashboard-transcripts">
+        {#each transcripts.slice(0, 6) as transcript (transcript.id)}
+          <button type="button" class="transcript-item" on:click={() => onOpenTranscript(transcript.id)}>
+            <span class="transcript-copy">
+              <strong dir="auto" title={transcript.title}>{transcript.title}</strong>
+              <small>{transcript.language} · {$translator('home.seconds', { count: Math.round(transcript.durationSeconds) })}</small>
+            </span>
+            <span class="row-chevron" aria-hidden="true">›</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <button type="button" class="empty-action" on:click={() => onNavigate('jobs')}>
+        <strong>{$translator('home.transcript')}</strong><span>{$translator('queue.addJob')}</span>
+      </button>
+    {/if}
   </section>
 </div>
 
-<section class="metric-grid compact-metrics" data-i18n-ignore aria-label={$translator('home.projectSummary')}>
-  <article><span>{$translator('home.activeJobs')}</span><strong>{active.length}</strong><small>{$translator('home.needsAttention', { count: attention.length })}</small></article>
-  <article><span>{$translator('home.recentTranscripts')}</span><strong>{transcripts.length}</strong><small>{$translator('home.transcriptLibrary')}</small></article>
-  <article><span>{$translator('home.recentCreators')}</span><strong>{creators.length}</strong><small>{$translator('home.watchlisted', { count: creators.filter((creator) => creator.watchlisted).length })}</small></article>
-  <article><span>{$translator('home.aiWork')}</span><strong>{aiRuns.length}</strong><small>{$translator('home.promptRuns')}</small></article>
-</section>
+<div class="workspace-secondary" data-i18n-ignore>
+  <section class="workspace-section" aria-label={$translator('home.recentCreators')}>
+    <div class="section-heading"><h2>{$translator('home.recentCreators')}</h2><button type="button" class="text-button" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button></div>
+    {#if creators.length}
+      <div class="secondary-list">
+        {#each creators.slice(0, 3) as creator (creator.id)}
+          <button type="button" class="creator-item" on:click={() => onNavigate('research')}>
+            {#if creator.avatar}<img class="creator-avatar" alt="" src={creator.avatar} />{:else}<span class="avatar-fallback" aria-hidden="true">{creator.name.slice(0, 1)}</span>{/if}
+            <span class="secondary-copy"><strong dir="auto">{creator.name}</strong><small dir="auto">{creator.handle} · {creator.platform}</small></span>
+            {#if creator.watchlisted}<span class="watch-chip">{$translator('home.watching')}</span>{/if}
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <button type="button" class="empty-link" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button>
+    {/if}
+  </section>
+  <section class="workspace-section" aria-label={$translator('home.recentWork')}>
+    <div class="section-heading"><h2>{$translator('home.recentWork')}</h2><button type="button" class="text-button" on:click={() => onNavigate('ai')}>{$translator('home.create')}</button></div>
+    {#if aiRuns.length}
+      <div class="secondary-list">
+        {#each aiRuns.slice(0, 3) as run (run.id)}
+          <button type="button" class="ai-item" on:click={() => onNavigate('ai')}>
+            <span class="secondary-copy"><strong dir="auto">{run.title}</strong><small>{run.task} · {run.mode === 'copy' ? $translator('home.copyPrompt') : run.provider}</small></span>
+            <span class="row-chevron" aria-hidden="true">›</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <button type="button" class="empty-link" on:click={() => onNavigate('ai')}>{$translator('home.create')}</button>
+    {/if}
+  </section>
+</div>
 
 <style>
-  .home-head { align-items: center; }
-  .home-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .project-create-panel { margin-bottom: 12px; }
-  .project-create-form { display: grid; gap: 12px; max-width: 620px; }
-  .project-create-form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 650; }
-  .project-create-form input { width: 100%; }
-  .project-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .project-error { margin: 0; color: var(--danger, #f87171); font-size: 12px; }
-  .home-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(300px, .85fr); gap: 12px; }
-  .home-grid .panel { padding: 17px; }
-  .work-panel { grid-row: span 2; }
-  .creator-panel, .ai-panel { min-height: 220px; }
-  .recent-stack { display: grid; margin-top: 10px; }
-  .recent-stack > button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 10px 2px; border: 0; border-top: 1px solid var(--border); background: transparent; text-align: start; }
-  .recent-stack strong, .recent-stack small { display: block; }
-  .recent-stack strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .recent-stack small { margin-top: 4px; color: var(--muted); font-size: 11px; }
-  .quiet-empty { display: flex !important; align-items: center; justify-content: space-between; width: 100%; min-height: 64px; margin-top: 10px; padding: 0 12px !important; border: 1px dashed var(--border-strong) !important; border-radius: 9px; color: var(--muted); background: transparent !important; text-align: start; }
-  .quiet-empty strong { color: var(--text); }
-  .creator-avatar { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; background: var(--surface-2); }
-  .compact-metrics { margin-top: 12px; margin-bottom: 0; }
-  .compact-metrics article { padding: 13px 15px; }
-  .compact-metrics strong { margin: 7px 0 3px; font-size: 22px; }
-
-  @media (max-width: 980px) {
-    .home-grid { grid-template-columns: 1fr; }
-    .work-panel { grid-row: auto; }
+  .dashboard-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-5); }
+  .project-heading { min-width: 0; }
+  .project-heading h1 { margin: 0; overflow-wrap: anywhere; font-size: var(--text-xl); line-height: 1.25; }
+  .project-heading p { margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
+  .header-actions, .project-form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .header-actions { justify-content: flex-end; }
+  .header-actions .text-button { min-height: var(--control-height); padding-inline: var(--space-2); }
+  .project-create { margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+  .project-create h2 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
+  .project-create form { display: grid; gap: var(--space-2); max-width: 600px; }
+  .project-create label { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .project-create input { width: 100%; }
+  .project-form-actions { justify-content: flex-end; margin-top: var(--space-2); }
+  .project-error { margin: 0; color: var(--color-danger); font-size: var(--text-sm); }
+  .workspace-primary { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 1fr); gap: var(--space-5); }
+  .workspace-secondary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); margin-top: var(--space-5); }
+  .workspace-section { min-width: 0; padding: var(--space-3) 0; border-block-start: 1px solid var(--color-border); }
+  .section-heading, .heading-with-count { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .section-heading { justify-content: space-between; min-height: var(--control-height); margin-bottom: var(--space-2); }
+  .section-heading h2 { margin: 0; font-size: var(--text-md); font-weight: 700; }
+  .section-heading .text-button { min-height: 34px; padding-inline: var(--space-1); white-space: nowrap; }
+  .attention-indicator, .active-indicator { padding: 3px 7px; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 650; }
+  .attention-indicator { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
+  .active-indicator { color: var(--color-info); background: color-mix(in srgb, var(--color-info) 10%, transparent); }
+  .dashboard-jobs, .dashboard-transcripts { display: grid; min-width: 0; }
+  .transcript-item, .creator-item, .ai-item { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-width: 0; min-height: 58px; padding: var(--space-2) var(--space-1); border: 0; border-block-start: 1px solid var(--color-border); background: transparent; text-align: start; }
+  .transcript-item:first-child, .creator-item:first-child, .ai-item:first-child { border-block-start: 0; }
+  .transcript-item:hover, .creator-item:hover, .ai-item:hover { background: var(--color-surface-raised); }
+  .transcript-copy, .secondary-copy { display: block; min-width: 0; flex: 1; }
+  .transcript-copy strong, .secondary-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text); font-size: var(--text-md); }
+  .transcript-copy small, .secondary-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: var(--space-1); color: var(--color-text-muted); font-size: var(--text-xs); }
+  .row-chevron { color: var(--color-text-faint); font-size: var(--text-lg); }
+  .creator-avatar, .avatar-fallback { flex: none; width: 30px; height: 30px; border-radius: var(--radius-sm); object-fit: cover; background: var(--color-surface-raised); }
+  .avatar-fallback { display: grid; place-items: center; color: var(--color-signal); font-weight: 700; }
+  .watch-chip { flex: none; color: var(--color-signal); font-size: var(--text-xs); }
+  .empty-action, .empty-link { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); width: 100%; min-height: 68px; padding: var(--space-3); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md); background: transparent; text-align: start; }
+  .empty-action strong { color: var(--color-text); font-size: var(--text-sm); }
+  .empty-action span, .empty-link { color: var(--color-text-muted); font-size: var(--text-sm); }
+  .empty-link { justify-content: flex-start; min-height: 48px; }
+  .empty-action:hover, .empty-link:hover { border-color: var(--color-signal); color: var(--color-text); }
+  @media (max-width: 1050px) { .workspace-primary { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) {
+    .dashboard-header { align-items: stretch; flex-direction: column; }
+    .header-actions { justify-content: flex-start; }
+    .workspace-secondary { grid-template-columns: 1fr; }
   }
-  @media (max-width: 700px) {
-    .home-actions { width: 100%; }
-    .home-actions .button { flex: 1; }
-    .project-form-actions { flex-direction: column-reverse; }
-    .project-form-actions .button { width: 100%; }
-  }
+  @media (max-width: 480px) { .header-actions .button { flex: 1; } .project-form-actions .button { flex: 1; } }
 </style>
