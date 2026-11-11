@@ -158,9 +158,7 @@
 <section id="settings-mcp" class="panel wizard" data-testid="mcp-permissions" data-i18n-ignore>
   <header class="wizard-head">
     <div>
-      <span class="eyebrow">{$translator('mcp.setup')}</span>
       <h2>{$translator('mcp.heading')}</h2>
-      <p>{$translator('mcp.intro')}</p>
     </div>
     {#if connection?.state === 'ready'}<span class="wizard-status connected">{$translator('mcp.ready')}</span>
     {:else if connection?.state === 'connecting'}<span class="wizard-status">{$translator('mcp.connecting')}</span>
@@ -263,10 +261,10 @@
   .wizard-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
   .wizard-head h2 { font-size: 20px; margin: 0; }
   .wizard-head p, .wizard-pane > p { font-size: 12px; line-height: 1.5; color: var(--muted); }
-  .wizard-status { border: 1px solid var(--border); padding: 6px 9px; border-radius: 20px; white-space: nowrap; font-size: 10px; color: var(--muted); }
+  .wizard-status { border: 1px solid var(--border); padding: 6px 9px; border-radius: 20px; white-space: nowrap; font-size: 12px; color: var(--muted); }
   .wizard-status.connected { border-color: var(--accent); color: var(--accent); }
   .steps { display: flex; gap: 6px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-  .steps button { border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 11px; padding: 8px 10px; cursor: pointer; }
+  .steps button { border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 12px; padding: 8px 10px; cursor: pointer; }
   .steps button.current { background: var(--surface-raised, var(--surface)); color: var(--text); }
   .steps button:disabled { cursor: not-allowed; opacity: .45; }
   .steps span { display: inline-flex; justify-content: center; align-items: center; border-radius: 50%; border: 1px solid var(--border); width: 19px; height: 19px; margin-right: 5px; }
@@ -276,14 +274,14 @@
   .wizard-pane > button, .wizard-pane > a.button { justify-self: start; }
   .switch { display: flex; gap: 9px; align-items: center; font-size: 12px; }
   .permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
-  .permission-grid label { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+  .permission-grid label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
   .advanced-permissions { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
   .method-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
   .method-grid label { display: grid; align-content: start; gap: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; cursor: pointer; min-width: 0; }
   .method-grid label.chosen { border-color: var(--accent); background: var(--surface-raised, var(--surface)); }
   .method-grid label strong { font-size: 12px; }
-  .method-grid label span { font-size: 11px; line-height: 1.5; color: var(--muted); }
-  .field { display: grid; gap: 6px; font-size: 11px; }
+  .method-grid label span { font-size: 12px; line-height: 1.5; color: var(--muted); }
+  .field { display: grid; gap: 6px; font-size: 12px; }
   .field input, .field textarea { min-width: 0; width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--text); padding: 10px; font: inherit; }
   .field textarea { font-family: monospace; }
   .hint { line-height: 1.6; }
@@ -291,7 +289,7 @@
   .url-copy { display: flex; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
   .url-copy code { font-size: 11px; flex: 1; user-select: text; }
   .url-copy button { flex-shrink: 0; }
-  .warning { color: var(--warn); line-height: 1.6; font-size: 11px; }
+  .warning { color: var(--warn); line-height: 1.6; font-size: 12px; }
   .message { color: var(--accent); font-size: 11px; }
   .connection-state { border-inline-start: 3px solid var(--accent); padding: 8px 12px; }
   .danger { color: var(--warn); }
