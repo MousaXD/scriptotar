@@ -11,7 +11,7 @@ Neither packaging workflow may create or edit a GitHub Release, upload assets di
 
 ## Distribution approval gate
 
-Building and validating packages is intentionally separate from publicly publishing them. The `publish-preview` job runs only when the repository variable `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` is exactly `true`.
+Building and validating packages is intentionally separate from publicly publishing them. For Scriptotar Next 1.4.0, the `publish-preview` job runs only when **both** repository variables `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` and `SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED` are exactly `true`. The version-specific flag prevents a previously approved 1.3.0 preview from implicitly publishing a new release.
 
 If that variable is absent or has any other value, Windows and Linux package CI can still build and validate artifacts, but the rolling Scriptotar Next GitHub prerelease and `tauri-next-latest` tag are not mutated.
 
