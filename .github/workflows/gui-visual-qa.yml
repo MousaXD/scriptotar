@@ -50,9 +50,9 @@ jobs:
           node --check qa/verify-snapshots.mjs
           node --check qa/approve-baseline.mjs
           node --check qa/compare-browser-metrics.mjs
-          node --check qa/tooling.test.mjs
+          node --check qa/tooling.nodecheck.mjs
       - name: Independent QA evidence-verifier unit tests
-        run: node --test qa/tooling.test.mjs
+        run: node --test qa/tooling.nodecheck.mjs
       - name: Install locked application dependencies
         run: npm ci
       - name: Typecheck and application regression tests
