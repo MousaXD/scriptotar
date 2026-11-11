@@ -27,6 +27,9 @@ describe('visual and semantic regression contract', () => {
     expect(app).toContain('text-align: start;');
     expect(app).toContain('margin-inline-end: 7px;');
     expect(app).toContain('border-inline-end: 0;');
+    // Search inputs deliberately clear their inner ring; the wrapper must provide it.
+    expect(app).toContain('outline: 0;');
+    expect(app).toContain('.global-search:focus-within, .search-field:focus-within { outline: 2px solid var(--accent-strong); outline-offset: 2px; }');
   });
 
   it('never leaves a visually native closed select in migrated or legacy controls', () => {
