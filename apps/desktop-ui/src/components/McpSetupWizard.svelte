@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { translator } from '../i18n/translate';
+  import Checkbox from './ui/Checkbox.svelte';
+  import Switch from './ui/Switch.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { McpConnectionStatus, McpPermissions } from '../types';
 
@@ -189,21 +191,21 @@
     <div class="wizard-pane" data-testid="mcp-step-permissions">
       <h3>{$translator('mcp.permissionsHeading')}</h3>
       <p>{$translator('mcp.permissionsHelp')}</p>
-      <label class="switch"><input type="checkbox" bind:checked={permissions.enabled} on:change={() => acknowledge = false}/><strong>{$translator('mcp.enable')}</strong></label>
+      <Switch label={$translator('mcp.enable')} bind:checked={permissions.enabled} onChange={() => acknowledge = false} />
       <div class="permission-grid">
-        <label><input type="checkbox" bind:checked={permissions.readData} on:change={() => acknowledge = false}/> {$translator('mcp.readData')}</label>
-        <label><input type="checkbox" bind:checked={permissions.searchCreators} on:change={() => acknowledge = false}/> {$translator('mcp.searchCreators')}</label>
-        <label><input type="checkbox" bind:checked={permissions.downloadVideos} on:change={() => acknowledge = false}/> {$translator('mcp.downloadVideos')}</label>
-        <label><input type="checkbox" bind:checked={permissions.writeData} on:change={() => acknowledge = false}/> {$translator('mcp.writeData')}</label>
+        <Checkbox label={$translator('mcp.readData')} bind:checked={permissions.readData} onChange={() => acknowledge = false} />
+        <Checkbox label={$translator('mcp.searchCreators')} bind:checked={permissions.searchCreators} onChange={() => acknowledge = false} />
+        <Checkbox label={$translator('mcp.downloadVideos')} bind:checked={permissions.downloadVideos} onChange={() => acknowledge = false} />
+        <Checkbox label={$translator('mcp.writeData')} bind:checked={permissions.writeData} onChange={() => acknowledge = false} />
       </div>
       <button class="button secondary" on:click={() => advanced = !advanced}>{advanced ? $translator('mcp.hide') : $translator('mcp.show')} {$translator('mcp.advanced')}</button>
       {#if advanced}
         <div class="advanced-permissions">
           <div class="permission-grid">
-            <label><input type="checkbox" bind:checked={permissions.readFiles} on:change={() => acknowledge = false}/> {$translator('mcp.readFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.writeFiles} on:change={() => acknowledge = false}/> {$translator('mcp.writeFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.overwriteFiles} on:change={() => acknowledge = false}/> {$translator('mcp.overwriteFiles')}</label>
-            <label><input type="checkbox" bind:checked={permissions.executeCommands} on:change={() => acknowledge = false}/> {$translator('mcp.executeCommands')}</label>
+            <Checkbox label={$translator('mcp.readFiles')} bind:checked={permissions.readFiles} onChange={() => acknowledge = false} />
+            <Checkbox label={$translator('mcp.writeFiles')} bind:checked={permissions.writeFiles} onChange={() => acknowledge = false} />
+            <Checkbox label={$translator('mcp.overwriteFiles')} bind:checked={permissions.overwriteFiles} onChange={() => acknowledge = false} />
+            <Checkbox label={$translator('mcp.executeCommands')} bind:checked={permissions.executeCommands} onChange={() => acknowledge = false} />
           </div>
           <label class="field"><span>{$translator('mcp.allowedPaths')}</span><textarea rows="2" dir="ltr" bind:value={approvedPaths} on:input={() => acknowledge = false} placeholder="/home/user/Documents/Scriptotar"></textarea></label>
           <label class="field"><span>{$translator('mcp.allowedPrograms')}</span><textarea rows="2" dir="ltr" bind:value={approvedPrograms} on:input={() => acknowledge = false} placeholder="/usr/bin/git"></textarea></label>
@@ -211,7 +213,7 @@
         </div>
       {/if}
       {#if permissions.enabled && powerful(permissions)}
-        <label class="switch"><input type="checkbox" bind:checked={acknowledge}/> {$translator('mcp.approve')}</label>
+        <Checkbox label={$translator('mcp.approve')} bind:checked={acknowledge} />
       {/if}
       {#if permissionDirty}<p class="permission-unsaved" role="status">{$translator('mcp.unsaved')}</p>{/if}
       {#if permissionDirty}<button class="button secondary" disabled={busy} on:click={discardPermissions}>{$translator('mcp.discard')}</button>{/if}
@@ -232,7 +234,7 @@
         <p class="hint">{$translator('mcp.openaiPrefix')} <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">{$translator('mcp.openaiPlatform')}</a>{$translator('mcp.openaiSuffix')}</p>
         <label class="field"><span>{$translator('mcp.tunnelId')}</span><input dir="ltr" autocomplete="off" placeholder="tunnel_0123456789abcdef0123456789abcdef" bind:value={tunnelId}/></label>
         <label class="field"><span>{$translator('mcp.restrictedKey')}</span><input type="password" dir="ltr" autocomplete="off" spellcheck="false" placeholder="sk-..." bind:value={apiKey}/></label>
-        <label class="switch"><input type="checkbox" bind:checked={rememberKey}/> {$translator('mcp.rememberKey')}</label>
+        <Checkbox label={$translator('mcp.rememberKey')} bind:checked={rememberKey} />
         {#if !connection.openaiAvailable}<p class="warning">{$translator('mcp.openaiMissing')}</p>{/if}
       {:else}
         <label class="field"><span>{$translator('mcp.hostname')}</span><input dir="ltr" placeholder="https://mcp.example.com" spellcheck="false" bind:value={customHostname}/></label>
@@ -283,12 +285,13 @@
   .wizard-pane h3 { margin: 0; font-size: 14px; }
   .permission-unsaved { color: var(--warn); font-weight: 600; font-size: 12px; }
   .wizard-pane > button, .wizard-pane > a.button { justify-self: start; }
-  .switch { display: flex; gap: 9px; align-items: center; font-size: 12px; }
   .permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
-  .permission-grid label { display: flex; align-items: center; gap: 6px; font-size: 12px; }
   .advanced-permissions { display: grid; gap: 12px; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
   .method-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; }
-  .method-grid label { display: grid; align-content: start; gap: 9px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; cursor: pointer; min-width: 0; }
+  .method-grid label { display: grid; align-content: start; gap: 9px; min-height: 40px; padding: 13px; border: 1px solid var(--border); border-radius: 9px; cursor: pointer; min-width: 0; }
+  .method-grid label input[type='radio'] { appearance: none; -webkit-appearance: none; width: 20px; height: 20px; margin: 0; border: 1.5px solid var(--border-strong); border-radius: 50%; background: var(--surface-2); cursor: inherit; }
+  .method-grid label input[type='radio']:checked { border: 6px solid var(--accent-strong); background: var(--accent-ink); }
+  .method-grid label input[type='radio']:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 3px; }
   .method-grid label.chosen { border-color: var(--accent); background: var(--surface-raised, var(--surface)); }
   .method-grid label strong { font-size: 12px; }
   .method-grid label span { font-size: 12px; line-height: 1.5; color: var(--muted); }

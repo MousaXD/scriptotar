@@ -4,6 +4,7 @@ import base from '../../design/base.css?raw';
 import app from '../../app.css?raw';
 import theme from '../../theme.css?raw';
 import selectSource from './Select.svelte?raw';
+import mcpWizardSource from '../McpSetupWizard.svelte?raw';
 import sliderSource from './Slider.svelte?raw';
 import checkboxSource from './Checkbox.svelte?raw';
 import switchSource from './Switch.svelte?raw';
@@ -39,6 +40,16 @@ describe('visual and semantic regression contract', () => {
     expect(selectSource).toContain('role="listbox"');
     expect(selectSource).toContain('aria-activedescendant');
     expect(selectSource).toContain('function listKeys(');
+  });
+
+  it('keeps MCP policy and secret-consent controls styled without relaxing default-deny', () => {
+    expect(mcpWizardSource).toContain("import Checkbox from './ui/Checkbox.svelte'");
+    expect(mcpWizardSource).toContain("import Switch from './ui/Switch.svelte'");
+    expect(mcpWizardSource).not.toContain('<input type="checkbox"');
+    expect(mcpWizardSource).toContain("onChange={() => acknowledge = false}");
+    expect(mcpWizardSource).toContain(".method-grid label input[type='radio'] { appearance: none");
+    expect(mcpWizardSource).toContain("bind:checked={acknowledge}");
+    expect(mcpWizardSource).toContain("bind:checked={rememberKey}");
   });
 
   it('keeps popover width limits consistent with viewport-aware placement', () => {
