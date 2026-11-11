@@ -37,7 +37,7 @@ describe('desktop workstation', () => {
     await chooseProject('Client A');
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith('p-client-a'));
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
-    expect(select).toHaveValue('p-client-a');
+    expect(select).toHaveTextContent('Client A');
   });
 
   it('keeps the previous project usable when project switching fails', async () => {
