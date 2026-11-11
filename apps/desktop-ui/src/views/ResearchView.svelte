@@ -10,6 +10,8 @@
   export let onSave: (url: string, limit: number) => Promise<void> | void;
 
   const PAGE_SIZE = 50;
+  // Matches both the Tauri IPC guard and backend queue-research admission limit.
+  const QUEUE_BATCH_SIZE = 200;
   const stateLabel: Record<WatchlistOperationalState, string> = {
     healthy: 'Healthy',
     never_scanned: 'Never scanned',
@@ -143,14 +145,22 @@
     if (!ids.length) return;
     queuing = true;
     status = '';
+    let completed = 0;
     try {
-      await onQueue(ids);
-      selected = new Set([...selected].filter((id) => !ids.includes(id)));
+      for (let index = 0; index < ids.length; index += QUEUE_BATCH_SIZE) {
+        const batch = ids.slice(index, index + QUEUE_BATCH_SIZE);
+        await onQueue(batch);
+        const completedIds = new Set(batch);
+        selected = new Set([...selected].filter((id) => !completedIds.has(id)));
+        completed += batch.length;
+      }
       statusError = false;
       status = 'Selected media queued.';
     } catch (error) {
       statusError = true;
-      status = 'Queue unavailable: ' + (error instanceof Error ? error.message : String(error));
+      const detail = error instanceof Error ? error.message : String(error);
+      status = 'Queue unavailable: ' + detail
+        + (completed ? ' (' + completed + ' submitted; remaining selection preserved)' : '');
     } finally {
       queuing = false;
     }
@@ -163,7 +173,7 @@
 </section>
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
-  <label class="url-field"><span>Creator / profile URL</span><input type="url" bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" spellcheck="false" /></label>
+  <label class="url-field"><span>Creator / profile URL</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" spellcheck="false" /></label>
   <label class="small-field"><span>Limit</span><select bind:value={limit} aria-label="Scan limit"><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
   <button type="submit" class="button primary" disabled={scanning || saving || !profileUrl.trim()}>{scanning ? 'Scanning…' : 'Scan profile'}</button>
   <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? 'Saving…' : 'Save watchlist'}</button>
@@ -208,8 +218,8 @@
         <div class="research-row" role="row" data-testid={'research-' + item.id}>
           <label class="check-only"><input type="checkbox" checked={selected.has(item.id)} on:change={() => toggle(item.id)} aria-label={'Select ' + item.title} /></label>
           <div class="media-cell" role="cell">
-            {#if item.thumbnail && !failedThumbnails.has(item.id)}
-              <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={() => failedThumbnails = new Set([...failedThumbnails, item.id])} />
+            {#if item.thumbnail && !failedThumbnails.has(item.id + ":" + item.thumbnail)}
+              <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={() => failedThumbnails = new Set([...failedThumbnails, item.id + ":" + item.thumbnail])} />
             {:else}
               <div class="thumbnail-placeholder" aria-hidden="true">{item.platform.slice(0, 1)}</div>
             {/if}
@@ -289,7 +299,11 @@
   .filter-bar select { min-width: 120px; }
   .selection-bar { display: flex; gap: 14px; align-items: center; padding: 9px 14px; background: var(--color-surface-raised); border-bottom: 1px solid var(--color-border); font-size: var(--text-sm); }
   .select-page { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .select-page input, .check-only input { accent-color: var(--color-signal-strong); width: 16px; height: 16px; }
+  .select-page input, .check-only input { appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface-raised); cursor: pointer; }
+  .select-page input:checked, .check-only input:checked { background: var(--color-signal); border-color: var(--color-signal-strong); }
+  .select-page input:checked::after, .check-only input:checked::after { content: ''; position: absolute; width: 5px; height: 9px; inset-inline-start: 5px; top: 2px; border: solid var(--color-signal-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .select-page input:focus-visible, .check-only input:focus-visible { outline: 2px solid var(--color-signal-strong); outline-offset: 3px; }
+  .select-page input:disabled, .check-only input:disabled { opacity: .5; cursor: not-allowed; }
   .selection-count { color: var(--color-text-muted); white-space: nowrap; }
   .text-action { border: 0; color: var(--color-text-muted); background: transparent; text-decoration: underline; text-underline-offset: 2px; }
   .queue-action { margin-inline-start: auto; white-space: nowrap; }
