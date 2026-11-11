@@ -100,7 +100,7 @@ describe('local MCP connection setup wizard', () => {
     expect(screen.getByRole('heading', { name: 'الخطوة 2 · اختر طريقة الاتصال' })).toBeInTheDocument();
     expect(screen.getByText(/حُفظت الأذونات على هذا الجهاز/)).toBeInTheDocument();
     setLocale('en');
-    expect(screen.getByText(/Saved on this computer/)).toBeInTheDocument();
+    expect(await screen.findByText(/Saved on this computer/)).toBeInTheDocument();
   });
   it('reveals existing approved paths and keeps identifiers LTR in Arabic', async () => {
     const original = createMockClient();
