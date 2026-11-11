@@ -63,7 +63,8 @@ describe('Research workspace', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Filter research' }), { target: { value: 'Video 17' } });
     expect(screen.getByTestId('research-r-17')).toBeInTheDocument();
     expect(screen.queryByRole('navigation', { name: 'Research pages' })).not.toBeInTheDocument();
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Platform filter' }), { target: { value: 'YouTube' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Platform filter' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'YouTube' }));
     expect(screen.queryByTestId('research-r-17')).not.toBeInTheDocument();
   });
 
@@ -201,7 +202,8 @@ describe('Library workspace', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Search library' }), { target: { value: 'Source creator 6' } });
     expect(screen.getByRole('button', { name: 'Open Research: Artifact 6' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Research: Artifact 61' })).toBeInTheDocument();
-    await fireEvent.change(screen.getByRole('combobox', { name: 'Library sort' }), { target: { value: 'title' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Library sort' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Title' }));
     expect(screen.getByRole('button', { name: 'Open Research: Artifact 6' })).toBeInTheDocument();
   });
 

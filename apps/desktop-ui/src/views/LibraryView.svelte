@@ -1,5 +1,6 @@
 <script lang="ts">
   import { translator } from '../i18n/translate';
+  import Select from '../components/ui/Select.svelte';
   import { locale } from '../i18n';
   import type { LibraryItem, LibraryKind } from '../types';
 
@@ -90,13 +91,14 @@
       <span class="sr-only">{$translator('library.search')}</span>
       <input aria-label={$translator('library.search')} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={$translator('library.searchPlaceholder')} />
     </label>
-    <label class="sort-select"><span>{$translator('library.sort')}</span>
-      <select value={sort} on:change={(event) => updateSort(event.currentTarget.value as typeof sort)} aria-label={$translator('library.sortControl')}>
-        <option value="newest">{$translator('library.sortNewest')}</option>
-        <option value="title">{$translator('library.sortTitle')}</option>
-        <option value="type">{$translator('library.sortType')}</option>
-      </select>
-    </label>
+    <div class="sort-select">
+      <Select label={$translator('library.sortControl')} value={sort}
+        options={[
+          { value: 'newest', label: $translator('library.sortNewest') },
+          { value: 'title', label: $translator('library.sortTitle') },
+          { value: 'type', label: $translator('library.sortType') }
+        ]} onChange={(next) => updateSort(next as typeof sort)} />
+    </div>
   </div>
 
   <div class="kind-tabs" role="group" aria-label={$translator('library.kindGroup')}>

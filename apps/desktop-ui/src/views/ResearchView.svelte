@@ -1,5 +1,6 @@
 <script lang="ts">
   import { locale } from '../i18n';
+  import Select from '../components/ui/Select.svelte';
   import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
   import { observedInteractionRate } from '../utils/researchMetrics';
 
@@ -180,7 +181,11 @@
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
   <label class="url-field"><span>Creator / profile URL</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" spellcheck="false" /></label>
-  <label class="small-field"><span>Limit</span><select bind:value={limit} aria-label="Scan limit"><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option></select></label>
+  <div class="small-field">
+    <Select label={isArabic ? 'حد الفحص' : 'Scan limit'} value={String(limit)}
+      options={[10, 25, 50, 100].map((value) => ({ value: String(value), label: String(value) }))}
+      onChange={(next) => { limit = Number(next); }} />
+  </div>
   <button type="submit" class="button primary" disabled={scanning || saving || !profileUrl.trim()}>{scanning ? 'Scanning…' : 'Scan profile'}</button>
   <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? 'Saving…' : 'Save watchlist'}</button>
 </form>
@@ -190,13 +195,19 @@
 <section class="panel research-panel" aria-label="Research results">
   <div class="filter-bar">
     <label class="search-field research-search"><span class="sr-only">Filter research</span><input aria-label="Filter research" value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder="Filter title or creator…" /></label>
-    <select aria-label="Platform filter" value={platform} on:change={(event) => updatePlatform(event.currentTarget.value)}>
-      <option value="All">All</option>
-      {#each platforms as option (option)}<option value={option}>{option}</option>{/each}
-    </select>
-    <label class="sort-control"><span>Sort</span><select aria-label="Research sort" value={sort} on:change={(event) => updateSort(event.currentTarget.value as typeof sort)}>
-      <option value="views">Views</option><option value="likes">Likes</option><option value="comments">Comments</option><option value="date">Newest</option><option value="rate">Interactions / views</option>
-    </select></label>
+    <Select label={isArabic ? 'مرشح المنصة' : 'Platform filter'} value={platform}
+      options={[{ value: 'All', label: isArabic ? 'الكل' : 'All' }, ...platforms.map((option) => ({ value: option, label: option }))]}
+      onChange={updatePlatform} />
+    <div class="sort-control">
+      <Select label={isArabic ? 'ترتيب البحث' : 'Research sort'} value={sort}
+        options={[
+          { value: 'views', label: isArabic ? 'المشاهدات' : 'Views' },
+          { value: 'likes', label: isArabic ? 'الإعجابات' : 'Likes' },
+          { value: 'comments', label: isArabic ? 'التعليقات' : 'Comments' },
+          { value: 'date', label: isArabic ? 'الأحدث' : 'Newest' },
+          { value: 'rate', label: isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views' }
+        ]} onChange={(next) => updateSort(next as typeof sort)} />
+    </div>
   </div>
 
   <div class="selection-bar">

@@ -109,8 +109,9 @@ describe('desktop workstation', () => {
   it('filters and sorts research results', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: /Research/ }));
-    const sort = screen.getByLabelText('Research sort');
-    await fireEvent.change(sort, { target: { value: 'date' } });
+    const sort = screen.getByRole('combobox', { name: 'Research sort' });
+    await fireEvent.click(sort);
+    await fireEvent.click(screen.getByRole('option', { name: 'Newest' }));
     expect(screen.getAllByTestId(/research-r-/)[0]).toHaveAttribute('data-testid', 'research-r-2');
     const filter = screen.getByLabelText('Filter research');
     await fireEvent.input(filter, { target: { value: 'caption pacing' } });
