@@ -202,7 +202,7 @@
   .dirty-indicator > span { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
   .settings-layout { display: grid; grid-template-columns: 174px minmax(0, 1fr); gap: 14px; align-items: start; }
   .settings-nav { position: sticky; top: 82px; display: grid; gap: 2px; padding: 8px; }
-  .settings-nav-title { padding: 8px 9px 5px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+  .settings-nav-title { padding: 8px 9px 5px; color: var(--faint); font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
   .settings-nav-title.secondary-group { margin-top: 7px; padding-top: 11px; border-top: 1px solid var(--border); }
   .settings-nav a { min-height: 36px; display: flex; align-items: center; padding: 0 9px; border-radius: 7px; color: var(--muted); text-decoration: none; font-size: 12px; }
   .settings-nav a:hover, .settings-nav a:focus-visible { color: var(--text); background: var(--surface-2); }
@@ -212,7 +212,7 @@
   .settings-section h2 { margin: 0; }
   .settings-section > div:first-child { max-width: 310px; }
   .output-picker { display: grid; gap: 9px; min-width: 0; }
-  .field-label { color: var(--muted); font-size: 10px; }
+  .field-label { color: var(--muted); font-size: 12px; }
   code { display: block; max-width: 560px; overflow-wrap: anywhere; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); color: var(--text); }
   .output-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .watch-settings { display: grid; gap: 14px; min-width: min(560px, 100%); }
