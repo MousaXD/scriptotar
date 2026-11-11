@@ -51,7 +51,8 @@ describe('Transcript reader workspace', () => {
     render(TranscriptView, { props: { api, transcripts: mockBootstrap.transcripts, selectedId: 't-ar' } });
 
     expect(await screen.findByTestId('transcript-loading-skeleton')).toBeInTheDocument();
-    await fireEvent.change(screen.getByRole('combobox'), { target: { value: 't-en' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Choose transcript' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Caption pacing breakdown' }));
     const content = await screen.findByTestId('transcript-content');
     expect(content).toHaveAttribute('dir', 'ltr');
     expect(content).toHaveTextContent('The caption is doing two jobs');
@@ -167,7 +168,8 @@ describe('AI Studio request isolation', () => {
     const api = createMockClient();
     const original = mockBootstrap.transcripts[0];
     const { rerender } = render(AiStudioView, { props: { api, transcripts: [original] } });
-    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: original.id } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Transcript source' }));
+    await fireEvent.click(screen.getByRole('option', { name: original.title }));
     const source = screen.getByPlaceholderText('Paste or load transcript/research text…');
     await waitFor(() => expect(source).toHaveValue(original.text));
     const moved: Transcript = { ...original, projectId: 'another-project' };
@@ -190,7 +192,8 @@ describe('AI Studio request isolation', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
     expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled();
 
-    await fireEvent.change(screen.getByRole('combobox', { name: 'AI provider' }), { target: { value: 'Anthropic' } });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'AI provider' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Anthropic' }));
     await fireEvent.input(screen.getByLabelText('Model'), { target: { value: 'custom-model' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
     expect(calls).toBe(2);

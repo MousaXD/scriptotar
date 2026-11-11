@@ -1,5 +1,6 @@
 <script lang="ts">
   import { translator } from '../i18n/translate';
+  import Select from '../components/ui/Select.svelte';
   import type { AiMode, AiProvider, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import { countWords, formatSpeakingDuration } from '../utils/textUtils';
@@ -128,12 +129,8 @@
     }
   }
 
-  function chooseSource(event: Event) {
-    void loadSource((event.currentTarget as HTMLSelectElement).value);
-  }
-
-  function chooseProvider(event: Event) {
-    provider = (event.currentTarget as HTMLSelectElement).value as AiProvider;
+  function chooseProvider(next: string) {
+    provider = next as AiProvider;
     // A model name for one provider must not be silently sent to another.
     model = provider === 'OpenAI' ? 'gpt-5.2' : '';
     invalidatePrompt();
@@ -226,10 +223,19 @@
 <section class="panel ai-setup">
   <div class="setup-heading"><h2>Prompt setup</h2><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
   <div class="ai-config-grid" class:byok-mode={mode === 'byok'}>
-    <label><span>Task</span><select bind:value={task} on:change={invalidatePrompt}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
-    <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
+    <Select label="Task" value={task}
+      options={['Viral breakdown', 'Hook ideas', 'New short-form script', 'Structure remix', 'Content ideas', 'Caption + CTA', 'Voice profile', 'B-roll shot list'].map((value) => ({ value, label: value }))}
+      onChange={(next) => { task = next; invalidatePrompt(); }} />
+    <Select label={$translator('ai.speakingRate')} value={pace}
+      options={[
+        { value: 'slow', label: $translator('ai.paceSlow') },
+        { value: 'normal', label: $translator('ai.paceNormal') },
+        { value: 'fast', label: $translator('ai.paceFast') }
+      ]} onChange={(next) => { pace = next as typeof pace; }} />
     {#if mode === 'byok'}
-      <label><span>Provider</span><select aria-label="AI provider" value={provider} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
+      <Select label="AI provider" value={provider}
+        options={['OpenAI', 'Anthropic', 'Gemini', 'OpenAI-compatible', 'Local (coming later)'].map((value) => ({ value, label: value }))}
+        onChange={chooseProvider} />
       <label><span>Model</span><input bind:value={model} on:input={invalidatePrompt} /></label>
     {/if}
   </div>
@@ -251,18 +257,19 @@
         <span class="timer-chip" data-i18n-ignore>{$translator('ai.estimatedDuration', { duration: formatSpeakingDuration(sourceSpeakingSeconds) })}</span>
       </div>
     </div>
-    <label class="source-picker" data-i18n-ignore>
-      <span>{$translator('ai.sourceLabel')}</span>
-      <select value={selectedTranscriptId} on:change={chooseSource} aria-label={$translator('ai.sourceLabel')}>
-        <option value="manual">{$translator('ai.sourceManual')}</option>
-        {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
-      </select>
-    </label>
+    <div class="source-picker" data-i18n-ignore>
+      <Select label={$translator('ai.sourceLabel')} value={selectedTranscriptId}
+        options={[
+          { value: 'manual', label: $translator('ai.sourceManual') },
+          ...transcripts.map((transcript) => ({ value: transcript.id, label: transcript.title }))
+        ]}
+        onChange={(next) => { void loadSource(next); }} />
+    </div>
     {#if selectedTranscriptId !== 'manual' && selectedTranscript && selectedTranscript.projectId === sourceSelectionProjectId}
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
-        <span>TranscriptSummary ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
+        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
       </div>
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>

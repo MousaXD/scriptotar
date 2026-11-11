@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
+  import Select from '../components/ui/Select.svelte';
   import type { Transcript, TranscriptSegment, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
   import EmptyState from '../components/EmptyState.svelte';
@@ -238,12 +239,11 @@
       <p role="alert">{selectedLoadError}</p>
       <button class="button secondary" type="button" on:click={() => loadSelected(selectedId)}>{$translator('transcript.retryLoading')}</button>
     {/if}
-    <label class="transcript-fallback-select">
-      <span>{$translator('transcript.choose')}</span>
-      <select value={selectedId} on:change={(event) => selectTranscript(event.currentTarget.value)} aria-label={$translator('transcript.choose')}>
-        {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
-      </select>
-    </label>
+    <div class="transcript-fallback-select">
+      <Select label={$translator('transcript.choose')} value={selectedId}
+        options={transcripts.map((transcript) => ({ value: transcript.id, label: transcript.title }))}
+        onChange={selectTranscript} />
+    </div>
   </section>
 {:else}
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">

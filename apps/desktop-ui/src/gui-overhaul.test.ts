@@ -175,7 +175,8 @@ describe('Creator Control Room GUI', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Transcript could not be read');
     expect(screen.getByRole('button', { name: 'Retry loading' })).toBeInTheDocument();
     const picker = screen.getByRole('combobox', { name: 'Choose transcript' });
-    await fireEvent.change(picker, { target: { value: 't-en' } });
+    await fireEvent.click(picker);
+    await fireEvent.click(screen.getByRole('option', { name: 'Caption pacing breakdown' }));
 
     expect(await screen.findByRole('heading', { name: 'Caption pacing breakdown' })).toBeInTheDocument();
     expect(getTranscript).toHaveBeenCalledWith('t-en');
