@@ -29,7 +29,7 @@
   :root[data-theme='system'] .sidebar nav button.active { color: var(--text); background: var(--surface-3); border-color: var(--border); }
   :root[data-theme='system'] .topbar { border-color: var(--border); background: var(--bg); }
   :root[data-theme='system'] .panel { border-color: var(--border); background: var(--surface); box-shadow: none; }
-  :root[data-theme='system'] input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']),
+  :root[data-theme='system'] input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])),
   :root[data-theme='system'] textarea,
   :root[data-theme='system'] .global-search,
   :root[data-theme='system'] .search-field,

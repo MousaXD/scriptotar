@@ -16,7 +16,7 @@ describe('visual and semantic regression contract', () => {
     expect(palette).toContain('--color-surface:');
     expect(theme).toContain('prefers-color-scheme: light');
     // Light-theme text-field rules must not paint over native slider or toggle controls.
-    expect(theme).toContain("input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])");
+    expect(theme).toContain("input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']))");
     expect(theme).toContain("stroke='%23586b76'");
     expect(app).toContain('inset-inline-start: -13px');
     expect(app).toContain('inset-inline-end: 42px');
@@ -37,7 +37,10 @@ describe('visual and semantic regression contract', () => {
     expect(sliderSource).toContain('::-moz-range-thumb');
     expect(checkboxSource).toContain('type="checkbox"');
     expect(switchSource).toContain('role="switch"');
-    expect(app).toContain("input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])");
+    expect(app).toContain("input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']))");
     expect(sliderSource).toContain('border: 0; border-radius: 0');
+    expect(base).toContain("input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden']))");
+    // :where does not add specificity, so component error borders keep precedence.
+    expect(app + base + theme).not.toContain("input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])");
   });
 });
