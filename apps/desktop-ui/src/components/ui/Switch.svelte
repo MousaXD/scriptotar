@@ -5,12 +5,14 @@
   export let name: string | undefined = undefined;
   export let description: string | undefined = undefined;
   export let onChange: ((checked: boolean) => void) | undefined = undefined;
+  const uid = 'scriptotar-switch-' + Math.random().toString(36).slice(2);
   function change(event: Event) { checked = (event.currentTarget as HTMLInputElement).checked; onChange?.(checked); }
 </script>
 
 <label class="control">
-  <span class="copy"><span class="label">{label}</span>{#if description}<small>{description}</small>{/if}</span>
-  <input type="checkbox" role="switch" {name} {disabled} bind:checked on:change={change} />
+  <span class="copy"><span id={uid + '-label'} class="label">{label}</span>{#if description}<small id={uid + '-help'}>{description}</small>{/if}</span>
+  <input type="checkbox" role="switch" {name} {disabled} bind:checked on:change={change}
+    aria-labelledby={uid + '-label'} aria-describedby={description ? uid + '-help' : undefined} />
 </label>
 
 <style>

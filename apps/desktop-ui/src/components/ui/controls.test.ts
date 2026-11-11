@@ -96,6 +96,30 @@ describe('shared workstation controls', () => {
     expect(screen.getByRole('radio', { name: 'Manual' })).not.toHaveAttribute('name', fast.name);
   });
 
+  it('separates Checkbox and Switch accessible names from their help text', async () => {
+    const onCheckboxChange = vi.fn();
+    const onSwitchChange = vi.fn();
+    render(Checkbox, { props: {
+      label: 'Track diagnostics', description: 'Saved on this computer only',
+      checked: false, onChange: onCheckboxChange
+    } });
+    render(Switch, { props: {
+      label: 'Enable notifications', description: 'Show job completion alerts',
+      checked: true, onChange: onSwitchChange
+    } });
+    const checkbox = screen.getByRole('checkbox', { name: 'Track diagnostics' });
+    const toggle = screen.getByRole('switch', { name: 'Enable notifications' });
+    expect(checkbox).toHaveAccessibleName('Track diagnostics');
+    expect(checkbox).toHaveAccessibleDescription('Saved on this computer only');
+    expect(toggle).toHaveAccessibleName('Enable notifications');
+    expect(toggle).toHaveAccessibleDescription('Show job completion alerts');
+    expect(checkbox.getAttribute('aria-labelledby')).not.toBe(toggle.getAttribute('aria-labelledby'));
+    await fireEvent.click(screen.getByText('Track diagnostics'));
+    await fireEvent.click(screen.getByText('Enable notifications'));
+    expect(onCheckboxChange).toHaveBeenCalledWith(true);
+    expect(onSwitchChange).toHaveBeenCalledWith(false);
+  });
+
   it('offers a labeled input with validation and description, including RTL', async () => {
     document.documentElement.dir = 'rtl';
     const onInput = vi.fn();
