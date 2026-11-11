@@ -2055,7 +2055,8 @@ mod tests {
                 ))
                 .unwrap();
         }
-        let old = project_jobs::summarize_project_jobs(&services.store.list_jobs(None).unwrap());
+        let historical_jobs = services.store.list_jobs(None).unwrap();
+        let old = project_jobs::summarize_project_jobs(&historical_jobs);
         let sql = services.store.project_job_summaries().unwrap();
         assert_eq!(old.len(), sql.len());
         for (project_id, original) in old {
@@ -2068,11 +2069,13 @@ mod tests {
         }
         let snapshot = services.bootstrap_summary().unwrap();
         assert_eq!(snapshot.jobs.len(), 3);
-        assert!(snapshot.projects.iter().any(|item| {
-            item.id == inbox.to_string() && item.item_count == 1
-        }));
-        assert!(snapshot.projects.iter().any(|item| {
-            item.id == other.to_string() && item.item_count == 3
-        }));
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|item| { item.id == inbox.to_string() && item.item_count == 1 }));
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|item| { item.id == other.to_string() && item.item_count == 3 }));
     }
 }
