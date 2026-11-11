@@ -193,3 +193,25 @@ Other integration dependencies remain: the owners of AppShell/Research/AI/Settin
 ### Verdict
 
 **READY FOR AGENT 00 REVIEW** of the Agent 01 design-system implementation: source ownership respected, all six named in-scope and packaging workflows passed on the prior exact head, no remaining confirmed Agent 01 defect. **BLOCKED FOR MERGE / RELEASE** until the RustSec vulnerability is fixed by the correct owner, required supply-chain CI turns green, and Agent 00 completes visual/integration certification. Maintain the existing draft PR.
+
+
+## Continuation self-audit — visual form isolation and CSS precedence (2026-11-11)
+
+**Repository / working context:** `MousaXD/scriptotar`, assigned branch `agent-01/design-system-controls-overhaul`, existing draft PR #89, base `main`. The runner working directory is `/`, not a Git checkout; GitHub API access was used. No new branch or PR was created and no other agent's work was merged. The PR's 18 changed paths remain entirely within Agent 01 ownership.
+
+**Audited implementation source:** `46d46d302cb4efa6ce247fc58464b9205ea4076b`, following two targeted source corrections:
+
+1. `372f3512fca6a233fc7957b43efc4255939e05b7` — system-light theme previously styled **all** `input` elements as text inputs, including custom switches, sliders, checkboxes and radios. Scoped light-mode text-field backgrounds/borders to inputs except `checkbox`, `radio`, `range` and `hidden`, and extended source-contract tests.
+2. `46d46d302cb4efa6ce247fc58464b9205ea4076b` — a follow-up specificity audit showed repeated `:not()` pseudo-classes raise CSS specificity and could override the `TextField` invalid-state border. Wrapped those exclusions inside `:where(...)` consistently in `app.css`, `design/base.css`, and `theme.css` so the exclusions are kept without overriding component validation styling. Extended regression assertions.
+
+**Source-wide audit of owned files:** Examined the shared Select, Slider, Checkbox, Switch, RadioGroup, TextField and Popover components, their interaction tests, `floatingPosition.ts` and its geometry tests, the global dark/system-light CSS and token declarations, migration contract, and handoff. Rechecked keyboard active selection, role associations, Escape/outside dismissal, popover focus, RTL insets, reduced motion, narrow layout placement, native input behavior and value propagation. No other confirmed functional regression was identified within ownership. Actual transformed-ancestor popup positioning, OS screen readers, native popup migration and rendered bilingual layouts remain integration tests, not simulated local certification.
+
+**Confirmed CI / tests:**
+
+- For the previous exact head `47fcf49b4c49e17ab3f976ae8e96750ab46496f6`, **six workflows passed**: Desktop UI #42934085297, Security hygiene #42934085362, CI #42934085304, Scriptotar MCP E2E #42934085250, Linux Tauri Package #42934085298 and Windows Tauri Installer #42934085279. Linux and Windows packaging and packaged-app smoke are therefore supported by actual workflow success on that head.
+- The seventh workflow, [Tauri migration integration #42934085294](https://github.com/MousaXD/scriptotar/actions/runs/42934085294), **failed** only its supply-chain Rust advisories job; Rust workspace, sidecar, Svelte frontend, Rust↔sidecar integration and integrated Tauri build succeeded. The existing `libsqlite3-sys 0.30.1`, [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459) / CVE-2026-119375 remains the exact external security blocker. RustSec specifies `>=0.39.0` patched. Agent 01 must not edit `Cargo.lock`, suppress advisory checks or alter another owner's Rust dependencies.
+- For the new source fix `46d46d302cb4efa6ce247fc58464b9205ea4076b`, [Desktop UI #42936639255](https://github.com/MousaXD/scriptotar/actions/runs/42936639255) and [Security hygiene #42936639399](https://github.com/MousaXD/scriptotar/actions/runs/42936639399) had **passed** at this checkpoint. The new CI / MCP / Tauri integration / Linux / Windows workflows were still in progress at the time of this report, and must be checked on their exact commit and on this documentation commit. No uncompleted run is counted as passed.
+
+**Ownership dependencies and gate:** Agent 00 must assign the RustSec SQLite upgrade and associated migration compatibility review to its Rust/database/security owner. Owners of the 20 legacy native selectors must migrate their own views without removing persisted handlers. Agent 08 must provide actual installed Windows/Linux WebView dark/light, Arabic RTL, keyboard/focus and popup evidence. Agent 07 owns translations. Do not bypass any test.
+
+**Source verdict:** **READY FOR AGENT 00 REVIEW** — all confirmed Agent 01 code defects corrected and the new frontend checks passed. **Integration/release verdict:** **BLOCKED** by the non-owned RustSec dependency and final visual/integration acceptance; keep existing PR #89 draft. This handoff update itself creates a newer HEAD, which requires exact-head CI confirmation.
