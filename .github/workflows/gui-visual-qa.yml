@@ -64,7 +64,13 @@ jobs:
       - name: Install pinned browser test runner without modifying the lockfile
         run: |
           npm install --no-save --package-lock=false --ignore-scripts playwright@1.56.1
-          npx playwright install --with-deps chromium
+          # GitHub's base Ubuntu runner ships the shared Chromium libraries; installing
+          # optional extra APT font packages here makes real GUI checks depend on
+          # unrelated Ubuntu/Azure mirror DNS. Chromium launch and all 140 browser
+          # scenarios below remain mandatory, so missing libs still fail closed.
+          npx playwright install chromium
+          printf 'Arabic fallback font: '
+          fc-match -f '%{family}\n' 'sans-serif:lang=ar'
       - name: Render every workspace and exercise keyboard, RTL, controls and states
         run: node qa/visual-regression.mjs
       - name: Compare screenshots with approved baseline, if one exists
