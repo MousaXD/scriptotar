@@ -1,6 +1,7 @@
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { createTauriClient, setApi } from './api';
+import { applyAppearance, loadAppearance } from './appearance';
 import { initializeLocalization } from './i18n';
 import './design/tokens.css';
 import './app.css';
@@ -35,8 +36,10 @@ if (globalTauri?.core?.invoke) {
   throw new Error('Scriptotar is running inside Tauri, but the Tauri IPC bridge is unavailable.');
 }
 
+// Apply persisted preferences before the first Svelte paint to avoid a theme/direction flash.
+applyAppearance(loadAppearance('dark'));
+initializeLocalization();
+
 mount(App, {
   target: document.getElementById('app')!
 });
-
-initializeLocalization();
