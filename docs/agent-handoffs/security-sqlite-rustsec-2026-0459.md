@@ -1,53 +1,73 @@
-# Security Agent — RUSTSEC-2026-0459 SQLite dependency remediation
+# Scriptotar SQLite supply-chain remediation — final security-agent handoff
 
-**Issue:** https://github.com/MousaXD/scriptotar/issues/97  
-**Branch:** `fix/scriptotar-sqlite-rustsec-2026-0459`  
-**Source baseline:** `main` at `f741244634b5143602a21a554094a498a0005b11`  
-**Verdict:** **BLOCKED until exact-HEAD GitHub Actions and packaging pass.** Do not merge automatically.
+**Issue:** [#97](https://github.com/MousaXD/scriptotar/issues/97)  
+**PR:** [#98](https://github.com/MousaXD/scriptotar/pull/98)  
+**Owned branch:** `fix/scriptotar-sqlite-rustsec-2026-0459`  
+**Original main baseline:** `f741244634b5143602a21a554094a498a0005b11`  
+**Fully validated source/test commit:** `30575059e6c69a98150c4da744022cb7b41e90c1`  
+**Verdict:** **GO for Agent 00 independent integration review; NOT permission to merge or release.**
 
-## Root cause and impact
+This document is a follow-up documentation-only update to the already validated source commit. The latest PR HEAD must have its own green checks before merge; see the PR for the current exact-HEAD status. The original source and test changes are unchanged.
 
-Scriptotar's `rusqlite = "0.32"` resolves to `rusqlite 0.32.1` / `libsqlite3-sys 0.30.1` with `bundled` and `backup` enabled. The bundled native SQLite can expose uninitialized page-cache memory when opening a locally crafted database and incompatible WAL pair. See [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html) (CVE-2026-119375). RustSec requires `libsqlite3-sys >=0.39.0`, bundling SQLite >=3.54.0.
+## Root cause
 
-Do **not** merge Dependabot PR #44 as the fix: it updates to `rusqlite 0.40.2` but its lockfile still resolves `libsqlite3-sys 0.38.2`, below the patched floor. That PR is a reference candidate only.
+The application's workspace `rusqlite = "0.32"` and its `bundled` feature resolved to `rusqlite 0.32.1 -> libsqlite3-sys 0.30.1`. RustSec [RUSTSEC-2026-0459](https://rustsec.org/advisories/RUSTSEC-2026-0459.html), CVE-2026-119375, describes uninitialized memory disclosure from crafted SQLite database and WAL data. The patched `libsqlite3-sys` floor is **0.39.0**, bundling SQLite **3.54.0+**. This vulnerability failed the mandatory Rust advisory job on the old lockfile.
 
-## Narrow dependency update
+Existing Dependabot [PR #44](https://github.com/MousaXD/scriptotar/pull/44) is **not a fix**: it upgrades `rusqlite` to 0.40.2 but its lockfile still resolves `libsqlite3-sys 0.38.2`, below the safe floor. Do not merge #44 for advisory remediation.
 
-| Package | Before | This branch | Reason |
+## Applied dependency update
+
+| Package | Before | This PR | Notes |
 |---|---|---|---|
-| `rusqlite` | 0.32.1 | 0.41.0 | First patched upstream release line; Rust 1.89 minimum |
-| `libsqlite3-sys` | 0.30.1 | 0.39.1 | Includes bundled SQLite 3.54.1; patched |
-| `hashlink` | 0.9.1 | 0.12.1 | Existing default cache feature compatibility |
-| `hashbrown` | 0.14.5 removed | 0.16.1 added; 0.17.1 retained | Transitive from `rsqlite-vfs` / `hashlink` |
-| `rsqlite-vfs` | absent | 0.1.1 | Transitive wasm backend dependency |
-| `sqlite-wasm-rs` | absent | 0.5.5 | `rusqlite` default feature's wasm dependency |
+| `rusqlite` | 0.32.1 | **0.41.0** | Upstream Rust 1.89.0 MSRV; CI Rust 1.97.1 meets it |
+| `libsqlite3-sys` | 0.30.1 | **0.39.1** | Patched; bundled SQLite 3.54.x |
+| `hashlink` | 0.9.1 | 0.12.1 | Updated for rusqlite caching |
+| `hashbrown` | 0.14.5 | 0.16.1 and 0.17.1 | 0.17.1 already existed; transitive adjustment |
+| `rsqlite-vfs` | absent | 0.1.1 | New wasm graph transitive |
+| `sqlite-wasm-rs` | absent | 0.5.5 | New rusqlite wasm default-feature transitive |
 
-Unreferenced `ahash 0.8.12`, `hashbrown 0.14.5`, `zerocopy 0.8.56` and `zerocopy-derive 0.8.56` are removed. Existing `foldhash 0.2.0` is reused. All unchanged dependencies retain their baseline versions. Registry checksums and crate metadata came from the official [crates.io index](https://github.com/rust-lang/crates.io-index).
+Orphaned `ahash 0.8.12`, `hashbrown 0.14.5`, `zerocopy 0.8.56`, and `zerocopy-derive 0.8.56` were removed; existing `foldhash 0.2.0` was reused. Unrelated dependencies were held at baseline versions. Registry checksums match the crates.io index. The workspace's `rusqlite` feature declaration stays **`["bundled", "backup"]`**. No application backend implementation, schema migration, installer workflow, source data, or audit policy was edited.
 
-The exact feature declaration `["bundled", "backup"]` is preserved. The workspace toolchain in GitHub Actions pins Rust 1.97.1 (meets upstream Rust 1.89.0 minimum). `libsqlite3-sys 0.39.1` uses MIT; `rusqlite 0.41.0` uses MIT. New transitive crate license details still require the CI/package license inventory check.
+**Lockfile inverse dependency audit (derived from Cargo.lock):**
 
-## Database and API compatibility
+```text
+scriptotar-db 1.3.0 ─────┐
+                         ├─> rusqlite 0.41.0 ─> libsqlite3-sys 0.39.1
+scriptotar-desktop 1.3.0 ┘
+```
 
-Static inspection of `scriptotar-db` and desktop migration sources found standard `Connection`, `TransactionBehavior::Immediate`, `OpenFlags`, `pragma_update`, and `backup::Backup::new(...).run_to_completion(...)` use. Upstream 0.41 retains these APIs; no source changes were made. The newer `rusqlite` release changes several optional VTab/statement APIs, but no matching call sites were found in inspected owned database and desktop migration sources. Compile/test results must verify this assessment.
+`scriptotar-desktop` also pulls `scriptotar-db`; other Rust crates depend transitively on the DB crate. Only one `libsqlite3-sys` version exists in the new lockfile. This inverse chain was independently calculated from the committed lockfile; **the literal command `cargo tree -i libsqlite3-sys` has not been captured** because the GitHub connector cannot execute arbitrary shell commands and local Cargo is unavailable. Agent 00 should capture that command on the integration candidate if a literal command transcript is required.
 
-Schema migrations are unchanged: main and integration schema versions both end at v5. Existing repository tests exercise v1/v2/v3/v4 upgrades, migration ledger validation, failed-transaction rollback, WAL/read-only snapshots, legacy import/idempotence, project lifecycle, job concurrency and recovery, transcript lineage, AI/research, watchlists and settings. New `sqlite_dependency_compatibility.rs` tests assert a patched runtime SQLite version; exercise WAL, online backup, data restoration; rerun schema migrations; and reject a tampered ledger without deleting project data.
+## Compatibility and data safety
 
-This is an application dependency upgrade, not an on-disk schema migration or database reset. Old database compatibility and file preservation still require exact-HEAD CI; the static review is not proof.
+Both existing migrations and new tests retain main and integration schema version **5**. Source review located the used `rusqlite` APIs: `Connection`, `OpenFlags`, immediate transactions, PRAGMAs, and `backup::Backup::new(...).run_to_completion(...)`. Their compatibility is now corroborated by passing locked compilation and the complete Rust tests.
 
-## Dependency chain and validation evidence
+New `crates/scriptotar-db/tests/sqlite_dependency_compatibility.rs` covers patched bundled SQLite runtime version (>=3.54.0), WAL mode, online backup/quick-check, project/job/settings restoration, idempotent reopening of migrations, and rejection of tampered migration ledgers without erasing project data. Existing tests additionally cover historical schema upgrades, repeatability, failed-migration rollback, transaction and concurrency behavior, recovery, legacy import and snapshot safety, project lifecycle, transcripts, research, watchlists, AI state, and MCP. Installed-app CI checks clean database initialization, packaged frontend/backend, and persistence (Linux repeatedly, Windows clean install).
 
-Expected inverse tree: `scriptotar-db -> rusqlite 0.41.0 -> libsqlite3-sys 0.39.1` and `scriptotar-desktop -> rusqlite 0.41.0 -> libsqlite3-sys 0.39.1` (also via `scriptotar-db`). A real `cargo tree -i libsqlite3-sys` on the final commit is still required.
+**No database reset, migration deletion, relaxation of fail-closed checks, or removal of bundled SQLite occurred.** The production data format is unchanged.
 
-Local execution was unavailable in the authoring container (no Cargo/rustc and no external DNS), so **no local cargo audit, fmt, check, clippy, test, or package build is claimed**. This branch relies on GitHub Actions exact-HEAD checks. Requirements:
+## Security audit and warnings
 
-- `cargo tree -i libsqlite3-sys`, `cargo audit`, `cargo fmt --all -- --check`
-- `cargo check --workspace --all-targets --locked`
-- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
-- `cargo test --workspace --locked` and `cargo test -p scriptotar-db --locked`
-- mandatory Tauri migration / Supply chain, Rust foundation, MCP E2E, Linux installed-deb, Windows clean-machine NSIS installation and database smoke workflows.
+The [successful Supply chain job in workflow #43017701668](https://github.com/MousaXD/scriptotar/actions/runs/43017701668) ran `cargo-audit 0.23.0`, fetched **1,453 RustSec advisory records**, scanned **494** locked crates, and passed with **zero reported vulnerabilities**. It emitted **nine warnings** (not vulnerability failures) involving the existing unmaintained `proc-macro-error` and `unic-*` crates and unsoundness warnings affecting `glib 0.18.5`, `rustix 1.1.4`, and `tokio 1.53.1`. There were eight warnings in the earlier failing audit ([#42931619259](https://github.com/MousaXD/scriptotar/actions/runs/42931619259)), which reported the removed SQLite vulnerability. The ninth is **RUSTSEC-2026-0486 for `rustix 1.1.4`**, and the baseline `main` lockfile already contains `rustix 1.1.4`. That warning does not originate from this dependency change. It may warrant separate coordinated dependency remediation; do not misreport zero warnings.
 
-Do not waive audit findings or approve release without packaging, database-upgrade and exact-HEAD CI evidence. Other agents (especially Agent 03) own source changes; report any API incompatibility to Agent 00 instead of editing their implementation.
+Supply chain also passed `npm audit --audit-level=high` (three low-severity findings remain) and `pip-audit` (no findings). No `cargo audit` ignore, suppression, exception, or workflow modification was introduced. `rusqlite` and `libsqlite3-sys` are MIT-licensed; the existing package distribution pipelines check their required license inventory artifacts. No upstream license-exception waiver was added.
 
-## Handoff
+## Fully completed exact-HEAD CI — source/test SHA `30575059e6c69a98150c4da744022cb7b41e90c1`
 
-The source of truth for final exact-HEAD SHA, CI job results and any follow-up incompatibilities is the linked PR conversation. Owner Agent 00 must independently approve this branch, coordinate with Agent 03 and re-run integrated checks on the final merge candidate. **GO only after all required checks pass**.
+| Workflow | Result and validation |
+|---|---|
+| [Rust foundation #43017701772](https://github.com/MousaXD/scriptotar/actions/runs/43017701772) | PASS: `cargo fmt --all -- --check`, `cargo check --workspace --all-targets --locked`, strict `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`, `cargo test --workspace --locked` |
+| [Full CI #43017701607](https://github.com/MousaXD/scriptotar/actions/runs/43017701607) | PASS: frontend/sidecar/workspace regression suite |
+| [Security hygiene #43017701469](https://github.com/MousaXD/scriptotar/actions/runs/43017701469) | PASS |
+| [Scriptotar MCP E2E #43017701556](https://github.com/MousaXD/scriptotar/actions/runs/43017701556) | PASS: MCP CLI, HTTP, auth and integration |
+| [Tauri migration integration #43017701668](https://github.com/MousaXD/scriptotar/actions/runs/43017701668) | PASS: supply-chain audit, database migration/recovery, sidecar/frontend/Rust workspace, integrated desktop build |
+| [Linux .deb #43017701584](https://github.com/MousaXD/scriptotar/actions/runs/43017701584) | PASS: package creation, installation, real application startup, multiple IPC/persistence test repetitions, MCP smoke, distributable license inventory; `scriptotar-linux-tauri` artifact |
+| [Windows NSIS #43017701836](https://github.com/MousaXD/scriptotar/actions/runs/43017701836) | PASS: locked binary build, NSIS bundle, clean-machine install, installed SQLite initialization, runtime/MCP smoke, uninstall, `scriptotar-windows-tauri` artifact |
+
+All seven workflows concluded **success** on this code commit. The prior formatting failure on `edf32d86...` was fixed in the validated source/test commit.
+
+## Ownership and final decision
+
+The modified files are exactly: root `Cargo.toml`, `Cargo.lock`, one *new* `crates/scriptotar-db/tests/sqlite_dependency_compatibility.rs`, and this handoff document. No Agent 03 or other agent's implementation files were touched.
+
+**Security-agent determination: GO for Agent 00 review.** The library vulnerability and packaged compatibility are validated; the issue remains open and the PR remains unmerged. **Owner-level release determination: BLOCKED** pending independent cross-agent integration, regression certification on the eventual merged SHA, and owner approval. Agent 00 alone should decide merge order, version/changelog and release. Neither a passing isolated PR nor this handoff authorizes a direct merge to `main`.
