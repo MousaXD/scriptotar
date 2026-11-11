@@ -86,6 +86,20 @@ describe('Settings UX', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('keeps filesystem paths left-to-right in Arabic Settings', () => {
+    const settings = structuredClone(mockBootstrap.settings);
+    settings.outputDirectory = '/home/مستخدم/الملفات';
+    render(SettingsView, {
+      props: {
+        api: createMockClient(),
+        settings,
+        migrationStatus: structuredClone(mockBootstrap.migrationStatus)
+      }
+    });
+    setLocale('ar');
+    expect(screen.getByText('/home/مستخدم/الملفات')).toHaveAttribute('dir', 'ltr');
+  });
+
   it('keeps legacy migration controls and warnings visible', () => {
     setup();
     expect(screen.getByTestId('migration-status')).toBeInTheDocument();
