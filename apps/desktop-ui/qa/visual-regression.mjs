@@ -74,6 +74,8 @@ async function checkOverflow(page, label) {
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
       mainVisible: Boolean(document.querySelector('#workspace-main')),
+      headingTop: heading?.top ?? null,
+      topbarBottom: topbar?.bottom ?? null,
       mobileShell: sidebar && topbar ? {
         sidebarWidth: sidebar.width,
         sidebarHeight: sidebar.height,
