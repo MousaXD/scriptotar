@@ -154,7 +154,7 @@ describe('AI Studio request isolation', () => {
     await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), { target: { value: 'Reusable source' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
     const preview = screen.getByPlaceholderText('Build a prompt to preview it here…');
-    await waitFor(() => expect(preview).toHaveValue(expect.stringContaining('Reusable source')));
+    await waitFor(() => expect((preview as HTMLTextAreaElement).value).toContain('Reusable source'));
     const built = (preview as HTMLTextAreaElement).value;
     await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
     expect(preview).toHaveValue(built);
@@ -173,7 +173,7 @@ describe('AI Studio request isolation', () => {
     await rerender({ api, transcripts: [moved] });
     await waitFor(() => expect(screen.getByLabelText('Transcript source')).toHaveValue('manual'));
     expect(source).toHaveValue('');
-    expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument());
   });
   it('allows a new provider run after inputs change without an old completion clearing busy state', async () => {
     const old = deferred<string>();
