@@ -51,8 +51,9 @@
   $: totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   $: currentPage = Math.min(page, totalPages);
   $: pageItems = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  $: selectedCount = items.filter((item) => selected.has(item.id)).length;
-  $: pageSelected = pageItems.length > 0 && pageItems.every((item) => selected.has(item.id));
+  $: selectablePageItems = pageItems.filter((item) => !item.queued);
+  $: selectedCount = items.filter((item) => selected.has(item.id) && !item.queued).length;
+  $: pageSelected = selectablePageItems.length > 0 && selectablePageItems.every((item) => selected.has(item.id));
   $: attentionCount = watchlistStatuses.filter((item) => item.state === 'failed' || item.state === 'retry_scheduled').length;
 
   function metric(value?: number) {
@@ -85,7 +86,7 @@
 
   function togglePageSelection() {
     const next = new Set(selected);
-    for (const item of pageItems) {
+    for (const item of selectablePageItems) {
       if (pageSelected) next.delete(item.id);
       else next.add(item.id);
     }
@@ -169,7 +170,12 @@
 
 <section class="view-head research-head">
   <h1>Research</h1>
-  <span class="result-count" aria-live="polite">{filtered.length} / {items.length}</span>
+  <div class="research-summary">
+    <span class="result-count" aria-live="polite">{filtered.length} / {items.length}</span>
+    {#if attentionCount > 0}
+      <a class="attention-link" href="#watch-health-title">{attentionCount} {isArabic ? 'قوائم متابعة تحتاج انتباهاً' : 'watchlists need attention'}</a>
+    {/if}
+  </div>
 </section>
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
@@ -195,7 +201,7 @@
 
   <div class="selection-bar">
     <label class="select-page">
-      <input type="checkbox" checked={pageSelected} disabled={pageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
+      <input type="checkbox" checked={pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
       <span>{isArabic ? 'تحديد الصفحة' : 'Select page'}</span>
     </label>
     <span class="selection-count" aria-live="polite">{isArabic ? 'محدد: ' : 'Selected: '}{selectedCount}</span>
@@ -216,7 +222,7 @@
       </div>
       {#each pageItems as item (item.id)}
         <div class="research-row" role="row" data-testid={'research-' + item.id}>
-          <label class="check-only"><input type="checkbox" checked={selected.has(item.id)} on:change={() => toggle(item.id)} aria-label={'Select ' + item.title} /></label>
+          <div class="check-only" role="cell"><label><input type="checkbox" checked={selected.has(item.id) && !item.queued} disabled={Boolean(item.queued)} on:change={() => toggle(item.id)} aria-label={'Select ' + item.title} /></label></div>
           <div class="media-cell" role="cell">
             {#if item.thumbnail && !failedThumbnails.has(item.id + ":" + item.thumbnail)}
               <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={() => failedThumbnails = new Set([...failedThumbnails, item.id + ":" + item.thumbnail])} />
@@ -284,7 +290,9 @@
 <style>
   .research-head { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
   .research-head h1 { margin: 0; }
+  .research-summary { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 12px; }
   .result-count { color: var(--color-text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+  .attention-link { color: var(--color-warning); text-decoration: underline; text-underline-offset: 3px; font-size: var(--text-sm); }
   .research-capture { display: grid; grid-template-columns: minmax(0, 1fr) 96px auto auto; gap: 10px; align-items: end; padding: 14px; margin-bottom: 12px; }
   .research-capture label { min-width: 0; }
   .research-capture label span { font-size: var(--text-sm); }
