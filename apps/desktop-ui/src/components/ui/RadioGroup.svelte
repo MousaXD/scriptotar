@@ -1,5 +1,9 @@
-<script lang="ts">
+<script lang="ts" context="module">
   export type RadioOption = { value: string; label: string; disabled?: boolean };
+</script>
+
+<script lang="ts">
+
   export let label: string;
   export let options: RadioOption[] = [];
   export let value = '';

@@ -1,8 +1,12 @@
+<script lang="ts" context="module">
+  export type SelectOption = { value: string; label: string; disabled?: boolean };
+</script>
+
 <script lang="ts">
   import { tick } from 'svelte';
   import { floatingPosition } from './floatingPosition';
 
-  export type SelectOption = { value: string; label: string; disabled?: boolean };
+
   export let label: string;
   export let options: SelectOption[] = [];
   export let value = '';
@@ -116,7 +120,7 @@
   <button type="button" id={controlId} class:invalid class="trigger"
     bind:this={trigger} {disabled} aria-haspopup="listbox" aria-expanded={open}
     aria-controls={open ? controlId + '-options' : undefined}
-    aria-invalid={invalid || undefined} aria-describedby={description ? controlId + '-help' : undefined}
+    aria-describedby={description ? controlId + '-help' : undefined}
     aria-labelledby={controlId + '-label ' + controlId + '-value'}
     on:click={() => open ? close(true) : void show()} on:keydown={triggerKey}>
     <span id={controlId + '-value'} class:placeholder={!selected}>{selected?.label || placeholder}</span>
@@ -126,7 +130,7 @@
   {#if description}<small id={controlId + '-help'}>{description}</small>{/if}
   {#if open}
     <div id={controlId + '-options'} class="options" role="listbox" tabindex="0"
-      aria-label={label} aria-required={required}
+      aria-label={label} aria-required={required} aria-invalid={invalid || undefined}
       aria-activedescendant={active >= 0 ? controlId + '-option-' + active : undefined}
       bind:this={listbox} use:floatingPosition={{ anchor: trigger, matchWidth: true }} on:keydown={listKeys}>
       {#each options as option, i (option.value)}

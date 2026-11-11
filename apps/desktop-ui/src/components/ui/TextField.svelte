@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { HTMLInputAttributes } from 'svelte/elements';
   export let label: string;
   export let value = '';
   export let type: 'text' | 'search' | 'password' | 'url' | 'email' = 'text';
@@ -6,7 +7,7 @@
   export let id: string | undefined = undefined;
   export let placeholder = '';
   export let description: string | undefined = undefined;
-  export let autocomplete: string | undefined = undefined;
+  export let autocomplete: HTMLInputAttributes['autocomplete'] = undefined;
   export let disabled = false;
   export let required = false;
   export let invalid = false;
