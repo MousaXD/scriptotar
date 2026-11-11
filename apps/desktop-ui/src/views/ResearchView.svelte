@@ -235,7 +235,7 @@
               {#if observedInteractionRate(item) !== null}<small class="derived-metric" title="Likes plus comments divided by observed views; not unique people or causal performance">{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
             </div>
           </div>
-          <strong class="metric metric-views" role="cell"><span class="mobile-metric-label">Views</span>{metric(item.views)}</strong>
+          <div class="metric metric-views" role="cell"><span class="mobile-metric-label">Views</span><strong>{metric(item.views)}</strong></div>
           <span class="metric metric-likes" role="cell"><span class="mobile-metric-label">Likes</span>{metric(item.likes)}</span>
           <span class="metric metric-comments" role="cell"><span class="mobile-metric-label">Comments</span>{metric(item.comments)}</span>
           <span class="metric metric-date" role="cell"><span class="mobile-metric-label">Date</span>{item.publishedAt || '—'}</span>
