@@ -19,8 +19,9 @@ describe('shared workstation controls', () => {
       options: [{ value: 'one', label: 'One' }, { value: 'locked', label: 'Locked', disabled: true }, { value: 'two', label: 'Two' }],
       onChange
     } });
-    const trigger = screen.getByRole('button', { name: 'Project One' });
-    expect(trigger).toHaveAccessibleName('Project One');
+    const trigger = screen.getByRole('combobox', { name: 'Project' });
+    expect(trigger).toHaveAccessibleName('Project');
+    expect(trigger).toHaveTextContent('One');
     await fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     const menu = await screen.findByRole('listbox', { name: 'Project' });
     expect(document.activeElement).toBe(menu);
@@ -41,7 +42,7 @@ describe('shared workstation controls', () => {
       options: [{ value: 'en', label: 'English' }, { value: 'ar', label: 'Arabic' }],
       onChange
     } });
-    const trigger = screen.getAllByRole('button')[0];
+    const trigger = screen.getByRole('combobox', { name: 'Language' });
     await fireEvent.click(trigger);
     const menu = screen.getByRole('listbox');
     await fireEvent.keyDown(menu, { key: 'Escape' });
@@ -51,6 +52,33 @@ describe('shared workstation controls', () => {
     expect(screen.getByRole('listbox')).toBeInTheDocument();
     await fireEvent.pointerDown(document.body);
     await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+  });
+
+  it('exposes required and invalid state while closed and preserves the form value', async () => {
+    const onChange = vi.fn();
+    render(Select, { props: {
+      label: 'Workspace', value: 'one', name: 'workspace', required: true, invalid: true,
+      description: 'Select a workspace before continuing',
+      options: [{ value: 'one', label: 'One' }, { value: 'two', label: 'Two' }],
+      onChange
+    } });
+    const trigger = screen.getByRole('combobox', { name: 'Workspace' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAttribute('aria-required', 'true');
+    expect(trigger).toHaveAttribute('aria-invalid', 'true');
+    expect(trigger).toHaveAccessibleDescription('Select a workspace before continuing');
+    expect(trigger).toHaveTextContent('One');
+    const hidden = document.querySelector('input[name="workspace"]') as HTMLInputElement;
+    expect(hidden).toHaveAttribute('type', 'hidden');
+    expect(hidden.value).toBe('one');
+    await fireEvent.click(trigger);
+    const menu = screen.getByRole('listbox', { name: 'Workspace' });
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await fireEvent.click(within(menu).getByRole('option', { name: 'Two' }));
+    expect(onChange).toHaveBeenCalledWith('two');
+    expect(hidden.value).toBe('two');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAccessibleName('Workspace');
   });
 
   it('preserves accessible native slider keyboard semantics and exposes value', async () => {

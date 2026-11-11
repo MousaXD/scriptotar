@@ -17,7 +17,7 @@ Import from `src/components/ui/<Name>.svelte`:
 
 | Component | Props / integration API | Interaction contract |
 | --- | --- | --- |
-| `Select` | `label`, `options: {value,label,disabled?}[]`, `bind:value`, `onChange?`, `name?`, `required?`, `invalid?`, `description?` | Styled trigger and listbox; Up/Down/Home/End; Enter/Space; Escape restores focus; Tab exits; options skipped when disabled; outside press closes |
+| `Select` | `label`, `options: {value,label,disabled?}[]`, `bind:value`, `onChange?`, `name?`, `required?`, `invalid?`, `description?` | Select-only combobox trigger and listbox; required/invalid states available even when closed; Up/Down/Home/End, Enter/Space, Escape, Tab, disabled-option skipping and outside dismissal |
 | `Slider` | `label`, `bind:value`, `min`, `max`, `step`, `format?`, `onChange?` | Native range semantics and keyboard, branded track/thumb on WebKit/Firefox |
 | `Checkbox` | `label`, `bind:checked`, `description?`, `onChange?` | Native checkbox semantics and spacebar |
 | `Switch` | `label`, `bind:checked`, `description?`, `onChange?` | Checkbox input with `role=switch` |
@@ -25,7 +25,7 @@ Import from `src/components/ui/<Name>.svelte`:
 | `TextField` | `label`, `bind:value`, `type?`, `invalid?`, `description?`, `onInput?` | Real native input with accessible name and validation status |
 | `Popover` | `label`, `triggerLabel`, trigger slot and default content slot | Labeled non-modal panel; Escape and outside press close; focus restored |
 
-**Important:** Components expose bindable values/callbacks, but no Rust commands, backend settings semantics, translation keys, or implicit persistence. The caller remains responsible for validation and saving. The Select listbox is not a native required form input; parent forms must validate mandatory selections explicitly. Popover is non-modal: do not use it for confirmation or focus-trapping dialogs.
+**Important:** Components expose bindable values/callbacks, but no Rust commands, backend settings semantics, translation keys, or implicit persistence. The caller remains responsible for validation and saving. The Select trigger exposes `role=combobox`, `aria-required` and `aria-invalid`; its hidden input preserves the form value but is not a native required form control, so parent forms must still validate mandatory selections explicitly. Popover is non-modal: do not use it for confirmation or focus-trapping dialogs.
 
 ## Native inventory on initial audited baseline `f7412446`
 
