@@ -159,10 +159,10 @@
     }
   }
 
-  async function refresh() { if (!switchingProject) await load(false); }
+  async function refresh() { if (!switchingProject && !creatingProject) await load(false); }
 
   async function refreshJobs() {
-    if (!data || jobRefreshGeneration === workspaceGeneration || switchingProject) return;
+    if (!data || jobRefreshGeneration === workspaceGeneration || switchingProject || creatingProject) return;
     const generation = workspaceGeneration;
     const snapshot = data;
     jobRefreshGeneration = generation;
@@ -194,7 +194,7 @@
   }
 
   async function refreshOperationalStatus() {
-    if (!data || operationalRefreshGeneration === workspaceGeneration || switchingProject) return;
+    if (!data || operationalRefreshGeneration === workspaceGeneration || switchingProject || creatingProject) return;
     const generation = workspaceGeneration;
     const projectId = data.activeProjectId;
     operationalRefreshGeneration = generation;
@@ -289,11 +289,11 @@
   }
 
   async function saveWatchlist(profileUrl: string, limit: number) {
-    if (!data || switchingProject) return;
+    if (!data || switchingProject || creatingProject) return;
     const generation = workspaceGeneration;
     const projectId = data.activeProjectId;
     const next = await api.saveWatchlist({ profileUrl, limit });
-    if (generation === workspaceGeneration && !switchingProject &&
+    if (generation === workspaceGeneration && !switchingProject && !creatingProject &&
         data?.activeProjectId === projectId && next.activeProjectId === projectId) {
       data = prepareData(next);
     }
