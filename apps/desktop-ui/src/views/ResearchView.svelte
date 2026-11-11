@@ -373,7 +373,9 @@
   .watch-diagnostics dd { margin: 0; text-align: end; color: var(--color-text); }
   @media (max-width: 980px) {
     .research-capture { grid-template-columns: minmax(0, 1fr) 96px; }
-    .research-capture button { width: 100%; }
+    /* At 760px the Arabic save-watchlist action exceeds the fixed 96px track:
+       keep the full label readable instead of forcing inline overflow. */
+    .research-capture button { width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
     .filter-bar { flex-wrap: wrap; }
     .research-search { flex-basis: 100%; }
   }
