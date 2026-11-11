@@ -136,7 +136,8 @@
     try {
       const next = await api.bootstrap();
       if (generation !== workspaceGeneration) return;
-      if (next.projects.length && !next.projects.some((project) => project.id === next.activeProjectId)) {
+      if ((next.projects.length === 0 && next.activeProjectId !== '') ||
+          (next.projects.length > 0 && !next.projects.some((project) => project.id === next.activeProjectId))) {
         throw new Error('The backend did not identify an active project.');
       }
       data = prepareData(next);
@@ -255,6 +256,7 @@
   async function createProject(name: string) {
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
+    const priorProjectId = data?.activeProjectId || '';
     const generation = ++workspaceGeneration;
     let inconsistentResponse = false;
     creatingProject = true;
@@ -267,6 +269,10 @@
       if (!next.projects.some((project) => project.id === next.activeProjectId)) {
         inconsistentResponse = true;
         throw new Error('The created project was not available in the backend response.');
+      }
+      if (next.activeProjectId === priorProjectId) {
+        inconsistentResponse = true;
+        throw new Error('The created project did not become active in the backend response.');
       }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
