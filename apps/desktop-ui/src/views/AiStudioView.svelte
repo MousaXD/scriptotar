@@ -258,7 +258,7 @@
         {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
       </select>
     </label>
-    {#if selectedTranscript}
+    {#if selectedTranscriptId !== 'manual' && selectedTranscript && selectedTranscript.projectId === sourceSelectionProjectId}
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
