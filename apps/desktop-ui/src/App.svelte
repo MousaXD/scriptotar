@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { translator } from './i18n/translate';
   import { locale } from './i18n';
   import { getApi, type ScriptotarApi } from './api';
@@ -473,7 +473,12 @@
     if (target instanceof Element &&
         target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="listbox"], [role="option"], [role="combobox"]')) return;
     const shortcuts: Record<string, ViewId> = { d: 'dashboard', r: 'research', j: 'jobs', t: 'transcript', a: 'ai', l: 'library', ',': 'settings' };
-    if (shortcuts[event.key.toLowerCase()]) activeView = shortcuts[event.key.toLowerCase()];
+    const destination = shortcuts[event.key.toLowerCase()];
+    if (destination) {
+      activeView = destination;
+      // Shortcuts bypass AppShell's pointer navigation; restore the view heading below the sticky toolbar.
+      void tick().then(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+    }
   }
 
   onMount(() => {
