@@ -311,7 +311,7 @@
     {#if detailsOpen}
       <aside class="panel details-panel" data-i18n-ignore>
         <div class="rail-head"><h3>{$translator('transcript.details')}</h3><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
-        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div></dl>
+        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div><div><dt>{$translator('ai.sourceLabel')}</dt><dd class="source-value" dir="auto">{selected.source}</dd></div></dl>
         <button class="button secondary folder-unavailable" disabled title={$translator('transcript.folderHelp')}>{$translator('transcript.folderUnavailable')}</button>
       </aside>
     {/if}
@@ -374,6 +374,7 @@
   .details-panel dt { color: var(--faint); }
   .show-more-segments { display: block; width: 100%; margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); cursor: pointer; }
   .details-panel dd { margin: 0; }
+  .details-panel .source-value { overflow-wrap: anywhere; text-align: end; min-width: 0; }
   .folder-unavailable { width: 100%; margin-top: 14px; white-space: normal; }
   .no-match { padding: 20px 0; }
 
