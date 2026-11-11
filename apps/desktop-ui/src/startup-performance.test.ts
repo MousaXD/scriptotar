@@ -97,6 +97,25 @@ describe('progressive desktop startup', () => {
     expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
   });
 
+  it('reserves workspace letter shortcuts for an open native dialog', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('open', '');
+    document.body.appendChild(dialog);
+    try {
+      await fireEvent.keyDown(dialog, { key: 'r' });
+      expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Research' })).not.toBeInTheDocument();
+    } finally {
+      dialog.remove();
+    }
+
+    await fireEvent.keyDown(window, { key: 'r' });
+    expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
+  });
+
   it('keeps the command palette closed while another modal owns keyboard focus', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
