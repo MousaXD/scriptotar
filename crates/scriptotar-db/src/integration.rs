@@ -1550,7 +1550,10 @@ mod tests {
         assert_eq!(metadata[0].project_id, project.id);
         assert_eq!(metadata[0].source, "/tmp/a.mp4");
         assert_eq!(metadata[0].duration_seconds, Some(1.0));
-        assert!(store.list_transcript_metadata(Uuid::new_v4()).unwrap().is_empty());
+        assert!(store
+            .list_transcript_metadata(Uuid::new_v4())
+            .unwrap()
+            .is_empty());
         assert_eq!(
             store
                 .list_job_transcript_links(Some(project.id))
