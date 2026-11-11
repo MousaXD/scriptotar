@@ -54,7 +54,7 @@
       const [policy, status] = await Promise.all([api.getMcpPermissions(), api.mcpConnectionStatus()]);
       savedPermissions = structuredClone(policy);
       permissions = structuredClone(policy);
-      advanced = powerful(policy) || policy.readFiles;
+      advanced = powerful(policy) || policy.readFiles || policy.allowedPaths.length > 0 || policy.allowedPrograms.length > 0;
       approvedPaths = policy.allowedPaths.join('\n');
       approvedPrograms = policy.allowedPrograms.join('\n');
       connection = status;
