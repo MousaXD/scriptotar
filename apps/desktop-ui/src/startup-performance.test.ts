@@ -486,6 +486,7 @@ describe('progressive desktop startup', () => {
 
     expect((await screen.findAllByText(/may already have been created\. Check the project selector/)).length).toBeGreaterThan(0);
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Project' }));
     expect(screen.getByRole('option', { name: 'Partially Created' })).toBeInTheDocument();
     expect(api.createProject).toHaveBeenCalledTimes(1);
   });

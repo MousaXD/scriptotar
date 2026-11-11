@@ -121,12 +121,14 @@ describe('AiStudioView interactive speaking calculator', () => {
 
     // Switch pace to Relaxed (Slow: 2.1 w/s) -> 50 / 2.1 = 23.8 -> 24s -> 0:24
     const paceSelect = screen.getByLabelText('Speaking pace');
-    await fireEvent.change(paceSelect, { target: { value: 'slow' } });
+    await fireEvent.click(paceSelect);
+    await fireEvent.click(screen.getByRole('option', { name: 'Relaxed (130 WPM)' }));
 
     expect(screen.getByText(/~0:24 spoken/)).toBeInTheDocument();
 
     // Switch pace to Fast (2.9 w/s) -> 50 / 2.9 = 17.2 -> 18s -> 0:18
-    await fireEvent.change(paceSelect, { target: { value: 'fast' } });
+    await fireEvent.click(paceSelect);
+    await fireEvent.click(screen.getByRole('option', { name: 'High energy (175 WPM)' }));
 
     expect(screen.getByText(/~0:18 spoken/)).toBeInTheDocument();
   });

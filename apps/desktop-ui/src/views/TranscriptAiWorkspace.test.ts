@@ -174,7 +174,7 @@ describe('AI Studio request isolation', () => {
     await waitFor(() => expect(source).toHaveValue(original.text));
     const moved: Transcript = { ...original, projectId: 'another-project' };
     await rerender({ api, transcripts: [moved] });
-    await waitFor(() => expect(screen.getByLabelText('Transcript source')).toHaveValue('manual'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Transcript source' })).toHaveTextContent('Manual / pasted text'));
     expect(source).toHaveValue('');
     await waitFor(() => expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument());
   });
