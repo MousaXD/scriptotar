@@ -16,6 +16,11 @@ async function ready(api = createMockClient()) {
   return api;
 }
 
+async function chooseProject(name: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Project' }));
+  await fireEvent.click(screen.getByRole('option', { name }));
+}
+
 function bootstrapWithMigration(migrationStatus: MigrationStatus) {
   return {
     ...structuredClone(mockBootstrap),
@@ -29,7 +34,7 @@ describe('desktop workstation', () => {
     const selectProject = vi.spyOn(api, 'selectProject');
     await ready(api);
     const select = screen.getByLabelText('Project');
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     await waitFor(() => expect(selectProject).toHaveBeenCalledWith('p-client-a'));
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
     expect(select).toHaveValue('p-client-a');
@@ -40,11 +45,11 @@ describe('desktop workstation', () => {
     vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project unavailable'));
     await ready(api);
     const select = screen.getByLabelText('Project');
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('alert')).toHaveTextContent('Project unavailable');
     expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
-    await waitFor(() => expect(select).toHaveValue('p-creator-lab'));
-    await fireEvent.change(select, { target: { value: 'p-client-a' } });
+    await waitFor(() => expect(select).toHaveTextContent('Creator Lab'));
+    await chooseProject('Client A');
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });

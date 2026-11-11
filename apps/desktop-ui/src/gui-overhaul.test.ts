@@ -19,6 +19,11 @@ async function readyWithApi(api: ReturnType<typeof createMockClient>) {
   await screen.findByRole('heading', { name: 'Creator Lab' });
 }
 
+async function chooseArabicInterface() {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Interface language' }));
+  await fireEvent.click(screen.getByRole('option', { name: 'ع' }));
+}
+
 describe('Creator Control Room GUI', () => {
   it('persists the compact sidebar preference', async () => {
     await ready();
@@ -150,7 +155,7 @@ describe('Creator Control Room GUI', () => {
   it('localizes Library controls in Arabic without changing creator or transcript titles', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: 'Library' }));
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'المكتبة' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'نوع عناصر المكتبة' })).toBeInTheDocument();
@@ -185,7 +190,7 @@ describe('Creator Control Room GUI', () => {
 
   it('localizes the dashboard while preserving the current project name', async () => {
     await ready();
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByText('المهام الحالية')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'أحدث النصوص المفرغة' })).toBeInTheDocument();
@@ -198,7 +203,7 @@ describe('Creator Control Room GUI', () => {
   it('keeps the native media queue workflow usable in Arabic', async () => {
     await ready();
     await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'مرشحات المهام' })).toBeInTheDocument();
@@ -213,7 +218,7 @@ describe('Creator Control Room GUI', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Transcripts' }));
     const content = await screen.findByTestId('transcript-content');
     const before = content.textContent;
-    await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
+    await chooseArabicInterface();
 
     expect(await screen.findByRole('heading', { name: 'مساحة النصوص المفرغة' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'نسخ النص' })).toBeInTheDocument();

@@ -4,6 +4,7 @@
   import { translator } from '../i18n/translate';
   import type { Project, ViewId, WorkspaceSearchResult } from '../types';
   import Icon, { type IconName } from './Icon.svelte';
+  import Select from './ui/Select.svelte';
 
   export let activeView: ViewId;
   export let activeProjectId: string;
@@ -26,6 +27,9 @@
   let paletteOpen = false;
   let paletteIndex = 0;
   let sidebarCollapsed = readSidebarState();
+  let projectSelection = activeProjectId;
+  let projectChangePending = false;
+  $: if (!projectChangePending && projectSelection !== activeProjectId) projectSelection = activeProjectId;
 
   $: workNav = [
     { id: 'dashboard', label: $translator('nav.home'), icon: 'home', shortcut: 'D' },
@@ -107,16 +111,20 @@
     catch { /* A hardened webview may deny local persistence. */ }
   }
 
-  async function changeProject(event: Event) {
-    const select = event.currentTarget as HTMLSelectElement;
-    const requestedProjectId = select.value;
-    await onProjectChange(requestedProjectId);
-    await tick();
-    select.value = activeProjectId;
+  async function changeProject(requestedProjectId: string) {
+    projectChangePending = true;
+    try {
+      await onProjectChange(requestedProjectId);
+    } finally {
+      // A rejected selection must display the real active project, not a stale optimistic choice.
+      await tick();
+      projectSelection = activeProjectId;
+      projectChangePending = false;
+    }
   }
 
-  function changeLocale(event: Event) {
-    setLocale((event.currentTarget as HTMLSelectElement).value as AppLocale);
+  function changeLocale(next: string) {
+    setLocale(next as AppLocale);
   }
 
   async function openPalette() {
@@ -265,11 +273,11 @@
   <div class="workspace-shell">
     <header class="topbar" data-i18n-ignore>
       <div class="project-control">
-        <label for="project-select">{$translator('project.label')}</label>
-        <select id="project-select" value={activeProjectId} on:change={changeProject} disabled={busy || projects.length === 0} aria-busy={busy}>
-          {#if projects.length === 0}<option value="">{busy ? $translator('boot.loading') : '—'}</option>{/if}
-          {#each projects as project}<option value={project.id}>{project.name}</option>{/each}
-        </select>
+        <Select id="project-select" label={$translator('project.label')} bind:value={projectSelection}
+          options={projects.length
+            ? projects.map((project) => ({ value: project.id, label: project.name }))
+            : [{ value: '', label: busy ? $translator('boot.loading') : '—' }]}
+          disabled={busy || projects.length === 0} onChange={changeProject} />
       </div>
 
       <label class="command-trigger">
@@ -279,14 +287,12 @@
       </label>
 
       <div class="topbar-actions">
-        <label class="language-control" title={$translator('language.label')}>
+        <div class="language-control" title={$translator('language.label')}>
           <Icon name="globe" size={17} />
-          <span class="sr-only">{$translator('language.label')}</span>
-          <select value={$locale} on:change={changeLocale} aria-label={$translator('language.label')}>
-            <option value="en">EN</option>
-            <option value="ar">ع</option>
-          </select>
-        </label>
+          <Select label={$translator('language.label')} value={$locale}
+            options={[{ value: 'en', label: 'EN' }, { value: 'ar', label: 'ع' }]}
+            onChange={changeLocale} />
+        </div>
         <button class:busy={activeJobs > 0} class="activity-button" type="button" on:click={() => navigate('jobs')} aria-label={$translator('jobs.open')}>
           <span class="activity-orb" class:busy={activeJobs > 0}></span>
           <span>{activeJobs > 0 ? $translator('jobs.active', { count: activeJobs }) : $translator('jobs.idle')}</span>
@@ -375,9 +381,9 @@
   .workspace-shell { min-width: 0; }
   .topbar { min-height: var(--topbar-height); grid-template-columns: minmax(170px, 230px) minmax(240px, 620px) auto; gap: var(--space-3); padding: 10px var(--space-5); border-color: var(--color-border); background: color-mix(in srgb, var(--color-canvas) 86%, transparent); }
   .project-control { min-width: 0; }
-  .project-control label { color: var(--color-text-faint); font-size: 9px; }
-  .project-control select { min-width: 0; border-color: transparent; background: transparent; font-weight: 650; }
-  .project-control select:hover, .project-control select:focus-visible { border-color: var(--color-border); background: var(--color-surface); }
+  .project-control :global(.field > label) { color: var(--color-text-faint); font-size: 9px; }
+  .project-control :global(.field .trigger) { min-width: 0; border-color: transparent; background: transparent; font-weight: 650; }
+  .project-control :global(.field .trigger:hover), .project-control :global(.field .trigger:focus-visible) { border-color: var(--color-border); background: var(--color-surface); }
 
   .command-trigger { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: var(--control-height); padding: 0 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--color-surface) 86%, transparent); color: var(--color-text-faint); text-align: start; cursor: text; }
   .command-trigger:hover, .command-trigger:focus-within { border-color: var(--color-border-strong); background: var(--color-surface-raised); color: var(--color-text-muted); }
@@ -388,7 +394,8 @@
 
   .topbar-actions { justify-self: end; display: flex; align-items: center; gap: var(--space-2); }
   .language-control { display: flex; align-items: center; gap: 4px; min-height: var(--control-height); padding-inline: 8px 4px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text-muted); }
-  .language-control select { min-width: 45px; min-height: 32px; padding: 0 4px; border: 0; background: transparent; color: var(--color-text); font-size: var(--text-xs); font-weight: 700; }
+  .language-control :global(.field > label) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .language-control :global(.field .trigger) { min-width: 58px; min-height: 32px; padding: 0 4px; border: 0; background: transparent; color: var(--color-text); font-size: var(--text-xs); font-weight: 700; }
   .activity-button { min-height: var(--control-height); border-radius: var(--radius-md); font-size: var(--text-xs); }
   .activity-button.busy { border-color: color-mix(in srgb, var(--color-info) 44%, var(--color-border)); color: var(--color-text); }
 

@@ -20,6 +20,11 @@ beforeEach(() => {
   setLocale('en');
 });
 
+async function chooseProject(name: string) {
+  await fireEvent.click(screen.getByRole('combobox', { name: 'Project' }));
+  await fireEvent.click(screen.getByRole('option', { name }));
+}
+
 describe('progressive desktop startup', () => {
   it('uses metadata-only bootstrap for the startup list while preserving detail hydration', async () => {
     const api = createMockClient();
@@ -235,7 +240,7 @@ describe('progressive desktop startup', () => {
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
 
-    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('alert')).toHaveTextContent('The active project could not be verified');
     expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Project')).toBeDisabled();
@@ -254,7 +259,7 @@ describe('progressive desktop startup', () => {
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
 
-    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('alert')).toHaveTextContent('The active project could not be verified');
     expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
@@ -322,7 +327,7 @@ describe('progressive desktop startup', () => {
 
     notify?.('j-1');
     await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
-    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
 
     jobs.resolve([{ ...mockBootstrap.jobs[0], id: 'stale-job', title: 'STALE JOB FROM OTHER PROJECT' }]);
@@ -350,7 +355,7 @@ describe('progressive desktop startup', () => {
 
     notify?.('j-1');
     await waitFor(() => expect(listJobs).toHaveBeenCalledTimes(1));
-    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
 
     notify?.('new-project-job');
@@ -432,7 +437,7 @@ describe('progressive desktop startup', () => {
     });
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
-    await fireEvent.change(screen.getByLabelText('Project'), { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the backend response');
     expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
@@ -524,7 +529,7 @@ describe('progressive desktop startup', () => {
     });
 
     expect(await screen.findByRole('heading', { name: 'Protected Project' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Project')).toHaveValue('p-protected');
+    expect(screen.getByLabelText('Project')).toHaveTextContent('Protected Project');
   });
 
   it('fails closed when creating a project returns the previously active project', async () => {
@@ -628,7 +633,7 @@ describe('progressive desktop startup', () => {
 
     const projectSelector = screen.getByLabelText('Project');
     expect(projectSelector).toBeDisabled();
-    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    await fireEvent.click(projectSelector);
     expect(selectProject).not.toHaveBeenCalled();
 
     await fireEvent.keyDown(window, { key: 'd' });
@@ -643,7 +648,7 @@ describe('progressive desktop startup', () => {
 
     saving.resolve(structuredClone(mockBootstrap));
     await waitFor(() => expect(projectSelector).not.toBeDisabled());
-    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    await chooseProject('Client A');
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
   });
 
@@ -663,8 +668,8 @@ describe('progressive desktop startup', () => {
 
     saving.reject(new Error('Save refused'));
     await waitFor(() => expect(projectSelector).not.toBeDisabled());
-    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
-    await waitFor(() => expect(projectSelector).toHaveValue('p-client-a'));
+    await chooseProject('Client A');
+    await waitFor(() => expect(projectSelector).toHaveTextContent('Client A'));
     // Switching projects preserves the current view; the project title is on Dashboard.
     await fireEvent.keyDown(window, { key: 'd' });
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
