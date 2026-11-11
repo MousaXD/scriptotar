@@ -422,10 +422,10 @@
     const target = event.target;
     // Window-dispatched shortcuts have no Element target; nested editor content
     // must not accidentally trigger workspace navigation either.
-    // Listbox and combobox keyboard input belongs to the focused custom selector,
-    // including typeahead letters that also happen to be workspace shortcuts.
+    // Editing and selector widgets own their letter keys, including plaintext-only
+    // contenteditable fields and custom ARIA textboxes that are not native inputs.
     if (target instanceof Element &&
-        target.closest('input, textarea, select, [contenteditable="true"], [role="listbox"], [role="option"], [role="combobox"]')) return;
+        target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="listbox"], [role="option"], [role="combobox"]')) return;
     const shortcuts: Record<string, ViewId> = { d: 'dashboard', r: 'research', j: 'jobs', t: 'transcript', a: 'ai', l: 'library', ',': 'settings' };
     if (shortcuts[event.key.toLowerCase()]) activeView = shortcuts[event.key.toLowerCase()];
   }
