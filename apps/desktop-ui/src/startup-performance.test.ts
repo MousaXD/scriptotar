@@ -562,6 +562,63 @@ describe('progressive desktop startup', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
+  it('prevents project switching and creation while an active-project watchlist write is pending', async () => {
+    const saving = deferred<BootstrapData>();
+    const saveWatchlist = vi.fn(() => saving.promise);
+    const api = createMockClient({ saveWatchlist });
+    const selectProject = vi.spyOn(api, 'selectProject');
+    const createProject = vi.spyOn(api, 'createProject');
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Research' }));
+    await screen.findByRole('heading', { name: 'Research' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creator profile URL' }), {
+      target: { value: 'https://example.com/pending-watchlist' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save watchlist' }));
+    await waitFor(() => expect(saveWatchlist).toHaveBeenCalledTimes(1));
+
+    const projectSelector = screen.getByLabelText('Project');
+    expect(projectSelector).toBeDisabled();
+    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    expect(selectProject).not.toHaveBeenCalled();
+
+    await fireEvent.keyDown(window, { key: 'd' });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'Must Wait' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    expect(createProject).not.toHaveBeenCalled();
+    expect(await screen.findByText('Finish saving the watchlist before creating a project.')).toBeInTheDocument();
+
+    saving.resolve(structuredClone(mockBootstrap));
+    await waitFor(() => expect(projectSelector).not.toBeDisabled());
+    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+  });
+
+  it('releases the project-selection guard after a watchlist save fails', async () => {
+    const saving = deferred<BootstrapData>();
+    const api = createMockClient({ saveWatchlist: () => saving.promise });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Research' }));
+    await screen.findByRole('heading', { name: 'Research' });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creator profile URL' }), {
+      target: { value: 'https://example.com/rejected-watchlist' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save watchlist' }));
+    const projectSelector = screen.getByLabelText('Project');
+    expect(projectSelector).toBeDisabled();
+
+    saving.reject(new Error('Save refused'));
+    await waitFor(() => expect(projectSelector).not.toBeDisabled());
+    await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
+  });
+
   it('fails closed when a watchlist save returns a different active project', async () => {
     const api = createMockClient({
       saveWatchlist: async () => ({
