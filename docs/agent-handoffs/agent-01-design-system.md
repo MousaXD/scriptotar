@@ -152,3 +152,44 @@ On PR #89 source/head `c7adb8375b4aa49a567b1e32903b90a548d280f3`, [Scriptotar MC
 Repeated audit of all 18 changed files found no further confirmed source defect inside Agent 01 ownership. Global CSS, seven controls, popup positioning, RTL, tests and docs remain in scope. No Rust, existing views, AppShell, security checks, API or translation changes. Local working directory is `/` with no checkout; all source work used GitHub on the assigned branch.
 
 **Disposition: READY FOR AGENT 00 REVIEW of Agent 01 code and test coverage; NOT ready for integration/merge until latest exact-head required CI, packaged Windows/Linux WebView screenshot/keyboard accessibility evidence and other agents' native-selector migrations are cleared.** This documentation commit itself changes HEAD, so reverify CI on the resulting head.
+
+
+## Independent final audit checkpoint — 2026-11-11 (exact-head CI and dependency escalation)
+
+**Verified repository / branch / PR:** `MousaXD/scriptotar`; `agent-01/design-system-controls-overhaul`; existing draft [PR #89](https://github.com/MousaXD/scriptotar/pull/89) against `main`. Starting verified HEAD: `16b9e15837bba143b1e5d068c73fed5bc506ef12`. The GitHub comparison showed **22 commits ahead, 0 behind**, with exactly **18 changed files, all within Agent 01 exclusive ownership**. The execution container's working directory is `/` and is not a Git checkout, so code and status were inspected through the existing GitHub connection. No `main` edits or other agents' files were made.
+
+### Finished code review
+
+Re-audited Select and Popover keyboard/focus semantics, RTL-aware floating placement, slider/radio/checkbox/switch/text input styles and labels, dark/system-light tokens, and the existing interaction and viewport-position tests. No additional reproducible Agent 01 source defect was identified after the previous fixes. Menu clipping inside transformed WebView ancestors and screen-reader announcements still require real installed-app testing, not speculative source changes. All previously identified fixes are preserved.
+
+### Exact-head validation results at `16b9e15837bba143b1e5d068c73fed5bc506ef12`
+
+| GitHub Actions run | Result | Verified detail |
+| --- | --- | --- |
+| [Desktop UI #42931669937](https://github.com/MousaXD/scriptotar/actions/runs/42931669937) | **PASS** | Svelte/type, interaction tests and production build |
+| [CI #42931669965](https://github.com/MousaXD/scriptotar/actions/runs/42931669965) | **PASS** | Version identity, frontend, sidecar and Rust tests |
+| [Scriptotar MCP E2E #42931669865](https://github.com/MousaXD/scriptotar/actions/runs/42931669865) | **PASS** | MCP protocol, frontend checks/tests/build and gateway security |
+| [Security hygiene #42931669926](https://github.com/MousaXD/scriptotar/actions/runs/42931669926) | **PASS** | Security hygiene workflow |
+| [Linux Tauri Package #42931669998](https://github.com/MousaXD/scriptotar/actions/runs/42931669998) | **PASS** | Installed deb package and runtime, MCP default deny/auth/revocation, desktop shell launch, repeated installed-app IPC/persistence E2E |
+| [Windows Tauri Installer #42931669863](https://github.com/MousaXD/scriptotar/actions/runs/42931669863) | **PASS** | NSIS installer bundle, checksum, clean-machine install and packaged runtime smoke |
+| [Tauri migration integration #42931669867](https://github.com/MousaXD/scriptotar/actions/runs/42931669867) | **FAIL** | **Supply chain → Rust advisories**; all its other jobs passed, including frontend, Rust workspace, sidecar, integrated Tauri build |
+
+The earlier MCP CI logs also confirmed `svelte-check` **0 errors / 0 warnings**, **90 frontend tests passed across 15 files**, and successful Vite production build. The source has not been altered since that exact-head validation; this handoff-only update will produce a new HEAD that must be revalidated as required by Agent 00.
+
+### Exact release blocker — unrelated to Agent 01
+
+[Failure: Tauri migration integration #42931669867, Supply chain job](https://github.com/MousaXD/scriptotar/actions/runs/42931669867). `cargo audit` fetched **1,446 RustSec advisories**, scanned **495 crates**, and found **one vulnerability**:
+
+- Crate: `libsqlite3-sys` **0.30.1**
+- Advisory: **RUSTSEC-2026-0459**, C SQLite **CVE-2026-119375**
+- Severity: **6.8 (medium)**; advisory date 2026-10-30
+- RustSec supplied resolution: `libsqlite3-sys >=0.39.0` (patched)
+- Separate log warnings: **8 allowed warnings** covering unmaintained or unsound dependencies; these are not the vulnerability that caused exit code 1
+
+**Ownership dependency:** Rust dependencies, `Cargo.lock`, database/SQLite compatibility and supply-chain workflow configuration are outside Agent 01. Agent 00 must assign the dependency upgrade to its Rust/database or security owner, verify API/migration compatibility, and rerun the non-weakened supply-chain audit. **Do not ignore or whitelist RUSTSEC-2026-0459, remove the test, or change Rust dependencies from this branch.**
+
+Other integration dependencies remain: the owners of AppShell/Research/AI/Settings/Library/Transcript must migrate the **20 original native selectors** where branded opened menus are required; Agent 07 owns translation keys; Agent 08 owns real dark/light/Arabic RTL and keyboard/screen-reader screenshot certification.
+
+### Verdict
+
+**READY FOR AGENT 00 REVIEW** of the Agent 01 design-system implementation: source ownership respected, all six named in-scope and packaging workflows passed on the prior exact head, no remaining confirmed Agent 01 defect. **BLOCKED FOR MERGE / RELEASE** until the RustSec vulnerability is fixed by the correct owner, required supply-chain CI turns green, and Agent 00 completes visual/integration certification. Maintain the existing draft PR.
