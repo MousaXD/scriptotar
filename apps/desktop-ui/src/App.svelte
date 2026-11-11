@@ -240,6 +240,7 @@
         throw new Error('The active project changed after the failed operation.');
       }
       data = prepareData(snapshot);
+      return snapshot;
     } catch {
       if (generation !== workspaceGeneration) return;
       data = null;
@@ -323,7 +324,16 @@
           error = message;
         } else {
           if (!hadActiveProject) switchError = message;
-          await reconcileFailedProjectMutation(previousProjectId, generation, message);
+          const recovered = await reconcileFailedProjectMutation(previousProjectId, generation, message);
+          // Creating a project and activating it are separate backend writes.
+          // A rejected activation can leave a newly created project available.
+          if (recovered?.projects.some((project) =>
+            !priorProjectIds.has(project.id) && project.name === name.trim()
+          )) {
+            const warning = 'A project with this name may already have been created. Check the project selector before retrying.';
+            switchError = warning;
+            throw new Error(warning);
+          }
         }
       }
       throw cause;
