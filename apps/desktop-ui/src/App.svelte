@@ -417,7 +417,7 @@
 
   function keyNav(event: KeyboardEvent) {
     // Modal dialogs must own keyboard input; workspace shortcuts must not navigate behind them.
-    if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+    if (document.querySelector('[role="dialog"][aria-modal="true"], dialog[open]')) return;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target;
     // Window-dispatched shortcuts have no Element target; nested editor content
