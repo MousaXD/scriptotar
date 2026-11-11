@@ -14,7 +14,7 @@
   let connection: McpConnectionStatus | null = null;
   let busy = false;
   let error = '';
-  let notice = '';
+  let notice: '' | 'saved' | 'connected' | 'disconnected' = '';
   let acknowledge = false;
   let approvedPaths = '';
   let approvedPrograms = '';
@@ -23,8 +23,8 @@
   let rememberKey = false;
   let customHostname = '';
   let advanced = false;
-  let copyStatus = '';
-  let pollError = '';
+  let copyStatus: '' | 'copied' | 'failed' = '';
+  let pollError = false;
   let loading = true;
   let timer: ReturnType<typeof setInterval> | undefined;
 
@@ -72,9 +72,9 @@
   async function refresh() {
     try {
       connection = await api.mcpConnectionStatus();
-      pollError = '';
+      pollError = false;
     } catch {
-      pollError = $translator('mcp.statusUnavailable');
+      pollError = true;
     }
   }
 
@@ -97,7 +97,7 @@
       approvedPrograms = permissions.allowedPrograms.join('\n');
       acknowledge = false;
       await refresh();
-      notice = $translator('mcp.savedNotice');
+      notice = 'saved';
       step = 2;
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -121,7 +121,7 @@
       else connection = await api.mcpConnectManual(customHostname.trim());
       apiKey = ''; // Never keep a key in the DOM after IPC completes.
       step = 3;
-      notice = $translator('mcp.connectedNotice');
+      notice = 'connected';
     } catch (err) {
       apiKey = '';
       error = err instanceof Error ? err.message : String(err);
@@ -137,7 +137,7 @@
     try {
       connection = await api.mcpDisconnect();
       step = 2;
-      notice = $translator('mcp.disconnectedNotice');
+      notice = 'disconnected';
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -148,9 +148,9 @@
   async function copyUrl(value: string) {
     try {
       await navigator.clipboard.writeText(value);
-      copyStatus = $translator('mcp.copiedNotice');
+      copyStatus = 'copied';
     } catch {
-      copyStatus = $translator('mcp.copyFailed');
+      copyStatus = 'failed';
     }
   }
 </script>
@@ -250,11 +250,11 @@
       <a class="button secondary external" href="https://chatgpt.com/plugins" target="_blank" rel="noopener noreferrer">{$translator('mcp.openPlugins')}</a>
       {#if connection.state === 'error'}<button class="button secondary" on:click={() => step = 2}>{$translator('mcp.editConnection')}</button>{/if}
       <button class="button secondary danger" disabled={busy} on:click={disconnect}>{busy ? $translator('mcp.stopping') : $translator('mcp.disconnect')}</button>
-      {#if copyStatus}<p role="status">{copyStatus}</p>{/if}
+      {#if copyStatus}<p role="status">{copyStatus === 'copied' ? $translator('mcp.copiedNotice') : $translator('mcp.copyFailed')}</p>{/if}
     </div>
   {/if}
-  {#if notice}<p class="message" role="status">{notice}</p>{/if}
-  {#if pollError}<p class="warning" role="status">{pollError}</p>{/if}
+  {#if notice}<p class="message" role="status">{notice === 'saved' ? $translator('mcp.savedNotice') : notice === 'connected' ? $translator('mcp.connectedNotice') : $translator('mcp.disconnectedNotice')}</p>{/if}
+  {#if pollError}<p class="warning" role="status">{$translator('mcp.statusUnavailable')}</p>{/if}
   {#if error}<p class="warning" role="alert">{error}</p>{/if}
 </section>
 
