@@ -97,6 +97,33 @@ describe('progressive desktop startup', () => {
     expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
   });
 
+  it('reserves workspace letter shortcuts for plaintext-only editors and ARIA textboxes', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+
+    for (const attributes of [
+      { contenteditable: 'plaintext-only' },
+      { role: 'textbox' },
+      { role: 'searchbox' }
+    ]) {
+      const editor = document.createElement('div');
+      for (const [name, value] of Object.entries(attributes)) editor.setAttribute(name, value);
+      editor.setAttribute('tabindex', '0');
+      screen.getByRole('main').appendChild(editor);
+      try {
+        editor.focus();
+        await fireEvent.keyDown(editor, { key: 'r' });
+        expect(screen.getByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+        expect(screen.queryByRole('heading', { name: 'Research' })).not.toBeInTheDocument();
+      } finally {
+        editor.remove();
+      }
+    }
+
+    await fireEvent.keyDown(window, { key: 'r' });
+    expect(await screen.findByRole('heading', { name: 'Research' })).toBeInTheDocument();
+  });
+
   it('reserves workspace letter shortcuts for an open native dialog', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
