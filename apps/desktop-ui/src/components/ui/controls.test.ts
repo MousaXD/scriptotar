@@ -35,6 +35,32 @@ describe('shared workstation controls', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it('closes when the selected option is reselected without repeating a change callback', async () => {
+    const onChange = vi.fn();
+    render(Select, { props: {
+      label: 'Transcription quality', value: 'fast',
+      options: [{ value: 'fast', label: 'Fast' }, { value: 'accurate', label: 'Accurate' }],
+      onChange
+    } });
+    const trigger = screen.getByRole('combobox', { name: 'Transcription quality' });
+    await fireEvent.click(trigger);
+    await fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Fast' }));
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    expect(onChange).not.toHaveBeenCalled();
+    expect(trigger).toHaveTextContent('Fast');
+
+    await fireEvent.click(trigger);
+    await fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Accurate' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith('accurate');
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    expect(trigger).toHaveTextContent('Accurate');
+
+    await fireEvent.click(trigger);
+    await fireEvent.click(within(screen.getByRole('listbox')).getByRole('option', { name: 'Accurate' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
   it('closes with Escape and outside pointer presses without changing the value', async () => {
     const onChange = vi.fn();
     render(Select, { props: {

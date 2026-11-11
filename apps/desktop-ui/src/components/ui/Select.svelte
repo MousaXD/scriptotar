@@ -71,8 +71,12 @@
   function choose(index: number) {
     const option = options[index];
     if (!option || option.disabled) return;
-    value = option.value;
-    onChange?.(value);
+    // Match native select change semantics: reselecting the current value
+    // closes the menu without repeating save/jobs owned by the caller.
+    if (option.value !== value) {
+      value = option.value;
+      onChange?.(value);
+    }
     close(true);
   }
 
