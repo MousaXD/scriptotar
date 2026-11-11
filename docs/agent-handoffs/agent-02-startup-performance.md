@@ -151,3 +151,23 @@ The existing [issue #97](https://github.com/MousaXD/scriptotar/issues/97) remain
 **READY FOR AGENT 00 REVIEW — Agent 02 frontend scope.** All independently executable source and tests are pushed, and the code-bearing commit passed all frontend checks. **BLOCKED FOR INTEGRATED MERGE / RELEASE** until security issue #97, shared selector integration and Agent 08 packaged-performance acceptance are resolved. No assertions, security gates or old features were removed or weakened.
 
 This final handoff is a documentation-only commit after the green code run; CI on its new SHA must be checked independently for merge-gate certification. Avoid additional no-op documentation commits that supersede running checks.
+
+## Continuation audit — empty bootstrap, create response, and watchlist isolation
+
+**Branch and worktree verification:** Source repository `MousaXD/scriptotar`; original branch `agent-02/frontend-startup-performance`; [PR #90](https://github.com/MousaXD/scriptotar/pull/90) remains the original open review PR; `main` remained `f741244634b5143602a21a554094a498a0005b11`. Connected GitHub operations were performed on the original branch. Current tool runtime is `/`, which has **no local Git checkout**, so no local npm or Git working-tree validation is claimed. GitHub branch/pr pointer and six changed paths were verified.
+
+**Independent source audit:** Rechecked `App.svelte`, `AppShell.svelte`, `main.ts`, the workspace skeleton, dedicated startup tests, and existing mock/management interactions for startup recovery, project-specific actions, keyboard focus and custom selector typeahead, Arabic/English RTL, semantic design tokens, responsive loading, data isolation and asynchronous job refresh. All file changes remain in Agent 02 ownership. Existing features and tests were preserved; no security policies or assertions were loosened.
+
+**Three additional fail-closed fixes within owned files:**
+1. A backend bootstrap with **zero projects but a nonempty active project ID** previously exposed the first-project form rather than detecting the inconsistent state. It now shows the retryable boot error.
+2. A nominally successful project creation that returned the **previous active project** previously appeared to succeed without activating the new project. It now fails closed, requiring a fresh bootstrap instead of continuing with potentially stale data.
+3. A watchlist save response with an **unexpected active project** previously was silently ignored while leaving the outdated workspace actionable. It now invalidates the visible snapshot and offers retry, preventing subsequent project-sensitive actions from using a possibly wrong active project.
+
+**Test evidence:** Dedicated startup tests increased from **14 to 17**. All existing and new assertions run in exact-code [Desktop UI workflow #42939479073](https://github.com/MousaXD/scriptotar/actions/runs/42939479073), **success** on code commit `45c9cbdf9b00a4b892f0a977a88cc6c84ef7ef37`. Reported by completed job log:
+- `svelte-check`: 0 errors and 0 warnings.
+- `npm run test`: **13 files, 95 of 95 tests passed**, including **17 of 17 startup tests**.
+- `npm run build`: success (Vite 1.44s); JS **252.69 KB / 77.79 KB gzip**, CSS **74.34 KB / 13.62 KB gzip**. These are built asset sizes, not desktop startup-time measurements.
+
+**Remaining blockers, all outside independently mergeable Agent 02 scope:** [issue #97](https://github.com/MousaXD/scriptotar/issues/97) remains a genuine Rust audit finding in `libsqlite3-sys 0.30.1` (RUSTSEC-2026-0459), requiring Rust/database/dependency ownership and secure upgrade. Agent 01 [PR #89](https://github.com/MousaXD/scriptotar/pull/89) provides shared styled `Select` for AppShell project/language controls, but its component is absent on the standalone baseline. Do not import missing components or copy another agent's code: Agent 00 must approve integration sequencing; the AppShell owner will then migrate controls and Agent 08 must verify their keyboard, focus, RTL and real packaged performance. Agent 03's optional summary bootstrap depends on Agent 06 transcript hydration. Windows/Linux installer builds alone do not prove startup latency improvements.
+
+**Final verdict: READY FOR AGENT 00 REVIEW (Agent 02 frontend scope); BLOCKED FOR INTEGRATED MERGE/RELEASE** until the mandatory Rust security check, shared dropdown integration, and Agent 08 packaged-app acceptance are complete. This documentation-only commit changes branch HEAD without changing the fully tested frontend code. For formal review and branch protection, check CI on the final documentation HEAD, not only the last code commit.
