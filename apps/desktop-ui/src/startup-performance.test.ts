@@ -196,6 +196,21 @@ describe('progressive desktop startup', () => {
     expect(screen.getByText('NEW PROJECT JOB')).toBeInTheDocument();
   });
 
+  it('rejects an empty bootstrap snapshot that still claims an active project', async () => {
+    const api = createMockClient({
+      bootstrap: async () => ({
+        ...structuredClone(mockBootstrap),
+        projects: [],
+        activeProjectId: 'ghost-project'
+      })
+    });
+    render(App, { props: { api } });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not identify an active project');
+    expect(screen.queryByRole('heading', { name: 'Create your first project' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
   it('does not show a different project when bootstrap returns an invalid active ID', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), activeProjectId: 'missing-project' })
@@ -282,6 +297,23 @@ describe('progressive desktop startup', () => {
 
     expect(await screen.findByRole('heading', { name: 'Protected Project' })).toBeInTheDocument();
     expect(screen.getByLabelText('Project')).toHaveValue('p-protected');
+  });
+
+  it('fails closed when creating a project returns the previously active project', async () => {
+    const api = createMockClient({
+      createProject: async () => structuredClone(mockBootstrap)
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'New project' }));
+    await fireEvent.input(screen.getByLabelText('Project name'), {
+      target: { value: 'A Newly Created Project' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not become active');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('fails closed on a malformed project creation result instead of exposing the old project', async () => {
