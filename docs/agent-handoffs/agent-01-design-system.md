@@ -274,3 +274,28 @@ The same source HEAD's CI #42943822895, MCP E2E #42943823223, Tauri migration #4
 ### Final scoped verdict
 
 **READY FOR AGENT 00 REVIEW** of Agent 01's source, tests and design-system contract: the identified defects are committed, the exact-source frontend quality gate passed, and all changes remain within ownership. **BLOCKED FOR MERGE/RELEASE** until the non-owned RustSec vulnerability and cross-agent installed-app certification are resolved. Keep the existing PR draft. This handoff-only update advances the PR HEAD, which must be validated again under the coordinator's exact-head CI rule.
+
+
+## Exact-head completed gate audit — 2026-11-11 at 06:25 GST
+
+**Verified repository:** `MousaXD/scriptotar`; **working directory:** `/` (not a Git checkout); **assigned branch:** `agent-01/design-system-controls-overhaul`; **existing draft PR:** [#89](https://github.com/MousaXD/scriptotar/pull/89); **reviewed source/PR HEAD:** `6814349d3d0a3029f63fb4519a94675be7ea6131`. Compared against `main` at `f741244634b5143602a21a554094a498a0005b11`: 30 commits ahead, 0 behind, and all 18 changed files belong to Agent 01. No unresolved PR review threads were reported. Source remained unchanged after the last checked-in accessibility/RTL fixes.
+
+The complete exact-commit CI matrix for `6814349d3d0a3029f63fb4519a94675be7ea6131` is now **finished**:
+
+| Workflow | Run | Verdict |
+| --- | --- | --- |
+| Desktop UI | [42944037004](https://github.com/MousaXD/scriptotar/actions/runs/42944037004) | PASS |
+| CI | [42944036996](https://github.com/MousaXD/scriptotar/actions/runs/42944036996) | PASS |
+| Scriptotar MCP E2E | [42944037049](https://github.com/MousaXD/scriptotar/actions/runs/42944037049) | PASS |
+| Security hygiene | [42944037014](https://github.com/MousaXD/scriptotar/actions/runs/42944037014) | PASS |
+| Linux Tauri Package | [42944037034](https://github.com/MousaXD/scriptotar/actions/runs/42944037034) | PASS |
+| Windows Tauri Installer | [42944037091](https://github.com/MousaXD/scriptotar/actions/runs/42944037091) | PASS |
+| Tauri migration integration | [42944036981](https://github.com/MousaXD/scriptotar/actions/runs/42944036981) | **FAIL — Rust advisories** |
+
+Inside the failed Tauri migration workflow, the **Svelte frontend, Rust workspace, Python sidecar, Rust↔sidecar integration and integrated Tauri build** all passed. Only **Supply chain → Rust advisories** failed. On this HEAD, desktop Svelte/type checks and all 91 frontend tests passed, with zero Svelte errors and zero warnings; the production build passed. Native Linux/Windows installer job success is certified by workflow results, but these results do *not* substitute for Agent 08's dark/light/Arabic RTL and assistive-technology screenshot review.
+
+**Root cause external to this branch:** `libsqlite3-sys 0.30.1`, **RUSTSEC-2026-0459 / CVE-2026-119375**; audit recommends `>=0.39.0`. `Cargo.lock` and Rust/SQLite migration compatibility remain the responsibility of Agent 00's Rust/database/security owner. Do not suppress this security check, and do not change another agent's files from Agent 01.
+
+**Further source audit:** Verified actual `main.ts` stylesheet import order (tokens → app → base → theme → RTL); reviewed the owned tokens, controls, keyboard/accessible descriptions, logical RTL text alignment, floating placement, reduced-motion styles, and tests for regressions. Found no new reproducible Agent 01 defect. The 20 original native selectors still require migration by their view/AppShell owners to achieve consistently branded *open* menus; screen-reader and transformed-container popup certification remains Agent 08's integration gate.
+
+**Final owner-scope verdict: READY FOR AGENT 00 REVIEW. Final merge/release verdict: BLOCKED.** Preserve existing draft PR #89. This appendix updates documentation only and creates a new HEAD; certify any merge using that final commit's required checks rather than treating prior-HEAD results as final-HEAD results.
