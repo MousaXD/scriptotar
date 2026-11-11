@@ -378,6 +378,10 @@
     .research-search { flex-basis: 100%; }
   }
   @media (max-width: 790px) {
+    /* Arabic watchlist attention text can exceed the single-line heading width. */
+    .research-head { flex-wrap: wrap; }
+    .research-summary { min-width: 0; max-width: 100%; justify-content: flex-start; }
+    .attention-link { overflow-wrap: anywhere; }
     .research-row.table-head { display: none; }
     .research-row:not(.table-head) { min-width: 0; grid-template-columns: 26px minmax(0, 1fr) repeat(3, auto); grid-template-areas: 'check media media media media' '. views likes comments comments' '. date date duration duration'; gap: 9px 13px; margin: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
     .check-only { grid-area: check; }
