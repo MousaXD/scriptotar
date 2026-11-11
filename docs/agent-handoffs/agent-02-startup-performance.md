@@ -96,3 +96,30 @@ Existing `App.test.ts`, `gui-overhaul.test.ts`, `project-management.test.ts`, an
 This handoff update alone creates a new documentation-only HEAD; the code remains identical to the fully passed commit above. Use the newest head's CI results for formal branch-protection checks.
 
 **PR status verified:** `ready for review` (not draft), open, unmerged, same branch; latest reviewed exact-code-and-documentation HEAD `3533f3a3169174276a55eb14fa15b5cc6b7d14a3` passed Desktop UI before this administrative status correction; latest branch-only documentation commit will require new CI. `main` remains at the original baseline SHA. Agent 00 must not merge while repository-wide and packaged acceptance gates are incomplete.
+
+## Final exact-head validation and external blockers — 2026-11-11
+
+### Verified source, ownership and PR
+- Inspected `/` in the current runtime; it is **not** a Git checkout (so no local branch or dirty state can be claimed). The GitHub connector verified the assigned branch and PR #90 at `f31e315d879f21dbb71b26d215c3ac2668d7ed84` before this report edit; `main` was still `f741244634b5143602a21a554094a498a0005b11`.
+- Reused original branch `agent-02/frontend-startup-performance` and [PR #90](https://github.com/MousaXD/scriptotar/pull/90); no new branch, duplicate PR, merge or other agent's file modification.
+- All six PR-changed paths remain within Agent 02 ownership: `App.svelte`, `AppShell.svelte`, `WorkspaceSkeleton.svelte`, `main.ts`, `startup-performance.test.ts`, and this handoff.
+
+### **Verified** complete CI at last exact source-and-doc HEAD
+Commit `f31e315d879f21dbb71b26d215c3ac2668d7ed84` has completed all 12 GitHub check jobs: **11 succeeded, 1 failed**.
+
+**Pass:** [Desktop UI workflow #42931619454](https://github.com/MousaXD/scriptotar/actions/runs/42931619454) — `npm ci`, Svelte/type check with **0 errors, 0 warnings**, **13 test files / 90 tests passed including 12 Agent 02 startup tests**, and Vite production build. Compiled JS: **252.25 kB (77.65 kB gzip)**; compiled CSS: **74.34 kB (13.62 kB gzip)**. These are build sizes, not measured startup-time reductions. Other completed passing check jobs: full CI test, Rust workspace, Rust↔sidecar integration, Python sidecar, Svelte frontend, integrated Tauri build, Windows NSIS installer/smoke, Linux deb build/validation, MCP, and repository security hygiene.
+
+**Fail:** [Tauri migration integration #42931619259](https://github.com/MousaXD/scriptotar/actions/runs/42931619259), job **Supply chain**, Rust advisories. `cargo audit` scanned 495 crates and reported **one real vulnerability**: `libsqlite3-sys 0.30.1`, **RUSTSEC-2026-0459 / CVE-2026-119375**, CVSS **6.8 (medium)**, audit-reported patched floor `>=0.39.0`. Eight additional allowed warnings were not the gate's failure reason. This must **not** be suppressed, ignored or downgraded to make CI green. The existing PR changes no Cargo source, manifest, lockfile or CI policy, so remediation requires a Rust/database/dependency owner and full migration/release verification. Created tracked [issue #97](https://github.com/MousaXD/scriptotar/issues/97) for Agent 00 coordination.
+
+### Agent 08 GUI integration dependency
+Agent 08 left a source-verified [comment on PR #90](https://github.com/MousaXD/scriptotar/pull/90#issuecomment-6782304120): AppShell still uses **native project and language selects**, which must migrate to Agent 01's shared styled `Select` to eliminate OS-owned popup appearance and pass integrated GUI certification. This is an **existing cross-agent dependency**, not a regression introduced by this startup change.
+- Agent 01's [PR #89](https://github.com/MousaXD/scriptotar/pull/89) is **draft/unmerged** and introduces the missing `src/components/ui/Select.svelte` and its keyboard/focus/listbox APIs. It is absent from Agent 02's standalone baseline.
+- Do not import a non-existent component, copy another agent's component, or break already-passing independent CI. Agent 00 must first establish an approved integration baseline containing PR #89; then Agent 02's AppShell owner (or a coordinated integration agent) can replace the two selects using the shared `Select` API, preserve project selection/error behavior and persisted EN/AR toggles, and update existing keyboard/RTL/accessibility coverage **without weakening assertions**.
+- Agent 08 must certify the final integrated exact SHA. This dependency was acknowledged in [PR #90 discussion](https://github.com/MousaXD/scriptotar/pull/90#issuecomment-6783567173).
+- Agent 03's optional `bootstrapSummary()` remains **disabled** here until Agent 06's secure transcript hydration is integrated and independently verified.
+
+### Current readiness
+**Agent 02 frontend-only implementation: complete and independently CI-tested.**
+**Full overhaul / merge verdict: BLOCKED** by verified Rust supply-chain vulnerability [#97](https://github.com/MousaXD/scriptotar/issues/97) and outstanding shared-select/packaged cold-warm startup certification dependencies. PR #90 is open and ready for Agent 00 review, but **must not be merged as a release-ready integration** on the strength of frontend tests alone.
+
+This documentation-only commit changes the SHA and triggers a new CI run; the code and tests are unchanged from the fully verified 11/12 source head above. Check the *new* SHA's check status before formal merge-gate approval.
