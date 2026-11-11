@@ -211,6 +211,38 @@ describe('progressive desktop startup', () => {
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
+  it('fails closed on an inconsistent background bootstrap while retaining retry recovery', async () => {
+    let bootstrapCalls = 0;
+    let notify: ((id: string) => void) | undefined;
+    const api = createMockClient({
+      bootstrap: async () => {
+        bootstrapCalls += 1;
+        if (bootstrapCalls === 2) {
+          return { ...structuredClone(mockBootstrap), activeProjectId: 'missing-after-refresh' };
+        }
+        return structuredClone(mockBootstrap);
+      },
+      listJobs: async () => structuredClone(mockBootstrap.jobs).map((job) =>
+        job.id === 'j-1' ? { ...job, state: 'completed' as const } : job
+      ),
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await waitFor(() => expect(notify).toBeTypeOf('function'));
+    notify?.('j-1');
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('did not identify an active project');
+    expect(screen.queryByRole('heading', { name: 'Creator Lab' })).not.toBeInTheDocument();
+    expect(bootstrapCalls).toBe(2);
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('heading', { name: 'Creator Lab' })).toBeInTheDocument();
+    expect(bootstrapCalls).toBe(3);
+  });
+
   it('does not show a different project when bootstrap returns an invalid active ID', async () => {
     const api = createMockClient({
       bootstrap: async () => ({ ...structuredClone(mockBootstrap), activeProjectId: 'missing-project' })
