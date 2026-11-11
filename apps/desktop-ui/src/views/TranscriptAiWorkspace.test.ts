@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, mockBootstrap } from '../api/mockClient';
 import type { Transcript } from '../types';
 import TranscriptView from './TranscriptView.svelte';
@@ -73,6 +73,69 @@ describe('Transcript reader workspace', () => {
     expect(screen.queryByTestId('transcript-content')).not.toBeInTheDocument();
   });
 
+  it('clears old content when the same transcript ID points to a different project', async () => {
+    const oldTranscript = mockBootstrap.transcripts[1];
+    const replacement: Transcript = {
+      ...oldTranscript,
+      projectId: 'another-project',
+      text: 'New project transcription',
+      segments: [{ id: 'replacement', startSeconds: 0, endSeconds: 3, text: 'New project transcription' }]
+    };
+    const newer = deferred<Transcript>();
+    let reads = 0;
+    const api = createMockClient({
+      getTranscript: () => ++reads === 1 ? Promise.resolve(oldTranscript) : newer.promise
+    });
+    const { rerender } = render(TranscriptView, {
+      props: { api, transcripts: [oldTranscript], selectedId: oldTranscript.id }
+    });
+    expect(await screen.findByTestId('transcript-content')).toHaveTextContent('The caption is doing two jobs');
+
+    await rerender({ api, transcripts: [replacement], selectedId: oldTranscript.id });
+    await waitFor(() => expect(screen.queryByTestId('transcript-content')).not.toBeInTheDocument());
+    expect(reads).toBe(2);
+
+    await act(async () => {
+      newer.resolve(replacement);
+      await newer.promise;
+    });
+    expect(await screen.findByTestId('transcript-content')).toHaveTextContent('New project transcription');
+    expect(screen.getByTestId('transcript-content')).not.toHaveTextContent('The caption is doing two jobs');
+  });
+
+  it('keeps all five export actions usable, regardless of transcript segment paging', async () => {
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn(() => 'blob:transcript-test');
+    URL.revokeObjectURL = vi.fn();
+    const names: string[] = [];
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    });
+    try {
+      const api = createMockClient();
+      const { container } = render(TranscriptView, {
+        props: { api, transcripts: [mockBootstrap.transcripts[1]], selectedId: 't-en' }
+      });
+      await screen.findByTestId('transcript-content');
+      const exports = container.querySelectorAll('.export-popover button');
+      expect(exports).toHaveLength(5);
+      for (const control of exports) await fireEvent.click(control);
+      expect(names).toEqual([
+        'Caption pacing breakdown.txt',
+        'Caption pacing breakdown.timestamps.txt',
+        'Caption pacing breakdown.srt',
+        'Caption pacing breakdown.vtt',
+        'Caption pacing breakdown.json'
+      ]);
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(5);
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      clickSpy.mockRestore();
+    }
+  });
+
   it('retains Arabic direction and timestamp controls in the reader', async () => {
     render(TranscriptView, {
       props: { api: createMockClient(), transcripts: [mockBootstrap.transcripts[0]], selectedId: 't-ar' }
@@ -85,6 +148,33 @@ describe('Transcript reader workspace', () => {
 });
 
 describe('AI Studio request isolation', () => {
+  it('keeps a completed prompt when changing between Copy Prompt and BYOK', async () => {
+    const api = createMockClient();
+    render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });
+    await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), { target: { value: 'Reusable source' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
+    const preview = screen.getByPlaceholderText('Build a prompt to preview it here…');
+    await waitFor(() => expect(preview).toHaveValue(expect.stringContaining('Reusable source')));
+    const built = (preview as HTMLTextAreaElement).value;
+    await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
+    expect(preview).toHaveValue(built);
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy Prompt' }));
+    expect(preview).toHaveValue(built);
+  });
+
+  it('invalidates a source when its transcript ID changes ownership project', async () => {
+    const api = createMockClient();
+    const original = mockBootstrap.transcripts[0];
+    const { rerender } = render(AiStudioView, { props: { api, transcripts: [original] } });
+    await fireEvent.change(screen.getByLabelText('Transcript source'), { target: { value: original.id } });
+    const source = screen.getByPlaceholderText('Paste or load transcript/research text…');
+    await waitFor(() => expect(source).toHaveValue(original.text));
+    const moved: Transcript = { ...original, projectId: 'another-project' };
+    await rerender({ api, transcripts: [moved] });
+    await waitFor(() => expect(screen.getByLabelText('Transcript source')).toHaveValue('manual'));
+    expect(source).toHaveValue('');
+    expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument();
+  });
   it('allows a new provider run after inputs change without an old completion clearing busy state', async () => {
     const old = deferred<string>();
     const next = deferred<string>();
