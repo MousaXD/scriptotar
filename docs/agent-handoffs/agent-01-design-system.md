@@ -98,3 +98,30 @@ The required `npm ci`, `npm run check`, `npm run test`, `npm run build` and inst
 **Independent integration dependencies:** The other agents own migration of existing `<select>` markup (20 baseline instances) and view-level layout changes. Agent 07 owns translation strings; Agent 08 owns rendered screenshot infrastructure. The floating action and Svelte components still need actual Linux/Windows WebView testing for focus, popup clipping and RTL visual positions. Bundled offline font licensing/assets remain unapproved; installed-font fallback is intentional.
 
 **Continuation verdict: BLOCKED from merge** until the exact PR head has successful Desktop UI/type/test/build checks and Agent 00 receives installed-app UI evidence. All code fixes identified in this scope-only audit are committed. Preserve the existing draft PR.
+
+
+## CI continuation — exact-head diagnostics and correction (2026-11-11)
+
+**Last independently audited source commit:** `a63c9e500f788f1ebbdd81014ea73965e9e85a78`.
+
+**Actual failed CI evidence:**
+
+- [Desktop UI #42927303086](https://github.com/MousaXD/scriptotar/actions/runs/42927303086), on `30c0fdca69ef2669ba45158f727183abebb301f7`, **failed** at `npm run check` with three errors and one warning.
+- Error 1: `Select.svelte` exported a TypeScript type from the instance component script, which Svelte disallows.
+- Error 2: `RadioGroup.svelte` exported a TypeScript type from the instance component script.
+- Error 3: `TextField.svelte` declared `autocomplete` as unconstrained `string`; Svelte's HTML attribute type is narrower.
+- Warning: `Select.svelte` placed `aria-invalid` on the trigger's implicit `button` role, which does not support that ARIA property.
+- [Scriptotar MCP E2E #42927303013](https://github.com/MousaXD/scriptotar/actions/runs/42927303013) failed at the same frontend `npm run check` step; there is no separate demonstrated MCP security regression in this run.
+- [Security hygiene #42927303011](https://github.com/MousaXD/scriptotar/actions/runs/42927303011) passed on the older source commit. This result **must not be treated as an exact-new-head pass**.
+- On the older Windows installer job, `Build frontend assets` and `Build locked Windows binary` steps succeeded before a newer commit superseded/cancelled the workflow. These individual step passes do not certify the entire installer.
+
+**Correction committed and pushed:**
+
+- Moved the exported `SelectOption` and `RadioOption` type definitions to Svelte module scripts, preserving consumer-facing type exports.
+- Typed `TextField.autocomplete` as `HTMLInputAttributes['autocomplete']` from `svelte/elements`.
+- Moved `aria-invalid` to the role=`listbox` element rather than using an unsupported attribute on a button. The invalid visual style and all existing selection/keyboard handlers remain intact.
+- No CI steps, scripts, assertions, security checks, or existing product functionality were removed or loosened.
+
+**Revalidation:** [Desktop UI #42929149805](https://github.com/MousaXD/scriptotar/actions/runs/42929149805) is the source-fix rerun for `a63c9e500f788f1ebbdd81014ea73965e9e85a78`. At the last check it was **queued**, as were the other workflows on that commit (the Linux package showed pending). Do not infer that tests passed from their source presence or from the unrelated successful Windows build steps.
+
+**Current verdict: BLOCKED.** Source-level fixes are committed; exact-head Svelte/type check, component tests, production build, packaged-app behavior, WebView visuals and the integration owners' migration of legacy selectors remain necessary. The next handoff-only commit itself also needs fresh exact-head CI according to the coordinator's merge gate.
