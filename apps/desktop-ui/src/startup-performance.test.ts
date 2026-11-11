@@ -55,6 +55,52 @@ describe('progressive desktop startup', () => {
     expect(attempts).toBe(2);
   });
 
+  it('finds a project near the end of a large workspace without prebuilding every palette command', async () => {
+    const projects = Array.from({ length: 75 }, (_, index) => ({
+      ...mockBootstrap.projects[0],
+      id: `project-${index}`,
+      name: `Ordinary workspace ${index}`
+    }));
+    projects.push({ ...mockBootstrap.projects[0], id: 'project-target', name: 'Distinctive Zebra Workspace' });
+    const api = createMockClient({
+      bootstrap: async () => ({
+        ...structuredClone(mockBootstrap),
+        projects,
+        activeProjectId: 'project-0'
+      })
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Ordinary workspace 0' });
+    await fireEvent.input(screen.getByLabelText('Search workspace'), {
+      target: { value: 'Distinctive Zebra' }
+    });
+    expect(await screen.findByRole('button', { name: /Distinctive Zebra Workspace.*Project/ })).toBeInTheDocument();
+  });
+
+  it('does not schedule job refreshes from an event after unmount', async () => {
+    let notify: ((id: string) => void) | undefined;
+    const listJobs = vi.fn(async () => [] as Job[]);
+    const api = createMockClient({
+      listJobs,
+      subscribeJobChanges: async (listener) => {
+        notify = listener;
+        return () => {};
+      }
+    });
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    view.unmount();
+
+    vi.useFakeTimers();
+    try {
+      notify?.('late-event');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(listJobs).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not apply stale job responses after switching projects', async () => {
     const jobs = deferred<Job[]>();
     let notify: ((id: string) => void) | undefined;
