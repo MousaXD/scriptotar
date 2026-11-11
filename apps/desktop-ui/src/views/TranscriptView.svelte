@@ -26,23 +26,47 @@
   let selectedLoading = false;
   let selectedLoadError = '';
   let selectedGeneration = 0;
+  const SEGMENT_BATCH = 140;
+  let visibleCount = SEGMENT_BATCH;
 
-  $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectedId = transcripts[0].id;
+  $: if (transcripts.length > 0 && !transcripts.some((item) => item.id === selectedId)) selectTranscript(transcripts[0].id);
+  $: if (transcripts.length === 0 && selectedId) selectTranscript('');
+  // A project switch may replace a summary without changing its ID; never keep old project content.
+  $: {
+    const currentSelection = selected;
+    if (currentSelection && !transcripts.some((item) => item.id === currentSelection.id && item.projectId === currentSelection.projectId)) {
+      selected = undefined;
+      selectedLoadId = '';
+      selectedGeneration += 1;
+    }
+  }
   $: if (selectedId && selectedId !== selectedLoadId) void loadSelected(selectedId);
-  $: matchingSegments = selected ? selected.segments.filter((segment) => segment.text.toLowerCase().includes(query.trim().toLowerCase())) : [];
-  $: if (query !== previousQuery) { previousQuery = query; searchCursor = 0; }
+  $: matchingSegments = selected && query.trim() ? selected.segments.filter((segment) => segment.text.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())) : [];
+  $: readingSegments = query.trim() ? matchingSegments : (selected?.segments ?? []);
+  $: visibleSegments = readingSegments.slice(0, visibleCount);
+  $: if (query !== previousQuery) { previousQuery = query; searchCursor = 0; visibleCount = SEGMENT_BATCH; }
   $: if (searchCursor >= matchingSegments.length) searchCursor = Math.max(0, matchingSegments.length - 1);
 
   async function loadSelected(id: string) {
     selectedLoadId = id;
+    visibleCount = SEGMENT_BATCH;
     // Never display content from a previously selected transcript while a new one loads.
     selected = undefined;
     selectedLoading = true;
     selectedLoadError = '';
     const generation = ++selectedGeneration;
     try {
+      const expected = transcripts.find((item) => item.id === id);
+      if (!expected) throw new Error($translator('transcript.unavailable'));
       const transcript = await api.getTranscript(id);
-      if (generation === selectedGeneration && selectedId === id) selected = transcript;
+      if (transcript.id !== id || transcript.projectId !== expected.projectId) {
+        throw new Error('Loaded transcript did not match the selected project and transcript ID.');
+      }
+      if (generation === selectedGeneration && selectedId === id && transcripts.some((item) => item.id === id && item.projectId === expected.projectId)) {
+        selected = transcript;
+      } else if (generation === selectedGeneration && selectedId === id) {
+        selectedLoadId = '';
+      }
     } catch (cause) {
       if (generation === selectedGeneration && selectedId === id) {
         selected = undefined;
@@ -152,22 +176,43 @@
   async function jumpToSegment(segmentId: string) {
     query = '';
     searchCursor = 0;
+    // Let the query-reset reaction finish before expanding to a late segment.
+    await tick();
+    const index = selected?.segments.findIndex((segment) => segment.id === segmentId) ?? -1;
+    if (index >= 0) visibleCount = Math.max(visibleCount, index + 1);
     await scrollToSegment(segmentId);
   }
 
   async function jumpSearch(delta: number) {
     if (matchingSegments.length === 0) return;
     searchCursor = (searchCursor + delta + matchingSegments.length) % matchingSegments.length;
+    visibleCount = Math.max(visibleCount, searchCursor + 1);
     await scrollToSegment(matchingSegments[searchCursor].id);
+  }
+
+  function showNextSegments() {
+    visibleCount = Math.min(readingSegments.length, visibleCount + SEGMENT_BATCH);
+  }
+
+  function onReaderScroll(event: Event) {
+    const target = event.currentTarget as HTMLElement;
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 500) showNextSegments();
   }
 
   function selectTranscript(id: string) {
     if (selectedId !== id) selected = undefined;
     selectedId = id;
+    if (!id) {
+      selectedLoadId = '';
+      selectedGeneration += 1;
+      selectedLoading = false;
+      selectedLoadError = '';
+    }
     query = '';
     status = '';
     actionError = '';
     searchCursor = 0;
+    visibleCount = SEGMENT_BATCH;
   }
 
   function searchShortcut(event: KeyboardEvent) {
@@ -182,11 +227,12 @@
 </script>
 <svelte:window onkeydown={searchShortcut} />
 
-<section class="view-head" data-i18n-ignore><div><span class="eyebrow">{$translator('transcript.eyebrow')}</span><h1>{$translator('transcript.heading')}</h1><p>{$translator('transcript.description')}</p></div></section>
+<section class="view-head" data-i18n-ignore><div><h1>{$translator('transcript.heading')}</h1></div></section>
 {#if transcripts.length === 0}
   <EmptyState title={$translator('transcript.emptyTitle')} message={$translator('transcript.emptyMessage')} />
 {:else if !selected}
   <section class="panel transcript-loading" aria-busy={selectedLoading} data-i18n-ignore>
+    {#if selectedLoading}<div class="transcript-skeleton" aria-hidden="true" data-testid="transcript-loading-skeleton"><span></span><span></span><span></span></div>{/if}
     <strong role="status">{$translator(selectedLoading ? 'transcript.loading' : 'transcript.unavailable')}</strong>
     {#if selectedLoadError}
       <p role="alert">{selectedLoadError}</p>
@@ -203,7 +249,7 @@
   <div class:list-hidden={!listOpen} class:details-hidden={!detailsOpen} class="transcript-shell-v2">
     {#if listOpen}
       <aside class="panel transcript-list" data-i18n-ignore aria-label={$translator('transcript.list')}>
-        <div class="rail-head"><span class="eyebrow">{$translator('transcript.listEyebrow')}</span><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
+        <div class="rail-head"><strong>{$translator('transcript.list')}</strong><button class="rail-button" on:click={toggleList} aria-label={$translator('transcript.hideList')} title={$translator('transcript.hideList')}>‹</button></div>
         <div class="transcript-list-scroll">
           {#each transcripts as transcript}
             <button class:active={transcript.id === selected.id} aria-current={transcript.id === selected.id ? 'true' : undefined} on:click={() => selectTranscript(transcript.id)}>
@@ -216,7 +262,7 @@
 
     <section class="panel transcript-reader">
       <div class="reader-head" data-i18n-ignore>
-        <div class="reader-title"><span class="eyebrow">{selected.platform}</span><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.source}</p></div>
+        <div class="reader-title"><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.platform}</p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
           <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
@@ -245,24 +291,27 @@
         {/if}
       </div>
 
-      <div class="transcript-content" dir={selected.direction} data-testid="transcript-content" data-i18n-ignore class:rtl={selected.direction === 'rtl'}>
-        {#if query && matchingSegments.length === 0}
+      <div class="transcript-content" dir={selected.direction} data-testid="transcript-content" data-i18n-ignore class:rtl={selected.direction === 'rtl'} on:scroll={onReaderScroll}>
+        {#if query.trim() && matchingSegments.length === 0}
           <p class="no-match">{$translator('transcript.noMatches')}</p>
         {:else}
-          {#each (query ? matchingSegments : selected.segments) as segment}
+          {#each visibleSegments as segment (segment.id)}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
               <button class="timestamp" aria-label={$translator('transcript.jumpTo', { time: time(segment.startSeconds) })} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
               <p>{segment.text}</p>
             </article>
           {/each}
+          {#if visibleCount < readingSegments.length}
+            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label="Show more transcript segments">Show more ({visibleCount} / {readingSegments.length})</button>
+          {/if}
         {/if}
       </div>
     </section>
 
     {#if detailsOpen}
       <aside class="panel details-panel" data-i18n-ignore>
-        <div class="rail-head"><div><span class="eyebrow">{$translator('transcript.details')}</span><h3>{$translator('transcript.metadata')}</h3></div><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
-        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div></dl>
+        <div class="rail-head"><h3>{$translator('transcript.details')}</h3><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
+        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div><div><dt>{$translator('ai.sourceLabel')}</dt><dd class="source-value" dir="auto">{selected.source}</dd></div></dl>
         <button class="button secondary folder-unavailable" disabled title={$translator('transcript.folderHelp')}>{$translator('transcript.folderUnavailable')}</button>
       </aside>
     {/if}
@@ -272,6 +321,13 @@
 {/if}
 
 <style>
+  .transcript-loading { max-width: 720px; margin: 0 auto; padding: 18px; }
+  .transcript-skeleton { display: grid; gap: 11px; margin-bottom: 16px; }
+  .transcript-skeleton span { display: block; width: 100%; height: 19px; border-radius: 6px; background: var(--surface-2); animation: transcript-pulse 1.3s ease-in-out infinite alternate; }
+  .transcript-skeleton span:first-child { width: 56%; height: 26px; }
+  .transcript-skeleton span:last-child { width: 76%; }
+  @keyframes transcript-pulse { to { opacity: .42; } }
+  @media (prefers-reduced-motion: reduce) { .transcript-skeleton span { animation: none; } }
   .transcript-fallback-select { display: grid; max-width: 400px; gap: 6px; margin-top: var(--space-3); }
   .transcript-shell-v2 { display: grid; grid-template-columns: 220px minmax(0, 1fr) 210px; gap: 12px; align-items: start; }
   .transcript-shell-v2.list-hidden { grid-template-columns: minmax(0, 1fr) 210px; }
@@ -288,12 +344,12 @@
   .transcript-list-scroll > button.active { background: color-mix(in srgb, var(--accent-strong) 10%, var(--surface)); }
   .transcript-list-scroll strong, .transcript-list-scroll small { display: block; }
   .transcript-list-scroll strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .transcript-list-scroll small { margin-top: 5px; color: var(--muted); font-size: 10px; }
+  .transcript-list-scroll small { margin-top: 5px; color: var(--muted); font-size: 12px; }
   .transcript-reader { min-height: 660px; padding: 18px; }
   .reader-head { display: flex; justify-content: space-between; gap: 16px; }
   .reader-title { min-width: 0; }
-  .reader-title h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .reader-head p { margin: 5px 0 0; font-size: 11px; }
+  .reader-title h2 { margin: 0; overflow-wrap: anywhere; font-size: clamp(18px, 2vw, 24px); line-height: 1.3; }
+  .reader-head p { margin: 5px 0 0; font-size: 12px; color: var(--muted); }
   .action-cluster { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 7px; }
   .export-menu { position: relative; }
   .export-summary { display: grid; place-items: center; list-style: none; cursor: pointer; }
@@ -303,20 +359,22 @@
   .export-popover button:hover:not(:disabled) { background: var(--surface-2); }
   .transcript-search-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; margin: 15px 0 8px; }
   .transcript-search { margin: 0; }
-  .search-navigation { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 10px; }
+  .search-navigation { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; }
   .search-navigation > span { min-width: 62px; text-align: right; }
   .search-navigation button { width: 30px; height: 30px; font-family: var(--font-technical); }
   .transcript-content { max-height: calc(100vh - 250px); min-height: 500px; overflow: auto; padding: 5px 3px 42px; scroll-padding-block: 30%; }
   .segment { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 14px; padding: 14px 8px; border-top: 1px solid var(--border); border-radius: 7px; transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard); }
   .segment.search-current { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 7%, transparent); }
   .segment:focus { outline: none; box-shadow: inset 3px 0 0 var(--accent-strong); }
-  .segment p { margin: 0; color: var(--text); font-size: 14px; line-height: 1.85; }
-  .timestamp { align-self: start; padding: 4px 5px; border: 0; border-radius: 5px; background: var(--surface-2); color: var(--info); font-size: 10px; }
+  .segment p { margin: 0; color: var(--text); font-size: 16px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .timestamp { align-self: start; padding: 4px 5px; border: 0; border-radius: 5px; background: var(--surface-2); color: var(--info); font-size: 12px; font-variant-numeric: tabular-nums; }
   .details-panel { position: sticky; top: 82px; padding: 14px; }
   .details-panel dl { margin: 15px 0; }
-  .details-panel dl div { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 10px; }
+  .details-panel dl div { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); font-size: 12px; }
   .details-panel dt { color: var(--faint); }
+  .show-more-segments { display: block; width: 100%; margin-top: 14px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--text); cursor: pointer; }
   .details-panel dd { margin: 0; }
+  .details-panel .source-value { overflow-wrap: anywhere; text-align: end; min-width: 0; }
   .folder-unavailable { width: 100%; margin-top: 14px; white-space: normal; }
   .no-match { padding: 20px 0; }
 

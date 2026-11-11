@@ -13,6 +13,7 @@
   let pace: 'slow' | 'normal' | 'fast' = 'normal';
   // An explicit choice prevents accidentally treating the first workspace transcript as the source.
   let selectedTranscriptId = 'manual';
+  let sourceSelectionProjectId = '';
   let sourceEdited = false;
   let sourceText = '';
   let sourceLoadGeneration = 0;
@@ -41,6 +42,8 @@
   };
 
   $: selectedTranscript = transcripts.find((transcript) => transcript.id === selectedTranscriptId);
+  // Project/source changes must not leave an orphaned transcript ready for a BYOK request.
+  $: if (selectedTranscriptId !== 'manual' && (!selectedTranscript || selectedTranscript.projectId !== sourceSelectionProjectId)) void loadSource('manual');
   $: sourceWords = countWords(sourceText);
   $: sourceChars = sourceText.length;
   $: sourceSpeakingSeconds = Math.ceil(sourceWords / paceWordsPerSec[pace]);
@@ -50,7 +53,7 @@
   $: briefFields = [topic, audience, cta, voice].filter((value) => value.trim()).length;
 
   function payload() {
-    return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl, apiKey: mode === 'byok' ? apiKey : undefined };
+    return { mode, provider, model, task, sourceText, topic, audience, duration, cta, voice, baseUrl: provider === 'OpenAI-compatible' ? baseUrl : undefined, apiKey: mode === 'byok' ? apiKey : undefined };
   }
 
   function invalidatePrompt() {
@@ -59,6 +62,7 @@
     // Prompt construction is local and safe to retry with newer inputs even if an old call stalls.
     // The generation guard prevents either response from overwriting the other.
     building = false;
+    busy = false;
     prompt = '';
     builtPrompt = '';
     result = '';
@@ -66,12 +70,16 @@
 
   function invalidateRun() {
     runGeneration += 1;
+    busy = false;
     result = '';
   }
 
   function chooseMode(next: AiMode) {
     if (mode === next) return;
     mode = next;
+    // Preserve an already prepared prompt, but discard any older in-flight build.
+    promptGeneration += 1;
+    building = false;
     invalidateRun();
     status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK runs only when you choose Run with API.';
   }
@@ -85,7 +93,9 @@
     invalidatePrompt();
     sourceEdited = false;
     selectedTranscriptId = id;
+    sourceSelectionProjectId = id === 'manual' ? '' : transcripts.find((transcript) => transcript.id === id)?.projectId ?? '';
     sourceError = '';
+    status = 'Source changed. Build a prompt for the current context.';
     const generation = ++sourceLoadGeneration;
     if (id === 'manual') {
       sourceLoading = false;
@@ -101,7 +111,14 @@
       if (transcript.id !== id || transcript.projectId !== expected.projectId) {
         throw new Error('Loaded transcript did not match the selected project and source ID.');
       }
-      if (generation === sourceLoadGeneration && selectedTranscriptId === id) sourceText = transcript.text;
+      if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
+        const current = transcripts.find((item) => item.id === id);
+        if (!current || current.projectId !== sourceSelectionProjectId) {
+          void loadSource('manual');
+        } else {
+          sourceText = transcript.text;
+        }
+      }
     } catch (cause) {
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
         sourceError = cause instanceof Error ? cause.message : 'Could not load transcript source.';
@@ -157,11 +174,15 @@
   }
   function redactProviderError(cause: unknown, submittedKey: string): string {
     if (!(cause instanceof Error)) return 'Unknown error';
-    const secretVariants = [submittedKey, encodeURIComponent(submittedKey)];
-    return secretVariants.reduce(
+    const secretVariants = [submittedKey, encodeURIComponent(submittedKey), encodeURIComponent(submittedKey).replaceAll('%', '%25')];
+    const redacted = secretVariants.reduce(
       (message, secret) => secret ? message.replaceAll(secret, '[redacted]') : message,
       cause.message
     );
+    // Do not put authorization headers or URL-embedded credentials into the UI.
+    return redacted.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [redacted]')
+      .replace(/([?&](?:api_key|token|key|authorization)=)[^&\s]+/gi, '$1[redacted]')
+      .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[redacted]@');
   }
 
   async function runAi() {
@@ -183,36 +204,40 @@
     busy = true;
     try {
       const output = await api.runAi(request);
-      if (generation === runGeneration) { result = output; status = `Finished with ${provider}.`; }
+      if (generation === runGeneration) { result = output; status = `Finished with ${request.provider}.`; }
     } catch (error) {
       if (generation === runGeneration) {
         status = `AI request failed: ${redactProviderError(error, request.apiKey || '')}`;
       }
-    } finally { busy = false; }
+    } finally {
+      if (generation === runGeneration) busy = false;
+    }
   }
 </script>
 
 <section class="view-head ai-head">
-  <div><span class="eyebrow">Optional AI layer</span><h1>AI Studio</h1><p>Build portable prompts with no key, or use your own provider credentials for a direct run.</p></div>
+  <h1>AI Studio</h1>
   <div class="mode-switch compact-mode" role="group" aria-label="AI mode">
-    <button class:active={mode === 'copy'} on:click={() => chooseMode('copy')}><strong>Copy Prompt</strong><span>No API key · nothing sent</span></button>
-    <button class:active={mode === 'byok'} on:click={() => chooseMode('byok')}><strong>BYOK</strong><span>Use your own provider key</span></button>
+    <button type="button" class:active={mode === 'copy'} aria-pressed={mode === 'copy'} on:click={() => chooseMode('copy')}>Copy Prompt</button>
+    <button type="button" class:active={mode === 'byok'} aria-pressed={mode === 'byok'} on:click={() => chooseMode('byok')}>BYOK</button>
   </div>
 </section>
 
 <section class="panel ai-setup">
-  <div class="setup-heading"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.configure')}</span><h2>Prompt setup</h2></div><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
-  <div class="ai-config-grid">
+  <div class="setup-heading"><h2>Prompt setup</h2><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
+  <div class="ai-config-grid" class:byok-mode={mode === 'byok'}>
     <label><span>Task</span><select bind:value={task} on:change={invalidatePrompt}><option>Viral breakdown</option><option>Hook ideas</option><option>New short-form script</option><option>Structure remix</option><option>Content ideas</option><option>Caption + CTA</option><option>Voice profile</option><option>B-roll shot list</option></select></label>
     <label><span data-i18n-ignore>{$translator('ai.speakingRate')}</span><select bind:value={pace} aria-label={$translator('ai.speakingRate')}><option value="slow">{$translator('ai.paceSlow')}</option><option value="normal">{$translator('ai.paceNormal')}</option><option value="fast">{$translator('ai.paceFast')}</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Provider</span><select aria-label="AI provider" value={provider} disabled={mode === 'copy'} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
-    <label class:disabled-field={mode === 'copy'}><span>Model</span><input bind:value={model} disabled={mode === 'copy'} on:input={invalidatePrompt} /></label>
+    {#if mode === 'byok'}
+      <label><span>Provider</span><select aria-label="AI provider" value={provider} on:change={chooseProvider}><option>OpenAI</option><option>Anthropic</option><option>Gemini</option><option>OpenAI-compatible</option><option>Local (coming later)</option></select></label>
+      <label><span>Model</span><input bind:value={model} on:input={invalidatePrompt} /></label>
+    {/if}
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
       <label><span>API key · session only</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" placeholder="Paste key for this run" /></label>
       {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
-      <p>Keys are not persisted by this frontend. The Rust host will own secure storage and endpoint policy.</p>
+      <p>Session-only credentials. Nothing is saved by this frontend.</p>
     </div>
   {/if}
 </section>
@@ -233,7 +258,7 @@
         {#each transcripts as transcript}<option value={transcript.id}>{transcript.title}</option>{/each}
       </select>
     </label>
-    {#if selectedTranscript}
+    {#if selectedTranscriptId !== 'manual' && selectedTranscript && selectedTranscript.projectId === sourceSelectionProjectId}
       <div class="source-lineage" data-testid="ai-source-lineage">
         <strong>{selectedTranscript.title}</strong>
         <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
@@ -242,12 +267,12 @@
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
     {/if}
-    {#if sourceLoading}<p class="status-copy" aria-live="polite">Loading transcript source…</p>{/if}
+    {#if sourceLoading}<div class="source-loading-skeleton" role="status" aria-label="Loading transcript source"><span></span><span></span></div>{/if}
     {#if sourceError}
       <p class="status-copy" role="alert">{sourceError}</p>
       <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>Retry transcript load</button>
     {/if}
-    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} placeholder="Paste or load transcript/research text…"></textarea>
+    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} dir="auto" placeholder="Paste or load transcript/research text…"></textarea>
   </section>
 
   <section class="panel brief-panel">
@@ -263,7 +288,7 @@
 
   <section class="panel ai-prompt">
     <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
-    <textarea bind:value={prompt} placeholder="Build a prompt to preview it here…"></textarea>
+    <textarea bind:value={prompt} dir="auto" placeholder="Build a prompt to preview it here…"></textarea>
     {#if mode === 'byok'}<p class="prompt-note">Edits here are available for copying, but BYOK builds its request from the source and brief fields above.</p>{/if}
   </section>
 </div>
@@ -272,8 +297,8 @@
   <span class="status-copy" role="status" aria-live="polite">{status}</span>
   <div class="ai-actions">
     <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
-    <button class="button primary" disabled={building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
-    <button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || (mode === 'byok' && provider === 'Local (coming later)')} on:click={runAi}>{busy ? 'Running…' : mode === 'copy' ? 'Prepare for copy' : 'Run with API'}</button>
+    <button class="button primary" disabled={busy || building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
+    {#if mode === 'byok'}<button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || provider === 'Local (coming later)'} on:click={runAi}>{busy ? 'Running…' : 'Run with API'}</button>{/if}
   </div>
 </div>
 
@@ -287,28 +312,26 @@
         <button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button>
       </div>
     </div>
-    <div class="result-copy">{result}</div>
+    <div class="result-copy" dir="auto">{result}</div>
   </section>
 {/if}
 
 <style>
   .ai-head { align-items: center; }
-  .compact-mode { width: min(420px, 100%); margin: 0; }
+  .compact-mode { width: min(330px, 100%); margin: 0; }
   .mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-  .mode-switch button { display: grid; gap: 3px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); text-align: left; }
+  .mode-switch button { padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); text-align: center; font-size: 13px; font-weight: 650; }
   .mode-switch button:hover { border-color: var(--border-strong); }
   .mode-switch button.active { border-color: color-mix(in srgb, var(--accent-strong) 45%, var(--border)); background: color-mix(in srgb, var(--accent-strong) 8%, var(--surface)); }
-  .mode-switch strong { font-size: 12px; }
-  .mode-switch span { color: var(--muted); font-size: 9px; }
 
   .ai-setup { display: grid; gap: 14px; margin-bottom: 12px; padding: 15px; }
   .setup-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
   .setup-heading h2, .setup-heading p { margin: 0; }
   .setup-heading p { max-width: 440px; font-size: 11px; text-align: right; }
-  .ai-config-grid { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 1fr) 1fr 1fr; gap: 9px; }
+  .ai-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ai-config-grid.byok-mode { grid-template-columns: minmax(160px, 1.2fr) minmax(130px, 1fr) repeat(2, minmax(0, 1fr)); }
   .ai-config-grid label, .ai-brief-grid label, .byok-strip label, .source-picker { display: grid; gap: 5px; }
-  .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span, .source-picker span { color: var(--muted); font-size: 10px; }
-  .disabled-field { opacity: .55; }
+  .ai-config-grid label span, .ai-brief-grid label span, .byok-strip label span, .source-picker span { color: var(--muted); font-size: 12px; }
   .byok-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border: 1px solid color-mix(in srgb, var(--accent-strong) 28%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent-strong) 4%, transparent); }
   .byok-strip p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 10px; }
   .timer-badge-group, .result-head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -320,10 +343,10 @@
   .ai-source, .brief-panel, .ai-prompt { padding: 15px; }
   .source-picker { margin-top: 12px; }
   .source-lineage { display: grid; gap: 3px; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
-  .source-lineage strong { font-size: 11px; }
-  .source-lineage span, .muted-lineage { overflow-wrap: anywhere; color: var(--muted); font-size: 9px; }
-  .ai-source textarea, .ai-prompt textarea { width: 100%; min-height: 270px; margin-top: 12px; line-height: 1.65; }
-  .ai-prompt textarea { min-height: 220px; font-family: var(--font-technical); font-size: 12px; }
+  .source-lineage strong { font-size: 13px; }
+  .source-lineage span, .muted-lineage { overflow-wrap: anywhere; color: var(--muted); font-size: 12px; }
+  .ai-source textarea, .ai-prompt textarea { width: 100%; min-height: 270px; margin-top: 12px; font-size: 14px; line-height: 1.7; resize: vertical; }
+  .ai-prompt textarea { min-height: 220px; font-family: inherit; font-size: 14px; }
   .timer-chip, .ready-chip, .brief-count { padding: 4px 8px; border-radius: 999px; background: color-mix(in srgb, var(--accent-strong) 8%, var(--surface)); color: var(--accent); font-size: 9px; }
   .brief-count { color: var(--muted); background: var(--surface-2); }
   .ai-brief-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
@@ -335,8 +358,13 @@
   .run-button { border-color: color-mix(in srgb, var(--info) 25%, var(--border)); }
   .prompt-note { margin: 8px 0 0; color: var(--muted); font-size: 11px; }
   .source-lineage code { overflow-wrap: anywhere; }
+  .source-loading-skeleton { display: grid; gap: 9px; margin-top: 12px; }
+  .source-loading-skeleton span { display: block; width: 88%; height: 18px; border-radius: 6px; background: var(--surface-2); animation: source-pulse 1.3s ease-in-out infinite alternate; }
+  .source-loading-skeleton span:last-child { width: 62%; }
+  @keyframes source-pulse { to { opacity: .45; } }
+  @media (prefers-reduced-motion: reduce) { .source-loading-skeleton span { animation: none; } }
   .result-card { padding: 15px; }
-  .result-copy { margin-top: 12px; white-space: pre-wrap; color: var(--text); line-height: 1.65; }
+  .result-copy { margin-top: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font-size: 15px; line-height: 1.75; }
 
   :global(html[dir='rtl']) .mode-switch button { text-align: right; }
   :global(html[dir='rtl']) .setup-heading p { text-align: left; }
@@ -349,7 +377,7 @@
   @media (max-width: 760px) {
     .setup-heading { align-items: flex-start; flex-direction: column; }
     .setup-heading p { text-align: left; }
-    .ai-config-grid, .ai-brief-grid, .byok-strip { grid-template-columns: 1fr; }
+    .ai-config-grid, .ai-config-grid.byok-mode, .ai-brief-grid, .byok-strip { grid-template-columns: 1fr; }
     .ai-brief-grid .wide, .byok-strip p { grid-column: auto; }
     .ai-action-bar { position: static; align-items: stretch; flex-direction: column; }
     .ai-actions { flex-wrap: wrap; justify-content: stretch; }
