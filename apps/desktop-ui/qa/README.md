@@ -32,8 +32,10 @@ The allowlist is qa/native-control-allowlist.json: genuine native file/color inp
 
 ## Independently executable tooling checks and performance comparison
 
-Run `node --test qa/tooling.test.mjs` to validate that the screenshot verifier rejects missing/failing runs, rejects pending approvals, and detects tampered screenshot hashes. These tests use isolated synthetic byte fixtures **only to test the verifier**; they do not substitute for actual Chromium screenshots. The CI workflow runs this before installing browser dependencies.
+Run `node --test qa/tooling.nodecheck.mjs` to validate that the screenshot verifier rejects missing/failing runs, rejects pending approvals, and detects tampered screenshot hashes. These tests use isolated synthetic byte fixtures **only to test the verifier**; they do not substitute for actual Chromium screenshots. The CI workflow runs this before installing browser dependencies.
 
 For two complete exact-SHA browser evidence reports captured under matching environment conditions, run `node qa/compare-browser-metrics.mjs path/to/baseline-report.json path/to/candidate-report.json`. The report compares median browser shell and useful-workspace latency, same-context warm reload and navigation by matched scenario, with negative deltas meaning faster. This is informational and **must never be presented as native cold/warm startup or a statistical release pass**.
 
 The Chromium workflow checks out the exact PR HEAD SHA (not an implicit pull-request merge ref), checks the checkout against QA_TESTED_SHA and labels each artifact and JSON report with that source SHA. Final cross-agent integration must still run independently at its exact integrated commit.
+
+The Node-only test has the non-Vitest filename tooling.nodecheck.mjs deliberately. Do not rename it to *.test.mjs or *.spec.mjs: the frontend Vitest jsdom discovery attempts to bundle node:test, causing otherwise passing application suites to fail. The standalone Node test remains required in the QA workflow.
