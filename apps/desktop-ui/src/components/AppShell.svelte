@@ -430,7 +430,9 @@
     .activity-button > span:last-child { display: none; }
   }
 
-  @media (max-width: 720px) {
+  /* Match app.css's 760px block-layout breakpoint: the old 720px threshold
+     left a 721–760px vertical rail above a full-width toolbar. */
+  @media (max-width: 760px) {
     .app-frame { display: block; }
     .sidebar { position: static; display: flex; flex-direction: row; align-items: center; gap: 4px; width: 100%; height: auto; padding: 8px; border-inline-end: 0; border-bottom: 1px solid var(--color-border); }
     .brand-row, .nav-group-label { display: none; }

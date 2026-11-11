@@ -66,14 +66,32 @@ async function routeTo(page, view) {
   return performance.now() - start;
 }
 async function checkOverflow(page, label) {
-  const data = await page.evaluate(() => ({
-    scrollWidth: document.documentElement.scrollWidth,
-    innerWidth: window.innerWidth,
-    mainVisible: Boolean(document.querySelector('#workspace-main'))
-  }));
+  const data = await page.evaluate(() => {
+    const sidebar = document.querySelector('.app-frame .sidebar')?.getBoundingClientRect();
+    const topbar = document.querySelector('.app-frame .topbar')?.getBoundingClientRect();
+    return {
+      scrollWidth: document.documentElement.scrollWidth,
+      innerWidth: window.innerWidth,
+      mainVisible: Boolean(document.querySelector('#workspace-main')),
+      mobileShell: sidebar && topbar ? {
+        sidebarWidth: sidebar.width,
+        sidebarHeight: sidebar.height,
+        toolbarGap: topbar.top - sidebar.bottom
+      } : null
+    };
+  });
   if (!data.mainVisible) recordFailure(label, 'Workspace shell absent');
   if (data.scrollWidth > data.innerWidth + 2) {
     recordFailure(label, 'Horizontal page overflow: ' + data.scrollWidth + ' > ' + data.innerWidth);
+  }
+  if (data.innerWidth <= 760 && data.mobileShell) {
+    if (data.mobileShell.sidebarWidth < data.innerWidth - 2 ||
+        data.mobileShell.sidebarHeight > 110 ||
+        Math.abs(data.mobileShell.toolbarGap) > 3) {
+      recordFailure(label + '/mobile-shell',
+        'Mobile navigation must be a compact full-width row directly above the toolbar: ' +
+        JSON.stringify(data.mobileShell));
+    }
   }
 }
 async function checkNativeControls(page, label) {
