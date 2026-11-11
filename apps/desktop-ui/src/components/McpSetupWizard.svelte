@@ -176,7 +176,7 @@
     {:else}<span class="wizard-status">{$translator('mcp.notConnected')}</span>{/if}
   </header>
 
-  <div class="steps" aria-label={$translator('mcp.steps')}>
+  <div class="steps" role="group" aria-label={$translator('mcp.steps')}>
     <button class:current={step === 1} aria-current={step === 1 ? 'step' : undefined} on:click={() => step = 1}><span>1</span> {$translator('mcp.permissions')}</button>
     <button class:current={step === 2} aria-current={step === 2 ? 'step' : undefined} disabled={!permissions || permissionDirty} on:click={() => step = 2}><span>2</span> {$translator('mcp.connection')}</button>
     <button class:current={step === 3} aria-current={step === 3 ? 'step' : undefined} disabled={!connection || connection.mode === 'none' || permissionDirty} on:click={() => step = 3}><span>3</span> {$translator('mcp.finish')}</button>
