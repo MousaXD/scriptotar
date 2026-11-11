@@ -17,4 +17,12 @@ describe('English and Arabic UI message coverage', () => {
       expect(ar).not.toBe(en);
     }
   });
+  it('retains the same interpolation placeholders in both locales', () => {
+    const placeholders = (message: string) =>
+      [...message.matchAll(/\{([a-zA-Z0-9_]+)\}/g)].map((match) => match[1]).sort();
+    for (const key of Object.keys(shellMessages.en) as Array<keyof typeof shellMessages.en>) {
+      expect(placeholders(shellMessages.ar[key]), key).toEqual(placeholders(shellMessages.en[key]));
+    }
+  });
+
 });
