@@ -147,7 +147,7 @@ describe('Research workspace', () => {
     expect(watchlist).toHaveTextContent('Retry scheduled');
     expect(watchlist).toHaveTextContent('Provider authentication expired');
     expect(watchlist).toHaveTextContent('Next retry');
-    expect(screen.getByRole('link', { name: '1 watchlists need attention' })).toHaveAttribute('href', '#watch-health-title');
+    expect(screen.getByRole('link', { name: '1 watchlist needs attention' })).toHaveAttribute('href', '#watch-health-title');
     const details = within(watchlist).getByText('Refresh details');
     expect(details.closest('details')).not.toHaveAttribute('open');
     await fireEvent.click(details);
