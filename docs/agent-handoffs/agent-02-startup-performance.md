@@ -71,5 +71,26 @@ Existing `App.test.ts`, `gui-overhaul.test.ts`, `project-management.test.ts`, an
 
 **Verdict remains BLOCKED.** The previous 36-failure run was on the superseded lazy-view implementation, and the fix cannot be called green without a completed exact-head CI run. The user-requested Svelte checks, Vitest, production build, packaged-app startup performance and Agent 08 independent validation remain unverified for this branch.
 
-## Readiness verdict
-**BLOCKED — NOT READY FOR AGENT 00 REVIEW/MERGE** until the latest exact-head Desktop UI tests/build and required integrated/packaged gates are genuinely green. Code regression fixes have been pushed and tests added, but queued CI is not passing CI. PR #90 remains a draft; main is unchanged.
+## Final validation update — 2026-11-11
+
+**Latest audited code commit:** `3036cd308d7bc245fd51be28b1f16140322966d3`.
+
+**Exact-head frontend CI is GREEN.** GitHub Actions [Desktop UI #42929753686](https://github.com/MousaXD/scriptotar/actions/runs/42929753686) ran on PR head `5e6f57673a4a6ddfadd8a4f4dfa6fd241edbca06` and finished with **success**. This commit includes the complete frontend implementation and the prior audit handoff. Decoded job log and steps confirm:
+
+- `npm ci`: success.
+- `npm run check`: success; **0 Svelte/type errors and 0 warnings**.
+- `npm run test`: success; **13/13 files, 90/90 tests**, including **12/12** dedicated `startup-performance.test.ts` tests, original App, AI source selection, project management, GUI and localization suites.
+- `npm run build`: success, Vite **7.68s**; generated JS **252.25 kB raw / 77.65 kB gzip**, CSS **74.34 kB raw / 13.62 kB gzip**. These are production build output figures and **not measured comparative improvement**.
+- The earlier 36-failure UI run belongs only to the superseded lazy-import implementation; all original assertions are intact and now green on the tested head.
+
+**Other exact-head CI during this validation:** `Security hygiene` success; `Python sidecar` success. At last inspection Tauri migration, core CI, Windows NSIS, Linux deb and MCP were queued/in progress. Do not claim complete release-gate certification or packaged startup timing from this frontend workflow.
+
+**Final verification performed:** checked branch and PR pointers, inspected six PR files, reviewed localization/RTL and keyboard navigation plus reduced-motion skeleton (no animated shimmer), project-switch fail-closed guard, early shell and recovery controls, fixed command-palette performance and teardown behavior, and passed GitHub test evidence. The current runtime working directory is `/`, not a Git checkout; direct local tests could not be rerun, but real GitHub Actions completed.
+
+**Independent dependencies:** Agent 03 opt-in summary bootstrap is intentionally unused until Agent 06 ensures full transcript hydration; Agent 08 must certify the packaged binary and actual cold/warm startup under realistic workspace loads. No source-level benchmark is substituted for packaged results.
+
+## Final readiness verdict
+
+**READY FOR AGENT 00 REVIEW (frontend scope)** — all owned changes are committed/pushed; 90/90 frontend tests, Svelte checks and Vite production build have passed on the previously exact-head PR commit. **NOT APPROVED FOR RELEASE OR MERGE** until pending repository-wide gates and Agent 08 packaged acceptance are independently verified.
+
+This handoff update alone creates a new documentation-only HEAD; the code remains identical to the fully passed commit above. Use the newest head's CI results for formal branch-protection checks.
