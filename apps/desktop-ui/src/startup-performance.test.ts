@@ -616,6 +616,9 @@ describe('progressive desktop startup', () => {
     saving.reject(new Error('Save refused'));
     await waitFor(() => expect(projectSelector).not.toBeDisabled());
     await fireEvent.change(projectSelector, { target: { value: 'p-client-a' } });
+    await waitFor(() => expect(projectSelector).toHaveValue('p-client-a'));
+    // Switching projects preserves the current view; the project title is on Dashboard.
+    await fireEvent.keyDown(window, { key: 'd' });
     expect(await screen.findByRole('heading', { name: 'Client A' })).toBeInTheDocument();
   });
 
