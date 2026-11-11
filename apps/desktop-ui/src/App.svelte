@@ -299,10 +299,16 @@
     const generation = workspaceGeneration;
     const projectId = data.activeProjectId;
     const next = await api.saveWatchlist({ profileUrl, limit });
-    if (generation === workspaceGeneration && !switchingProject && !creatingProject &&
-        data?.activeProjectId === projectId && next.activeProjectId === projectId) {
-      data = prepareData(next);
+    if (generation !== workspaceGeneration || switchingProject || creatingProject ||
+        data?.activeProjectId !== projectId) return;
+    if (next.activeProjectId !== projectId || !next.projects.some((project) => project.id === projectId)) {
+      // The write may have changed the backend's active project unexpectedly.
+      // Do not keep issuing operations against a workspace that may no longer be active.
+      error = 'The watchlist response did not match the active project. Reload the workspace.';
+      data = null;
+      throw new Error(error);
     }
+    data = prepareData(next);
   }
 
   async function createFirstProject(event: SubmitEvent) {
