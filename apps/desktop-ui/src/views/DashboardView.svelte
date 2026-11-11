@@ -20,7 +20,9 @@
 
   $: active = jobs.filter((job) => activeStates.has(job.state));
   $: attention = jobs.filter((job) => job.state === 'failed' || job.state === 'interrupted');
-  $: currentJobs = [...attention, ...active].slice(0, 6);
+  // Keep in-flight work visible even when a project has a large failure backlog.
+  $: attentionPreview = attention.slice(0, 6 - Math.min(active.length, 2));
+  $: currentJobs = [...attentionPreview, ...active.slice(0, 6 - attentionPreview.length)];
 
   function openProjectForm() {
     projectError = '';

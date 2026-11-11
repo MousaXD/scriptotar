@@ -73,7 +73,7 @@ describe('jobs workspace', () => {
     expect(screen.getByRole('textbox', { name: 'Media URL' })).toHaveValue('https://example.com/video');
     await fireEvent.drop(target, { dataTransfer: { getData: () => '', files: [{ name: 'untrusted.mp4' }] } });
     expect(onEnqueueLocal).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('A dropped filename is not a usable file path');
   });
 
 

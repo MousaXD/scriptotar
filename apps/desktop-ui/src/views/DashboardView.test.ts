@@ -57,6 +57,16 @@ describe('dashboard creator workflow', () => {
     expect(screen.getByText('1 needs attention')).toBeInTheDocument();
   });
 
+  it('still shows active jobs when failed jobs would otherwise fill the dashboard', () => {
+    const failedJobs = Array.from({ length: 8 }, (_, i) => ({ ...failed, id: `failed-${i}` }));
+    const activeJobs = Array.from({ length: 3 }, (_, i) => ({ ...processing, id: `active-${i}` }));
+    const { container } = setup({ jobs: [...failedJobs, ...activeJobs] });
+    const rows = Array.from(container.querySelectorAll('[data-testid^="job-"]'));
+    expect(rows).toHaveLength(6);
+    expect(rows.filter((row) => row.getAttribute('data-testid') === 'job-failed')).toHaveLength(4);
+    expect(rows.filter((row) => row.getAttribute('data-testid') === 'job-transcribing')).toHaveLength(2);
+  });
+
   it('opens recent transcripts and keeps secondary workflows accessible', async () => {
     const { onOpenTranscript, onNavigate } = setup({ transcripts: [transcript], creators: [creator], aiRuns: [aiRun] });
     const recent = screen.getByRole('region', { name: 'Recent transcripts' });

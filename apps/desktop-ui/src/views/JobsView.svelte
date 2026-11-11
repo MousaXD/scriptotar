@@ -159,7 +159,9 @@
     const dropped = Array.from(event.dataTransfer.files ?? []);
     const paths = dropped.map((file) => (file as File & { path?: string }).path).filter((path): path is string => Boolean(path));
     if (paths.length) acceptDroppedPaths(paths);
-    else if (dropped.length) actionError = $translator('queue.nativeDropFailed');
+    else if (dropped.length) actionError = $locale === 'ar'
+      ? 'اسم الملف وحده ليس مساراً صالحاً. استخدم «اختيار فيديو» لتحديد ملف محلي.'
+      : 'A dropped filename is not a usable file path. Choose video to select a local file.';
   }
 
   onMount(() => {
