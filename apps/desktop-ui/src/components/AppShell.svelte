@@ -103,6 +103,8 @@
   function navigate(view: ViewId) {
     onNavigate(view);
     closePalette();
+    // Keyboard and pointer navigation should reveal the next view's heading, not leave it behind the sticky toolbar.
+    void tick().then(() => window.scrollTo({ top: 0, behavior: 'instant' }));
   }
 
   function toggleSidebar() {
