@@ -25,8 +25,8 @@
       .toLocaleLowerCase().includes(normalizedQuery)
   );
   $: visible = [...filtered].sort((a, b) => {
-    if (sort === 'title') return a.title.localeCompare(b.title);
-    if (sort === 'type') return a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title);
+    if (sort === 'title') return a.title.localeCompare(b.title, $locale);
+    if (sort === 'type') return a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title, $locale);
     return (newestOrder.get(a) ?? 0) - (newestOrder.get(b) ?? 0);
   });
   $: totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
@@ -48,6 +48,10 @@
     if (value === 'AI run') return $translator('library.kind.ai');
     if (value === 'Project') return $translator('library.kind.project');
     return $translator('library.kind.creator');
+  }
+
+  function platformLabel(value?: string) {
+    return !value || value === 'Local' ? $translator('library.local') : value;
   }
 
   function chooseKind(value: typeof kind) {
@@ -128,7 +132,7 @@
             <strong title={item.title}>{item.title}</strong>
             <small><span class="kind-label">{kindLabel(item.kind)}</span><span class="library-subtitle" title={item.subtitle}>{item.subtitle}</span></small>
           </span>
-          <span class="library-meta">{item.platform || $translator('library.local')}</span>
+          <span class="library-meta">{platformLabel(item.platform)}</span>
           <span class="library-meta metric-copy">{item.metric || '—'}</span>
           <span class="library-date">{item.date}</span>
           <span class="open-arrow" aria-hidden="true">›</span>
