@@ -173,7 +173,7 @@
   <div class="research-summary">
     <span class="result-count" aria-live="polite">{filtered.length} / {items.length}</span>
     {#if attentionCount > 0}
-      <a class="attention-link" href="#watch-health-title">{attentionCount} {isArabic ? 'قوائم متابعة تحتاج انتباهاً' : 'watchlists need attention'}</a>
+      <a class="attention-link" href="#watch-health-title">{attentionCount} {isArabic ? (attentionCount === 1 ? 'قائمة متابعة تحتاج انتباهاً' : 'قوائم متابعة تحتاج انتباهاً') : (attentionCount === 1 ? 'watchlist needs attention' : 'watchlists need attention')}</a>
     {/if}
   </div>
 </section>
@@ -381,6 +381,8 @@
     .selection-bar { flex-wrap: wrap; }
   }
   @media (max-width: 480px) {
+    .research-head { flex-wrap: wrap; }
+    .research-summary { justify-content: flex-start; }
     .research-capture { grid-template-columns: minmax(0, 1fr) 90px; }
     .research-capture button { grid-column: span 2; }
     .filter-bar select { min-width: 0; flex: 1; }
