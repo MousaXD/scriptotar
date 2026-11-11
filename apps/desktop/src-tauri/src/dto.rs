@@ -200,6 +200,21 @@ pub struct UiTranscript {
     pub segments: Vec<UiTranscriptSegment>,
 }
 
+/// Dashboard-level transcript record: no full text, segments or word timings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiTranscriptSummary {
+    pub id: String,
+    pub project_id: String,
+    pub title: String,
+    pub language: String,
+    pub direction: String,
+    pub source: String,
+    pub platform: String,
+    pub duration_seconds: f64,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiAiRun {
@@ -247,13 +262,13 @@ pub struct UiSettings {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BootstrapData {
+pub struct BootstrapData<T = UiTranscript> {
     pub projects: Vec<UiProject>,
     pub active_project_id: String,
     pub creators: Vec<UiCreator>,
     pub research: Vec<UiResearchItem>,
     pub jobs: Vec<UiJob>,
-    pub transcripts: Vec<UiTranscript>,
+    pub transcripts: Vec<T>,
     pub ai_runs: Vec<UiAiRun>,
     pub library: Vec<UiLibraryItem>,
     pub settings: UiSettings,

@@ -116,6 +116,15 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const client: ScriptotarApi = {
     async backendHealth() { return {schema_version: 1}; },
     async bootstrap() { return snapshot(); },
+    async bootstrapSummary() {
+      const full = snapshot();
+      return {
+        ...full,
+        transcripts: full.transcripts.map(({
+          id, projectId, title, language, direction, source, platform, durationSeconds, createdAt
+        }) => ({ id, projectId, title, language, direction, source, platform, durationSeconds, createdAt }))
+      };
+    },
     async listJobs() { return structuredClone(snapshot().jobs); },
     async searchTranscripts(rawQuery: string, limit = 10) {
       const query = rawQuery.trim().toLocaleLowerCase();

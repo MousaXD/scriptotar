@@ -12,6 +12,20 @@ use uuid::Uuid;
 
 use crate::SqliteStore;
 
+/// Lightweight transcript information for dashboard and library listing.
+/// Deliberately excludes text, segment JSON, word JSON and local media paths.
+#[derive(Debug, Clone)]
+pub struct TranscriptMetadata {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub source_type: SourceType,
+    pub source: String,
+    pub title: Option<String>,
+    pub duration_seconds: Option<f64>,
+    pub language: Option<String>,
+    pub created_at: String,
+}
+
 pub const LATEST_INTEGRATION_SCHEMA_VERSION: u32 = 5;
 
 fn storage_error(error: rusqlite::Error) -> RepositoryError {
@@ -337,6 +351,48 @@ impl SqliteStore {
         };
         rows.collect::<Result<HashMap<_, _>, _>>()
             .map_err(storage_error)
+    }
+
+    /// Fetch transcript headers without reading large text/segment/word columns.
+    /// The project predicate stays inside SQL; callers never receive other
+    /// projects' transcript metadata.
+    pub fn list_transcript_metadata(
+        &self,
+        project_id: Uuid,
+    ) -> RepositoryResult<Vec<TranscriptMetadata>> {
+        let connection = connection(self)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT t.id, s.project_id, s.source_type, s.locator, s.title,
+                        m.duration_seconds, t.language, t.created_at
+                 FROM transcripts t
+                 JOIN media m ON m.id = t.media_id
+                 JOIN sources s ON s.id = m.source_id
+                 WHERE s.project_id = ?1
+                 ORDER BY t.created_at DESC",
+            )
+            .map_err(storage_error)?;
+        let rows = statement
+            .query_map(params![project_id.to_string()], |row| {
+                let kind: String = row.get(2)?;
+                let source_type = match kind.as_str() {
+                    "url" => SourceType::Url,
+                    "local_file" => SourceType::LocalFile,
+                    _ => return Err(rusqlite::Error::InvalidQuery),
+                };
+                Ok(TranscriptMetadata {
+                    id: parse_uuid(row.get::<_, String>(0)?)?,
+                    project_id: parse_uuid(row.get::<_, String>(1)?)?,
+                    source_type,
+                    source: row.get(3)?,
+                    title: row.get(4)?,
+                    duration_seconds: row.get(5)?,
+                    language: row.get(6)?,
+                    created_at: row.get(7)?,
+                })
+            })
+            .map_err(storage_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(storage_error)
     }
 
     pub fn get_transcript_bundle(&self, transcript_id: Uuid) -> RepositoryResult<TranscriptBundle> {
@@ -1488,6 +1544,16 @@ mod tests {
         assert_eq!(loaded.project_id, project.id);
         assert_eq!(loaded.transcript.text, "hello");
         assert_eq!(loaded.source.locator, "/tmp/a.mp4");
+        let metadata = store.list_transcript_metadata(project.id).unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, transcript.id);
+        assert_eq!(metadata[0].project_id, project.id);
+        assert_eq!(metadata[0].source, "/tmp/a.mp4");
+        assert_eq!(metadata[0].duration_seconds, Some(1.0));
+        assert!(store
+            .list_transcript_metadata(Uuid::new_v4())
+            .unwrap()
+            .is_empty());
         assert_eq!(
             store
                 .list_job_transcript_links(Some(project.id))

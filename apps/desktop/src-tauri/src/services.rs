@@ -1,3 +1,4 @@
+#[cfg(test)]
 mod project_jobs;
 
 use std::{
@@ -9,7 +10,7 @@ use std::{
         Arc, Mutex,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, Utc};
@@ -22,7 +23,7 @@ use scriptotar_core::{
     RepositoryResult, ResearchItem, ResearchRepository, SettingsRepository, SourceType,
     TranscriptBundle, Watchlist, WatchlistRepository,
 };
-use scriptotar_db::{SqliteStore, WatchlistRefreshState};
+use scriptotar_db::{SqliteStore, TranscriptMetadata, WatchlistRefreshState};
 use scriptotar_jobs::JobService;
 use scriptotar_media::MediaPolicy;
 use scriptotar_orchestrator::{JobChangeNotifier, JobOrchestrator, RuntimeConfig};
@@ -32,9 +33,8 @@ use uuid::Uuid;
 
 use crate::dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
-    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment,
+    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment, UiTranscriptSummary,
 };
-use project_jobs::summarize_project_jobs;
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
 const MAX_AI_SOURCE_CHARS: usize = 450_000;
@@ -82,13 +82,17 @@ impl AppServices {
         data_dir: impl AsRef<Path>,
         notifier: JobChangeNotifier,
     ) -> RepositoryResult<Self> {
+        let startup_started = Instant::now();
         let data_dir = data_dir.as_ref();
         std::fs::create_dir_all(data_dir)
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let store = SqliteStore::open(data_dir.join("scriptotar.sqlite3"))?;
+        let database_opened = Instant::now();
         store.run_integration_migrations()?;
+        let migrations_complete = Instant::now();
         store.recover_interrupted_watchlist_refreshes()?;
         JobService::new(store.clone()).recover_after_unclean_shutdown()?;
+        let recovery_complete = Instant::now();
 
         let legacy_path = data_dir.join("history.sqlite3");
 
@@ -121,6 +125,17 @@ impl AppServices {
         let watchlist_refresher =
             spawn_watchlist_refresher(store.clone(), research_command.clone());
 
+        if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
+            eprintln!(
+                "[scriptotar-perf] database_open_ms={:.3} migrations_ms={:.3} recovery_ms={:.3} service_init_ms={:.3} total_ms={:.3}",
+                database_opened.duration_since(startup_started).as_secs_f64() * 1_000.0,
+                migrations_complete.duration_since(database_opened).as_secs_f64() * 1_000.0,
+                recovery_complete.duration_since(migrations_complete).as_secs_f64() * 1_000.0,
+                recovery_complete.elapsed().as_secs_f64() * 1_000.0,
+                startup_started.elapsed().as_secs_f64() * 1_000.0,
+            );
+        }
+
         Ok(Self {
             store,
             orchestrator,
@@ -131,11 +146,24 @@ impl AppServices {
         })
     }
 
+    /// Reuse the already migrated and recovered database handle for Tauri's
+    /// operational commands. This avoids a second SQLite open/migration pass.
+    pub fn operational_store(&self) -> SqliteStore {
+        self.store.clone()
+    }
+
     pub fn schema_version(&self) -> RepositoryResult<u32> {
         self.store.schema_version()
     }
 
     pub fn bootstrap(&self) -> RepositoryResult<BootstrapData> {
+        let active_project = self.active_project_id()?;
+        self.bootstrap_for(active_project)
+    }
+
+    /// Opt-in first-screen snapshot. Existing bootstrap() stays byte-for-byte
+    /// compatible for callers that still require eager transcript bodies.
+    pub fn bootstrap_summary(&self) -> RepositoryResult<BootstrapData<UiTranscriptSummary>> {
         let active_project = self.active_project_id()?;
         self.bootstrap_for(active_project)
     }
@@ -485,18 +513,23 @@ impl AppServices {
             .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))
     }
 
-    fn bootstrap_for(&self, active_project: Uuid) -> RepositoryResult<BootstrapData> {
+    fn bootstrap_for<T: BootstrapTranscript + serde::Serialize>(
+        &self,
+        active_project: Uuid,
+    ) -> RepositoryResult<BootstrapData<T>> {
+        let started = Instant::now();
         let projects = self.store.list_projects()?;
-        let all_jobs = self.store.list_jobs(None)?;
-        // Precompute project counts and latest updates once. Repeatedly filtering all
-        // jobs for every project makes bootstrap CPU work quadratic in workspace size.
-        let project_job_summaries = summarize_project_jobs(&all_jobs);
-        let transcripts = self.store.list_transcripts(Some(active_project))?;
+        // Keep active project jobs ordered as before; fetch other project counters
+        // as a compact grouped SQL query rather than pulling every historical job.
+        let all_jobs = self.store.list_jobs(Some(active_project))?;
+        let project_job_summaries = self.store.project_job_summaries()?;
+        let ui_transcripts = T::list_for(&self.store, active_project)?;
         let transcript_links = self.store.list_job_transcript_links(Some(active_project))?;
         let research_items = self.store.list_research_items(Some(active_project))?;
         let ai_runs = self.store.list_ai_runs(Some(active_project))?;
         let stored_creators = self.store.list_creators(Some(active_project))?;
         let watchlists = self.store.list_watchlists(Some(active_project))?;
+        let queries_complete = Instant::now();
         let watch_by_url = watchlists
             .iter()
             .map(|watchlist| (watchlist.profile_url.clone(), watchlist))
@@ -560,13 +593,12 @@ impl AppServices {
             .map(|item| research_to_ui(item, &creator_by_id, &queued_sources))
             .collect::<Vec<_>>();
         let ui_ai_runs = ai_runs.iter().map(ai_run_to_ui).collect::<Vec<_>>();
-        let ui_transcripts = transcripts.iter().map(transcript_to_ui).collect::<Vec<_>>();
         let ui_projects = projects
             .iter()
             .map(|project| {
                 let summary = project_job_summaries.get(&project.id);
                 let updated_at = summary
-                    .and_then(|summary| summary.latest_updated_at)
+                    .and_then(|summary| summary.latest_updated_at.as_deref())
                     .unwrap_or(&project.created_at)
                     .to_owned();
                 UiProject {
@@ -591,16 +623,7 @@ impl AppServices {
                 date: project.updated_at.clone(),
             })
             .collect::<Vec<_>>();
-        library.extend(ui_transcripts.iter().map(|transcript| UiLibraryItem {
-            id: format!("transcript:{}", transcript.id),
-            kind: "Transcript".to_owned(),
-            title: transcript.title.clone(),
-            subtitle: transcript.source.clone(),
-            project_id: transcript.project_id.clone(),
-            platform: Some(transcript.platform.clone()),
-            metric: None,
-            date: transcript.created_at.clone(),
-        }));
+        library.extend(ui_transcripts.iter().map(BootstrapTranscript::library_item));
         library.extend(ui_research.iter().map(|item| {
             UiLibraryItem {
                 id: format!("research:{}", item.id),
@@ -636,7 +659,7 @@ impl AppServices {
             }
         }));
 
-        Ok(BootstrapData {
+        let payload = BootstrapData {
             projects: ui_projects,
             active_project_id: active_project.to_string(),
             creators,
@@ -646,7 +669,22 @@ impl AppServices {
             ai_runs: ui_ai_runs,
             library,
             settings: self.load_settings()?,
-        })
+        };
+        if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
+            let assembled = Instant::now();
+            let serialization_started = Instant::now();
+            if let Ok(serialized) = serde_json::to_vec(&payload) {
+                eprintln!(
+                    "[scriptotar-perf] bootstrap_mode={} query_ms={:.3} assemble_ms={:.3} json_ms={:.3} json_bytes={}",
+                    std::any::type_name::<T>(),
+                    queries_complete.duration_since(started).as_secs_f64() * 1_000.0,
+                    assembled.duration_since(queries_complete).as_secs_f64() * 1_000.0,
+                    serialization_started.elapsed().as_secs_f64() * 1_000.0,
+                    serialized.len(),
+                );
+            }
+        }
+        Ok(payload)
     }
 }
 
@@ -1086,6 +1124,104 @@ fn stage_label(state: JobState) -> String {
         JobState::Interrupted => "Interrupted",
     }
     .to_owned()
+}
+
+/// Common operations needed to build the same ordered library entries for
+/// full and summary snapshots without loading full transcript content twice.
+trait BootstrapTranscript {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>>
+    where
+        Self: Sized;
+    fn library_item(&self) -> UiLibraryItem;
+}
+
+fn transcript_library_item(
+    id: &str,
+    project_id: &str,
+    title: &str,
+    source: &str,
+    platform: &str,
+    created_at: &str,
+) -> UiLibraryItem {
+    UiLibraryItem {
+        id: format!("transcript:{id}"),
+        kind: "Transcript".to_owned(),
+        title: title.to_owned(),
+        subtitle: source.to_owned(),
+        project_id: project_id.to_owned(),
+        platform: Some(platform.to_owned()),
+        metric: None,
+        date: created_at.to_owned(),
+    }
+}
+
+impl BootstrapTranscript for UiTranscript {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>> {
+        Ok(store
+            .list_transcripts(Some(project_id))?
+            .iter()
+            .map(transcript_to_ui)
+            .collect())
+    }
+
+    fn library_item(&self) -> UiLibraryItem {
+        transcript_library_item(
+            &self.id,
+            &self.project_id,
+            &self.title,
+            &self.source,
+            &self.platform,
+            &self.created_at,
+        )
+    }
+}
+
+impl BootstrapTranscript for UiTranscriptSummary {
+    fn list_for(store: &SqliteStore, project_id: Uuid) -> RepositoryResult<Vec<Self>> {
+        Ok(store
+            .list_transcript_metadata(project_id)?
+            .into_iter()
+            .map(transcript_summary_to_ui)
+            .collect())
+    }
+
+    fn library_item(&self) -> UiLibraryItem {
+        transcript_library_item(
+            &self.id,
+            &self.project_id,
+            &self.title,
+            &self.source,
+            &self.platform,
+            &self.created_at,
+        )
+    }
+}
+
+fn transcript_summary_to_ui(metadata: TranscriptMetadata) -> UiTranscriptSummary {
+    let language = metadata.language.unwrap_or_else(|| "unknown".to_owned());
+    let direction = if language.to_ascii_lowercase().starts_with("ar") {
+        "rtl"
+    } else {
+        "ltr"
+    };
+    let title = metadata.title.unwrap_or_else(|| {
+        Path::new(&metadata.source)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "Transcript".to_owned())
+    });
+    UiTranscriptSummary {
+        id: metadata.id.to_string(),
+        project_id: metadata.project_id.to_string(),
+        title,
+        language,
+        direction: direction.to_owned(),
+        platform: source_platform(&metadata.source, metadata.source_type),
+        source: metadata.source,
+        duration_seconds: metadata.duration_seconds.unwrap_or_default(),
+        created_at: metadata.created_at,
+    }
 }
 
 fn transcript_to_ui(bundle: &TranscriptBundle) -> UiTranscript {
@@ -1773,5 +1909,177 @@ mod tests {
             restarted.store.load_settings().unwrap().active_project_id,
             Some(inbox_id)
         );
+    }
+
+    fn seed_transcript_row(connection: &Connection, project_id: Uuid, ordinal: usize) -> Uuid {
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let timestamp = format!("2026-11-10T00:{:02}:{:02}Z", ordinal / 60, ordinal % 60);
+        let locator = format!("/mock/source-{ordinal}.mp4");
+        connection
+            .execute(
+                "INSERT INTO sources(id, project_id, source_type, locator, title, created_at)
+                 VALUES(?1, ?2, 'local_file', ?3, ?4, ?5)",
+                params![
+                    source_id.to_string(),
+                    project_id.to_string(),
+                    locator,
+                    format!("Recording {ordinal}"),
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO media(id, source_id, local_path, duration_seconds, created_at)
+                 VALUES(?1, ?2, ?3, 24.5, ?4)",
+                params![
+                    media_id.to_string(),
+                    source_id.to_string(),
+                    format!("/mock/source-{ordinal}.mp4"),
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        let language = if ordinal.is_multiple_of(2) {
+            "ar"
+        } else {
+            "en"
+        };
+        let segments = serde_json::json!([{
+            "index": 0,
+            "start": 0.0,
+            "end": 24.5,
+            "text": "a long segment ".repeat(500)
+        }])
+        .to_string();
+        connection
+            .execute(
+                "INSERT INTO transcripts(id, media_id, language, text, segments_json, created_at, updated_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                params![
+                    transcript_id.to_string(),
+                    media_id.to_string(),
+                    language,
+                    format!("private-body-{ordinal}:{}", "longword ".repeat(6000)),
+                    segments,
+                    timestamp,
+                ],
+            )
+            .unwrap();
+        transcript_id
+    }
+
+    #[test]
+    fn summary_bootstrap_preserves_metadata_and_project_isolation_without_large_bodies() {
+        for count in [2_usize, 128] {
+            let temp = TempDir::new().unwrap();
+            let services = AppServices::new(temp.path()).unwrap();
+            let inbox = Uuid::parse_str(&services.bootstrap().unwrap().active_project_id).unwrap();
+            let active = Uuid::parse_str(
+                &services
+                    .create_project("Test workspace".to_owned())
+                    .unwrap()
+                    .active_project_id,
+            )
+            .unwrap();
+            let connection = Connection::open(database_path(&temp)).unwrap();
+            let other_id = seed_transcript_row(&connection, inbox, 999);
+            let active_ids = (0..count)
+                .map(|ordinal| seed_transcript_row(&connection, active, ordinal))
+                .collect::<Vec<_>>();
+            drop(connection);
+
+            let full_started = Instant::now();
+            let full = services.bootstrap().unwrap();
+            let full_duration = full_started.elapsed();
+            let summary_started = Instant::now();
+            let summary = services.bootstrap_summary().unwrap();
+            let summary_duration = summary_started.elapsed();
+            let full_json = serde_json::to_vec(&full).unwrap();
+            let summary_json = serde_json::to_vec(&summary).unwrap();
+            println!(
+                "agent03 fixture={} full_ms={:.3} summary_ms={:.3} full_bytes={} summary_bytes={}",
+                count,
+                full_duration.as_secs_f64() * 1_000.0,
+                summary_duration.as_secs_f64() * 1_000.0,
+                full_json.len(),
+                summary_json.len()
+            );
+
+            assert_eq!(full.transcripts.len(), count);
+            assert_eq!(summary.transcripts.len(), count);
+            assert_eq!(summary.active_project_id, full.active_project_id);
+            assert_eq!(
+                summary
+                    .transcripts
+                    .iter()
+                    .map(|entry| entry.id.as_str())
+                    .collect::<Vec<_>>(),
+                full.transcripts
+                    .iter()
+                    .map(|entry| entry.id.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                serde_json::to_value(&summary.library).unwrap(),
+                serde_json::to_value(&full.library).unwrap()
+            );
+            assert!(full.transcripts[0].text.starts_with("private-body-"));
+            assert_eq!(full.transcripts[0].segments.len(), 1);
+            assert!(!String::from_utf8_lossy(&summary_json).contains("private-body-"));
+            assert!(!String::from_utf8_lossy(&summary_json).contains("segments"));
+            assert!(summary_json.len() * 5 < full_json.len());
+            assert!(services.get_transcript(other_id).is_err());
+            assert!(active_ids.contains(
+                &Uuid::parse_str(&services.get_transcript(active_ids[0]).unwrap().id).unwrap()
+            ));
+        }
+    }
+
+    #[test]
+    fn grouped_sql_job_summary_matches_full_history_and_active_project_order() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let inbox = Uuid::parse_str(&services.bootstrap().unwrap().active_project_id).unwrap();
+        let other = Uuid::parse_str(
+            &services
+                .create_project("Other workspace".to_owned())
+                .unwrap()
+                .active_project_id,
+        )
+        .unwrap();
+        for project in [inbox, other, other, other] {
+            services
+                .store
+                .insert_job(&Job::new(
+                    project,
+                    JobInput::Url(format!("https://example.com/{project}")),
+                ))
+                .unwrap();
+        }
+        let historical_jobs = services.store.list_jobs(None).unwrap();
+        let old = project_jobs::summarize_project_jobs(&historical_jobs);
+        let sql = services.store.project_job_summaries().unwrap();
+        assert_eq!(old.len(), sql.len());
+        for (project_id, original) in old {
+            let summarized = sql.get(&project_id).unwrap();
+            assert_eq!(summarized.item_count, original.item_count);
+            assert_eq!(
+                summarized.latest_updated_at.as_deref(),
+                original.latest_updated_at
+            );
+        }
+        let snapshot = services.bootstrap_summary().unwrap();
+        assert_eq!(snapshot.jobs.len(), 3);
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|item| { item.id == inbox.to_string() && item.item_count == 1 }));
+        assert!(snapshot
+            .projects
+            .iter()
+            .any(|item| { item.id == other.to_string() && item.item_count == 3 }));
     }
 }
