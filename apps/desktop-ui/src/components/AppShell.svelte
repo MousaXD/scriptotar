@@ -50,19 +50,25 @@
     command('settings', $translator('command.openSettings'), $translator('search.navigate'), 'settings preferences', () => navigate('settings'))
   ] satisfies PaletteItem[];
 
-  $: projectCommands = globalSearch.trim()
-    ? projects.map((project) => command(
-        `project:${project.id}`,
-        project.name,
-        $translator('search.project'),
-        `${project.name} ${project.description || ''} project`,
-        async () => {
-          if ((await onProjectChange(project.id)) !== false) closePalette();
-        }
-      ))
+  $: commandQuery = globalSearch.trim().toLocaleLowerCase();
+  $: projectCommands = commandQuery
+    ? matchingProjectCommands(projects, commandQuery, $translator('search.project'))
     : [];
 
-  $: commandQuery = globalSearch.trim().toLocaleLowerCase();
+  // Only the first eight matching project commands can appear in the palette.
+  // Stop building closures once that visible limit is reached, even in large workspaces.
+  function matchingProjectCommands(source: Project[], query: string, meta: string): PaletteItem[] {
+    const matches: PaletteItem[] = [];
+    for (const project of source) {
+      const keywords = `${project.name} ${project.description || ''} project`;
+      if (!keywords.toLocaleLowerCase().includes(query)) continue;
+      matches.push(command(`project:${project.id}`, project.name, meta, keywords, async () => {
+        if ((await onProjectChange(project.id)) !== false) closePalette();
+      }));
+      if (matches.length >= 8) break;
+    }
+    return matches;
+  }
   $: filteredCommands = [...baseCommands, ...projectCommands].filter((item) => !commandQuery || `${item.label} ${item.keywords}`.toLocaleLowerCase().includes(commandQuery));
   $: resultItems = searchResults.map((result) => command(
     `search:${result.id}`,
