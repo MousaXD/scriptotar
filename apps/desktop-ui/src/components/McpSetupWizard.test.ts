@@ -99,6 +99,33 @@ describe('local MCP connection setup wizard', () => {
     expect(save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, readData: true }), false);
     expect(screen.getByRole('heading', { name: 'الخطوة 2 · اختر طريقة الاتصال' })).toBeInTheDocument();
   });
+  it('reveals existing approved paths and keeps identifiers LTR in Arabic', async () => {
+    const original = createMockClient();
+    const policy = await original.getMcpPermissions();
+    policy.allowedPaths = ['/home/user/Approved'];
+    const api = createMockClient({ getMcpPermissions: async () => policy });
+    render(McpSetupWizard, { props: { api } });
+    await screen.findByTestId('mcp-step-permissions');
+    expect(screen.getByText(/Powerful access:/)).toBeInTheDocument();
+    const paths = screen.getByPlaceholderText('/home/user/Documents/Scriptotar') as HTMLTextAreaElement;
+    expect(paths).toHaveValue('/home/user/Approved');
+    setLocale('ar');
+    expect(paths).toHaveAttribute('dir', 'ltr');
+    expect(paths).toHaveValue('/home/user/Approved');
+    expect(document.documentElement.dir).toBe('rtl');
+  });
+
+  it('keeps the native setup steps keyboard focusable', async () => {
+    await enableReadOnly();
+    const step = screen.getByRole('button', { name: /2 Connection/ });
+    step.focus();
+    expect(step).toHaveFocus();
+    expect(step).toHaveAttribute('aria-current', 'step');
+    const first = screen.getByRole('button', { name: /1 Permissions/ });
+    first.focus();
+    expect(first).toHaveFocus();
+  });
+
   it('invalidates powerful-access approval if the approved scope changes before save', async () => {
     await setup();
     await fireEvent.click(screen.getByLabelText('Enable Scriptotar MCP'));
