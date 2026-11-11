@@ -123,6 +123,18 @@ describe('Research workspace', () => {
     await waitFor(() => expect(onScan).toHaveBeenCalledWith('youtube.com/@creator', 25));
   });
 
+  it('keeps already queued media visible but excludes them from actionable selections', async () => {
+    const source = researchItems(3);
+    source[0].queued = true;
+    const onQueue = vi.fn().mockResolvedValue(undefined);
+    mountResearch(source, { onQueue });
+    expect(screen.getByRole('checkbox', { name: /^Select An exceptionally long research title/ })).toBeDisabled();
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select page' }));
+    expect(screen.getByText('Selected: 2')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue selected (2)' }));
+    await waitFor(() => expect(onQueue).toHaveBeenCalledWith(['r-1', 'r-2']));
+  });
+
   it('keeps watchlist failures and retry timing visible while grouping normal diagnostics', async () => {
     mountResearch([], {
       watchlistStatuses: [{
@@ -135,6 +147,7 @@ describe('Research workspace', () => {
     expect(watchlist).toHaveTextContent('Retry scheduled');
     expect(watchlist).toHaveTextContent('Provider authentication expired');
     expect(watchlist).toHaveTextContent('Next retry');
+    expect(screen.getByRole('link', { name: '1 watchlists need attention' })).toHaveAttribute('href', '#watch-health-title');
     const details = within(watchlist).getByText('Refresh details');
     expect(details.closest('details')).not.toHaveAttribute('open');
     await fireEvent.click(details);
@@ -202,6 +215,7 @@ describe('Library workspace', () => {
     expect(await screen.findByRole('heading', { name: 'المكتبة' })).toBeInTheDocument();
     const button = screen.getByRole('button', { name: 'فتح نص مفرغ: Original creator title' });
     expect(button).toHaveTextContent('Original creator title');
+    expect(screen.getByText('محلي')).toBeInTheDocument();
     await fireEvent.click(button);
     expect(await screen.findByRole('alert')).toHaveTextContent('Artifact offline');
   });
