@@ -101,7 +101,10 @@ fn reopened_schema_migrations_are_repeatable_and_tampering_fails_closed() {
             [],
         )
         .unwrap();
-    assert!(SqliteStore::open(&path).is_err(), "tampered ledger must fail closed");
+    assert!(
+        SqliteStore::open(&path).is_err(),
+        "tampered ledger must fail closed"
+    );
     let preserved: String = connection
         .query_row(
             "SELECT name FROM projects WHERE id = ?1",
