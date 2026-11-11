@@ -15,6 +15,7 @@ describe('visual and semantic regression contract', () => {
     expect(palette).toContain('--font-arabic:');
     expect(palette).toContain('--color-surface:');
     expect(theme).toContain('prefers-color-scheme: light');
+    expect(theme).toContain("stroke='%23586b76'");
     expect(app).toContain('inset-inline-start: -13px');
     expect(app).toContain('inset-inline-end: 42px');
   });

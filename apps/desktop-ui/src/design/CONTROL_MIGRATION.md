@@ -9,7 +9,7 @@ This document is owned by Agent 01 and describes the frontend control foundation
 - Control height is 40px; longer transcript content retains its separate reading scale.
 - UI and Arabic text use local/offline font stacks. We intentionally do not request web-hosted fonts. **Exact glyph metrics are not guaranteed across Windows/Linux until a licensed font bundle is approved.**
 - Native operating-system file and directory pickers remain native.
-- Dark and system modes share semantic tokens. Sidebar markers and activity counters use logical inline offsets; new controls also avoid physical left/right anchoring. Static palette contrast was audited against canvas and raised surfaces (main text, muted and faint are at least 5:1 in both audited palettes), but this does not replace rendered accessibility testing.
+- Dark and system modes share semantic tokens. Sidebar markers and activity counters use logical inline offsets; new controls also avoid physical left/right anchoring. Static palette contrast was audited against canvas and raised surfaces (main text, muted and faint are at least 5:1 in both audited palettes), but this does not replace rendered accessibility testing. The system-light native selector chevron now uses a darker SVG stroke with approximately 5.13:1 contrast against the light field surface; this is a closed-select fallback only.
 
 ## Shared components (new)
 
