@@ -196,7 +196,7 @@ describe('Creator Control Room GUI', () => {
 
   it('keeps the native media queue workflow usable in Arabic', async () => {
     await ready();
-    await fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
     await fireEvent.change(screen.getByLabelText('Interface language'), { target: { value: 'ar' } });
 
     expect(await screen.findByRole('heading', { name: 'المهام' })).toBeInTheDocument();
