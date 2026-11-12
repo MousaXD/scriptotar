@@ -11,7 +11,7 @@ Neither packaging workflow may create or edit a GitHub Release, upload assets di
 
 ## Distribution approval gate
 
-Building and validating packages is intentionally separate from publicly publishing them. For Scriptotar Next 1.4.0, the `publish-preview` job runs only when **both** repository variables `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` and `SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED` are exactly `true`. The version-specific flag prevents a previously approved 1.3.0 preview from implicitly publishing a new release.
+Building and validating packages is intentionally separate from publicly publishing them. For Scriptotar Next 1.4.1, the `publish-preview` job normally requires **both** repository variables `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` and `SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED` are exactly `true`. The owner also explicitly authorized this 1.4.1 hotfix in the current session; the one-time approval is restricted to the exact main commit message `owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112`. All exact-SHA gates still apply. The version-specific flag prevents a previously approved 1.3.0 preview from implicitly publishing a new release.
 
 If either variable is absent or has any other value, Windows and Linux package CI can still build and validate artifacts, but the rolling Scriptotar Next GitHub prerelease and `tauri-next-latest` tag are not mutated.
 
@@ -25,7 +25,7 @@ Keep this approval disabled while a known distribution/compliance blocker remain
 - `Linux Tauri Package` (`linux-tauri.yml`), including `Build and validate Tauri deb`;
 - `Scriptotar MCP E2E` (`mcp-e2e.yml`), including the `mcp` job.
 
-These five workflow gates are defined in `scripts/release_ci_gate.py`. They do not replace the separate live-provider, real-model, hardware, or manual acceptance record. A hosted YouTube access failure and a local full-canary pass remain distinct evidence; neither should be silently relabeled to satisfy release review. See [source-access diagnostics](../../docs/SOURCE_ACCESS.md) and the [1.3.0 readiness record](../../docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
+These five workflow gates are defined in `scripts/release_ci_gate.py`. They do not replace the separate live-provider, real-model, hardware, or manual acceptance record. A hosted YouTube access failure and a local full-canary pass remain distinct evidence; neither should be silently relabeled to satisfy release review. See [source-access diagnostics](../../docs/SOURCE_ACCESS.md) and the [1.4.1 readiness record](../../docs/releases/NEXT_1.4.1_RELEASE_READINESS.md).
 
 The exact-SHA gate queries GitHub Actions by workflow file, `main`, `push` event, and exact commit SHA, then independently rechecks each selected run's `headSha`. If more than one push run exists for the same workflow and SHA, the newest run is authoritative. Runs for another SHA are ignored, and an older green run cannot replace a newer failing run for the same SHA.
 

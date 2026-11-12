@@ -46,9 +46,9 @@ jobs:
         run: python .github/tests/test_tauri_next_release_race.py
 
   publish-preview:
-    # One-time repository owner approval for the 1.4.0 preview is restricted to an exact main commit message.
+    # One-time repository owner approval for the 1.4.1 preview is restricted to an exact main commit message.
     # Every mandatory exact-SHA CI and package-artifact gate remains enforced.
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && ((vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED == 'true') || github.event.workflow_run.head_commit.message == 'owner-approve-scriptotar-next-1.4.0-publish-20261112')
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && ((vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true') || github.event.workflow_run.head_commit.message == 'owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -131,7 +131,7 @@ jobs:
           )
 
           cat > RELEASE-NOTES.md <<NOTES
-          # Scriptotar Next Preview
+          # Scriptotar Next 1.4.1 Hotfix
 
           Built automatically only after the mandatory exact-SHA CI suite passed on main.
 
@@ -139,6 +139,8 @@ jobs:
           - Commit: ${SOURCE_SHA}
           - Windows asset: Scriptotar-Next-latest-x64-setup.exe
           - Linux asset: Scriptotar-Next-latest-amd64.deb
+
+          Hotfix: isolates the worker JSON protocol from yt-dlp console progress and native/subprocess output, preventing ENGINE_PROTOCOL failures during valid downloads. Adds real downloader transport regression coverage and an exact Instagram-post protocol canary.
 
           Required release gates: Tauri migration integration, Scriptotar MCP E2E, Security hygiene, Windows Tauri Installer, and Linux Tauri Package. Every gate and its mandatory jobs must complete successfully for this exact commit.
 
@@ -169,7 +171,7 @@ jobs:
           gh release create "$STAGING_TAG" "${ASSETS[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
-            --title 'Scriptotar Next Preview' \
+            --title 'Scriptotar Next 1.4.1 Hotfix' \
             --notes-file RELEASE-NOTES.md \
             --prerelease \
             --draft
@@ -232,7 +234,7 @@ jobs:
             "repos/$GITHUB_REPOSITORY/releases/$STAGING_RELEASE_ID" \
             -f tag_name="$RELEASE_TAG" \
             -f target_commitish="$SOURCE_SHA" \
-            -f name='Scriptotar Next Preview' \
+            -f name='Scriptotar Next 1.4.1 Hotfix' \
             -F body=@RELEASE-NOTES.md \
             -F draft=false \
             -F prerelease=true \

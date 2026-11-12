@@ -11,8 +11,11 @@ on:
     paths:
       - 'sidecars/transcription/scriptotar_sidecar/engine.py'
       - 'sidecars/transcription/scriptotar_sidecar/validation.py'
+      - 'sidecars/transcription/scriptotar_sidecar/engine_worker.py'
+      - 'sidecars/transcription/scriptotar_sidecar/service.py'
       - 'sidecars/transcription/requirements-engine.txt'
       - 'scripts/live_media_e2e.py'
+      - 'scripts/live_sidecar_url_e2e.py'
       - 'tests/test_live_media_contract.py'
       - '.github/workflows/live-platform-e2e.yml'
 
@@ -65,6 +68,7 @@ jobs:
           ffprobe -version
           ffmpeg -version
       - name: Install production-pinned downloader and Whisper dependencies
+        id: engine-deps
         run: |
           python3 -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-engine.txt
           python3 -m pip check
@@ -75,6 +79,15 @@ jobs:
           python3 scripts/live_media_e2e.py \
             --summary-json "$RUNNER_TEMP/live-platform-e2e.json" \
             2>&1 | tee "$RUNNER_TEMP/live-platform-e2e.log"
+      - name: Verify exact Instagram post through supervisor and real worker
+        if: always() && steps.engine-deps.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/live_sidecar_url_e2e.py \
+            --url 'https://www.instagram.com/p/DfiW-6ssCCU/' \
+            --work-dir "$RUNNER_TEMP/instagram-protocol-e2e" \
+            2>&1 | tee "$RUNNER_TEMP/instagram-protocol-e2e.log"
       - name: Publish per-platform pass or failure summary
         if: always()
         shell: bash
@@ -92,6 +105,15 @@ jobs:
           else:
               summary = ('## Real platform E2E did not produce a result\n\n'
                          'The runner failed before completion; inspect the diagnostic log.\n')
+          protocol_report = Path(os.environ['RUNNER_TEMP']) / 'instagram-protocol-e2e' / 'summary.json'
+          summary += '\n## Exact Instagram post through the real JSON protocol\n\n'
+          if protocol_report.is_file():
+              protocol = json.loads(protocol_report.read_text())
+              summary += f"Source supervisor/worker run: **{protocol['status']}**.\n\n"
+              if protocol.get('error'):
+                  summary += protocol['error'] + '\n'
+          else:
+              summary += 'No completed protocol result; inspect the step log.\n'
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
               stream.write(summary)
           PY
@@ -103,5 +125,8 @@ jobs:
           path: |
             ${{ runner.temp }}/live-platform-e2e.json
             ${{ runner.temp }}/live-platform-e2e.log
+            ${{ runner.temp }}/instagram-protocol-e2e/summary.json
+            ${{ runner.temp }}/instagram-protocol-e2e/stderr.log
+            ${{ runner.temp }}/instagram-protocol-e2e.log
           retention-days: 14
           if-no-files-found: warn

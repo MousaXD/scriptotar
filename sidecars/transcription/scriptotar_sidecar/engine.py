@@ -183,6 +183,7 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
     emit("progress", {"stage": "downloading", "percent": 0.0, "message": "Reading media metadata."})
     preflight_opts: dict[str, Any] = {
         "quiet": True,
+        "noprogress": True,
         "no_warnings": True,
         "noplaylist": True,
         "socket_timeout": 30,
@@ -230,6 +231,9 @@ def download_url(job: dict[str, Any], partial: Path, emit: EventSink) -> tuple[P
         "outtmpl": output_template,
         "noplaylist": True,
         "quiet": True,
+        # quiet suppresses informational output, but yt-dlp's progress printer
+        # is independent. Progress belongs in our JSON hook, never stdout.
+        "noprogress": True,
         "no_warnings": True,
         "progress_hooks": [hook],
         "retries": 3,
