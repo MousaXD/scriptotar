@@ -38,7 +38,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
         with:
           components: rustfmt
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Verify 1.1.0 version identity and exhaustive API binding inventory
         run: PYTHONPATH=sidecars/transcription python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Verify all sidecar protocol, recovery, device and validation features
