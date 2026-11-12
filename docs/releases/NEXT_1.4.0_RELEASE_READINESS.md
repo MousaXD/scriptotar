@@ -1,38 +1,39 @@
-# Scriptotar Next 1.4.0 — Integration Candidate Readiness
+# Scriptotar Next 1.4.0 — Published Preview and Outstanding Certification
 
-**Snapshot date:** 2026-11-11  
-**Integration PR:** https://github.com/MousaXD/scriptotar/pull/99  
-**Branch:** `integration/scriptotar-agent00-gui-performance-20261111`  
-**Verdict:** **NO-GO for merge and distribution until exact-final-SHA checks and independent QA are complete.**
+**Publication date:** 2026-11-12
+**Release type:** Public GitHub **prerelease** using the existing rolling `tauri-next-latest` tag; **not** a stable release.
+**Published source SHA:** `82812c071b6b201ac3dccd66d014a187c838b0fa`
+**Source merge:** PR #99 / `e7d8bb3b207092436686a433599e148a24e1c9df`
+**Release:** https://github.com/MousaXD/scriptotar/releases/tag/tauri-next-latest
+**Publication workflow:** https://github.com/MousaXD/scriptotar/actions/runs/43131757810 (successful)
 
-## Scope and product identity
+## Scope
 
-Next 1.4.0 combines the eight-agent desktop GUI/startup/performance workstreams and patched bundled SQLite supply chain. The source versions in Tauri, the Rust workspace and nine local Cargo lockfile entries, Svelte and npm package-lock root, and the transcription sidecar are synchronized to `1.4.0`. The sidecar protocol stays `1`; archived Scriptotar Classic remains `1.3.0` and is not modified.
+Next 1.4.0 integrates the eight-agent GUI/startup/performance overhaul and the SQLite supply-chain patch. Windows NSIS and Debian/Ubuntu x64 distributions include their self-contained transcription runtime. The Next Rust/Tauri, Svelte and sidecar version identities are 1.4.0; the sidecar protocol stays 1, and archived Scriptotar Classic 1.3.0 is unchanged.
 
-Agent 00 combined source PRs #89 (design system), #90 (startup), #92 (Rust bootstrap), #95 (Dashboard/Jobs), #91 (Research/Library), #93 (Transcript/AI), #96 (Settings/localization), #98 (SQLite security), and #94 (independent QA tooling), preserving their source commits as merge parents. Agent 00 then adopted metadata-only startup with full on-demand transcript hydration and migrated real app selectors to shared accessible controls.
+## Verified automated checks on the exact published source commit
 
-## Evidence is exact-commit only
+- [Main CI](https://github.com/MousaXD/scriptotar/actions/runs/43130493137): success.
+- [Tauri migration integration](https://github.com/MousaXD/scriptotar/actions/runs/43130493223): success, including Rust workspace, Svelte, Python sidecar, Rust/sidecar integration, supply chain and Tauri build.
+- [Scriptotar MCP E2E](https://github.com/MousaXD/scriptotar/actions/runs/43130493252): success.
+- [Security hygiene](https://github.com/MousaXD/scriptotar/actions/runs/43130493257): success.
+- [Windows installer](https://github.com/MousaXD/scriptotar/actions/runs/43130493261): success, including clean installed-app smoke; release artifact uploaded.
+- [Linux Debian](https://github.com/MousaXD/scriptotar/actions/runs/43130493166): success, including installed-app IPC/persistence, MCP and shell checks; release artifact uploaded.
+- [Desktop UI](https://github.com/MousaXD/scriptotar/actions/runs/43130493215): success.
+- [Chromium GUI visual/performance QA](https://github.com/MousaXD/scriptotar/actions/runs/43130493375): success; all 140 screenshots/cases with zero automated failures.
+- [Release publisher](https://github.com/MousaXD/scriptotar/actions/runs/43131757810): success; both artifact packages, checksum manifest, staging validation, exact-current-main recheck, public rolling tag and uploaded assets verified.
 
-Prior to the version bump, integration commit `f3695908753bb5947bf00f6aea05a2d5e7446571` passed [Desktop UI](https://github.com/MousaXD/scriptotar/actions/runs/43045436283) and [Security hygiene](https://github.com/MousaXD/scriptotar/actions/runs/43045436709). These prove **only those two workflows for that commit**. They do not certify later release-version changes or any other platform.
+## Explicitly outstanding manual certification — not represented as passed
 
-The 2026-11-11 Linux native-dependency setup in earlier integration runs repeatedly failed or timed out resolving Ubuntu/Azure apt mirrors: see [Rust foundation](https://github.com/MousaXD/scriptotar/actions/runs/43041383836) and [CI](https://github.com/MousaXD/scriptotar/actions/runs/43041384017). This is an infrastructure blocker, **not** evidence that skipped Rust, database, or installer tests passed. Do not bypass native compilation or silence the mandatory checks.
+- Independent human approval of the full 140-scenario image set and signed accessibility/RTL baseline.
+- Reproducible native Tauri cold/warm startup and large SQLite metadata/bootstrap latency, payload and memory comparisons versus 1.3.0.
+- Manual device-specific Windows/Linux user flows, CUDA, GPU fallback, real Whisper multilingual media, migrated customer databases and live-provider canaries.
+- Hosted YouTube sign-in/bot-verification limitations. Source and fixture checks are not evidence that public YouTube access always succeeds.
 
-Independent GUI QA implements 140 browser screenshots and interaction cases but requires actual exact-SHA execution and manual image review. A browser-mock timing measurement cannot establish native app startup or SQLite IPC speed. No approved image-diff baseline or native performance certification exists for the 1.4.0 candidate at this snapshot.
+The repository owner explicitly requested immediate **early-preview** publication despite these incomplete manual checks. This records an informed distribution risk acceptance, not a claim of passing certification. [Issue #100](https://github.com/MousaXD/scriptotar/issues/100) remains open to close these gaps.
 
-The SQLite remediation source in PR #98 contains `rusqlite 0.41.0` and `libsqlite3-sys 0.39.1`, bundling patched SQLite 3.54.x. Preserve schema-5 migration/WAL/recovery/backup/security tests and obtain a **new successful exact-final-SHA** RustSec audit and installed package acceptance. See [security-agent handoff](../agent-handoffs/security-sqlite-rustsec-2026-0459.md).
+## Integrity and release safeguards
 
-## Required go/no-go gates
+The existing sole release writer used exact-published-commit required CI and Windows/Linux package artifact pairing, staged a draft with a SHA-256 checksum manifest, checked that source remained current `main`, then moved `tauri-next-latest`. The new approval was restricted to the publication commit message `owner-approve-scriptotar-next-1.4.0-publish-20261112`. The normal `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED` and `SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED` flags remain the default approval mechanism for other commits.
 
-1. Exact final commit: Svelte typecheck, Vitest, production build, command API contract, Arabic/English and RTL, keyboard, project switch, source lineage, prompt isolation and Settings/MCP persistence.
-2. Exact final commit: Rustfmt, locked Rust check/Clippy/tests, SQLite migrations, recovery and the bundled patched SQLite compatibility acceptance, mandatory Rust and other supply-chain audits.
-3. Exact final commit: MCP stdio/HTTP auth, default-deny security, token revocation, replay/path protections and restart persistence.
-4. Exact final commit: clean installed Windows NSIS and Linux Debian packages, host startup, cancellation/shutdown/recovery, package integrity, license/compliance artifacts.
-5. Exact final commit: real Chromium screenshots across themes, RTL, viewports and failure states; zero unexplained native controls, errors or focus regressions; independent human visual review and approved baseline.
-6. Reproducible, same-workload native cold/warm startup, payload size, large database memory/latency and regression evidence. Do not assert an unmeasured speedup.
-7. Hosted YouTube live E2E remains distinct from source-access verification and local model inference; never swap its URL, inject fixture success or relabel bot/sign-in denial. Manual GPU, mixed-language and real-provider acceptance remain outstanding where not measured.
-
-## Release protection
-
-`.github/workflows/tauri-next-release.yml` is the sole rolling release writer. The workflow requires exact-commit push CI on `main`, matching validated native artifacts, and explicit **both** `SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED=true` and `SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED=true`. Do **not** set this approval as a CI workaround, publish a stable tag or move `tauri-next-latest` as part of integration. An unpublished 1.4.0 source-version bump is **not** a release.
-
-**Promotion decision:** keep PR #99 draft and `main` untouched until the final source commit passes the mandatory gates and Agent 08 independently certifies the screenshots, keyboard/accessibility, responsiveness and native startup evidence.
+This page was updated after publication; the documentation-only update does not rebuild or replace the versioned release assets.

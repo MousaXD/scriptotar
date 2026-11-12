@@ -4,7 +4,7 @@ Research creators, transcribe videos on your device, and turn source material in
 
 Built with **Rust · Tauri v2 · Svelte 5 · Faster Whisper**. Available as Windows and Linux desktop packages, with an Arabic/English interface and optional MCP integration for assistants.
 
-**Current source version: Scriptotar Next 1.4.0, an unpublished preview candidate.** Published downloads may have a different version. See [Releases](https://github.com/MousaXD/scriptotar/releases), [Changelog](CHANGELOG.md), and [release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
+**Current published rolling preview: Scriptotar Next 1.4.0 (2026-11-12).** This is an early prerelease, not a stable release. Independent full visual certification, native startup/large-database benchmarks, and some real-provider/hardware canaries remain outstanding; see [release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md). See [Releases](https://github.com/MousaXD/scriptotar/releases), [Changelog](CHANGELOG.md), and [release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
 
 [Features](#features) · [Install](#installation) · [First transcription](#your-first-transcription) · [AI Studio](#ai-studio) · [MCP setup](#mcp-setup) · [Troubleshooting](#troubleshooting) · [Development](#development)
 

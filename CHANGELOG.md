@@ -1,8 +1,8 @@
 # Changelog
 
-## Scriptotar Next 1.4.0 — 2026-11-11 (integration candidate; unpublished)
+## Scriptotar Next 1.4.0 — 2026-11-12 (published rolling preview)
 
-The 1.4.0 candidate brings together the eight-agent GUI/performance overhaul and the SQLite security remediation. It is a **draft integration build, not certified for merge or distribution**.
+The 1.4.0 preview brings together the eight-agent GUI/performance overhaul and the SQLite security remediation. Published on the rolling GitHub preview tag after the owner explicitly accepted remaining manual-certification risks. **This is an early prerelease, not a stable release.**
 
 ### Experience and startup
 - Refined the desktop design system, typography and accessible custom controls; integrated styled selectors across the shell, Research, Library, Transcript, AI Studio and Settings, with keyboard and RTL behavior retained.
@@ -13,8 +13,8 @@ The 1.4.0 candidate brings together the eight-agent GUI/performance overhaul and
 ### Dependency security and release limitations
 - Updated bundled SQLite using `rusqlite 0.41.0` and `libsqlite3-sys 0.39.1` for RUSTSEC-2026-0459, retaining WAL, migrations, backups and legacy recovery tests.
 - Aligned Next 1.4.0 across Tauri, Rust, Svelte, sidecar and lockfiles. Archived Classic 1.3.0 and sidecar protocol version 1 are unchanged.
-- Exact-final-commit Rust/SQLite, MCP, Windows/Linux packaged app, visual screenshot, native performance and independent QA gates are still pending. Existing live YouTube access challenges and manual hardware/provider checks are not waived.
-- Publishing remains disabled until an approved exact-`main` build passes every release gate. See [1.4.0 release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
+- Exact-published-commit automated Rust/SQLite, MCP, Windows/Linux installed-app and GUI screenshot checks passed, including 140 rendered scenarios with zero automated failures. Independent human visual signoff, reproducible native cold/warm and large-database benchmarks, real hardware/provider canaries, and hosted YouTube E2E remain outstanding and are disclosed rather than misrepresented as PASS.
+- Published from exact-`main` commit `82812c071b6b201ac3dccd66d014a187c838b0fa` using the guarded single release writer after all required automated gates passed and owner-authorized preview distribution. Outstanding manual certification remains tracked in [issue #100](https://github.com/MousaXD/scriptotar/issues/100). See [1.4.0 release readiness](docs/releases/NEXT_1.4.0_RELEASE_READINESS.md).
 
 ## Scriptotar Next 1.3.0 — 2026-11-08 (release candidate; unpublished)
 
