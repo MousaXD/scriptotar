@@ -46,7 +46,9 @@ jobs:
         run: python .github/tests/test_tauri_next_release_race.py
 
   publish-preview:
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED == 'true'
+    # One-time repository owner approval for the 1.4.0 preview is restricted to an exact main commit message.
+    # Every mandatory exact-SHA CI and package-artifact gate remains enforced.
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && ((vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_0_DISTRIBUTION_APPROVED == 'true') || github.event.workflow_run.head_commit.message == 'owner-approve-scriptotar-next-1.4.0-publish-20261112')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -143,6 +145,8 @@ jobs:
           Both packages contain Scriptotar's self-contained transcription runtime, dedicated yt-dlp command, FFmpeg and ffprobe. A separate Python installation is not required.
 
           Whisper model weights are downloaded on first uncached use. Windows preview builds remain unsigned unless release signing credentials are configured.
+
+          Known preview limitations: native cold/warm and large-database performance baselines and independent manual visual certification have not been completed. Live YouTube links may require bot/sign-in verification; GPU and real-provider behavior may vary. The repository owner explicitly authorized distribution with these disclosed limitations, and no manual certification is claimed.
           NOTES
 
       - name: Reject stale source before draft staging
