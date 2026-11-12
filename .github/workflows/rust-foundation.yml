@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 branch, immutable security-backport head
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v4 branch, immutable security-backport head
       - name: Install Tauri system dependencies
         run: bash scripts/install_tauri_deps.sh
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
