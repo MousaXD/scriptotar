@@ -150,6 +150,48 @@ def process_dead(pid: int) -> bool:
 
 
 class SubprocessProtocolTests(unittest.TestCase):
+    def test_real_worker_keeps_dependency_stdout_out_of_protocol(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "input.mp4"
+            source.write_bytes(b"fixture")
+            wrapper = root / "noisy_worker.py"
+            wrapper.write_text(
+                "import os, subprocess, sys\n"
+                "from scriptotar_sidecar import engine_worker\n"
+                "def noisy_job(job, sink):\n"
+                "    print('[download] 0.0% of 2.31MiB', end='', flush=True)\n"
+                "    os.write(1, b'native dependency output\\n')\n"
+                "    subprocess.run([sys.executable, '-c', \"print('child output')\"], check=True)\n"
+                "    sink('progress', {'stage': 'downloading', 'percent': 50.0})\n"
+                "    if job['id'] == 'failure':\n"
+                "        raise engine_worker.SidecarError('SOURCE_ACCESS_FAILED', 'fixture source error')\n"
+                "    return {'text': 'completed'}\n"
+                "engine_worker.run_job = noisy_job\n"
+                "raise SystemExit(engine_worker.main())\n",
+                encoding="utf-8",
+            )
+            sidecar = SidecarProcess(extra_env={"SCRIPTOTAR_SIDECAR_ENGINE_WORKER": str(wrapper)})
+            try:
+                for job_id in ("success", "failure", "success-again"):
+                    sidecar.send(command_for(job_id, source, root / "output"))
+                    started = sidecar.next_event("job_started")
+                    self.assertEqual(started["job_id"], job_id)
+                    progress = sidecar.next_event("progress")
+                    self.assertEqual(progress["percent"], 50.0)
+                    terminal = sidecar.next_event("error" if job_id == "failure" else "result")
+                    self.assertEqual(terminal["job_id"], job_id)
+                    if job_id == "failure":
+                        self.assertEqual(terminal["error"]["code"], "SOURCE_ACCESS_FAILED")
+                    else:
+                        self.assertEqual(terminal["result"]["text"], "completed")
+                diagnostics = sidecar.stderr_text()
+                for expected in ("[download]", "native dependency output", "child output"):
+                    self.assertIn(expected, diagnostics)
+                self.assertNotIn("malformed JSON", diagnostics)
+            finally:
+                sidecar.close()
+
     def test_ping_ready_malformed_unknown_and_clean_shutdown(self):
         sidecar = SidecarProcess()
         try:

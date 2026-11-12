@@ -1,5 +1,12 @@
 # Changelog
 
+## Scriptotar Next 1.4.1 — 2026-11-12 (hotfix preview)
+
+- Prevent valid social-media downloads from failing with `ENGINE_PROTOCOL` when yt-dlp prints console progress into the worker JSON stream. Disable console progress and isolate JSON output from Python, native, and child-process diagnostics.
+- Add regression tests with the real pinned yt-dlp HTTP downloader and noisy worker output. Run the real transport check in the required integration gate and exercise the exact Instagram post through the live supervisor/worker protocol.
+- Local pre-bump verification completed the exact Instagram URL through the installed desktop MCP entrypoint with the existing `medium` model and persisted a transcript. This local evidence does not certify the rebuilt 1.4.1 packages.
+- Bump the Rust workspace, Tauri, frontend, sidecar and lockfiles to 1.4.1. Protocol remains 1. See [hotfix readiness](docs/releases/NEXT_1.4.1_RELEASE_READINESS.md).
+
 ## Scriptotar Next 1.4.0 — 2026-11-12 (published rolling preview)
 
 The 1.4.0 preview brings together the eight-agent GUI/performance overhaul and the SQLite security remediation. Published on the rolling GitHub preview tag after the owner explicitly accepted remaining manual-certification risks. **This is an early prerelease, not a stable release.**
