@@ -19,6 +19,7 @@
   export let gateway: StudioGateway | undefined = undefined;
   export let incoming: (StudySourceRef & { projectId: string }) | null = null;
   export let onNavigate: (view: ViewId) => void = () => {};
+  export let onOpenTranscript: ((id: string) => void) | undefined = undefined;
 
   let studies: Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[] = [];
   let record: ContentStudy | null = null;
@@ -527,7 +528,7 @@
           {:else}<p>{transcriptDetail.text.slice(0, 6000)}</p>{/if}
         </div>
       {/if}
-      <button type="button" class="text-button" on:click={() => onNavigate('transcript')}>{t.openTranscript}</button>
+      <button type="button" class="text-button" on:click={() => { if (onOpenTranscript) onOpenTranscript(selectedTranscript.id); else onNavigate('transcript'); }}>{t.openTranscript}</button>
     {:else}
       <p class="muted">{selectedSource ? t.previewUnavailable : t.selectSource}</p>
     {/if}
