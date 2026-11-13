@@ -3,7 +3,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use scriptotar_core::ResearchItem;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -34,10 +33,119 @@ pub enum IntelligenceError {
     SourceUnavailable(String),
 }
 
+/// UTC instant with nanosecond precision. Validates RFC3339 without a new
+/// workspace dependency, keeping root Cargo.lock owned by Agent 00.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ObservationTimestamp {
+    pub unix_seconds: i64,
+    pub nanosecond: u32,
+}
+
+impl ObservationTimestamp {
+    pub fn parse_rfc3339(raw: &str) -> Option<Self> {
+        let bytes = raw.as_bytes();
+        if bytes.len() < 20
+            || bytes[4] != b'-'
+            || bytes[7] != b'-'
+            || !matches!(bytes[10], b'T' | b't')
+            || bytes[13] != b':'
+            || bytes[16] != b':'
+        {
+            return None;
+        }
+        let digits = |start: usize, end: usize| -> Option<u32> {
+            std::str::from_utf8(bytes.get(start..end)?).ok()?.parse().ok()
+        };
+        let year = digits(0, 4)? as i64;
+        let month = digits(5, 7)?;
+        let day = digits(8, 10)?;
+        let hour = digits(11, 13)?;
+        let minute = digits(14, 16)?;
+        let second = digits(17, 19)?;
+        let epoch_day = validated_civil_day(year, month, day)?;
+        if hour > 23 || minute > 59 || second > 59 {
+            return None;
+        }
+        let mut index = 19;
+        let mut nanosecond = 0_u32;
+        if bytes.get(index) == Some(&b'.') {
+            index += 1;
+            let start = index;
+            while bytes.get(index).is_some_and(u8::is_ascii_digit) {
+                if index - start >= 9 {
+                    return None;
+                }
+                nanosecond = nanosecond * 10 + u32::from(bytes[index] - b'0');
+                index += 1;
+            }
+            if start == index {
+                return None;
+            }
+            for _ in 0..(9 - (index - start)) {
+                nanosecond *= 10;
+            }
+        }
+        let offset = match bytes.get(index) {
+            Some(b'Z') | Some(b'z') if index + 1 == bytes.len() => 0_i64,
+            Some(sign @ (b'+' | b'-')) if index + 6 == bytes.len() && bytes[index + 3] == b':' => {
+                let offset_hours = digits(index + 1, index + 3)?;
+                let offset_minutes = digits(index + 4, index + 6)?;
+                if offset_hours > 23 || offset_minutes > 59 {
+                    return None;
+                }
+                let seconds = i64::from(offset_hours * 3_600 + offset_minutes * 60);
+                if *sign == b'+' { seconds } else { -seconds }
+            }
+            _ => return None,
+        };
+        Some(Self {
+            unix_seconds: epoch_day * 86_400 + i64::from(hour * 3_600 + minute * 60 + second)
+                - offset,
+            nanosecond,
+        })
+    }
+
+    pub fn add_seconds(self, seconds: i64) -> Self {
+        Self {
+            unix_seconds: self.unix_seconds.saturating_add(seconds),
+            ..self
+        }
+    }
+
+    pub fn seconds_since(self, earlier: Self) -> i64 {
+        self.unix_seconds.saturating_sub(earlier.unix_seconds)
+            - i64::from(self.nanosecond < earlier.nanosecond)
+    }
+}
+
+/// Gregorian day index relative to Unix epoch, rejecting impossible dates.
+fn validated_civil_day(year: i64, month: u32, day: u32) -> Option<i64> {
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let max_day = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if !(1..=max_day).contains(&day) {
+        return None;
+    }
+    let adjusted_year = year - i64::from(month <= 2);
+    let era = adjusted_year.div_euclid(400);
+    let year_of_era = adjusted_year - era * 400;
+    let adjusted_month = i64::from(month) + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * adjusted_month + 2) / 5 + i64::from(day) - 1;
+    let year_day = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some(era * 146_097 + year_day - 719_468)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", content = "date", rename_all = "snake_case")]
+#[serde(tag = "status", content = "epoch_day", rename_all = "snake_case")]
 pub enum PublicationDate {
-    Known(NaiveDate),
+    Known(i64),
     Missing,
     Unrecognized,
 }
@@ -50,7 +158,7 @@ pub struct MetricSnapshot {
     pub source_url: String,
     pub platform: String,
     /// When this measurement was collected, not when the video was uploaded.
-    pub observed_at: DateTime<Utc>,
+    pub observed_at: ObservationTimestamp,
     pub published: PublicationDate,
     pub views: Option<u64>,
     pub likes: Option<u64>,
@@ -74,13 +182,20 @@ fn publication_date(value: Option<&str>) -> PublicationDate {
     let Some(value) = value else {
         return PublicationDate::Missing;
     };
-    if let Ok(date) = NaiveDate::parse_from_str(value, "%Y-%m-%d") {
-        return PublicationDate::Known(date);
+    let bytes = value.as_bytes();
+    if bytes.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
+        if let (Ok(year), Ok(month), Ok(day)) = (
+            value[0..4].parse::<i64>(),
+            value[5..7].parse::<u32>(),
+            value[8..10].parse::<u32>(),
+        ) {
+            if let Some(epoch_day) = validated_civil_day(year, month, day) {
+                return PublicationDate::Known(epoch_day);
+            }
+        }
     }
     if let Some(seconds) = value.strip_prefix("unix:").and_then(|s| s.parse::<i64>().ok()) {
-        if let Some(date) = Utc.timestamp_opt(seconds, 0).single() {
-            return PublicationDate::Known(date.date_naive());
-        }
+        return PublicationDate::Known(seconds.div_euclid(86_400));
     }
     PublicationDate::Unrecognized
 }
@@ -89,9 +204,8 @@ impl MetricSnapshot {
     /// Preserves missing counts. A zero view count is real but not a rate denominator.
     /// Rejects negative counts and malformed collection times instead of guessing.
     pub fn from_research_item(item: &ResearchItem) -> Result<Self, IntelligenceError> {
-        let observed_at = DateTime::parse_from_rfc3339(&item.scanned_at)
-            .map_err(|_| IntelligenceError::InvalidTimestamp)?
-            .with_timezone(&Utc);
+        let observed_at = ObservationTimestamp::parse_rfc3339(&item.scanned_at)
+            .ok_or(IntelligenceError::InvalidTimestamp)?;
         Ok(Self {
             project_id: item.project_id,
             research_item_id: item.id,
@@ -115,17 +229,16 @@ impl MetricSnapshot {
         }
     }
 
-    pub fn is_stale_at(&self, as_of: DateTime<Utc>, max_age_days: i64) -> bool {
+    pub fn is_stale_at(&self, as_of: ObservationTimestamp, max_age_days: i64) -> bool {
         max_age_days < 0
             || self.observed_at > as_of
-            || as_of.signed_duration_since(self.observed_at).num_seconds()
-                > max_age_days.saturating_mul(86_400)
+            || as_of.seconds_since(self.observed_at) > max_age_days.saturating_mul(86_400)
     }
 
     fn video_age_days(&self) -> Option<i64> {
         match &self.published {
             PublicationDate::Known(date) => {
-                let age = self.observed_at.date_naive().signed_duration_since(*date).num_days();
+                let age = self.observed_at.unix_seconds.div_euclid(86_400) - date;
                 (age >= 1).then_some(age)
             }
             PublicationDate::Missing | PublicationDate::Unrecognized => None,
@@ -139,7 +252,7 @@ pub fn deduplicate_snapshots(
     snapshots: impl IntoIterator<Item = MetricSnapshot>,
 ) -> Result<Vec<MetricSnapshot>, IntelligenceError> {
     let mut seen_ids = HashMap::<Uuid, (Uuid, String)>::new();
-    let mut seen = HashMap::<(Uuid, String, DateTime<Utc>), MetricSnapshot>::new();
+    let mut seen = HashMap::<(Uuid, String, ObservationTimestamp), MetricSnapshot>::new();
     for mut snapshot in snapshots {
         snapshot.source_url = canonical_source(&snapshot.source_url)?;
         if let Some((project, source)) =
@@ -215,7 +328,7 @@ pub enum CreatorComparison {
 pub fn compare_creator_views(
     target: &MetricSnapshot,
     available: &[MetricSnapshot],
-    as_of: DateTime<Utc>,
+    as_of: ObservationTimestamp,
     max_stale_days: i64,
 ) -> Result<CreatorComparison, IntelligenceError> {
     let target_url = canonical_source(&target.source_url)?;
@@ -304,8 +417,8 @@ pub fn compare_creator_views(
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ViewGrowth {
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
+    pub start: ObservationTimestamp,
+    pub end: ObservationTimestamp,
     pub observed_view_increase: u64,
     pub views_per_day: f64,
 }
@@ -337,7 +450,7 @@ pub fn observed_view_growth(
     let (Some(start_views), Some(end_views)) = (older.views, newer.views) else {
         return Ok(Err(GrowthLimitation::UnavailableCounts));
     };
-    let elapsed = newer.observed_at.signed_duration_since(older.observed_at).num_seconds();
+    let elapsed = newer.observed_at.seconds_since(older.observed_at);
     if elapsed <= 0 {
         return Ok(Err(GrowthLimitation::NonIncreasingTime));
     }
