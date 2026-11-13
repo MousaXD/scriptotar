@@ -54,7 +54,10 @@ impl ObservationTimestamp {
             return None;
         }
         let digits = |start: usize, end: usize| -> Option<u32> {
-            std::str::from_utf8(bytes.get(start..end)?).ok()?.parse().ok()
+            std::str::from_utf8(bytes.get(start..end)?)
+                .ok()?
+                .parse()
+                .ok()
         };
         let year = digits(0, 4)? as i64;
         let month = digits(5, 7)?;
@@ -167,7 +170,10 @@ pub struct MetricSnapshot {
     pub comments: Option<u64>,
 }
 
-fn checked_count(value: Option<i64>, field: &'static str) -> Result<Option<u64>, IntelligenceError> {
+fn checked_count(
+    value: Option<i64>,
+    field: &'static str,
+) -> Result<Option<u64>, IntelligenceError> {
     value
         .map(|number| u64::try_from(number).map_err(|_| IntelligenceError::InvalidCount(field)))
         .transpose()
@@ -196,7 +202,10 @@ fn publication_date(value: Option<&str>) -> PublicationDate {
             }
         }
     }
-    if let Some(seconds) = value.strip_prefix("unix:").and_then(|s| s.parse::<i64>().ok()) {
+    if let Some(seconds) = value
+        .strip_prefix("unix:")
+        .and_then(|s| s.parse::<i64>().ok())
+    {
         return PublicationDate::Known(seconds.div_euclid(86_400));
     }
     PublicationDate::Unrecognized
@@ -257,9 +266,10 @@ pub fn deduplicate_snapshots(
     let mut seen = HashMap::<(Uuid, String, ObservationTimestamp), MetricSnapshot>::new();
     for mut snapshot in snapshots {
         snapshot.source_url = canonical_source(&snapshot.source_url)?;
-        if let Some((project, source)) =
-            seen_ids.insert(snapshot.research_item_id, (snapshot.project_id, snapshot.source_url.clone()))
-        {
+        if let Some((project, source)) = seen_ids.insert(
+            snapshot.research_item_id,
+            (snapshot.project_id, snapshot.source_url.clone()),
+        ) {
             if project != snapshot.project_id {
                 return Err(IntelligenceError::ProjectMismatch);
             }
@@ -292,8 +302,11 @@ pub fn deduplicate_snapshots(
     }
     let mut result: Vec<_> = seen.into_values().collect();
     result.sort_by(|a, b| {
-        (a.project_id, &a.source_url, a.observed_at)
-            .cmp(&(b.project_id, &b.source_url, b.observed_at))
+        (a.project_id, &a.source_url, a.observed_at).cmp(&(
+            b.project_id,
+            &b.source_url,
+            b.observed_at,
+        ))
     });
     Ok(result)
 }
@@ -352,8 +365,7 @@ pub fn compare_creator_views(
     }
     let mut newest_by_url: HashMap<String, &MetricSnapshot> = HashMap::new();
     for peer in available {
-        if peer.research_item_id == target.research_item_id
-            && peer.project_id != target.project_id
+        if peer.research_item_id == target.research_item_id && peer.project_id != target.project_id
         {
             return Err(IntelligenceError::ProjectMismatch);
         }
@@ -386,9 +398,7 @@ pub fn compare_creator_views(
     let mut peer_views = Vec::new();
     for peer in newest_by_url.values() {
         if let (Some(peer_age), Some(views)) = (peer.video_age_days(), peer.views) {
-            if peer_age.saturating_mul(2) >= age_days
-                && peer_age <= age_days.saturating_mul(2)
-            {
+            if peer_age.saturating_mul(2) >= age_days && peer_age <= age_days.saturating_mul(2) {
                 peer_views.push(views);
             }
         }
@@ -407,7 +417,10 @@ pub fn compare_creator_views(
         peer_views[middle] as f64
     };
     if median == 0.0 {
-        return Ok(unavailable(ComparisonLimitation::MissingViews, peer_views.len()));
+        return Ok(unavailable(
+            ComparisonLimitation::MissingViews,
+            peer_views.len(),
+        ));
     }
     Ok(CreatorComparison::Observed {
         peer_count: peer_views.len(),
@@ -602,8 +615,7 @@ pub fn count_transcript_features(
     for hypothesis in hypotheses {
         if hypothesis.evidence.is_empty()
             || hypothesis.evidence.iter().any(|e| {
-                e.scope.project_id != project_id
-                    || e.scope != hypothesis.evidence[0].scope
+                e.scope.project_id != project_id || e.scope != hypothesis.evidence[0].scope
             })
         {
             return Err(IntelligenceError::ProjectMismatch);
@@ -682,10 +694,15 @@ pub fn extract_transcript_outline(
         }
         previous_start = segment.start_ms;
     }
-    let populated: Vec<_> = segments.iter().filter(|s| !s.text.trim().is_empty()).collect();
+    let populated: Vec<_> = segments
+        .iter()
+        .filter(|s| !s.text.trim().is_empty())
+        .collect();
     let mut warnings = Vec::new();
     if matches!(access, SourceAccess::Partial) {
-        warnings.push("Source extraction was partial; unobserved sections must not be inferred.".into());
+        warnings.push(
+            "Source extraction was partial; unobserved sections must not be inferred.".into(),
+        );
     }
     if populated.is_empty() {
         warnings.push("No spoken transcript segments are available.".into());
