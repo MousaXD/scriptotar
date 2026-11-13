@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
+  import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import type { Transcript, TranscriptSegment, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -266,7 +267,7 @@
         <div class="reader-title"><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.platform}</p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
-          {#if onUseInStudio}<button class="button secondary" type="button" on:click={() => onUseInStudio?.(selected.id)}>{$locale === 'ar' ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
+          {#if onUseInStudio}<button class="button secondary" type="button" on:click={() => { if (selected) onUseInStudio?.(selected.id); }}>{$locale === 'ar' ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
           <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
           <details class="export-menu">
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
