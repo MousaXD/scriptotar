@@ -448,7 +448,7 @@ pub fn propose_transcript_hypothesis(
     }
     let first_scope = &evidence[0].scope;
     if evidence.iter().any(|reference| {
-        reference.scope != *first_scope
+        &reference.scope != first_scope
             || reference.segment_id.is_empty()
             || reference.start_ms >= reference.end_ms
             || reference.excerpt.trim().is_empty()
@@ -486,10 +486,10 @@ pub fn count_transcript_features(
     let mut counts: HashMap<TranscriptFeature, HashSet<Uuid>> = HashMap::new();
     for hypothesis in hypotheses {
         if hypothesis.evidence.is_empty()
-            || hypothesis
-                .evidence
-                .iter()
-                .any(|e| e.scope.project_id != project_id)
+            || hypothesis.evidence.iter().any(|e| {
+                e.scope.project_id != project_id
+                    || e.scope != hypothesis.evidence[0].scope
+            })
         {
             return Err(IntelligenceError::ProjectMismatch);
         }
