@@ -199,6 +199,28 @@ pub struct AngleResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewFinding {
+    pub beat_id: Option<String>,
+    pub concern: String,
+    pub recommendation: String,
+    pub evidence_ids: Vec<String>,
+    /// Provider-proposed concern only; it is not an externally verified finding.
+    pub needs_human_review: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReviewResponse {
+    pub findings: Vec<ReviewFinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RevisionProposal {
+    pub beat_id: String,
+    pub replacement_narration: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BeatRevision {
     pub beat_id: String,
     pub expected_narration: String,
@@ -237,9 +259,9 @@ pub fn prepare_writing_request(input: &WritingInput) -> Result<AiRequest, Writin
             "Propose exactly {count} materially different original angles with different opening mechanisms. Return a JSON object with an angles array of AngleOption objects."
         ),
         WritingTask::Draft { .. } => "Write one original ScriptDraft JSON object using the selected angle. Include a hook, meaningful beats, optional on-screen text, concrete shot suggestions, and an appropriate CTA.".to_owned(),
-        WritingTask::Review { .. } => "Review the supplied draft for unsupported factual claims, weak hooks, filler, duration and CTA fit. Give actionable findings as a JSON object; do not silently rewrite the user's draft.".to_owned(),
+        WritingTask::Review { .. } => "Review the supplied draft for unsupported factual claims, weak hooks, filler, duration and CTA fit. Return a JSON object containing a findings array of ReviewFinding objects; do not silently rewrite the user's draft.".to_owned(),
         WritingTask::ReviseBeat { beat_id, .. } => format!(
-            "Propose replacement narration ONLY for beat ID {beat_id:?} as a JSON object with beat_id and replacement_narration. Do not modify other beats or accepted manual edits."
+            "Propose replacement narration ONLY for beat ID {beat_id:?} as a RevisionProposal JSON object with beat_id and replacement_narration. Do not modify other beats or accepted manual edits."
         ),
     };
     let prompt = format!(
@@ -257,12 +279,12 @@ pub fn prepare_writing_request(input: &WritingInput) -> Result<AiRequest, Writin
 /// Strictly decode proposed angles. Parsed IDs must refer to supplied evidence.
 pub fn parse_angles(text: &str, input: &WritingInput) -> Result<Vec<AngleOption>, WritingError> {
     validate_input(input)?;
-    let WritingTask::ProposeAngles { count } = input.task else {
+    let WritingTask::ProposeAngles { count } = &input.task else {
         return Err(WritingError::Invalid("expected angle task"));
     };
     let response: AngleResponse =
         serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
-    if response.angles.len() != usize::from(count) {
+    if response.angles.len() != usize::from(*count) {
         return Err(WritingError::Invalid("unexpected angle count"));
     }
     let mut ids = HashSet::new();
@@ -294,6 +316,51 @@ pub fn parse_draft(text: &str, input: &WritingInput) -> Result<ScriptDraft, Writ
         }
     }
     Ok(draft)
+}
+
+/// Model-produced review is treated as suggestions, not a fact-check verdict.
+pub fn parse_review(text: &str, input: &WritingInput) -> Result<ReviewResponse, WritingError> {
+    validate_input(input)?;
+    let WritingTask::Review { draft } = &input.task else {
+        return Err(WritingError::Invalid("expected review task"));
+    };
+    let response: ReviewResponse =
+        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    if response.findings.len() > 40 {
+        return Err(WritingError::LimitExceeded("review findings"));
+    }
+    for finding in &response.findings {
+        check_text(&finding.concern, "review concern", MAX_TEXT_CHARS)?;
+        check_text(&finding.recommendation, "review recommendation", MAX_TEXT_CHARS)?;
+        if finding
+            .beat_id
+            .as_ref()
+            .is_some_and(|id| !draft.beats.iter().any(|beat| beat.id == *id))
+        {
+            return Err(WritingError::InvalidIdentifier);
+        }
+        validate_evidence_links(&finding.evidence_ids, &input.evidence)?;
+    }
+    Ok(response)
+}
+
+/// Parse only a proposed replacement. Expected content and overwrite permission
+/// MUST be supplied by the editor/human, never trusted from provider output.
+pub fn parse_revision_proposal(
+    text: &str,
+    input: &WritingInput,
+) -> Result<RevisionProposal, WritingError> {
+    validate_input(input)?;
+    let WritingTask::ReviseBeat { beat_id, .. } = &input.task else {
+        return Err(WritingError::Invalid("expected revision task"));
+    };
+    let proposal: RevisionProposal =
+        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    if &proposal.beat_id != beat_id {
+        return Err(WritingError::InvalidIdentifier);
+    }
+    check_text(&proposal.replacement_narration, "replacement", MAX_TEXT_CHARS)?;
+    Ok(proposal)
 }
 
 /// Validate a generated script against declared references. The host must still
