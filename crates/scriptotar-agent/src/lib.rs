@@ -54,6 +54,8 @@ pub struct ExecutionContext {
     pub study_id: String,
     pub step_id: String,
     pub idempotency_key: String,
+    /// AppServices must enforce this deadline on in-flight I/O and computation.
+    pub deadline_ms: u64,
     pub estimate: Estimate,
 }
 
@@ -515,6 +517,7 @@ fn context(run: &RunSnapshot) -> ExecutionContext {
         study_id: run.plan.study_id.clone(),
         step_id: step.id.clone(),
         idempotency_key: record.idempotency_key.clone(),
+        deadline_ms: run.started_ms.saturating_add(run.plan.limits.max_elapsed_ms),
         estimate: step.estimate,
     }
 }
