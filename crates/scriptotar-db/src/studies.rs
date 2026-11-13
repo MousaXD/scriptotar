@@ -488,6 +488,45 @@ impl SqliteStore {
         .ok_or_else(|| RepositoryError::NotFound(format!("study source {source_id}")))
     }
 
+    /// Verify this Study's active transcript attachment and UTF-8 byte length
+    /// using a scoped SQL query, never loading its raw body into Rust memory.
+    pub fn attached_transcript_byte_length(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        transcript_id: Uuid,
+    ) -> RepositoryResult<u64> {
+        let db = database(self)?;
+        let bytes: Option<i64> = db
+            .query_row(
+                "SELECT length(CAST(t.text AS BLOB))
+                 FROM study_sources ss
+                 JOIN content_studies st ON st.id=ss.study_id AND st.project_id=ss.project_id
+                 JOIN projects p ON p.id=ss.project_id
+                 JOIN transcripts t ON t.id=ss.transcript_id
+                 JOIN media m ON m.id=t.media_id
+                 JOIN sources src ON src.id=m.source_id
+                 WHERE ss.project_id=?1 AND ss.study_id=?2
+                   AND ss.kind='transcript' AND ss.reference_id=?3
+                   AND ss.transcript_id=?3 AND src.project_id=?1
+                   AND st.archived_at IS NULL AND p.archived_at IS NULL
+                 LIMIT 1",
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    transcript_id.to_string()
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        bytes
+            .and_then(|value| u64::try_from(value).ok())
+            .ok_or_else(|| RepositoryError::NotFound(
+                "active Study attachment for transcript".into()
+            ))
+    }
+
     pub fn list_study_sources(
         &self,
         project_id: Uuid,

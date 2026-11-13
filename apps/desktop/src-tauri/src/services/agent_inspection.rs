@@ -9,7 +9,9 @@ use scriptotar_agent::{
 };
 #[cfg(test)]
 use scriptotar_core::ProjectRepository;
-use scriptotar_core::{RepositoryError, RepositoryResult, StudySourceKind};
+use scriptotar_core::{RepositoryError, RepositoryResult};
+#[cfg(test)]
+use scriptotar_core::StudySourceKind;
 use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate, ScopedAgentCheckpointStore};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
@@ -64,28 +66,9 @@ fn checked_source(
     id: Uuid,
 ) -> RepositoryResult<u64> {
     services.require_active_project(project)?;
-    services.store.get_study(project, study)?;
-    let attached = services
-        .store
-        .list_study_sources(project, study)?
-        .iter()
-        .any(|entry| {
-            entry.available
-                && entry.kind == StudySourceKind::Transcript
-                && entry.reference_id == Some(id)
-        });
-    if !attached {
-        return Err(RepositoryError::NotFound(
-            "transcript not attached to study".into(),
-        ));
-    }
-    let bundle = services.store.get_transcript_bundle(id)?;
-    if bundle.project_id != project {
-        return Err(RepositoryError::NotFound(
-            "transcript in active project".into(),
-        ));
-    }
-    let bytes = bundle.transcript.text.len() as u64;
+    // Verify the exact Study attachment and budget without materializing the
+    // entire transcript or enumerating every linked source.
+    let bytes = services.store.attached_transcript_byte_length(project, study, id)?;
     if bytes > MAX_LOCAL_TRANSCRIPT_BYTES {
         return Err(RepositoryError::Validation(
             "local transcript exceeds inspection limit".into(),
@@ -677,6 +660,32 @@ mod tests {
         assert!(restarted
             .decide_local_inspection(project, study, &id, "approve")
             .is_err());
+    }
+
+    #[test]
+    fn oversized_attached_transcript_is_rejected_before_any_run_exists() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services.store.create_study(project, "Large text", "").unwrap().id;
+        let transcript = attached_transcript(&services, project, study);
+        let db = Connection::open(services.store.path()).unwrap();
+        db.execute(
+            "UPDATE transcripts SET text=?1 WHERE id=?2",
+            params!["Z".repeat(MAX_LOCAL_TRANSCRIPT_BYTES as usize + 1), transcript.to_string()],
+        ).unwrap();
+        assert!(matches!(
+            services.start_local_inspection(project, study, transcript),
+            Err(RepositoryError::Validation(_))
+        ));
+        assert!(services.list_local_inspections(project, study).unwrap().is_empty());
+        db.execute(
+            "UPDATE transcripts SET text='Short again' WHERE id=?1",
+            params![transcript.to_string()],
+        ).unwrap();
+        let prepared = services.start_local_inspection(project, study, transcript).unwrap();
+        assert_eq!(prepared.state, scriptotar_agent::RunState::AwaitingApproval);
+        assert_eq!(prepared.usage.tool_calls, 0);
     }
 
     #[test]
