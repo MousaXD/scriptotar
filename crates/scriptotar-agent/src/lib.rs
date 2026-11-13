@@ -69,6 +69,8 @@ pub enum ToolReceipt {
 pub enum ProbeResult {
     Applied(StepOutput),
     Pending,
+    /// Terminal failure reported by the actual queued job or provider ledger.
+    Failed(ToolFailure),
     /// Service proves that the operation did not happen; retry may be safe.
     NotApplied,
     /// Missing or ambiguous evidence; never automatically retry.
@@ -214,7 +216,7 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if run.state.terminal() {
             return Err(RuntimeError::WrongState);
         }
-        if run.state == RunState::Cancelling {
+        if matches!(run.state, RunState::Cancelling | RunState::Blocked) {
             return Err(RuntimeError::WrongState);
         }
         let executing = run.steps.get(run.current_step).is_some_and(|step| step.state == StepState::Running);
@@ -321,7 +323,8 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             return self.save(run);
         }
         let estimate = step.estimate;
-        let over_limit = now.saturating_sub(run.started_ms) > run.plan.limits.max_elapsed_ms
+        let over_limit = now < run.started_ms
+            || now.saturating_sub(run.started_ms) > run.plan.limits.max_elapsed_ms
             || run.usage.tool_calls.checked_add(1).is_none_or(|n| n > run.plan.limits.max_tool_calls)
             || run.usage.reserved_tokens.checked_add(estimate.tokens).is_none_or(|n| n > run.plan.limits.max_tokens)
             || run.usage.reserved_cost_microusd.checked_add(estimate.cost_microusd).is_none_or(|n| n > run.plan.limits.max_cost_microusd)
@@ -368,6 +371,7 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         match result {
             Ok(ProbeResult::Applied(output)) => self.finish(run_id, now, Ok(ToolReceipt::Applied(output))),
             Ok(ProbeResult::NotApplied) => self.mark_not_applied(run_id, now),
+            Ok(ProbeResult::Failed(failure)) => self.finish(run_id, now, Err(failure)),
             Ok(ProbeResult::Pending) => self.mark_pending(run_id, now, false),
             Ok(ProbeResult::Unknown) | Err(_) => self.mark_pending(run_id, now, true),
         }
@@ -443,7 +447,20 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             }
             match self.save(run) {
                 Err(RuntimeError::Store(StoreError::Conflict)) => continue,
-                other => return other,
+                Ok(committed) => {
+                    // A cancellation may have raced with a newly accepted background job.
+                    // Now the durable job/effect ID is available for service-side cancellation.
+                    if committed.cancel_requested
+                        && committed.steps.get(i).is_some_and(|s| s.state == StepState::AwaitingResult)
+                    {
+                        let ctx = context(&committed);
+                        let step = &committed.plan.steps[i];
+                        let effect = committed.steps[i].pending_effect_id.as_deref();
+                        let _ = self.driver.request_cancel(&ctx, &step.input, effect);
+                    }
+                    return Ok(committed);
+                }
+                Err(error) => return Err(error),
             }
         }
         Err(RuntimeError::Store(StoreError::Conflict))
