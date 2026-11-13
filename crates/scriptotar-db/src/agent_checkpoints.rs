@@ -175,15 +175,20 @@ impl CheckpointStore for ScopedAgentCheckpointStore {
         if owned != 1 {
             return Err(StoreError::Conflict);
         }
-        let exists: i64 = tx
+        let existing: Option<(String, String)> = tx
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE id=?1)",
+                "SELECT project_id,study_id FROM agent_runs WHERE id=?1",
                 params![snapshot.plan.id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
+            .optional()
             .map_err(|_| StoreError::Unavailable)?;
-        if exists != 0 {
-            return Err(StoreError::Exists);
+        if let Some((owner, study)) = existing {
+            if owner == self.project_id.to_string() && study == self.study_id.to_string() {
+                return Err(StoreError::Exists);
+            }
+            // Do not disclose a foreign run as a same-project duplicate.
+            return Err(StoreError::Conflict);
         }
         tx.execute(
             "INSERT INTO agent_runs(

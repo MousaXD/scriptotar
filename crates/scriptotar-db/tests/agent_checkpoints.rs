@@ -5,8 +5,9 @@ use std::thread;
 
 use rusqlite::{params, Connection};
 use scriptotar_agent::{
-    AuditKind, CheckpointStore, Estimate, Limits, Plan, RunSnapshot, RunState, StepInput, StepPlan,
-    StepRecord, StepState, StoreError, Usage,
+    AuditKind, CheckpointStore, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
+    ProbeResult, RunSnapshot, RunState, RuntimeError, StepInput, StepPlan, StepRecord, StepState,
+    StoreError, ToolExecutor, ToolFailure, ToolKind, ToolReceipt, ToolRegistry, Usage,
 };
 use scriptotar_core::{Project, ProjectRepository};
 use scriptotar_db::SqliteStore;
@@ -92,6 +93,66 @@ fn later(old: &RunSnapshot) -> RunSnapshot {
     snapshot
 }
 
+// This exercises the real engine with SQLite but deliberately dispatches
+// nothing until the user grants approval. No mock tools make provider calls.
+struct NeverExecute;
+
+impl ToolExecutor for NeverExecute {
+    fn execute(
+        &self,
+        _context: &ExecutionContext,
+        _input: &StepInput,
+    ) -> Result<ToolReceipt, ToolFailure> {
+        panic!("the plan must not dispatch before approval")
+    }
+
+    fn probe(
+        &self,
+        _context: &ExecutionContext,
+        _input: &StepInput,
+        _pending_effect_id: Option<&str>,
+    ) -> Result<ProbeResult, ToolFailure> {
+        panic!("no external side effect was started")
+    }
+}
+
+struct ApproveLocalScope;
+
+impl PolicyGate for ApproveLocalScope {
+    fn authorize(&self, _plan: &Plan, _step: &StepPlan) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn actual_agent_engine_restores_approval_and_denial_without_execution() {
+    let (temp, store, project, study) = fixture();
+    let mut plan = plan(project.id, study);
+    plan.steps[0].requires_approval = true;
+    let id = plan.id.clone();
+    let mut registry = ToolRegistry::default();
+    registry.allow(ToolKind::ReadTranscript);
+    {
+        let checkpoints = store.scoped_agent_checkpoints(project.id, study).unwrap();
+        let engine = Engine::new(checkpoints, NeverExecute, ApproveLocalScope, registry.clone());
+        engine.create(plan, 100).unwrap();
+        let waiting = engine.tick(&id, 101).unwrap();
+        assert_eq!(waiting.state, RunState::AwaitingApproval);
+        assert_eq!(waiting.events.len(), 2);
+    }
+    drop(store);
+    let reopened = SqliteStore::open(temp.path().join("agent.sqlite3")).unwrap();
+    let checkpoints = reopened.scoped_agent_checkpoints(project.id, study).unwrap();
+    let engine = Engine::new(checkpoints, NeverExecute, ApproveLocalScope, registry);
+    let restored = engine.get(&id).unwrap();
+    assert_eq!(restored.state, RunState::AwaitingApproval);
+    assert_eq!(restored.events.len(), 2);
+    let denied = engine.deny(&id, "read_1", 102).unwrap();
+    assert_eq!(denied.state, RunState::Cancelled);
+    assert_eq!(denied.events.len(), 3);
+    assert_eq!(engine.get(&id).unwrap(), denied);
+}
+
 #[test]
 fn scoped_checkpoint_survives_restart_with_exact_append_only_history() {
     let (temp, store, project, study) = fixture();
@@ -136,6 +197,11 @@ fn wrong_project_and_study_scope_cannot_read_or_mutate_run() {
     owner.create(run.clone()).unwrap();
     assert_eq!(foreign.load(&run.plan.id).unwrap(), None);
     assert_eq!(foreign.create(run.clone()), Err(StoreError::Conflict));
+    let mut foreign_collision = initial(other.id, other_study.id);
+    foreign_collision.plan.id = run.plan.id.clone();
+    foreign_collision.steps[0].idempotency_key =
+        format!("{}:0:read_1", foreign_collision.plan.id);
+    assert_eq!(foreign.create(foreign_collision), Err(StoreError::Conflict));
     assert_eq!(
         foreign.compare_and_swap(0, later(&run)),
         Err(StoreError::Conflict)
