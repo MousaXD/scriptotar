@@ -17,13 +17,17 @@ use tauri::{
 use tempfile::TempDir;
 
 use super::{
-    bootstrap_app, create_project, enqueue_local_media, list_jobs, select_project, AppServices,
+    bootstrap_app, create_project, create_study, enqueue_local_media, get_study, list_jobs,
+    list_studies, save_study, select_project, AppServices,
 };
 use crate::{
-    __cmd__bootstrap_app, __cmd__create_project, __cmd__enqueue_local_media, __cmd__list_jobs,
-    __cmd__select_project, __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
-    __tauri_command_name_enqueue_local_media, __tauri_command_name_list_jobs,
-    __tauri_command_name_select_project,
+    __cmd__bootstrap_app, __cmd__create_project, __cmd__create_study,
+    __cmd__enqueue_local_media, __cmd__get_study, __cmd__list_jobs, __cmd__list_studies,
+    __cmd__save_study, __cmd__select_project, __tauri_command_name_bootstrap_app,
+    __tauri_command_name_create_project, __tauri_command_name_create_study,
+    __tauri_command_name_enqueue_local_media, __tauri_command_name_get_study,
+    __tauri_command_name_list_jobs, __tauri_command_name_list_studies,
+    __tauri_command_name_save_study, __tauri_command_name_select_project,
 };
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
@@ -110,6 +114,10 @@ fn build_app(data_dir: &Path) -> App<MockRuntime> {
             select_project,
             create_project,
             enqueue_local_media,
+            list_studies,
+            create_study,
+            get_study,
+            save_study,
         ])
         .build(mock_context(noop_assets()))
         .expect("build mock-runtime Scriptotar app")
@@ -278,6 +286,59 @@ fn installed_app_e2e_round_trip_survives_restart() {
         format!("{EXPECTED_TRANSCRIPT}\n")
     );
 
+    // Verify the new P0 Studio path through the exact packaged Tauri IPC
+    // contract, using the *actual completed* transcript ID from this run.
+    let transcript_id = completed["transcripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["text"] == EXPECTED_TRANSCRIPT)
+        .and_then(|item| item["id"].as_str())
+        .expect("completed fixture transcript ID")
+        .to_owned();
+    let created_study = ipc(
+        &webview,
+        "create_study",
+        json!({
+            "projectId": project_id,
+            "brief": {
+                "title": "Installed Studio source study",
+                "goal": "Write an original script from the installed transcript",
+                "audience": "Test fixture creators",
+                "platform": "Reels",
+                "language": "en",
+                "duration": "40",
+                "style": "Clear"
+            }
+        }),
+    );
+    let study_id = created_study["id"].as_str().expect("created study ID").to_owned();
+    assert_eq!(created_study["revision"], 1);
+    let saved_study = ipc(
+        &webview,
+        "save_study",
+        json!({
+            "projectId": project_id,
+            "studyId": study_id,
+            "expectedRevision": 1,
+            "patch": {
+                "sources": [{ "kind": "transcript", "id": transcript_id }],
+                "draft": "A new, original source-aware installed script"
+            }
+        }),
+    );
+    assert_eq!(saved_study["revision"], 2);
+    assert_eq!(saved_study["sources"][0]["id"], transcript_id);
+    assert_eq!(saved_study["draft"], "A new, original source-aware installed script");
+    assert_eq!(saved_study["draftVersions"].as_array().unwrap().len(), 2);
+    let list = ipc(&webview, "list_studies", json!({"projectId": project_id}));
+    assert!(list.as_array().unwrap().iter().any(|entry| entry["id"] == study_id));
+    let exact = ipc(&webview, "get_study", json!({
+        "projectId": project_id,
+        "studyId": study_id
+    }));
+    assert_eq!(exact["draft"], saved_study["draft"]);
+
     drop(webview);
     drop(app);
 
@@ -289,4 +350,16 @@ fn installed_app_e2e_round_trip_survives_restart() {
         json!({"projectId": project_id}),
     );
     assert_completed_state(&restored, &project_id, &job_id);
+    let reopened_study = ipc(
+        &restarted_webview,
+        "get_study",
+        json!({"projectId": project_id, "studyId": study_id}),
+    );
+    assert_eq!(reopened_study["revision"], 2);
+    assert_eq!(
+        reopened_study["draft"],
+        "A new, original source-aware installed script"
+    );
+    assert_eq!(reopened_study["sources"][0]["id"], transcript_id);
+    assert_eq!(reopened_study["draftVersions"].as_array().unwrap().len(), 2);
 }
