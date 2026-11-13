@@ -21,13 +21,13 @@ use super::{
     list_studies, save_study, select_project, AppServices,
 };
 use crate::{
-    __cmd__bootstrap_app, __cmd__create_project, __cmd__create_study,
-    __cmd__enqueue_local_media, __cmd__get_study, __cmd__list_jobs, __cmd__list_studies,
-    __cmd__save_study, __cmd__select_project, __tauri_command_name_bootstrap_app,
-    __tauri_command_name_create_project, __tauri_command_name_create_study,
-    __tauri_command_name_enqueue_local_media, __tauri_command_name_get_study,
-    __tauri_command_name_list_jobs, __tauri_command_name_list_studies,
-    __tauri_command_name_save_study, __tauri_command_name_select_project,
+    __cmd__bootstrap_app, __cmd__create_project, __cmd__create_study, __cmd__enqueue_local_media,
+    __cmd__get_study, __cmd__list_jobs, __cmd__list_studies, __cmd__save_study,
+    __cmd__select_project, __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
+    __tauri_command_name_create_study, __tauri_command_name_enqueue_local_media,
+    __tauri_command_name_get_study, __tauri_command_name_list_jobs,
+    __tauri_command_name_list_studies, __tauri_command_name_save_study,
+    __tauri_command_name_select_project,
 };
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
@@ -312,7 +312,10 @@ fn installed_app_e2e_round_trip_survives_restart() {
             }
         }),
     );
-    let study_id = created_study["id"].as_str().expect("created study ID").to_owned();
+    let study_id = created_study["id"]
+        .as_str()
+        .expect("created study ID")
+        .to_owned();
     assert_eq!(created_study["revision"], 1);
     let saved_study = ipc(
         &webview,
@@ -329,14 +332,25 @@ fn installed_app_e2e_round_trip_survives_restart() {
     );
     assert_eq!(saved_study["revision"], 2);
     assert_eq!(saved_study["sources"][0]["id"], transcript_id);
-    assert_eq!(saved_study["draft"], "A new, original source-aware installed script");
+    assert_eq!(
+        saved_study["draft"],
+        "A new, original source-aware installed script"
+    );
     assert_eq!(saved_study["draftVersions"].as_array().unwrap().len(), 2);
     let list = ipc(&webview, "list_studies", json!({"projectId": project_id}));
-    assert!(list.as_array().unwrap().iter().any(|entry| entry["id"] == study_id));
-    let exact = ipc(&webview, "get_study", json!({
-        "projectId": project_id,
-        "studyId": study_id
-    }));
+    assert!(list
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["id"] == study_id));
+    let exact = ipc(
+        &webview,
+        "get_study",
+        json!({
+            "projectId": project_id,
+            "studyId": study_id
+        }),
+    );
     assert_eq!(exact["draft"], saved_study["draft"]);
 
     drop(webview);
