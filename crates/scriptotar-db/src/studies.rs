@@ -725,7 +725,9 @@ impl SqliteStore {
             )
             .map_err(db_error)?;
         if changed != 1 {
-            return Err(RepositoryError::NotFound(format!("study source {source_id}")));
+            return Err(RepositoryError::NotFound(format!(
+                "study source {source_id}"
+            )));
         }
         tx.commit().map_err(db_error)
     }

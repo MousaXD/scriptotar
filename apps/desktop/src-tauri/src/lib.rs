@@ -620,7 +620,6 @@ async fn save_copy_prompt(
     on_blocking_worker(move || services.save_copy_prompt(project_id, &input)).await
 }
 
-
 #[tauri::command]
 async fn list_studies(
     project_id: String,
@@ -628,7 +627,12 @@ async fn list_studies(
 ) -> Result<Vec<UiStudioStudySummary>, String> {
     let project_id = artifact_uuid(&project_id, "project id")?;
     let services = state.inner().clone();
-    on_blocking_worker(move || services.list_studio_studies(project_id).map_err(command_error)).await
+    on_blocking_worker(move || {
+        services
+            .list_studio_studies(project_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -639,7 +643,12 @@ async fn create_study(
 ) -> Result<UiStudioStudy, String> {
     let project_id = artifact_uuid(&project_id, "project id")?;
     let services = state.inner().clone();
-    on_blocking_worker(move || services.create_studio_study(project_id, brief).map_err(command_error)).await
+    on_blocking_worker(move || {
+        services
+            .create_studio_study(project_id, brief)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -651,7 +660,12 @@ async fn get_study(
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
     let services = state.inner().clone();
-    on_blocking_worker(move || services.get_studio_study(project_id, study_id).map_err(command_error)).await
+    on_blocking_worker(move || {
+        services
+            .get_studio_study(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]

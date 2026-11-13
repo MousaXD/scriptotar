@@ -1,22 +1,26 @@
 //! Project-scoped adapters from canonical SQLite Content Studies to Studio UI.
-use std::collections::HashSet;
-use scriptotar_core::{
-    CreativeBriefInput, RepositoryError, RepositoryResult, StudyEdit, StudySourceInput,
-    StudySourceKind,
-};
-use uuid::Uuid;
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch,
     UiStudioStudySummary,
 };
+use scriptotar_core::{
+    CreativeBriefInput, RepositoryError, RepositoryResult, StudyEdit, StudySourceInput,
+    StudySourceKind,
+};
+use std::collections::HashSet;
+use uuid::Uuid;
 
 fn invalid(label: &str) -> RepositoryError {
     RepositoryError::Validation(format!("invalid {label}"))
 }
 
 fn brief_input(value: &UiStudioBrief) -> RepositoryResult<CreativeBriefInput> {
-    let seconds = value.duration.trim().parse::<u32>().map_err(|_| invalid("duration"))?;
+    let seconds = value
+        .duration
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| invalid("duration"))?;
     if seconds == 0 || seconds > 3600 {
         return Err(invalid("duration"));
     }
@@ -118,7 +122,9 @@ impl AppServices {
             .iter()
             .filter_map(ui_source)
             .collect();
-        let drafts = self.store.search_drafts(project_id, study_id, "", false, 200)?;
+        let drafts = self
+            .store
+            .search_drafts(project_id, study_id, "", false, 200)?;
         let (draft, draft_versions) = if let Some(value) = drafts.first() {
             let versions = self
                 .store
@@ -182,9 +188,13 @@ impl AppServices {
     ) -> RepositoryResult<UiStudioStudy> {
         let _project_guard = self.lock_studio_project(project_id)?;
         let input = brief_input(&brief)?;
-        let study = self.store.create_study(project_id, &brief.title, &brief.goal)?;
-        self.store.save_creative_brief(project_id, study.id, 0, &input)?;
-        self.store.create_draft(project_id, study.id, &brief.title, "")?;
+        let study = self
+            .store
+            .create_study(project_id, &brief.title, &brief.goal)?;
+        self.store
+            .save_creative_brief(project_id, study.id, 0, &input)?;
+        self.store
+            .create_draft(project_id, study.id, &brief.title, "")?;
         self.read_studio_bundle(project_id, study.id)
     }
 
@@ -198,7 +208,9 @@ impl AppServices {
         let _project_guard = self.lock_studio_project(project_id)?;
         let study = self.store.get_study(project_id, study_id)?;
         if study.revision != expected_revision {
-            return Err(RepositoryError::Conflict("study changed by another editor".into()));
+            return Err(RepositoryError::Conflict(
+                "study changed by another editor".into(),
+            ));
         }
         let old = self.read_studio_bundle(project_id, study_id)?;
         let brief = patch.brief.unwrap_or_else(|| old.brief.clone());
@@ -245,7 +257,8 @@ impl AppServices {
         for source in &existing {
             if let Some(item) = ui_source(source) {
                 if !wanted.contains(&(item.kind, item.id)) {
-                    self.store.remove_study_source(project_id, study_id, source.id)?;
+                    self.store
+                        .remove_study_source(project_id, study_id, source.id)?;
                 }
             }
         }
@@ -256,10 +269,13 @@ impl AppServices {
             .collect();
         for source in sources {
             if !present.contains(&(source.kind.clone(), source.id.clone())) {
-                self.store.add_study_source(project_id, study_id, &source_input(&source)?)?;
+                self.store
+                    .add_study_source(project_id, study_id, &source_input(&source)?)?;
             }
         }
-        let drafts = self.store.search_drafts(project_id, study_id, "", false, 200)?;
+        let drafts = self
+            .store
+            .search_drafts(project_id, study_id, "", false, 200)?;
         if let Some(value) = drafts.first() {
             if value.body != draft || value.title != brief.title {
                 self.store.update_draft(
@@ -271,7 +287,8 @@ impl AppServices {
                 )?;
             }
         } else {
-            self.store.create_draft(project_id, study_id, &brief.title, &draft)?;
+            self.store
+                .create_draft(project_id, study_id, &brief.title, &draft)?;
         }
         self.read_studio_bundle(project_id, study_id)
     }

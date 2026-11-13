@@ -1,7 +1,7 @@
 mod artifact_details;
-mod study_gateway;
 #[cfg(test)]
 mod project_jobs;
+mod study_gateway;
 
 use std::{
     collections::{HashMap, HashSet},
