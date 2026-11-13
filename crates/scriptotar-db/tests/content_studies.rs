@@ -350,6 +350,14 @@ fn scope_and_duplicate_guards_cover_apis_and_direct_sql() {
     // an A origin or changing its project lineage after association.
     let conn = Connection::open(db.path()).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    assert!(
+        conn.execute(
+            "UPDATE content_studies SET project_id=?1 WHERE id=?2",
+            params![b.id.to_string(), study_a.id.to_string()],
+        )
+        .is_err(),
+        "a study must never silently change its owning project"
+    );
     let id = Uuid::new_v4();
     let cross_insert = conn.execute(
         "INSERT INTO study_sources (
