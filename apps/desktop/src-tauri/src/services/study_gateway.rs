@@ -188,14 +188,10 @@ impl AppServices {
     ) -> RepositoryResult<UiStudioStudy> {
         let _project_guard = self.lock_studio_project(project_id)?;
         let input = brief_input(&brief)?;
-        let study = self
-            .store
-            .create_study(project_id, &brief.title, &brief.goal)?;
-        self.store
-            .save_creative_brief(project_id, study.id, 0, &input)?;
-        self.store
-            .create_draft(project_id, study.id, &brief.title, "")?;
-        self.read_studio_bundle(project_id, study.id)
+        let study_id =
+            self.store
+                .create_studio_bundle(project_id, &brief.title, &brief.goal, &input)?;
+        self.read_studio_bundle(project_id, study_id)
     }
 
     pub fn save_studio_study(
@@ -241,9 +237,20 @@ impl AppServices {
             }
         }
 
-        // Claim the aggregate optimistic-concurrency token. The underlying
-        // brief and draft keep independent versions in the canonical DB.
-        self.store.update_study(
+        let canonical_sources = sources
+            .iter()
+            .map(source_input)
+            .collect::<RepositoryResult<Vec<_>>>()?;
+        let selected_sources = canonical_sources
+            .iter()
+            .map(|value| {
+                Ok((
+                    value.kind,
+                    value.reference_id.ok_or_else(|| invalid("source id"))?,
+                ))
+            })
+            .collect::<RepositoryResult<Vec<_>>>()?;
+        self.store.save_studio_bundle(
             project_id,
             study_id,
             expected_revision,
@@ -252,51 +259,11 @@ impl AppServices {
                 goal: brief.goal.clone(),
                 status: study.status,
             },
+            &input,
+            brief != old.brief,
+            &selected_sources,
+            &draft,
         )?;
-        if brief != old.brief {
-            let saved = self.store.get_creative_brief(project_id, study_id)?;
-            self.store.save_creative_brief(
-                project_id,
-                study_id,
-                saved.map_or(0, |value| value.revision),
-                &input,
-            )?;
-        }
-        let wanted: HashSet<(String, String)> = sources
-            .iter()
-            .map(|item| (item.kind.clone(), item.id.clone()))
-            .collect();
-        for source in &prior_sources {
-            if let Some(item) = ui_source(source) {
-                if !wanted.contains(&(item.kind, item.id)) {
-                    self.store
-                        .remove_study_source(project_id, study_id, source.id)?;
-                }
-            }
-        }
-        for source in sources {
-            if !present.contains(&(source.kind.clone(), source.id.clone())) {
-                self.store
-                    .add_study_source(project_id, study_id, &source_input(&source)?)?;
-            }
-        }
-        let drafts = self
-            .store
-            .search_drafts(project_id, study_id, "", false, 200)?;
-        if let Some(value) = drafts.first() {
-            if value.body != draft || value.title != brief.title {
-                self.store.update_draft(
-                    project_id,
-                    value.id,
-                    value.revision,
-                    &brief.title,
-                    &draft,
-                )?;
-            }
-        } else {
-            self.store
-                .create_draft(project_id, study_id, &brief.title, &draft)?;
-        }
         self.read_studio_bundle(project_id, study_id)
     }
 }

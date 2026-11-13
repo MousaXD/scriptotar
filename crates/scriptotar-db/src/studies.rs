@@ -277,7 +277,7 @@ fn escape_like(value: &str) -> String {
 
 /// Existing source text is not concatenated or interpreted as instructions.
 /// A stable v5 identity digest is sufficient for deduplication, not authenticity.
-fn fingerprint(kind: StudySourceKind, identity: &str) -> String {
+pub(crate) fn fingerprint(kind: StudySourceKind, identity: &str) -> String {
     let identity = format!("scriptotar/study-source/v1/{}/{}", kind.as_str(), identity);
     format!(
         "uuid-v5:{}",
@@ -285,7 +285,7 @@ fn fingerprint(kind: StudySourceKind, identity: &str) -> String {
     )
 }
 
-fn origin_locator(
+pub(crate) fn origin_locator(
     db: &Connection,
     project_id: Uuid,
     kind: StudySourceKind,

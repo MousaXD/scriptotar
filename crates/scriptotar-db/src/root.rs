@@ -14,3 +14,4 @@ mod studies;
 mod studies_schema;
 
 mod studies_drafts;
+mod studies_atomic;

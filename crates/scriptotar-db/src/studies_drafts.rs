@@ -13,7 +13,7 @@ use crate::{
     SqliteStore,
 };
 
-fn validate_brief(input: &CreativeBriefInput) -> RepositoryResult<String> {
+pub(crate) fn validate_brief(input: &CreativeBriefInput) -> RepositoryResult<String> {
     for (field, value, max) in [
         ("audience", input.audience.as_str(), 4000),
         ("goal", input.goal.as_str(), 20_000),
