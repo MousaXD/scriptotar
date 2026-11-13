@@ -1,3 +1,4 @@
+mod agent_inspection;
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;

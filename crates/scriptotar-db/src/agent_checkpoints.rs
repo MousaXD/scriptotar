@@ -38,6 +38,32 @@ impl SqliteStore {
 }
 
 impl ScopedAgentCheckpointStore {
+    /// Bounded, metadata-only listing: never read all snapshots or reveal
+    /// run identifiers from a different project or Study.
+    pub fn list_run_ids(&self, limit: usize) -> Result<Vec<String>, StoreError> {
+        if !(1..=50).contains(&limit) {
+            return Err(StoreError::Conflict);
+        }
+        let connection = database(&self.db).map_err(|_| StoreError::Unavailable)?;
+        let mut statement = connection
+            .prepare(
+                "SELECT r.id FROM agent_runs r
+                 JOIN content_studies s ON s.id=r.study_id AND s.project_id=r.project_id
+                 JOIN projects p ON p.id=s.project_id
+                 WHERE r.project_id=?1 AND r.study_id=?2
+                   AND s.archived_at IS NULL AND p.archived_at IS NULL
+                 ORDER BY r.updated_at DESC, r.id DESC LIMIT ?3",
+            )
+            .map_err(|_| StoreError::Unavailable)?;
+        let rows = statement
+            .query_map(
+                params![self.project_id.to_string(), self.study_id.to_string(), limit as i64],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|_| StoreError::Unavailable)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|_| StoreError::Unavailable)
+    }
+
     fn verify_snapshot(&self, snapshot: &RunSnapshot) -> Result<(), StoreError> {
         if snapshot.schema_version != 1
             || !snapshot.plan.validate()

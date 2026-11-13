@@ -8,6 +8,7 @@ pub enum ToolKind {
     SelectResearch,
     QueueTranscript,
     ReadTranscript,
+    ReadStudyTranscript,
     AnalyzeEvidence,
     DraftScript,
     ReviseScript,
@@ -21,6 +22,8 @@ pub enum StepInput {
     SelectResearch { source_ids: Vec<String> },
     QueueTranscript { source_id: String },
     ReadTranscript { job_id: String },
+    /// A specific already-attached transcript, never an arbitrary job ID.
+    ReadStudyTranscript { transcript_id: String },
     AnalyzeEvidence { source_ids: Vec<String> },
     DraftScript { brief_id: String },
     ReviseScript { draft_id: String },
@@ -34,6 +37,7 @@ impl StepInput {
             Self::SelectResearch { .. } => ToolKind::SelectResearch,
             Self::QueueTranscript { .. } => ToolKind::QueueTranscript,
             Self::ReadTranscript { .. } => ToolKind::ReadTranscript,
+            Self::ReadStudyTranscript { .. } => ToolKind::ReadStudyTranscript,
             Self::AnalyzeEvidence { .. } => ToolKind::AnalyzeEvidence,
             Self::DraftScript { .. } => ToolKind::DraftScript,
             Self::ReviseScript { .. } => ToolKind::ReviseScript,
@@ -51,6 +55,7 @@ impl StepInput {
             }
             Self::QueueTranscript { source_id } => valid_id(source_id),
             Self::ReadTranscript { job_id } => valid_id(job_id),
+            Self::ReadStudyTranscript { transcript_id } => valid_id(transcript_id),
             Self::DraftScript { brief_id } => valid_id(brief_id),
             Self::ReviseScript { draft_id } | Self::SaveArtifact { draft_id } => valid_id(draft_id),
         }
