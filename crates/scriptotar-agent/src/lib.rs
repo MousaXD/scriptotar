@@ -458,6 +458,8 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                 }
                 Err(failure) if failure.certainty == Certainty::NotApplied => {
                     run.steps[i].failure_code = Some(safe_code(&failure.code));
+                    // A proved-not-applied attempt must not retain an old queued-job locator.
+                    run.steps[i].pending_effect_id = None;
                     if run.cancel_requested {
                         run.steps[i].state = StepState::Cancelled;
                         run.state = RunState::Cancelled;
