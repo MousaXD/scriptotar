@@ -175,7 +175,22 @@ describe('App integration with legacy expert tools', () => {
     expect(screen.queryByText('Exactly saved answer from the historic run')).not.toBeInTheDocument();
   });
 
-    it('opens the activity interface with real failure details', async () => {
+    it('keeps unsaved local draft edits when switching between Studio and Discover', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Script draft' }), {
+      target: { value: 'A draft not yet saved to the backend' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Discover more' }));
+    expect(await screen.findByRole('heading', { name: /Research/ })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    expect(screen.getByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('A draft not yet saved to the backend');
+    expect(screen.getByText(/unsaved workspace; export your script/)).toBeInTheDocument();
+  });
+
+  it('opens the activity interface with real failure details', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: 'Show activity' }));
