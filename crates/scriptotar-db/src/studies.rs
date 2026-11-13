@@ -522,9 +522,9 @@ impl SqliteStore {
             .map_err(db_error)?;
         bytes
             .and_then(|value| u64::try_from(value).ok())
-            .ok_or_else(|| RepositoryError::NotFound(
-                "active Study attachment for transcript".into()
-            ))
+            .ok_or_else(|| {
+                RepositoryError::NotFound("active Study attachment for transcript".into())
+            })
     }
 
     pub fn list_study_sources(
