@@ -2,13 +2,21 @@ use scriptotar_core::ResearchItem;
 use uuid::Uuid;
 
 use crate::intelligence::{
-    compare_creator_views, deduplicate_snapshots, extract_transcript_outline, observed_view_growth,
+    compare_creator_views, count_transcript_features, deduplicate_snapshots,
+    extract_transcript_outline, observed_view_growth, propose_transcript_hypothesis,
     ComparisonLimitation, CreativeBeat, CreatorComparison, GrowthLimitation, IntelligenceError,
-    MetricSnapshot, ObservationTimestamp, PublicationDate, SourceAccess, SourceConfidence, TranscriptFeature,
-    TranscriptScope, TranscriptSegment, propose_transcript_hypothesis, count_transcript_features,
+    MetricSnapshot, ObservationTimestamp, PublicationDate, SourceAccess, SourceConfidence,
+    TranscriptFeature, TranscriptScope, TranscriptSegment,
 };
 
-fn item(project: Uuid, creator: Option<Uuid>, id: Uuid, url: &str, days_old: i64, views: Option<i64>) -> ResearchItem {
+fn item(
+    project: Uuid,
+    creator: Option<Uuid>,
+    id: Uuid,
+    url: &str,
+    days_old: i64,
+    views: Option<i64>,
+) -> ResearchItem {
     let publication = match days_old {
         2 => "2026-11-11",
         5 => "2026-11-08",
@@ -79,17 +87,23 @@ fn missing_invalid_and_unix_upload_dates_are_distinct() {
     let mut research = item(p, None, Uuid::new_v4(), &url(1), 2, Some(2));
     research.published_at = None;
     assert_eq!(
-        MetricSnapshot::from_research_item(&research).unwrap().published,
+        MetricSnapshot::from_research_item(&research)
+            .unwrap()
+            .published,
         PublicationDate::Missing
     );
     research.published_at = Some("not-a-date".into());
     assert_eq!(
-        MetricSnapshot::from_research_item(&research).unwrap().published,
+        MetricSnapshot::from_research_item(&research)
+            .unwrap()
+            .published,
         PublicationDate::Unrecognized
     );
     research.published_at = Some("unix:0".into());
     assert!(matches!(
-        MetricSnapshot::from_research_item(&research).unwrap().published,
+        MetricSnapshot::from_research_item(&research)
+            .unwrap()
+            .published,
         PublicationDate::Known(_)
     ));
     research.scanned_at = "corrupt".into();
@@ -122,10 +136,17 @@ fn source_policy_and_project_scoping_are_enforced() {
 fn duplicates_coalesce_and_contradictions_fail_closed() {
     let p = Uuid::new_v4();
     let creator = Some(Uuid::new_v4());
-    let a = MetricSnapshot::from_research_item(&item(p, creator, Uuid::new_v4(), &url(1), 8, Some(90))).unwrap();
+    let a =
+        MetricSnapshot::from_research_item(&item(p, creator, Uuid::new_v4(), &url(1), 8, Some(90)))
+            .unwrap();
     let mut repeated = a.clone();
     repeated.research_item_id = Uuid::new_v4();
-    assert_eq!(deduplicate_snapshots(vec![a.clone(), repeated.clone()]).unwrap().len(), 1);
+    assert_eq!(
+        deduplicate_snapshots(vec![a.clone(), repeated.clone()])
+            .unwrap()
+            .len(),
+        1
+    );
     repeated.views = Some(91);
     assert_eq!(
         deduplicate_snapshots(vec![a, repeated]).unwrap_err(),
@@ -137,28 +158,58 @@ fn duplicates_coalesce_and_contradictions_fail_closed() {
 fn same_creator_age_matched_comparison_does_not_mix_projects_or_sources() {
     let p = Uuid::new_v4();
     let c = Some(Uuid::new_v4());
-    let target = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 10, Some(300))).unwrap();
+    let target =
+        MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 10, Some(300)))
+            .unwrap();
     let peers: Vec<_> = (2..=4)
-        .map(|n| MetricSnapshot::from_research_item(
-            &item(p, c, Uuid::new_v4(), &url(n), 10, Some((n as i64 - 1) * 100))
-        ).unwrap())
+        .map(|n| {
+            MetricSnapshot::from_research_item(&item(
+                p,
+                c,
+                Uuid::new_v4(),
+                &url(n),
+                10,
+                Some((n as i64 - 1) * 100),
+            ))
+            .unwrap()
+        })
         .collect();
-    let result = compare_creator_views(&target, &peers, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap();
+    let result = compare_creator_views(
+        &target,
+        &peers,
+        ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+        1,
+    )
+    .unwrap();
     match result {
-        CreatorComparison::Observed { peer_count, median_peer_views, views_relative_to_peer_median, .. } => {
+        CreatorComparison::Observed {
+            peer_count,
+            median_peer_views,
+            views_relative_to_peer_median,
+            ..
+        } => {
             assert_eq!(peer_count, 3);
             assert_eq!(median_peer_views, 200.0);
             assert_eq!(views_relative_to_peer_median, 1.5);
         }
         other => panic!("expected creator-relative result, got {other:?}"),
     }
-    let mismatched_project = peers.iter().map(|peer| {
-        let mut peer = peer.clone();
-        peer.project_id = Uuid::new_v4();
-        peer
-    }).collect::<Vec<_>>();
+    let mismatched_project = peers
+        .iter()
+        .map(|peer| {
+            let mut peer = peer.clone();
+            peer.project_id = Uuid::new_v4();
+            peer
+        })
+        .collect::<Vec<_>>();
     assert!(matches!(
-        compare_creator_views(&target, &mismatched_project, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
+        compare_creator_views(
+            &target,
+            &mismatched_project,
+            ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+            1
+        )
+        .unwrap(),
         CreatorComparison::Unavailable {
             reason: ComparisonLimitation::InsufficientAgeMatchedPeers,
             eligible_peers: 0
@@ -167,8 +218,17 @@ fn same_creator_age_matched_comparison_does_not_mix_projects_or_sources() {
     let mut stale = target.clone();
     stale.observed_at = stale.observed_at.add_seconds(-70 * 86_400);
     assert!(matches!(
-        compare_creator_views(&stale, &peers, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 30).unwrap(),
-        CreatorComparison::Unavailable { reason: ComparisonLimitation::StaleObservation, .. }
+        compare_creator_views(
+            &stale,
+            &peers,
+            ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+            30
+        )
+        .unwrap(),
+        CreatorComparison::Unavailable {
+            reason: ComparisonLimitation::StaleObservation,
+            ..
+        }
     ));
 }
 
@@ -176,10 +236,20 @@ fn same_creator_age_matched_comparison_does_not_mix_projects_or_sources() {
 fn missing_or_age_incompatible_peers_do_not_make_a_rank() {
     let p = Uuid::new_v4();
     let c = Some(Uuid::new_v4());
-    let target = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 5, Some(100))).unwrap();
-    let peer = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(2), 150, Some(500))).unwrap();
+    let target =
+        MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 5, Some(100)))
+            .unwrap();
+    let peer =
+        MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(2), 150, Some(500)))
+            .unwrap();
     assert!(matches!(
-        compare_creator_views(&target, &[peer], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
+        compare_creator_views(
+            &target,
+            &[peer],
+            ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+            1
+        )
+        .unwrap(),
         CreatorComparison::Unavailable {
             reason: ComparisonLimitation::InsufficientAgeMatchedPeers,
             eligible_peers: 0
@@ -188,15 +258,26 @@ fn missing_or_age_incompatible_peers_do_not_make_a_rank() {
     let mut unknown = target.clone();
     unknown.published = PublicationDate::Missing;
     assert!(matches!(
-        compare_creator_views(&unknown, &[], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
-        CreatorComparison::Unavailable { reason: ComparisonLimitation::UnknownUploadDate, .. }
+        compare_creator_views(
+            &unknown,
+            &[],
+            ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+            1
+        )
+        .unwrap(),
+        CreatorComparison::Unavailable {
+            reason: ComparisonLimitation::UnknownUploadDate,
+            ..
+        }
     ));
 }
 
 #[test]
 fn growth_requires_two_monotonic_timestamps_and_counters() {
     let p = Uuid::new_v4();
-    let older = MetricSnapshot::from_research_item(&item(p, None, Uuid::new_v4(), &url(1), 8, Some(100))).unwrap();
+    let older =
+        MetricSnapshot::from_research_item(&item(p, None, Uuid::new_v4(), &url(1), 8, Some(100)))
+            .unwrap();
     let mut newer = older.clone();
     newer.observed_at = newer.observed_at.add_seconds(12 * 3_600);
     newer.views = Some(150);
@@ -230,9 +311,24 @@ fn transcript_evidence_is_timecoded_limited_and_explicitly_nonvisual() {
         transcript_revision: "fixture-hash-v1".into(),
     };
     let segments = vec![
-        TranscriptSegment { segment_id: "1".into(), start_ms: 100, end_ms: 2500, text: "هل تعرف لماذا؟".into() },
-        TranscriptSegment { segment_id: "2".into(), start_ms: 3000, end_ms: 7000, text: "Here is context".into() },
-        TranscriptSegment { segment_id: "3".into(), start_ms: 8000, end_ms: 11000, text: "This is the ending".into() },
+        TranscriptSegment {
+            segment_id: "1".into(),
+            start_ms: 100,
+            end_ms: 2500,
+            text: "هل تعرف لماذا؟".into(),
+        },
+        TranscriptSegment {
+            segment_id: "2".into(),
+            start_ms: 3000,
+            end_ms: 7000,
+            text: "Here is context".into(),
+        },
+        TranscriptSegment {
+            segment_id: "3".into(),
+            start_ms: 8000,
+            end_ms: 11000,
+            text: "This is the ending".into(),
+        },
     ];
     let outline = extract_transcript_outline(&scope, &segments, SourceAccess::Partial).unwrap();
     assert_eq!(outline.observations.len(), 3);
@@ -240,7 +336,10 @@ fn transcript_evidence_is_timecoded_limited_and_explicitly_nonvisual() {
     assert_eq!(outline.observations[0].evidence.start_ms, 100);
     assert_eq!(outline.observations[1].evidence.segment_id, "2");
     assert_eq!(outline.observations[2].beat, CreativeBeat::ClosingExcerpt);
-    assert!(outline.observations.iter().all(|o| o.confidence == SourceConfidence::DirectTranscriptExcerpt));
+    assert!(outline
+        .observations
+        .iter()
+        .all(|o| o.confidence == SourceConfidence::DirectTranscriptExcerpt));
     assert!(!outline.warnings.is_empty());
     assert!(matches!(
         extract_transcript_outline(&scope, &segments, SourceAccess::Denied),
@@ -291,20 +390,28 @@ fn transcript_hypotheses_stay_uncertain_and_project_scoped() {
         TranscriptFeature::Hook,
         "The spoken opening may be a question",
         vec![first.clone()],
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(hook.confidence, SourceConfidence::InferredFromTranscript);
     assert!(hook.limitations[0].contains("frames"));
     let stats = count_transcript_features(project, &[hook.clone(), hook]).unwrap();
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].sources_with_hypothesis, 1);
     assert_eq!(
-        count_transcript_features(Uuid::new_v4(), &[]).unwrap().len(),
+        count_transcript_features(Uuid::new_v4(), &[])
+            .unwrap()
+            .len(),
         0
     );
     assert_eq!(
-        count_transcript_features(Uuid::new_v4(), &[propose_transcript_hypothesis(
-            TranscriptFeature::Payoff, "Proposed", vec![first]
-        ).unwrap()]).unwrap_err(),
+        count_transcript_features(
+            Uuid::new_v4(),
+            &[
+                propose_transcript_hypothesis(TranscriptFeature::Payoff, "Proposed", vec![first])
+                    .unwrap()
+            ]
+        )
+        .unwrap_err(),
         IntelligenceError::ProjectMismatch
     );
 }
@@ -313,17 +420,22 @@ fn transcript_hypotheses_stay_uncertain_and_project_scoped() {
 fn conflicting_peer_observations_cannot_determine_creator_median() {
     let p = Uuid::new_v4();
     let c = Some(Uuid::new_v4());
-    let target = MetricSnapshot::from_research_item(
-        &item(p, c, Uuid::new_v4(), &url(1), 10, Some(300))
-    ).unwrap();
-    let a = MetricSnapshot::from_research_item(
-        &item(p, c, Uuid::new_v4(), &url(2), 10, Some(100))
-    ).unwrap();
+    let target =
+        MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 10, Some(300)))
+            .unwrap();
+    let a = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(2), 10, Some(100)))
+        .unwrap();
     let mut b = a.clone();
     b.research_item_id = Uuid::new_v4();
     b.views = Some(200);
     assert_eq!(
-        compare_creator_views(&target, &[a, b], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap_err(),
+        compare_creator_views(
+            &target,
+            &[a, b],
+            ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(),
+            1
+        )
+        .unwrap_err(),
         IntelligenceError::ContradictoryObservation
     );
 }
