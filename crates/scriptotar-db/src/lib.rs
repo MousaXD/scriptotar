@@ -1377,6 +1377,84 @@ mod tests {
     }
 
     #[test]
+    fn content_study_v6_migration_failure_rolls_back_to_v5_without_data_loss() {
+        let temp = TempDir::new().unwrap();
+        let path = temp.path().join("partial-v6.sqlite3");
+        let project = Project::new("Keep legacy project");
+        {
+            let mut connection = Connection::open(&path).unwrap();
+            configure_connection(&connection).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL
+                    );",
+                )
+                .unwrap();
+            for migration in MIGRATIONS.iter().filter(|migration| migration.version <= 5) {
+                let tx = connection.transaction().unwrap();
+                (migration.apply)(&tx).unwrap();
+                tx.execute(
+                    "INSERT INTO schema_migrations(version,name,applied_at)
+                     VALUES(?1,?2,?3)",
+                    params![migration.version, migration.name, now_rfc3339()],
+                )
+                .unwrap();
+                tx.pragma_update(None, "user_version", migration.version)
+                    .unwrap();
+                tx.commit().unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO projects(id,name,created_at) VALUES(?1,?2,?3)",
+                    params![project.id.to_string(), project.name, project.created_at],
+                )
+                .unwrap();
+
+            // Simulate a collision midway through the sixth migration. Its
+            // earlier CREATE TABLE statements must all roll back atomically.
+            connection
+                .execute_batch("CREATE TABLE draft_versions (sentinel INTEGER);")
+                .unwrap();
+        }
+        assert!(matches!(
+            SqliteStore::open(&path),
+            Err(RepositoryError::Storage(_))
+        ));
+        let connection = Connection::open(&path).unwrap();
+        let version: u32 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        let new_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type='table' AND name='content_studies'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(new_table_count, 0);
+        let persisted_name: String = connection
+            .query_row(
+                "SELECT name FROM projects WHERE id=?1",
+                params![project.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(persisted_name, "Keep legacy project");
+        connection
+            .execute_batch("DROP TABLE draft_versions;")
+            .unwrap();
+        drop(connection);
+        let upgraded = SqliteStore::open(&path).unwrap();
+        assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
+        assert_eq!(upgraded.get_project(project.id).unwrap(), project);
+    }
+
+    #[test]
     fn settings_round_trip_without_secret_storage() {
         let (_temp, db) = store();
         let mut settings = db.load_settings().unwrap();
