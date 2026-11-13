@@ -579,7 +579,9 @@ async fn get_ai_run(
     let ai_run_id = artifact_uuid(&ai_run_id, "AI run id")?;
     let services = state.inner().clone();
     on_blocking_worker(move || {
-        services.get_ai_run(project_id, ai_run_id).map_err(command_error)
+        services
+            .get_ai_run(project_id, ai_run_id)
+            .map_err(command_error)
     })
     .await
 }
@@ -1148,7 +1150,10 @@ mod tests {
     #[test]
     fn artifact_uuid_rejects_invalid_and_oversized_values() {
         let valid = Uuid::new_v4();
-        assert_eq!(artifact_uuid(&valid.to_string(), "AI run id").unwrap(), valid);
+        assert_eq!(
+            artifact_uuid(&valid.to_string(), "AI run id").unwrap(),
+            valid
+        );
         assert!(artifact_uuid("not-a-uuid", "AI run id").is_err());
         assert!(artifact_uuid(&"x".repeat(100), "AI run id").is_err());
     }
