@@ -744,7 +744,9 @@ async fn enqueue_local_media(
     let path = security::validated_local_media_path(&path)?;
     let services = state.inner().clone();
     on_blocking_worker(move || {
-        services.enqueue_local_media(project_id, path).map_err(command_error)
+        services
+            .enqueue_local_media(project_id, path)
+            .map_err(command_error)
     })
     .await
 }
@@ -771,10 +773,7 @@ fn choose_output_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn cancel_job(
-    job_id: Uuid,
-    state: tauri::State<'_, AppServices>,
-) -> Result<(), String> {
+async fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
     let services = state.inner().clone();
     on_blocking_worker(move || services.cancel_job(job_id).map_err(command_error)).await
 }
