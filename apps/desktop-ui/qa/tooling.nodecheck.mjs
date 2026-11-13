@@ -101,8 +101,8 @@ test('approved hashes pass unchanged and reject modified screenshot bytes', asyn
 });
 
 test('defragmentation QA fixtures and source-contract footprint remain valid', () => {
-  const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'tests',
-    '-p', 'test_baseline_contract.py', '-v'], {
+  const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'tests/defragmentation',
+    '-t', 'tests', '-p', 'test_*.py', '-v'], {
     cwd: resolve('..', '..'), encoding: 'utf8', timeout: 30000
   });
   assert.equal(result.status, 0, result.stdout + result.stderr + String(result.error || ''));

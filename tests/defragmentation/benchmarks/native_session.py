@@ -52,6 +52,7 @@ def main():
     ready_at = None
     peak_rss = None
     samples = 0
+    exit_before_cleanup = None
     try:
         until = start + args.seconds
         while time.perf_counter() < until and process.poll() is None:
@@ -65,7 +66,8 @@ def main():
             samples += 1
             time.sleep(0.1)
     finally:
-        if process.poll() is None:
+        exit_before_cleanup = process.poll()
+        if exit_before_cleanup is None:
             process.terminate()
             try:
                 process.wait(timeout=3)
@@ -86,7 +88,7 @@ def main():
         "peak_main_process_rss_bytes": peak_rss,
         "child_process_rss_bytes": None,
         "ipc_payload_bytes": None,
-        "exit_code_before_cleanup": process.poll(),
+        "exit_code_before_cleanup": exit_before_cleanup,
         "certification": "NOT_CERTIFIED",
         "limitations": "Main-process RSS excludes sidecars; no automated WebView ready proof; process liveness is not UI readiness."
     }
