@@ -39,7 +39,7 @@ export interface HistoricalAiArtifact {
   task: string;
   title: string;
   prompt: string;
-  result: string;
+  result: string | null;
   createdAt: string;
 }
 export interface StudioGateway {
