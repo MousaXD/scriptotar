@@ -69,6 +69,8 @@ pub struct Estimate {
     pub tokens: u64,
     pub cost_microusd: u64,
     pub max_output_bytes: u64,
+    pub cpu_ms: u64,
+    pub peak_memory_mib: u32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +78,7 @@ pub struct Usage {
     pub tool_calls: u32,
     pub reserved_tokens: u64,
     pub reserved_cost_microusd: u64,
+    pub reserved_cpu_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +88,8 @@ pub struct Limits {
     pub max_cost_microusd: u64,
     pub max_elapsed_ms: u64,
     pub max_output_bytes: u64,
+    pub max_cpu_ms: u64,
+    pub max_peak_memory_mib: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +132,8 @@ impl Plan {
             && self.limits.max_tool_calls > 0
             && self.limits.max_elapsed_ms > 0
             && self.limits.max_output_bytes > 0
+            && self.limits.max_cpu_ms > 0
+            && self.limits.max_peak_memory_mib > 0
             && self.steps.iter().all(|s| {
                 valid_id(&s.id)
                     && s.input.valid()
@@ -134,6 +141,7 @@ impl Plan {
                     && s.max_attempts <= 5
                     && s.estimate.max_output_bytes > 0
                     && s.estimate.max_output_bytes <= self.limits.max_output_bytes
+                    && s.estimate.peak_memory_mib <= self.limits.max_peak_memory_mib
             })
             && self.steps.iter().enumerate().all(|(i, s)| {
                 !self.steps[..i].iter().any(|prior| prior.id == s.id)
