@@ -97,6 +97,19 @@ class SyntheticFixtureTests(unittest.TestCase):
                 seed_workspace(original, output, 100)
             self.assertFalse(output.exists())
 
+
+    def test_native_sampler_counts_main_process_and_children_on_linux(self):
+        import os
+        import platform
+        from .benchmarks.native_session import process_tree_rss
+        if platform.system() != "Linux" or not Path("/proc").is_dir():
+            self.skipTest("Linux procfs only")
+        total, child_count = process_tree_rss(os.getpid())
+        self.assertIsInstance(total, int)
+        self.assertGreater(total, 0)
+        self.assertGreaterEqual(child_count, 0)
+        self.assertEqual(process_tree_rss(999999999), (None, 0))
+
     def test_rejects_arbitrary_scale(self):
         with tempfile.TemporaryDirectory() as folder:
             a, b = Path(folder) / "a.db", Path(folder) / "b.db"

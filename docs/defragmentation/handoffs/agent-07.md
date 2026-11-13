@@ -31,3 +31,10 @@ P0-00 **PARTIAL / NO-GO**. P0, P1, P2, P3 exit gates **NO-GO**, awaiting actual 
 - Request an independent re-audit after each P0-P3 integration slice; keep main and releases untouched.
 
 This handoff is NOT a release signoff.
+
+## Independent QA continuation (2026-11-13)
+
+- Following initial draft PR #106, the [c0ee54b QA CI](https://github.com/MousaXD/scriptotar/actions/runs/43443263814) passed 140 Chromium scenarios, all five QA-tooling subtests and the nested Python fixture suite. The [main CI](https://github.com/MousaXD/scriptotar/actions/runs/43443263812), [Windows package](https://github.com/MousaXD/scriptotar/actions/runs/43443263686) and [Linux package](https://github.com/MousaXD/scriptotar/actions/runs/43443263730) also passed at that SHA; **native WebView interactions/performance were not measured**.
+- [Integration run 43443263708](https://github.com/MousaXD/scriptotar/actions/runs/43443263708) did **NOT pass** on c0ee54b: `cargo audit` failed with three lockfile vulnerabilities. Filed [issue #111](https://github.com/MousaXD/scriptotar/issues/111) for quinn-proto 0.11.18 (RUSTSEC-2026-0524 and -0523) and quinn-udp 0.5.15 (RUSTSEC-2026-0538). Independent release gate stays NO-GO; dependency owner must assess safe remediation. [Issue #107](https://github.com/MousaXD/scriptotar/issues/107) tracks exact historical Library artifact selection.
+- A subsequent QA-only hardening commit requires a truly empty schema-migrated scratch template, rejects existing settings/private records, checks copied snapshots, and validates native evidence metadata structurally. A final QA-only extension samples descendant-process summed RSS under Linux with the caveat that shared memory may be overcounted. No measured native performance is asserted. This handoff applies to the PR branch, not main.
+- Agent 00 must use the **final PR SHA**, not any older passing SHA, to decide whether this QA PR is ready to review. Separate product/integrated release certification remains NO-GO.

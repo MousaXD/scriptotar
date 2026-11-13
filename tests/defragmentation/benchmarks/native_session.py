@@ -29,6 +29,42 @@ def rss_bytes(pid):
         pass
     return None
 
+def process_tree_rss(root_pid):
+    """Return sampled (sum-RSS bytes, descendant count), or (None, 0).
+
+    Sum of RSS includes shared mappings more than once; it is NOT PSS or
+    physical memory consumed. Only currently parented Linux /proc tasks count.
+    """
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return None, 0
+    entries = {}
+    for path in proc.iterdir():
+        if not path.name.isdigit():
+            continue
+        ppid = rss = None
+        try:
+            for line in (path / "status").read_text().splitlines():
+                if line.startswith("PPid:"):
+                    ppid = int(line.split()[1])
+                elif line.startswith("VmRSS:"):
+                    rss = int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            continue
+        if ppid is not None:
+            entries[int(path.name)] = (ppid, rss)
+    if root_pid not in entries:
+        return None, 0
+    selected = {root_pid}
+    while True:
+        added = {pid for pid, (ppid, _) in entries.items()
+                 if pid not in selected and ppid in selected}
+        if not added:
+            break
+        selected.update(added)
+    available = [entries[pid][1] for pid in selected if entries[pid][1] is not None]
+    return (sum(available) if available else None), max(0, len(selected) - 1)
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--executable", required=True, type=Path)
@@ -51,6 +87,8 @@ def main():
     alive_at = None
     ready_at = None
     peak_rss = None
+    peak_process_tree_rss = None
+    max_descendants = 0
     samples = 0
     exit_before_cleanup = None
     try:
@@ -63,6 +101,10 @@ def main():
             rss = rss_bytes(process.pid)
             if rss is not None:
                 peak_rss = max(peak_rss or 0, rss)
+            tree_rss, descendants = process_tree_rss(process.pid)
+            if tree_rss is not None:
+                peak_process_tree_rss = max(peak_process_tree_rss or 0, tree_rss)
+            max_descendants = max(max_descendants, descendants)
             samples += 1
             time.sleep(0.1)
     finally:
@@ -86,11 +128,13 @@ def main():
         "process_alive_detected_ms": round((alive_at - start) * 1000, 2) if alive_at else None,
         "useful_workspace_operator_ack_ms": round((ready_at - start) * 1000, 2) if ready_at else None,
         "peak_main_process_rss_bytes": peak_rss,
-        "child_process_rss_bytes": None,
+        "peak_process_tree_rss_bytes": peak_process_tree_rss,
+        "max_descendants_observed": max_descendants,
+        "process_tree_rss_is_shared_memory_inclusive": True,
         "ipc_payload_bytes": None,
         "exit_code_before_cleanup": exit_before_cleanup,
         "certification": "NOT_CERTIFIED",
-        "limitations": "Main-process RSS excludes sidecars; no automated WebView ready proof; process liveness is not UI readiness."
+        "limitations": "Linux parent/child RSS summed, shared mappings double-counted, orphans missed; no automated WebView readiness; no IPC transfer measurement; process liveness is not UI readiness."
     }
     encoded = json.dumps(report, indent=2) + "\n"
     if args.output:
