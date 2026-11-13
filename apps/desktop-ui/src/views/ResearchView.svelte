@@ -7,6 +7,7 @@
   export let items: ResearchItem[];
   export let watchlistStatuses: WatchlistStatus[] = [];
   export let onQueue: (ids: string[]) => Promise<void> | void;
+  export let onUseInStudio: ((item: ResearchItem) => void) | undefined = undefined;
   export let onScan: (url: string, limit: number) => Promise<void> | void;
   export let onSave: (url: string, limit: number) => Promise<void> | void;
 
@@ -243,6 +244,7 @@
             <div class="media-copy">
               <strong title={item.title}>{item.title}</strong>
               <small><span class="creator-name">{item.creator}</span><span class="source-platform">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
+              {#if onUseInStudio}<button type="button" class="text-action" on:click={() => onUseInStudio?.(item)}>{isArabic ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
               {#if observedInteractionRate(item) !== null}<small class="derived-metric" title="Likes plus comments divided by observed views; not unique people or causal performance">{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
             </div>
           </div>

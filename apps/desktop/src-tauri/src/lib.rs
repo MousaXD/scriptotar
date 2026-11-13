@@ -17,8 +17,8 @@ use std::{
 };
 
 use dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
+    UiResearchItemDetail, UiSettings, UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -488,10 +488,14 @@ fn migration_lock_status(error: MigrationLockError) -> UiMigrationStatus {
 }
 
 #[tauri::command]
-fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
-    Ok(BackendHealth {
-        schema_version: state.schema_version().map_err(command_error)?,
+async fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        Ok(BackendHealth {
+            schema_version: services.schema_version().map_err(command_error)?,
+        })
     })
+    .await
 }
 
 /// Retains the original full-data payload for existing callers. New callers
@@ -532,14 +536,18 @@ async fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, S
 }
 
 #[tauri::command]
-fn search_transcripts(
+async fn search_transcripts(
     query: String,
     limit: Option<usize>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Vec<String>, String> {
-    state
-        .search_transcripts(&query, limit.unwrap_or(10))
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .search_transcripts(&query, limit.unwrap_or(10))
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -558,59 +566,111 @@ async fn get_transcript(
     .await
 }
 
+fn artifact_uuid(raw: &str, label: &str) -> Result<Uuid, String> {
+    if raw.len() > 64 {
+        return Err(format!("invalid {label}"));
+    }
+    Uuid::parse_str(raw).map_err(|_| format!("invalid {label}"))
+}
+
 #[tauri::command]
-fn get_watchlist_statuses(
+async fn get_ai_run(
+    project_id: String,
+    ai_run_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let ai_run_id = artifact_uuid(&ai_run_id, "AI run id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_ai_run(project_id, ai_run_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_research_item(
+    project_id: String,
+    research_item_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiResearchItemDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let research_item_id = artifact_uuid(&research_item_id, "research item id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_research_item(project_id, research_item_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_copy_prompt(
+    project_id: String,
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    security::validate_ai_input(&input)?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_copy_prompt(project_id, &input)).await
+}
+
+#[tauri::command]
+async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
 ) -> Result<Vec<UiWatchlistStatus>, String> {
-    let watchlists = state.store.list_watchlists(None).map_err(command_error)?;
-    let persisted = state
-        .store
-        .list_watchlist_refresh_status(None)
-        .map_err(command_error)?
-        .into_iter()
-        .map(|status| (status.watchlist_id, status))
-        .collect::<HashMap<_, _>>();
-    let auto_watch = state
-        .store
-        .load_settings()
-        .map_err(command_error)?
-        .auto_watch;
+    let store = state.store.clone();
+    on_blocking_worker(move || {
+        let watchlists = store.list_watchlists(None).map_err(command_error)?;
+        let persisted = store
+            .list_watchlist_refresh_status(None)
+            .map_err(command_error)?
+            .into_iter()
+            .map(|status| (status.watchlist_id, status))
+            .collect::<HashMap<_, _>>();
+        let auto_watch = store.load_settings().map_err(command_error)?.auto_watch;
 
-    Ok(watchlists
-        .into_iter()
-        .map(|watchlist| {
-            let status = persisted.get(&watchlist.id);
-            let mut state_name = status
-                .map(|status| status.state.as_str())
-                .unwrap_or_else(|| {
-                    if watchlist.last_scan_at.is_some() {
-                        "healthy"
+        Ok(watchlists
+            .into_iter()
+            .map(|watchlist| {
+                let status = persisted.get(&watchlist.id);
+                let mut state_name = status
+                    .map(|status| status.state.as_str())
+                    .unwrap_or_else(|| {
+                        if watchlist.last_scan_at.is_some() {
+                            "healthy"
+                        } else {
+                            "never_scanned"
+                        }
+                    })
+                    .to_owned();
+                if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
+                    state_name = "failed".to_owned();
+                }
+                UiWatchlistStatus {
+                    watchlist_id: watchlist.id.to_string(),
+                    project_id: watchlist.project_id.to_string(),
+                    label: watchlist.label,
+                    state: state_name,
+                    last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
+                    last_successful_scan_at: status
+                        .and_then(|status| status.last_success_at.clone())
+                        .or(watchlist.last_scan_at),
+                    last_error: status.and_then(|status| status.last_error.clone()),
+                    next_retry_at: if auto_watch {
+                        status.and_then(|status| status.next_retry_at.clone())
                     } else {
-                        "never_scanned"
-                    }
-                })
-                .to_owned();
-            if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
-                state_name = "failed".to_owned();
-            }
-            UiWatchlistStatus {
-                watchlist_id: watchlist.id.to_string(),
-                project_id: watchlist.project_id.to_string(),
-                label: watchlist.label,
-                state: state_name,
-                last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
-                last_successful_scan_at: status
-                    .and_then(|status| status.last_success_at.clone())
-                    .or(watchlist.last_scan_at),
-                last_error: status.and_then(|status| status.last_error.clone()),
-                next_retry_at: if auto_watch {
-                    status.and_then(|status| status.next_retry_at.clone())
-                } else {
-                    None
-                },
-            }
-        })
-        .collect())
+                        None
+                    },
+                }
+            })
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -679,25 +739,30 @@ async fn create_project(
 }
 
 #[tauri::command]
-fn enqueue_local_media(
+async fn enqueue_local_media(
     project_id: Uuid,
     path: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
     let path = security::validated_local_media_path(&path)?;
-    state
-        .enqueue_local_media(project_id, path)
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .enqueue_local_media(project_id, path)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
-fn enqueue_url(
+async fn enqueue_url(
     project_id: Uuid,
     url: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
     security::validate_url_argument("media URL", &url)?;
-    state.enqueue_url(project_id, url).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.enqueue_url(project_id, url).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -711,21 +776,24 @@ fn choose_output_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.cancel_job(job_id).map_err(command_error)
+async fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.cancel_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn retry_job(
+async fn retry_job(
     job_id: Uuid,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
-    state.retry_job(job_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.retry_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
-    state.load_settings().map_err(command_error)
+async fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.load_settings().map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -753,8 +821,12 @@ fn save_mcp_permissions(
 }
 
 #[tauri::command]
-fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.save_settings(settings).map_err(command_error)
+async fn save_settings(
+    settings: UiSettings,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_settings(settings).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -778,18 +850,23 @@ async fn scan_creator(
 }
 
 #[tauri::command]
-fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+async fn queue_research(
+    ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
     security::validate_research_ids(&ids)?;
-    state.queue_research(ids)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.queue_research(ids)).await
 }
 
 #[tauri::command]
-fn build_ai_prompt(
+async fn build_ai_prompt(
     input: AiPromptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.build_ai_prompt(&input)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.build_ai_prompt(&input)).await
 }
 
 #[tauri::command]
@@ -958,6 +1035,9 @@ pub fn run() {
             list_jobs,
             search_transcripts,
             get_transcript,
+            get_ai_run,
+            get_research_item,
+            save_copy_prompt,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,
@@ -1068,6 +1148,17 @@ mod tests {
         .join();
         assert!(gateway.child.is_poisoned());
         assert!(stop_gateway(&gateway).is_ok());
+    }
+
+    #[test]
+    fn artifact_uuid_rejects_invalid_and_oversized_values() {
+        let valid = Uuid::new_v4();
+        assert_eq!(
+            artifact_uuid(&valid.to_string(), "AI run id").unwrap(),
+            valid
+        );
+        assert!(artifact_uuid("not-a-uuid", "AI run id").is_err());
+        assert!(artifact_uuid(&"x".repeat(100), "AI run id").is_err());
     }
 
     #[test]

@@ -30,7 +30,7 @@ export interface McpPermissions {
   allowedPrograms: string[];
 }
 
-export type ViewId = 'dashboard' | 'research' | 'jobs' | 'transcript' | 'ai' | 'library' | 'settings';
+export type ViewId = 'dashboard' | 'research' | 'jobs' | 'transcript' | 'ai' | 'studio' | 'library' | 'settings';
 export type JobState = 'queued' | 'preparing' | 'downloading' | 'transcribing' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type LibraryKind = 'Transcript' | 'Research' | 'AI run' | 'Project' | 'Creator';
 export type AiMode = 'copy' | 'byok';
