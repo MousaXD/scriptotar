@@ -12,3 +12,5 @@ pub use operational_status::*;
 
 mod studies_schema;
 mod studies;
+
+mod studies_drafts;
