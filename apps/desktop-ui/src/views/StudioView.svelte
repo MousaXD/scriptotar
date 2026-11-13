@@ -81,6 +81,11 @@
 
   onMount(() => {
     if (gateway) void loadStudies();
+    // Svelte's first reactive pass can run before mount. Explicitly reconcile
+    // an initial deep-link once mounted so its async detail is never stranded.
+    if (incoming && incoming.projectId === projectId && incoming.kind === 'transcript') {
+      void showSource(incoming);
+    }
   });
   onDestroy(() => {
     currentRequest++;
