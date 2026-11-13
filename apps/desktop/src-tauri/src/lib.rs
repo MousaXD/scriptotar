@@ -532,14 +532,18 @@ async fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, S
 }
 
 #[tauri::command]
-fn search_transcripts(
+async fn search_transcripts(
     query: String,
     limit: Option<usize>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Vec<String>, String> {
-    state
-        .search_transcripts(&query, limit.unwrap_or(10))
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .search_transcripts(&query, limit.unwrap_or(10))
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -730,25 +734,28 @@ async fn create_project(
 }
 
 #[tauri::command]
-fn enqueue_local_media(
+async fn enqueue_local_media(
     project_id: Uuid,
     path: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
     let path = security::validated_local_media_path(&path)?;
-    state
-        .enqueue_local_media(project_id, path)
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services.enqueue_local_media(project_id, path).map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
-fn enqueue_url(
+async fn enqueue_url(
     project_id: Uuid,
     url: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
     security::validate_url_argument("media URL", &url)?;
-    state.enqueue_url(project_id, url).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.enqueue_url(project_id, url).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -762,21 +769,27 @@ fn choose_output_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.cancel_job(job_id).map_err(command_error)
+async fn cancel_job(
+    job_id: Uuid,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.cancel_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn retry_job(
+async fn retry_job(
     job_id: Uuid,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
-    state.retry_job(job_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.retry_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
-    state.load_settings().map_err(command_error)
+async fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.load_settings().map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -804,8 +817,12 @@ fn save_mcp_permissions(
 }
 
 #[tauri::command]
-fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.save_settings(settings).map_err(command_error)
+async fn save_settings(
+    settings: UiSettings,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_settings(settings).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -829,9 +846,13 @@ async fn scan_creator(
 }
 
 #[tauri::command]
-fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+async fn queue_research(
+    ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
     security::validate_research_ids(&ids)?;
-    state.queue_research(ids)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.queue_research(ids)).await
 }
 
 #[tauri::command]
