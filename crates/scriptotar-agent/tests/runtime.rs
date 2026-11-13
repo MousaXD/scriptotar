@@ -1,5 +1,5 @@
 use scriptotar_agent::{
-    model::*, Certainty, Engine, ExecutionContext, MemoryStore, PolicyGate,
+    model::*, Certainty, CheckpointStore, Engine, ExecutionContext, MemoryStore, PolicyGate,
     ProbeResult, RuntimeError, ToolExecutor, ToolFailure, ToolReceipt, ToolRegistry,
 };
 use std::{
@@ -604,4 +604,67 @@ fn compound_id_separator_must_not_allow_colliding_idempotency_keys() {
     let mut unsafe_plan = plan(vec![step("s1")]);
     unsafe_plan.id = "a:0".into();
     assert_eq!(e.create(unsafe_plan, 0), Err(RuntimeError::InvalidPlan));
+}
+
+#[derive(Clone)]
+struct RaceStore {
+    inner: MemoryStore,
+    ready: Arc<Barrier>,
+}
+
+impl CheckpointStore for RaceStore {
+    fn create(&self, snapshot: RunSnapshot) -> Result<(), scriptotar_agent::StoreError> {
+        self.inner.create(snapshot)
+    }
+
+    fn load(&self, run_id: &str) -> Result<Option<RunSnapshot>, scriptotar_agent::StoreError> {
+        let snapshot = self.inner.load(run_id)?;
+        if snapshot.as_ref().is_some_and(|run| run.revision == 0) {
+            // Both competing ticks must claim the exact same persisted revision.
+            self.ready.wait();
+        }
+        Ok(snapshot)
+    }
+
+    fn compare_and_swap(
+        &self,
+        expected_revision: u64,
+        next: RunSnapshot,
+    ) -> Result<(), scriptotar_agent::StoreError> {
+        self.inner.compare_and_swap(expected_revision, next)
+    }
+}
+
+#[test]
+fn simultaneous_ticks_must_have_one_cas_winner_and_one_conflict() {
+    let driver = FakeDriver::default();
+    let template = engine(driver.clone());
+    let store = RaceStore { inner: MemoryStore::default(), ready: Arc::new(Barrier::new(2)) };
+    let e = Arc::new(Engine::new(store, driver.clone(), template.policy, template.registry));
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+
+    let a = e.clone();
+    let b = e.clone();
+    let one = thread::spawn(move || a.tick("run_1", 1));
+    let two = thread::spawn(move || b.tick("run_1", 1));
+    let r1 = one.join().unwrap();
+    let r2 = two.join().unwrap();
+    let winners = [&r1, &r2].iter().filter(|r| matches!(r, Ok(s) if s.state == RunState::Completed)).count();
+    let conflicts = [&r1, &r2].iter().filter(|r| matches!(r, Err(RuntimeError::Store(scriptotar_agent::StoreError::Conflict)))).count();
+    assert_eq!(winners, 1);
+    assert_eq!(conflicts, 1);
+    assert_eq!(driver.calls(), 1);
+}
+
+#[test]
+fn repeated_pause_and_cancel_are_idempotent() {
+    let e = engine(FakeDriver::default());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    let paused = e.pause("run_1", 1).unwrap();
+    let paused_again = e.pause("run_1", 2).unwrap();
+    assert_eq!(paused.revision, paused_again.revision);
+
+    let canceled = e.cancel("run_1", 3).unwrap();
+    let canceled_again = e.cancel("run_1", 4).unwrap();
+    assert_eq!(canceled.revision, canceled_again.revision);
 }
