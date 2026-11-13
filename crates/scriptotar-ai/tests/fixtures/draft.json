@@ -1,0 +1,40 @@
+{
+  "id": "draft-1",
+  "angle_id": "contrast",
+  "title": "The library surprise",
+  "language": "en",
+  "beats": [
+    {
+      "id": "hook",
+      "role": "hook",
+      "narration": "What if your next Saturday plan is closer than you think?",
+      "on_screen_text": "A plan close to home",
+      "shots": [{"visual": "Original footage of an entrance", "purpose": "Establish place", "evidence_ids": []}],
+      "evidence_ids": [],
+      "manually_edited": false
+    },
+    {
+      "id": "fact",
+      "role": "explanation",
+      "narration": "The community event is scheduled for Saturday at six at the public library, according to the event notice.",
+      "on_screen_text": "Saturday, 6 pm",
+      "shots": [{"visual": "A simple original time graphic", "purpose": "Clarify confirmed information", "evidence_ids": ["event"]}],
+      "evidence_ids": ["event"],
+      "manually_edited": true
+    },
+    {
+      "id": "close",
+      "role": "cta",
+      "narration": "Check the event notice and visit the library this Saturday.",
+      "on_screen_text": "See the details",
+      "shots": [],
+      "evidence_ids": ["event"],
+      "manually_edited": false
+    }
+  ],
+  "cta": "Visit the library this Saturday",
+  "caption": "A local Saturday idea. Confirm event details before visiting.",
+  "claims": [
+    {"id": "c1", "beat_id": "fact", "assertion": "The event is Saturday at six at the public library", "status": "supported", "evidence_ids": ["event"]}
+  ]
+}
