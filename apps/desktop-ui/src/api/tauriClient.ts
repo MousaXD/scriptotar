@@ -1,5 +1,7 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
 import type {
+  AiRunDetail,
+  ResearchItemDetail,
   AppSettings,
   BackendJob,
   BootstrapData,
@@ -44,6 +46,9 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     searchTranscripts: (query, limit = 10) =>
       invoke<string[]>('search_transcripts', { query, limit }),
     getTranscript: (id) => invoke<Transcript>('get_transcript', { transcriptId: id }),
+    getAiRun: (projectId, aiRunId) => invoke<AiRunDetail>('get_ai_run', { projectId, aiRunId }),
+    getResearchItem: (projectId, researchItemId) => invoke<ResearchItemDetail>('get_research_item', { projectId, researchItemId }),
+    saveCopyPrompt: (projectId, input) => invoke<AiRunDetail>('save_copy_prompt', { projectId, input }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

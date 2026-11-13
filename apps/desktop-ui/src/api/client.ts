@@ -1,5 +1,7 @@
 import type {
   AiMode,
+  AiRunDetail,
+  ResearchItemDetail,
   AiProvider,
   AppSettings,
   BackendJob,
@@ -41,6 +43,9 @@ export interface ScriptotarApi {
   listJobs(): Promise<Job[]>;
   searchTranscripts(query: string, limit?: number): Promise<string[]>;
   getTranscript(id: string): Promise<Transcript>;
+  getAiRun(projectId: string, aiRunId: string): Promise<AiRunDetail>;
+  getResearchItem(projectId: string, researchItemId: string): Promise<ResearchItemDetail>;
+  saveCopyPrompt(projectId: string, input: AiPromptInput): Promise<AiRunDetail>;
   subscribeJobChanges(listener: (jobId: string) => void): Promise<() => void>;
   getWatchlistStatuses(): Promise<WatchlistStatus[]>;
   getMigrationStatus(): Promise<MigrationStatus>;

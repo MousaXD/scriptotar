@@ -136,6 +136,17 @@ export interface Transcript {
 /** Metadata only; open a transcript with getTranscript(id) to load its body. */
 export type TranscriptSummary = Omit<Transcript, 'text' | 'segments'>;
 
+export interface AiRunDetail extends AiRun {
+  projectId: string;
+  prompt: string;
+  result: string | null;
+}
+
+export interface ResearchItemDetail extends ResearchItem {
+  projectId: string;
+  scannedAt: string;
+}
+
 export interface AiRun {
   id: string;
   task: string;

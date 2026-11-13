@@ -135,6 +135,26 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         .slice(0, limit)
         .map((transcript) => transcript.id);
     },
+    async getAiRun(projectId: string, aiRunId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      const run = snapshot().aiRuns.find((candidate) => candidate.id === aiRunId);
+      if (!run) throw new Error('AI artifact not found');
+      return { ...run, projectId, prompt: `Saved prompt for ${run.task}`,
+        result: run.mode === 'copy' ? null : `Saved output for ${run.task}` };
+    },
+    async getResearchItem(projectId: string, researchItemId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      const item = snapshot().research.find((candidate) => candidate.id === researchItemId);
+      if (!item) throw new Error('Research item not found');
+      return { ...item, projectId, scannedAt: '2026-08-09T09:00:00+04:00' };
+    },
+    async saveCopyPrompt(projectId: string, input: AiPromptInput) {
+      if (active !== projectId) throw new Error('Active project changed');
+      if (input.mode !== 'copy' || input.apiKey?.trim()) throw new Error('Copy mode without an API key is required');
+      return { id: 'a-saved-copy', projectId, task: input.task, title: input.topic || input.task,
+        mode: 'copy' as const, createdAt: '2026-08-09T09:00:00+04:00',
+        status: 'completed' as const, prompt: await this.buildAiPrompt(input), result: null };
+    },
     async getTranscript(id: string) {
       const transcript = snapshot().transcripts.find((candidate) => candidate.id === id);
       if (!transcript) throw new Error('Transcript not found');

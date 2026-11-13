@@ -63,6 +63,9 @@ describe('Tauri client command contract', () => {
     await api.mcpDisconnect();
     await api.searchTranscripts('scriptotar', 6);
     await api.getTranscript('transcript-id');
+    await api.getAiRun('project-id', 'ai-run-id');
+    await api.getResearchItem('project-id', 'research-id');
+    await api.saveCopyPrompt('project-id', aiInput);
     await api.getMcpPermissions();
     await api.saveMcpPermissions({
       enabled: false, httpToken: '', urlToken: '', readData: false, writeData: false,
@@ -120,6 +123,9 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('mcp_disconnect');
     expect(invokeMock).toHaveBeenCalledWith('search_transcripts', { query: 'scriptotar', limit: 6 });
     expect(invokeMock).toHaveBeenCalledWith('get_transcript', { transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_ai_run', { projectId: 'project-id', aiRunId: 'ai-run-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_research_item', { projectId: 'project-id', researchItemId: 'research-id' });
+    expect(invokeMock).toHaveBeenCalledWith('save_copy_prompt', { projectId: 'project-id', input: aiInput });
     expect(invokeMock).toHaveBeenCalledWith('get_mcp_permissions');
     expect(invokeMock).toHaveBeenCalledWith('save_mcp_permissions', {
       permissions: expect.objectContaining({ readData: false, enabled: false }),
