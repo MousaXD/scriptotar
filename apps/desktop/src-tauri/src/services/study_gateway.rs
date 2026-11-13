@@ -70,6 +70,37 @@ fn ui_source(source: &scriptotar_core::StudySource) -> Option<UiStudioSourceRef>
     })
 }
 
+/// A list row must never hydrate draft bodies, revisions or source transcripts.
+fn summarize_studio_brief(
+    study: &scriptotar_core::ContentStudy,
+    saved: Option<&scriptotar_core::CreativeBrief>,
+) -> UiStudioBrief {
+    if let Some(value) = saved {
+        UiStudioBrief {
+            title: study.title.clone(),
+            goal: value.input.goal.clone(),
+            audience: value.input.audience.clone(),
+            platform: value.input.platform.clone(),
+            language: value.input.language.clone(),
+            duration: value
+                .input
+                .duration_seconds
+                .map_or(String::new(), |v| v.to_string()),
+            style: value.input.tone.clone(),
+        }
+    } else {
+        UiStudioBrief {
+            title: study.title.clone(),
+            goal: study.goal.clone(),
+            audience: String::new(),
+            platform: String::new(),
+            language: String::new(),
+            duration: "40".into(),
+            style: String::new(),
+        }
+    }
+}
+
 impl AppServices {
     fn lock_studio_project(
         &self,
@@ -92,30 +123,7 @@ impl AppServices {
     ) -> RepositoryResult<UiStudioStudy> {
         let study = self.store.get_study(project_id, study_id)?;
         let saved_brief = self.store.get_creative_brief(project_id, study_id)?;
-        let brief = if let Some(ref value) = saved_brief {
-            UiStudioBrief {
-                title: study.title,
-                goal: value.input.goal.clone(),
-                audience: value.input.audience.clone(),
-                platform: value.input.platform.clone(),
-                language: value.input.language.clone(),
-                duration: value
-                    .input
-                    .duration_seconds
-                    .map_or(String::new(), |v| v.to_string()),
-                style: value.input.tone.clone(),
-            }
-        } else {
-            UiStudioBrief {
-                title: study.title,
-                goal: study.goal,
-                audience: String::new(),
-                platform: String::new(),
-                language: String::new(),
-                duration: "40".into(),
-                style: String::new(),
-            }
-        };
+        let brief = summarize_studio_brief(&study, saved_brief.as_ref());
         let sources = self
             .store
             .list_study_sources(project_id, study_id)?
@@ -161,12 +169,14 @@ impl AppServices {
             .search_studies(project_id, "", false, 200)?
             .into_iter()
             .map(|study| {
-                let row = self.read_studio_bundle(project_id, study.id)?;
+                // Listing is metadata-only: defer draft bodies, full version
+                // history and source provenance until get_studio_study(id).
+                let saved_brief = self.store.get_creative_brief(project_id, study.id)?;
                 Ok(UiStudioStudySummary {
-                    id: row.id,
-                    project_id: row.project_id,
-                    revision: row.revision,
-                    brief: row.brief,
+                    id: study.id.to_string(),
+                    project_id: study.project_id.to_string(),
+                    revision: study.revision,
+                    brief: summarize_studio_brief(&study, saved_brief.as_ref()),
                 })
             })
             .collect()
