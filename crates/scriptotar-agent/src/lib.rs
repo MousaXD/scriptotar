@@ -276,18 +276,28 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
     /// Must run at startup before issuing any new work; uncertain effects require reconciliation.
     pub fn recover(&self, run_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(run_id)?;
-        if matches!(run.state, RunState::Running | RunState::Cancelling) {
-            if run.steps.get(run.current_step).is_some_and(|s| matches!(s.state, StepState::Running | StepState::AwaitingResult)) {
+        if run.state.terminal() {
+            return Ok(run);
+        }
+        // Even a paused run might have a tool in flight at shutdown.
+        // The next session must probe, never issue a duplicate request.
+        if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::Running)
+            || (matches!(run.state, RunState::Running | RunState::Cancelling)
+                && run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::AwaitingResult))
+        {
+            run.state = RunState::Blocked;
+            run.event(now, AuditKind::Interrupted);
+            return self.save(run);
+        }
+        if run.cancel_requested {
+            if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::AwaitingResult) {
                 run.state = RunState::Blocked;
                 run.event(now, AuditKind::Interrupted);
-                return self.save(run);
-            }
-            if run.cancel_requested {
+            } else {
                 run.state = RunState::Cancelled;
                 run.event(now, AuditKind::Cancelled);
-                return self.save(run);
             }
-            // Running with a pending step is safe to continue; no dispatch has occurred.
+            return self.save(run);
         }
         Ok(run)
     }
@@ -307,6 +317,12 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if run.steps[index].state != StepState::Pending {
             // A process may still be executing this step. Never dispatch it twice.
             return Ok(run);
+        }
+        if run.steps[index].attempts >= run.plan.steps[index].max_attempts {
+            run.steps[index].state = StepState::Failed;
+            run.state = RunState::Failed;
+            run.event(now, AuditKind::Failed);
+            return self.save(run);
         }
         let step = run.plan.steps[index].clone();
         if !self.registry.contains(step.input.kind()) {
