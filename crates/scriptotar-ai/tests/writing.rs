@@ -359,3 +359,23 @@ fn model_response_limits_and_mismatched_language_are_rejected() {
         WritingError::Invalid("draft language differs from brief")
     );
 }
+
+#[test]
+fn empty_outline_beats_are_rejected_and_no_op_revision_keeps_citations() {
+    let request = input(WritingTask::ProposeAngles { count: 3 });
+    let mut angles: scriptotar_ai::writing::AngleResponse =
+        serde_json::from_str(include_str!("fixtures/angles.json")).unwrap();
+    angles.angles[0].outline[0].estimated_seconds = 0;
+    assert_eq!(
+        parse_angles(&serde_json::to_string(&angles).unwrap(), &request).unwrap_err(),
+        WritingError::Invalid("outline beat duration must be 1 to 600 seconds")
+    );
+    let draft = fixture_draft();
+    let same = BeatRevision {
+        beat_id: "fact".to_owned(),
+        expected_narration: draft.beats[1].narration.clone(),
+        replacement_narration: draft.beats[1].narration.clone(),
+        overwrite_manual_edit: true,
+    };
+    assert_eq!(apply_beat_revision(&draft, &same).unwrap(), draft);
+}
