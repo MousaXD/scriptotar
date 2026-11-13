@@ -30,7 +30,7 @@ export interface McpPermissions {
   allowedPrograms: string[];
 }
 
-export type ViewId = 'dashboard' | 'research' | 'jobs' | 'transcript' | 'ai' | 'library' | 'settings';
+export type ViewId = 'dashboard' | 'research' | 'jobs' | 'transcript' | 'ai' | 'studio' | 'library' | 'settings';
 export type JobState = 'queued' | 'preparing' | 'downloading' | 'transcribing' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
 export type LibraryKind = 'Transcript' | 'Research' | 'AI run' | 'Project' | 'Creator';
 export type AiMode = 'copy' | 'byok';
@@ -135,6 +135,17 @@ export interface Transcript {
 
 /** Metadata only; open a transcript with getTranscript(id) to load its body. */
 export type TranscriptSummary = Omit<Transcript, 'text' | 'segments'>;
+
+export interface AiRunDetail extends AiRun {
+  projectId: string;
+  prompt: string;
+  result: string | null;
+}
+
+export interface ResearchItemDetail extends ResearchItem {
+  projectId: string;
+  scannedAt: string;
+}
 
 export interface AiRun {
   id: string;

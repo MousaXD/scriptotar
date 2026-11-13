@@ -1,3 +1,5 @@
+pub mod intelligence;
+
 use std::{
     env,
     ffi::OsString,
@@ -895,3 +897,6 @@ mod tests {
         assert_eq!(items.len(), 1);
     }
 }
+
+#[cfg(test)]
+mod intelligence_tests;

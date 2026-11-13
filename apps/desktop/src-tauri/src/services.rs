@@ -1,5 +1,8 @@
+mod agent_inspection;
+mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
+mod study_gateway;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -32,8 +35,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
-    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment, UiTranscriptSummary,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiAiRunDetail, UiCreator, UiJob,
+    UiLibraryItem, UiProject, UiResearchItem, UiResearchItemDetail, UiSettings, UiTranscript,
+    UiTranscriptSegment, UiTranscriptSummary,
 };
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
@@ -196,6 +200,54 @@ impl AppServices {
         Ok(transcript_to_ui(&transcript))
     }
 
+    /// A historical AI run must be resolved by ID within its originating project.
+    /// Unlike bootstrap(), this returns the exact stored prompt and result.
+    pub fn get_ai_run(&self, project_id: Uuid, ai_run_id: Uuid) -> RepositoryResult<UiAiRunDetail> {
+        self.require_active_project(project_id)?;
+        let run = artifact_details::read_ai_run(&self.store, project_id, ai_run_id)?;
+        self.require_active_project(project_id)?;
+        Ok(ai_run_detail(&run))
+    }
+
+    pub fn get_research_item(
+        &self,
+        project_id: Uuid,
+        research_item_id: Uuid,
+    ) -> RepositoryResult<UiResearchItemDetail> {
+        self.require_active_project(project_id)?;
+        let item = self
+            .store
+            .get_research_items(&[research_item_id])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                RepositoryError::NotFound(format!("research item {research_item_id}"))
+            })?;
+        if item.project_id != project_id {
+            return Err(RepositoryError::NotFound(format!(
+                "research item {research_item_id} in active project"
+            )));
+        }
+        let creators = self.store.list_creators(Some(project_id))?;
+        let by_id = creators
+            .iter()
+            .map(|creator| (creator.id, creator))
+            .collect::<HashMap<_, _>>();
+        let queued =
+            artifact_details::is_research_source_queued(&self.store, project_id, &item.source_url)?;
+        self.require_active_project(project_id)?;
+        let queued_sources = if queued {
+            HashSet::from([item.source_url.clone()])
+        } else {
+            HashSet::new()
+        };
+        Ok(UiResearchItemDetail {
+            item: research_to_ui(&item, &by_id, &queued_sources),
+            project_id: project_id.to_string(),
+            scanned_at: item.scanned_at,
+        })
+    }
+
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
         let mut active_project = self
@@ -223,6 +275,16 @@ impl AppServices {
     }
 
     pub fn enqueue_local_media(&self, project_id: Uuid, path: String) -> RepositoryResult<Job> {
+        // A delayed/stale UI command must never enqueue work in another project.
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let input_path = Path::new(path.trim());
         if !input_path.is_file() {
@@ -245,6 +307,15 @@ impl AppServices {
     }
 
     pub fn enqueue_url(&self, project_id: Uuid, url: String) -> RepositoryResult<Job> {
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let validated = NetworkPolicy
             .validate(url.trim())
@@ -258,13 +329,32 @@ impl AppServices {
     }
 
     pub fn cancel_job(&self, job_id: Uuid) -> RepositoryResult<()> {
-        self.store.get_job(job_id)?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let job = self.store.get_job(job_id)?;
+        if job.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         self.orchestrator
             .cancel(job_id)
             .map_err(|error| RepositoryError::Storage(error.to_string()))
     }
 
     pub fn retry_job(&self, job_id: Uuid) -> RepositoryResult<Job> {
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let previous = self.store.get_job(job_id)?;
+        if previous.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         let job = JobService::new(self.store.clone()).retry(job_id)?;
         self.orchestrator
             .enqueue(job.id)
@@ -435,6 +525,49 @@ impl AppServices {
         build_ai_prompt_text(input)
     }
 
+    /// Explicit save action. Building/copying a preview never writes history.
+    /// The active-project lock prevents a stale UI action saving into another project.
+    pub fn save_copy_prompt(
+        &self,
+        project_id: Uuid,
+        input: &AiPromptInput,
+    ) -> Result<UiAiRunDetail, String> {
+        if !input.mode.eq_ignore_ascii_case("copy") {
+            return Err("Save Copy Prompt requires copy mode".to_owned());
+        }
+        if input
+            .api_key
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err("Copy Prompt saving does not accept API credentials".to_owned());
+        }
+        let prompt = self.build_ai_prompt(input)?;
+        let guard = self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
+        if *guard != project_id {
+            return Err("not found: active project has changed".to_owned());
+        }
+        let run = AiRun {
+            id: Uuid::new_v4(),
+            project_id,
+            task: input.task.trim().to_owned(),
+            mode: AiRunMode::CopyPrompt,
+            provider: None,
+            model: None,
+            prompt,
+            result: None,
+            created_at: now_rfc3339(),
+        };
+        self.store
+            .insert_ai_run(&run)
+            .map_err(|error| error.to_string())?;
+        drop(guard);
+        Ok(ai_run_detail(&run))
+    }
+
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
         let prompt = self.build_ai_prompt(input)?;
         let active_project = self
@@ -504,6 +637,15 @@ impl AppServices {
             })
             .map_err(|error| error.to_string())?;
         Ok(response.text)
+    }
+
+    fn require_active_project(&self, project_id: Uuid) -> RepositoryResult<()> {
+        if self.active_project_id()? != project_id {
+            return Err(RepositoryError::NotFound(
+                "artifact in active project".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     fn active_project_id(&self) -> RepositoryResult<Uuid> {
@@ -1053,6 +1195,15 @@ fn research_to_ui(
     }
 }
 
+fn ai_run_detail(run: &AiRun) -> UiAiRunDetail {
+    UiAiRunDetail {
+        summary: ai_run_to_ui(run),
+        project_id: run.project_id.to_string(),
+        prompt: run.prompt.clone(),
+        result: run.result.clone(),
+    }
+}
+
 fn ai_run_to_ui(run: &AiRun) -> UiAiRun {
     let title = run
         .result
@@ -1522,6 +1673,207 @@ mod tests {
 
     fn database_path(temp: &TempDir) -> PathBuf {
         temp.path().join("scriptotar.sqlite3")
+    }
+
+    #[test]
+    fn exact_artifact_details_are_project_scoped_and_survive_restart() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let prompt = "Exact historical prompt that must survive restart";
+        let result = "Exact historical response; not a regenerated answer";
+        let run = AiRun {
+            id: Uuid::new_v4(),
+            project_id,
+            task: "New short-form script".to_owned(),
+            mode: AiRunMode::Byok,
+            provider: Some("OpenAI".to_owned()),
+            model: Some("test-model".to_owned()),
+            prompt: prompt.to_owned(),
+            result: Some(result.to_owned()),
+            created_at: now_rfc3339(),
+        };
+        services.store.insert_ai_run(&run).unwrap();
+
+        let research = ResearchItem {
+            id: Uuid::new_v4(),
+            project_id,
+            creator_id: None,
+            source_url: "https://example.org/reel/123".to_owned(),
+            platform: "test".to_owned(),
+            title: Some("Exact research item".to_owned()),
+            view_count: Some(12),
+            like_count: None,
+            comment_count: None,
+            published_at: None,
+            duration_seconds: None,
+            raw_json: None,
+            scanned_at: now_rfc3339(),
+        };
+        let stored = services.store.upsert_research_items(&[research]).unwrap();
+        let research_id = stored[0].id;
+
+        let ai_detail = services.get_ai_run(project_id, run.id).unwrap();
+        assert_eq!(ai_detail.prompt, prompt);
+        assert_eq!(ai_detail.result.as_deref(), Some(result));
+        assert_eq!(ai_detail.project_id, project_id.to_string());
+        assert_eq!(ai_detail.summary.id, run.id.to_string());
+        assert_eq!(ai_detail.summary.mode, "byok");
+
+        let research_detail = services.get_research_item(project_id, research_id).unwrap();
+        assert_eq!(research_detail.item.id, research_id.to_string());
+        assert_eq!(research_detail.item.title, "Exact research item");
+        assert_eq!(research_detail.item.queued, Some(false));
+
+        assert!(matches!(
+            services.get_ai_run(project_id, Uuid::new_v4()),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(project_id, Uuid::new_v4()),
+            Err(RepositoryError::NotFound(_))
+        ));
+
+        let other = bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        assert_ne!(other, project_id);
+        // Wrong project must never return a result; nor should a stale command.
+        assert!(matches!(
+            services.get_ai_run(other, run.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(other, research_id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_ai_run(project_id, run.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(project_id, research_id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        services.select_project(project_id).unwrap();
+        drop(services);
+
+        let reopened = AppServices::new(temp.path()).unwrap();
+        let restored = reopened.get_ai_run(project_id, run.id).unwrap();
+        assert_eq!(restored.prompt, prompt);
+        assert_eq!(restored.result.as_deref(), Some(result));
+        assert_eq!(
+            reopened
+                .get_research_item(project_id, research_id)
+                .unwrap()
+                .item
+                .id,
+            research_id.to_string()
+        );
+    }
+
+    #[test]
+    fn job_mutations_and_enqueue_reject_foreign_and_stale_project_commands() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let original_project = bootstrap_active_id(&services.bootstrap().unwrap());
+        let foreign_job = Job::new(
+            original_project,
+            JobInput::Url("https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()),
+        );
+        services.store.insert_job(&foreign_job).unwrap();
+
+        let other_project =
+            bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        assert_ne!(original_project, other_project);
+
+        // These calls previously accepted any existing project's id or job.
+        assert!(matches!(
+            services.cancel_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.retry_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_url(
+                original_project,
+                "https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()
+            ),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_local_media(original_project, "/does/not/exist.mp4".to_owned()),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert_eq!(
+            services.store.get_job(foreign_job.id).unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            services.store.list_jobs(Some(other_project)).unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    fn preview_is_not_saved_but_explicit_copy_save_is_durable() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let mut input = prompt_input("Hook ideas");
+        input.mode = "copy".to_owned();
+        input.api_key = None;
+        let prompt = services.build_ai_prompt(&input).unwrap();
+        assert!(services
+            .store
+            .list_ai_runs(Some(project_id))
+            .unwrap()
+            .is_empty());
+        let saved = services.save_copy_prompt(project_id, &input).unwrap();
+        assert_eq!(saved.prompt, prompt);
+        assert_eq!(saved.result, None);
+        assert_eq!(saved.summary.mode, "copy");
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
+
+        input.api_key = Some("never-persist-me".to_owned());
+        assert!(services.save_copy_prompt(project_id, &input).is_err());
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
+
+        let other = bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        input.api_key = None;
+        assert!(services.save_copy_prompt(project_id, &input).is_err());
+        assert!(services.store.list_ai_runs(Some(other)).unwrap().is_empty());
+
+        services.select_project(project_id).unwrap();
+        drop(services);
+        let reopened = AppServices::new(temp.path()).unwrap();
+        let persisted_id = Uuid::parse_str(&saved.summary.id).unwrap();
+        assert_eq!(
+            reopened
+                .get_ai_run(project_id, persisted_id)
+                .unwrap()
+                .prompt,
+            prompt
+        );
+    }
+
+    #[test]
+    fn artifact_read_surfaces_storage_failure_not_false_not_found() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let connection = Connection::open(database_path(&temp)).unwrap();
+        connection.execute_batch("DROP TABLE ai_runs;").unwrap();
+        assert!(matches!(
+            services.get_ai_run(project_id, Uuid::new_v4()),
+            Err(RepositoryError::Storage(_))
+        ));
     }
 
     #[test]

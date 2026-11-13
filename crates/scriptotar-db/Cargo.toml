@@ -11,6 +11,7 @@ path = "src/root.rs"
 [dependencies]
 rusqlite.workspace = true
 scriptotar-core = { path = "../scriptotar-core" }
+scriptotar-agent = { path = "../scriptotar-agent" }
 serde_json.workspace = true
 uuid.workspace = true
 

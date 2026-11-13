@@ -1,3 +1,46 @@
+# LATEST CHECKPOINT — P1 local agent effect fencing (2026-11-13)
+
+- **Owner branch:** integration/scriptotar-defragmentation-agent00-20261113; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114. Main remains unchanged.
+- **Last verified all-green exact SHA:** c21016939b55253c4d249d496b7f31fa72c9d5d0, with nine green workflows including SQLite v8 agent-effects tests and Linux/Windows packaging. This precedes the new live effect adapter.
+- **New candidate work:** the approved, zero-cost ReadStudyTranscript production tool reserves a v8 effect key only after the agent Engine has committed its Running-intent checkpoint. It records a durable Applied or NotApplied receipt before reporting completion. Existing claims never permit duplicate dispatch; missing or ambiguous evidence blocks.
+- **Recovery:** a user-initiated reconciliation probes the persisted effect and only re-inspects this specifically repeatable *local* read. This is not permission for network, paid or mutating operations. Tests inject a claim failure and restart a reserved read; denial leaves no ledger claim.
+- **Resource safety:** the scoped SQLite transcript-attachment and UTF-8 byte-length query avoids loading arbitrary-sized bodies for tool admission; oversized text is refused before a new run.
+- **Not complete:** permitted external research tools, independent factual evidence verification, original script generation using Agent 06, real provider-cost/approval policy, native graphical WebView acceptance/performance, and P3 UI consolidation. The app is not a full production autonomous researcher/script writer.
+- **Verification:** retrieve current PR #114 HEAD and require all nine workflows at that *new* SHA. Do not present the c210 green baseline as validation for later changes. Draft/NO-GO for merge and release.
+
+---
+# LATEST CHECKPOINT — P1 local inspection integration (2026-11-13)
+
+- **Owner branch:** `integration/scriptotar-defragmentation-agent00-20261113`; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114; `main` remains unchanged. Retrieve and verify the actual current HEAD before continuing; do not infer success from this document.
+- **Earlier fully passing baseline:** `218fc97c101da7993c133587c88353dee7319034` passed all nine CI/package workflows for durable v7 checkpoint storage, but predates the new local inspection commands.
+- **New production-facing vertical slice:** `read_study_transcript` is the only enabled agent tool. Users select an already-attached transcript in Studio, prepare a durable run, explicitly approve or deny its local read, and reopen exact run state after restart. Each dispatch rechecks active-project, Study and transcript ownership, has a strict byte/CPU/cost limit and sends **no network request**, calls **no AI provider**, and creates **no external side effect**.
+- Tauri commands: `start_local_inspection`, `list_local_inspections`, `decide_local_inspection`. Typed ScriptotarApi/Tauri/mock bindings, EN/AR Studio controls and contract tests are included. Installed Linux mock-runtime IPC test now covers approval and two restart cycles using a real transcription artifact. Full graphical WebView acceptance is **not** proved by this mock-runtime test.
+- **Scope strictly limited:** This is not yet autonomous research or AI script writing. External tools, factual verification, pay-per-call budget authorization, service-side idempotent-effect ledger, controlled publishing, and writing agent integration are **NOT enabled**. Do not claim P1 GO or release.
+- **Next actions:** verify all nine workflows pass at the new exact head; then implement effect deduplication and user-visible tool budgets, wire Agent 05/06 to provenance-backed studies, certify real installed WebView journeys and native performance, and finish P3 professional UI de-cluttering/RTL without removing safety warnings.
+
+---
+
+# CURRENT CHECKPOINT — Agent 00 integration (2026-11-13)
+
+**Use this checkpoint instead of the older planning-only state below.**
+
+- Integration PR: https://github.com/MousaXD/scriptotar/pull/114 (draft)
+- Integration branch: integration/scriptotar-defragmentation-agent00-20261113
+- Main/released 1.4.1 remains untouched. No release authorization or release-certification claim.
+- Seven scoped agent implementation branches have been incorporated without overwriting overlapping paths.
+- P0 implementation now includes canonical v6 studies/sources/evidence/briefs/drafts, exact AI/research artifact retrieval, explicit saved Copy Prompt, source-to-Studio navigation, a project-scoped Tauri/TS Study gateway, revision-checked atomic SQLite Study creation/saves, pending-autosave project-switch guards, real-ID provenance/restart/rollback fixtures, and shallow Studio list queries.
+- Security: quinn-proto 0.11.19 and quinn-udp 0.5.16 lockfile updates included; root scriptotar-agent crate version aligned to 1.4.1; no ignored audit findings.
+- **Verified P0 integration baseline:** commit `22ce84ad3d0792282f6bf82af599967064dc8f8a` passed all nine workflows: Rust, CI, MCP, Desktop UI, security, GUI QA, Tauri migration, Linux installed-package persistence and Windows NSIS smoke. This does **not** certify real installed WebView UX or performance.
+- **New P1 checkpoint candidate:** check PR #114 for the latest post-v7 commit and run exact-head verification again. Do not use the older green P0 SHA to certify this addition.
+- P1 agent coordinator, research analytics and evidence-aware writing foundations remain **not a functioning production agent**. Agent 00 added SQLite migration v7 and project/study-scoped agent checkpoints with revision CAS, verified append-only audit, restart recovery and late-failure rollback. **Real AppServices tool drivers, service-side idempotent effects, paid provider permission gates, and user-facing run controls are still not wired.**
+- P0 still lacks full evidence editing, native packaged WebView journey/restart certification, and independent native scale/latency/RSS evidence (issue #100). P1–P3 exit criteria remain unmet. Do not merge to main or publish yet.
+- Exact acceptance still needed on the **post-v7 head**: all nine workflows succeed, full real installed WebView interactions on Windows and Linux, real multi-source Study-to-script journey with evidence, source access limitations, budget/approval tests, native perf 100/1k/10k fixture and EN/AR/RTL real UI validation.
+- Read docs/defragmentation/handoffs/agent-00-integration.md for owner decisions and remaining blockers.
+
+---
+
+## Historical planning snapshot (superseded by the checkpoint above)
+
 # Continuation checkpoint — start here in the next chat
 
 **Prepared:** 2026-11-13 UTC+04 (planning task; no application code changed).

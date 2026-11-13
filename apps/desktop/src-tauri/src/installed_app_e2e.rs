@@ -17,13 +17,21 @@ use tauri::{
 use tempfile::TempDir;
 
 use super::{
-    bootstrap_app, create_project, enqueue_local_media, list_jobs, select_project, AppServices,
+    bootstrap_app, create_project, create_study, decide_local_inspection, enqueue_local_media,
+    get_study, list_jobs, list_local_inspections, list_studies, save_study, select_project,
+    start_local_inspection, AppServices,
 };
 use crate::{
-    __cmd__bootstrap_app, __cmd__create_project, __cmd__enqueue_local_media, __cmd__list_jobs,
-    __cmd__select_project, __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
-    __tauri_command_name_enqueue_local_media, __tauri_command_name_list_jobs,
-    __tauri_command_name_select_project,
+    __cmd__bootstrap_app, __cmd__create_project, __cmd__create_study,
+    __cmd__decide_local_inspection, __cmd__enqueue_local_media, __cmd__get_study, __cmd__list_jobs,
+    __cmd__list_local_inspections, __cmd__list_studies, __cmd__save_study, __cmd__select_project,
+    __cmd__start_local_inspection, __tauri_command_name_bootstrap_app,
+    __tauri_command_name_create_project, __tauri_command_name_create_study,
+    __tauri_command_name_decide_local_inspection, __tauri_command_name_enqueue_local_media,
+    __tauri_command_name_get_study, __tauri_command_name_list_jobs,
+    __tauri_command_name_list_local_inspections, __tauri_command_name_list_studies,
+    __tauri_command_name_save_study, __tauri_command_name_select_project,
+    __tauri_command_name_start_local_inspection,
 };
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
@@ -110,6 +118,13 @@ fn build_app(data_dir: &Path) -> App<MockRuntime> {
             select_project,
             create_project,
             enqueue_local_media,
+            list_studies,
+            create_study,
+            get_study,
+            save_study,
+            start_local_inspection,
+            list_local_inspections,
+            decide_local_inspection,
         ])
         .build(mock_context(noop_assets()))
         .expect("build mock-runtime Scriptotar app")
@@ -278,6 +293,91 @@ fn installed_app_e2e_round_trip_survives_restart() {
         format!("{EXPECTED_TRANSCRIPT}\n")
     );
 
+    // Verify the new P0 Studio path through the exact packaged Tauri IPC
+    // contract, using the *actual completed* transcript ID from this run.
+    let transcript_id = completed["transcripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["text"] == EXPECTED_TRANSCRIPT)
+        .and_then(|item| item["id"].as_str())
+        .expect("completed fixture transcript ID")
+        .to_owned();
+    let created_study = ipc(
+        &webview,
+        "create_study",
+        json!({
+            "projectId": project_id,
+            "brief": {
+                "title": "Installed Studio source study",
+                "goal": "Write an original script from the installed transcript",
+                "audience": "Test fixture creators",
+                "platform": "Reels",
+                "language": "en",
+                "duration": "40",
+                "style": "Clear"
+            }
+        }),
+    );
+    let study_id = created_study["id"]
+        .as_str()
+        .expect("created study ID")
+        .to_owned();
+    assert_eq!(created_study["revision"], 1);
+    let saved_study = ipc(
+        &webview,
+        "save_study",
+        json!({
+            "projectId": project_id,
+            "studyId": study_id,
+            "expectedRevision": 1,
+            "patch": {
+                "sources": [{ "kind": "transcript", "id": transcript_id }],
+                "draft": "A new, original source-aware installed script"
+            }
+        }),
+    );
+    assert_eq!(saved_study["revision"], 2);
+    assert_eq!(saved_study["sources"][0]["id"], transcript_id);
+    assert_eq!(
+        saved_study["draft"],
+        "A new, original source-aware installed script"
+    );
+    assert_eq!(saved_study["draftVersions"].as_array().unwrap().len(), 2);
+    let list = ipc(&webview, "list_studies", json!({"projectId": project_id}));
+    assert!(list
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry["id"] == study_id));
+    let exact = ipc(
+        &webview,
+        "get_study",
+        json!({
+            "projectId": project_id,
+            "studyId": study_id
+        }),
+    );
+    assert_eq!(exact["draft"], saved_study["draft"]);
+
+    // Start a real agent plan via the installed Tauri IPC; it must stop
+    // before any tool dispatch until the user explicitly approves the read.
+    let planned_inspection = ipc(
+        &webview,
+        "start_local_inspection",
+        json!({"projectId": project_id, "studyId": study_id, "transcriptId": transcript_id}),
+    );
+    let inspection_id = planned_inspection["plan"]["id"]
+        .as_str()
+        .expect("durable local inspection run ID")
+        .to_owned();
+    assert_eq!(planned_inspection["state"], "awaiting_approval");
+    assert_eq!(planned_inspection["usage"]["tool_calls"], 0);
+    assert_eq!(
+        planned_inspection["plan"]["steps"][0]["estimate"]["cost_microusd"],
+        0
+    );
+
     drop(webview);
     drop(app);
 
@@ -289,4 +389,51 @@ fn installed_app_e2e_round_trip_survives_restart() {
         json!({"projectId": project_id}),
     );
     assert_completed_state(&restored, &project_id, &job_id);
+    let reopened_study = ipc(
+        &restarted_webview,
+        "get_study",
+        json!({"projectId": project_id, "studyId": study_id}),
+    );
+    assert_eq!(reopened_study["revision"], 2);
+    assert_eq!(
+        reopened_study["draft"],
+        "A new, original source-aware installed script"
+    );
+    assert_eq!(reopened_study["sources"][0]["id"], transcript_id);
+    assert_eq!(reopened_study["draftVersions"].as_array().unwrap().len(), 2);
+
+    let previous_inspections = ipc(
+        &restarted_webview,
+        "list_local_inspections",
+        json!({"projectId": project_id, "studyId": study_id}),
+    );
+    assert_eq!(previous_inspections.as_array().unwrap().len(), 1);
+    assert_eq!(previous_inspections[0]["plan"]["id"], inspection_id);
+    assert_eq!(previous_inspections[0]["state"], "awaiting_approval");
+    let approved = ipc(
+        &restarted_webview,
+        "decide_local_inspection",
+        json!({
+            "projectId": project_id, "studyId": study_id,
+            "runId": inspection_id, "action": "approve"
+        }),
+    );
+    assert_eq!(approved["state"], "completed");
+    assert_eq!(approved["steps"][0]["output"]["artifact_id"], transcript_id);
+    assert_eq!(approved["usage"]["reserved_cost_microusd"], 0);
+    drop(restarted_webview);
+    drop(restarted_app);
+
+    let final_app = build_app(&data_dir);
+    let final_webview = build_webview(&final_app, "installed-e2e-agent-restart");
+    let persisted = ipc(
+        &final_webview,
+        "list_local_inspections",
+        json!({"projectId": project_id, "studyId": study_id}),
+    );
+    assert_eq!(persisted[0]["state"], "completed");
+    assert_eq!(
+        persisted[0]["steps"][0]["output"]["artifact_id"],
+        transcript_id
+    );
 }

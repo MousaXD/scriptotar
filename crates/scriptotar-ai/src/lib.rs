@@ -1,3 +1,5 @@
+pub mod writing;
+
 use std::{io::Read, time::Duration};
 
 use reqwest::blocking::{Client, Response};

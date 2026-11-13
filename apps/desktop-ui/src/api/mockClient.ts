@@ -1,4 +1,6 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
+import type { ContentStudy } from '../studio/contract';
+import type { LocalInspectionRun } from '../studio/agent';
 import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
 export const mockBootstrap: BootstrapData = {
@@ -106,6 +108,16 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
   let projects = structuredClone(mockBootstrap.projects);
   let projectCounter = 0;
+  let studyCounter = 0;
+  const studies = new Map<string, ContentStudy>();
+  const inspectionRuns = new Map<string, LocalInspectionRun>();
+  let inspectionCounter = 0;
+  const studyInProject = (projectId: string, studyId: string): ContentStudy => {
+    if (active !== projectId) throw new Error('Active project changed');
+    const study = studies.get(studyId);
+    if (!study || study.projectId !== projectId) throw new Error('Study not found');
+    return study;
+  };
   const snapshot = (): BootstrapData => ({
     ...structuredClone(mockBootstrap),
     projects: structuredClone(projects),
@@ -134,6 +146,130 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         .filter((transcript) => transcript.text.toLocaleLowerCase().includes(query))
         .slice(0, limit)
         .map((transcript) => transcript.id);
+    },
+    async listStudies(projectId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      return [...studies.values()].filter((study) => study.projectId === projectId).map((study) => ({
+        id: study.id, projectId: study.projectId, brief: structuredClone(study.brief), revision: study.revision
+      }));
+    },
+    async createStudy(projectId, brief) {
+      if (active !== projectId) throw new Error('Active project changed');
+      if (!brief.title.trim()) throw new Error('Study title is required');
+      const study: ContentStudy = {
+        id: `mock-study-${++studyCounter}`, projectId, revision: 1,
+        brief: structuredClone(brief), sources: [], draft: '', draftVersions: []
+      };
+      studies.set(study.id, structuredClone(study));
+      return structuredClone(study);
+    },
+    async getStudy(projectId: string, studyId: string) {
+      return structuredClone(studyInProject(projectId, studyId));
+    },
+    async saveStudy(projectId, studyId, expectedRevision, patch) {
+      const old = studyInProject(projectId, studyId);
+      if (old.revision !== expectedRevision) throw new Error('Study changed by another editor');
+      const next = structuredClone(old);
+      if (patch.brief) {
+        if (!patch.brief.title.trim()) throw new Error('Study title is required');
+        next.brief = structuredClone(patch.brief);
+      }
+      if (patch.sources) {
+        const identities = patch.sources.map((ref) => `${ref.kind}:${ref.id}`);
+        if (new Set(identities).size !== identities.length) throw new Error('Duplicate source');
+        next.sources = structuredClone(patch.sources);
+      }
+      if (patch.draft !== undefined && patch.draft !== old.draft) {
+        next.draft = patch.draft;
+        next.draftVersions.push({
+          id: `${studyId}:v${next.draftVersions.length + 1}`,
+          revision: next.draftVersions.length + 1,
+          content: patch.draft,
+          createdAt: '2026-08-09T09:00:00+04:00'
+        });
+      }
+      next.revision += 1;
+      studies.set(studyId, next);
+      return structuredClone(next);
+    },
+    async startLocalInspection(projectId: string, studyId: string, transcriptId: string) {
+      const study = studyInProject(projectId, studyId);
+      if (!study.sources.some((item) => item.kind === 'transcript' && item.id === transcriptId)) {
+        throw new Error('Transcript must be attached to the study');
+      }
+      const id = 'mock-inspect-' + ++inspectionCounter;
+      const created: LocalInspectionRun = {
+        schema_version: 1, revision: 1, state: 'awaiting_approval', current_step: 0,
+        plan: {
+          id, project_id: projectId, study_id: studyId,
+          steps: [{ id: 'inspect_transcript', input: { tool: 'read_study_transcript', transcript_id: transcriptId },
+            requires_approval: true, estimate: { tokens: 0, cost_microusd: 0 } }]
+        },
+        steps: [{ id: 'inspect_transcript', state: 'pending', approved: false, output: null }],
+        events: [
+          { sequence: 1, kind: 'created' },
+          { sequence: 2, kind: 'awaiting_approval' }
+        ],
+        usage: { tool_calls: 0, reserved_cost_microusd: 0 }
+      };
+      inspectionRuns.set(id, created);
+      return structuredClone(created);
+    },
+    async listLocalInspections(projectId: string, studyId: string) {
+      studyInProject(projectId, studyId);
+      return [...inspectionRuns.values()]
+        .filter((run) => run.plan.project_id === projectId && run.plan.study_id === studyId)
+        .map((run) => structuredClone(run));
+    },
+    async decideLocalInspection(projectId: string, studyId: string, runId: string, action) {
+      studyInProject(projectId, studyId);
+      const stored = inspectionRuns.get(runId);
+      if (!stored || stored.plan.project_id !== projectId || stored.plan.study_id !== studyId) {
+        throw new Error('Agent run not found');
+      }
+      if (action === 'recover') return structuredClone(stored);
+      if (action === 'cancel' && !['completed', 'cancelled'].includes(stored.state)) {
+        stored.state = 'cancelled';
+      } else if (stored.state !== 'awaiting_approval') {
+        throw new Error('Agent run requires a different action');
+      } else if (action === 'deny') {
+        stored.state = 'cancelled';
+        stored.events.push({ sequence: stored.events.length + 1, kind: 'denied' });
+      } else if (action === 'approve') {
+        const sourceId = stored.plan.steps[0].input.transcript_id;
+        if (!studyInProject(projectId, studyId).sources.some((ref) => ref.id === sourceId && ref.kind === 'transcript')) {
+          throw new Error('Source no longer attached to the study');
+        }
+        stored.state = 'completed';
+        stored.steps[0].approved = true;
+        stored.steps[0].state = 'completed';
+        stored.steps[0].output = { artifact_id: sourceId, bytes: 0, tokens: 0, cost_microusd: 0 };
+        stored.usage.tool_calls = 1;
+        stored.events.push({ sequence: stored.events.length + 1, kind: 'approved' });
+      } else throw new Error('Unsupported agent action');
+      stored.revision += 1;
+      inspectionRuns.set(runId, stored);
+      return structuredClone(stored);
+    },
+    async getAiRun(projectId: string, aiRunId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      const run = snapshot().aiRuns.find((candidate) => candidate.id === aiRunId);
+      if (!run) throw new Error('AI artifact not found');
+      return { ...run, projectId, prompt: `Saved prompt for ${run.task}`,
+        result: run.mode === 'copy' ? null : `Saved output for ${run.task}` };
+    },
+    async getResearchItem(projectId: string, researchItemId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      const item = snapshot().research.find((candidate) => candidate.id === researchItemId);
+      if (!item) throw new Error('Research item not found');
+      return { ...item, projectId, scannedAt: '2026-08-09T09:00:00+04:00' };
+    },
+    async saveCopyPrompt(projectId: string, input: AiPromptInput) {
+      if (active !== projectId) throw new Error('Active project changed');
+      if (input.mode !== 'copy' || input.apiKey?.trim()) throw new Error('Copy mode without an API key is required');
+      return { id: 'a-saved-copy', projectId, task: input.task, title: input.topic || input.task,
+        mode: 'copy' as const, createdAt: '2026-08-09T09:00:00+04:00',
+        status: 'completed' as const, prompt: await this.buildAiPrompt(input), result: null };
     },
     async getTranscript(id: string) {
       const transcript = snapshot().transcripts.find((candidate) => candidate.id === id);

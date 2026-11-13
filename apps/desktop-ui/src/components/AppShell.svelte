@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { locale, setLocale, type AppLocale } from '../i18n';
   import { translator } from '../i18n/translate';
-  import type { Project, ViewId, WorkspaceSearchResult } from '../types';
+  import type { Job, Project, ViewId, WorkspaceSearchResult } from '../types';
   import Icon, { type IconName } from './Icon.svelte';
   import Select from './ui/Select.svelte';
 
@@ -10,6 +10,7 @@
   export let activeProjectId: string;
   export let projects: Project[];
   export let activeJobs = 0;
+  export let jobActivity: Job[] = [];
   export let busy = false;
   export let globalSearch = '';
   export let searchResults: WorkspaceSearchResult[] = [];
@@ -25,6 +26,7 @@
   let paletteRestoreFocus: HTMLElement | null = null;
   let suppressSearchFocus = false;
   let paletteOpen = false;
+  let activityOpen = false;
   let paletteIndex = 0;
   let sidebarCollapsed = readSidebarState();
   let projectSelection = activeProjectId;
@@ -39,6 +41,7 @@
   ] satisfies NavItem[];
 
   $: createNav = [
+    { id: 'studio', label: $locale === 'ar' ? 'الاستوديو' : 'Studio', icon: 'sparkles', shortcut: 'S' },
     { id: 'ai', label: $translator('nav.ai'), icon: 'sparkles', shortcut: 'A' },
     { id: 'library', label: $translator('nav.library'), icon: 'library', shortcut: 'L' }
   ] satisfies NavItem[];
@@ -49,6 +52,7 @@
     command('home', $translator('command.openHome'), $translator('search.navigate'), 'home dashboard', () => navigate('dashboard')),
     command('queue', $translator('command.openQueue'), $translator('search.navigate'), 'queue jobs activity', () => navigate('jobs')),
     command('transcripts', $translator('command.openTranscripts'), $translator('search.navigate'), 'transcript reader', () => navigate('transcript')),
+    command('studio', $locale === 'ar' ? 'فتح الاستوديو' : 'Open Studio', $translator('search.navigate'), 'studio content study script writing', () => navigate('studio')),
     command('ai', $translator('command.openAi'), $translator('search.navigate'), 'ai studio prompt', () => navigate('ai')),
     command('library', $translator('command.openLibrary'), $translator('search.navigate'), 'library local index', () => navigate('library')),
     command('settings', $translator('command.openSettings'), $translator('search.navigate'), 'settings preferences', () => navigate('settings'))
@@ -102,6 +106,7 @@
 
   function navigate(view: ViewId) {
     onNavigate(view);
+    activityOpen = false;
     closePalette();
     // Keyboard and pointer navigation should reveal the next view's heading, not leave it behind the sticky toolbar.
     void tick().then(() => window.scrollTo({ top: 0, behavior: 'instant' }));
@@ -216,6 +221,7 @@
       return;
     }
     if (paletteOpen && event.key === 'Escape') closePalette();
+    if (activityOpen && event.key === 'Escape') activityOpen = false;
   }
 </script>
 <svelte:window onkeydown={globalShortcut} />
@@ -237,7 +243,7 @@
       <section class="nav-group" aria-label={$translator('nav.work')}>
         <span class="nav-group-label">{$translator('nav.work')}</span>
         {#each workNav as item}
-          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button data-view-id={item.id} class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
             {#if item.id === 'jobs' && activeJobs > 0}<b class="activity-count" aria-label={$translator('jobs.active', { count: activeJobs })}>{activeJobs}</b>{/if}
@@ -248,7 +254,7 @@
       <section class="nav-group" aria-label={$translator('nav.create')}>
         <span class="nav-group-label">{$translator('nav.create')}</span>
         {#each createNav as item}
-          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button data-view-id={item.id} class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
           </button>
@@ -295,12 +301,28 @@
             options={[{ value: 'en', label: 'EN' }, { value: 'ar', label: 'ع' }]}
             onChange={changeLocale} />
         </div>
-        <button class:busy={activeJobs > 0} class="activity-button" type="button" on:click={() => navigate('jobs')} aria-label={$translator('jobs.open')}>
+        <button class:busy={activeJobs > 0} class="activity-button" type="button" on:click={() => activityOpen = !activityOpen} aria-expanded={activityOpen} aria-controls="global-job-activity" aria-label={$locale === 'ar' ? 'عرض النشاط' : 'Show activity'}>
           <span class="activity-orb" class:busy={activeJobs > 0}></span>
           <span>{activeJobs > 0 ? $translator('jobs.active', { count: activeJobs }) : $translator('jobs.idle')}</span>
         </button>
       </div>
     </header>
+    {#if activityOpen}
+      <section class="activity-popover" id="global-job-activity" aria-label={$locale === 'ar' ? 'نشاط المهام' : 'Job activity'}>
+        <div class="activity-head">
+          <strong>{$locale === 'ar' ? 'النشاط' : 'Activity'}</strong>
+          <button type="button" aria-label={$locale === 'ar' ? 'إغلاق النشاط' : 'Close activity'} on:click={() => activityOpen = false}>×</button>
+        </div>
+        {#each jobActivity.filter((job) => ['queued', 'preparing', 'downloading', 'processing', 'transcribing', 'failed', 'interrupted'].includes(job.state)).slice(0, 8) as job (job.id)}
+          <div class="activity-line"><span dir="auto">{job.title}</span><small>{job.state}</small>
+            {#if job.state === 'failed' || job.state === 'interrupted'}<p role="status">{job.detail || job.stageLabel}</p>{/if}
+          </div>
+        {:else}
+          <p class="activity-empty">{$locale === 'ar' ? 'لا توجد مهام نشطة أو فاشلة' : 'No active or failed jobs'}</p>
+        {/each}
+        <button type="button" class="button secondary activity-full" on:click={() => navigate('jobs')}>{$locale === 'ar' ? 'فتح الطابور' : 'Open full queue'}</button>
+      </section>
+    {/if}
     <main id="workspace-main" class="workspace" tabindex="-1"><slot /></main>
   </div>
 </div>
@@ -380,7 +402,14 @@
   .collapsed .activity-count { position: absolute; inset-inline-end: 2px; top: 2px; min-width: 17px; padding: 1px 4px; }
   .collapsed .local-status { justify-content: center; padding-inline: 0; }
 
-  .workspace-shell { min-width: 0; }
+  .workspace-shell { min-width: 0; position: relative; }
+  .activity-popover { position: absolute; z-index: 45; inset-block-start: 68px; inset-inline-end: 20px; width: min(360px, calc(100% - 26px)); max-height: min(70vh, 560px); overflow-y: auto; padding: 14px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--color-surface); box-shadow: var(--shadow-overlay); }
+  .activity-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .activity-head button { border: 0; background: transparent; font-size: 22px; }
+  .activity-line { display: grid; gap: 3px; padding: 9px 0; border-bottom: 1px solid var(--color-border); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .activity-line small { color: var(--color-text-muted); }
+  .activity-line p, .activity-empty { margin: 0; font-size: var(--text-xs); color: var(--color-text-muted); }
+  .activity-full { width: 100%; margin-top: 12px; }
   .topbar { min-height: var(--topbar-height); grid-template-columns: minmax(170px, 230px) minmax(240px, 620px) auto; gap: var(--space-3); padding: 10px var(--space-5); border-color: var(--color-border); background: var(--color-canvas); }
   .project-control { min-width: 0; }
   .project-control :global(.field > label) { color: var(--color-text-faint); font-size: 9px; }

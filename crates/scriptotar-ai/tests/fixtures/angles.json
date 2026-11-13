@@ -1,0 +1,40 @@
+{
+  "angles": [
+    {
+      "id": "contrast",
+      "approach": "Contrast expectations with a simple local opportunity",
+      "hook": "What if the most interesting Saturday plan is already around the corner?",
+      "promise": "Show why a familiar place is worth a second look",
+      "outline": [
+        {"role": "hook", "intent": "Make a local curiosity promise", "estimated_seconds": 6},
+        {"role": "explanation", "intent": "Show the confirmed event details", "estimated_seconds": 20},
+        {"role": "cta", "intent": "Invite a practical visit", "estimated_seconds": 9}
+      ],
+      "evidence_ids": ["event"]
+    },
+    {
+      "id": "micro_story",
+      "approach": "First-person discovery story with a practical payoff",
+      "hook": "A small notice on my walk changed where I will spend the weekend.",
+      "promise": "Reveal a useful local discovery without claiming universal appeal",
+      "outline": [
+        {"role": "hook", "intent": "Begin an ordinary discovery", "estimated_seconds": 7},
+        {"role": "payoff", "intent": "Deliver an event detail", "estimated_seconds": 20},
+        {"role": "cta", "intent": "Make the next step clear", "estimated_seconds": 8}
+      ],
+      "evidence_ids": ["event", "pattern"]
+    },
+    {
+      "id": "quick_guide",
+      "approach": "Three-step practical explainer with clear utility",
+      "hook": "Here is a quick way to plan a different kind of Saturday.",
+      "promise": "Present actionable information without a dramatic fabricated claim",
+      "outline": [
+        {"role": "hook", "intent": "Establish practical value", "estimated_seconds": 5},
+        {"role": "demonstration", "intent": "Give a short guide", "estimated_seconds": 23},
+        {"role": "cta", "intent": "Invite checking the venue", "estimated_seconds": 7}
+      ],
+      "evidence_ids": ["event"]
+    }
+  ]
+}

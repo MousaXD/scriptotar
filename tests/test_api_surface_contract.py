@@ -42,14 +42,14 @@ def methods() -> set[str]:
 class ApiSurfaceContractTests(unittest.TestCase):
     def test_every_rust_command_is_dispatched(self):
         self.assertEqual(actual_commands(), dispatched_commands())
-        self.assertEqual(len(actual_commands()), 34, "Update coverage inventory when Tauri commands change")
+        self.assertEqual(len(actual_commands()), 44, "Update coverage inventory when Tauri commands change")
 
     def test_every_rust_command_is_accessible_via_frontend_client(self):
         self.assertEqual(dispatched_commands(), wired_commands())
 
     def test_every_frontend_method_has_an_implementation_and_contract_invocation(self):
         names = methods()
-        self.assertEqual(len(names), 36, "Update coverage inventory when frontend APIs change")
+        self.assertEqual(len(names), 46, "Update coverage inventory when frontend APIs change")
         # The exact invoked command mapping is covered above.
         for name in names:
             self.assertRegex(TAURI, rf'(?m)^\s+{name}:', f'Missing frontend binding: {name}')

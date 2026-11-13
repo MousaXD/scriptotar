@@ -228,6 +228,84 @@ pub struct UiAiRun {
     pub status: String,
 }
 
+/// Exact persisted AI artifact, including its original prompt/result (never a credential).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiAiRunDetail {
+    #[serde(flatten)]
+    pub summary: UiAiRun,
+    pub project_id: String,
+    pub prompt: String,
+    pub result: Option<String>,
+}
+
+/// Exact research item, not a navigation-only library row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiResearchItemDetail {
+    #[serde(flatten)]
+    pub item: UiResearchItem,
+    pub project_id: String,
+    pub scanned_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioBrief {
+    pub title: String,
+    pub goal: String,
+    pub audience: String,
+    pub platform: String,
+    pub language: String,
+    pub duration: String,
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioSourceRef {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioDraftVersion {
+    pub id: String,
+    pub revision: i64,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudy {
+    pub id: String,
+    pub project_id: String,
+    pub revision: i64,
+    pub brief: UiStudioBrief,
+    pub sources: Vec<UiStudioSourceRef>,
+    pub draft: String,
+    pub draft_versions: Vec<UiStudioDraftVersion>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudySummary {
+    pub id: String,
+    pub project_id: String,
+    pub revision: i64,
+    pub brief: UiStudioBrief,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudyPatch {
+    pub brief: Option<UiStudioBrief>,
+    pub sources: Option<Vec<UiStudioSourceRef>>,
+    pub draft: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiLibraryItem {

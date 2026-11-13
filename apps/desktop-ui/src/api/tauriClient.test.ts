@@ -63,6 +63,17 @@ describe('Tauri client command contract', () => {
     await api.mcpDisconnect();
     await api.searchTranscripts('scriptotar', 6);
     await api.getTranscript('transcript-id');
+    await api.listStudies('project-id');
+    await api.createStudy('project-id', { title: 'Example', goal: 'Goal', audience: 'Audience',
+      platform: 'TikTok', language: 'Arabic', duration: '40', style: 'Direct' });
+    await api.getStudy('project-id', 'study-id');
+    await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
+    await api.startLocalInspection('project-id', 'study-id', 'transcript-id');
+    await api.listLocalInspections('project-id', 'study-id');
+    await api.decideLocalInspection('project-id', 'study-id', 'run-id', 'approve');
+    await api.getAiRun('project-id', 'ai-run-id');
+    await api.getResearchItem('project-id', 'research-id');
+    await api.saveCopyPrompt('project-id', aiInput);
     await api.getMcpPermissions();
     await api.saveMcpPermissions({
       enabled: false, httpToken: '', urlToken: '', readData: false, writeData: false,
@@ -120,6 +131,21 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('mcp_disconnect');
     expect(invokeMock).toHaveBeenCalledWith('search_transcripts', { query: 'scriptotar', limit: 6 });
     expect(invokeMock).toHaveBeenCalledWith('get_transcript', { transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('list_studies', { projectId: 'project-id' });
+    expect(invokeMock).toHaveBeenCalledWith('create_study', { projectId: 'project-id',
+      brief: expect.objectContaining({ title: 'Example', goal: 'Goal' }) });
+    expect(invokeMock).toHaveBeenCalledWith('get_study', { projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
+      studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });
+    expect(invokeMock).toHaveBeenCalledWith('start_local_inspection', {
+      projectId: 'project-id', studyId: 'study-id', transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('list_local_inspections', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('decide_local_inspection', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id', action: 'approve' });
+    expect(invokeMock).toHaveBeenCalledWith('get_ai_run', { projectId: 'project-id', aiRunId: 'ai-run-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_research_item', { projectId: 'project-id', researchItemId: 'research-id' });
+    expect(invokeMock).toHaveBeenCalledWith('save_copy_prompt', { projectId: 'project-id', input: aiInput });
     expect(invokeMock).toHaveBeenCalledWith('get_mcp_permissions');
     expect(invokeMock).toHaveBeenCalledWith('save_mcp_permissions', {
       permissions: expect.objectContaining({ readData: false, enabled: false }),
