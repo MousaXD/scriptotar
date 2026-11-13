@@ -42,6 +42,15 @@ Seven isolated branches were combined by Git tree changes without duplicate edit
 - A real `Engine` smoke test restores an awaiting-approval checkpoint after database restart and records denial without executing any tool.
 - Agent 04's existing runtime remains isolated. This change does NOT provide a service effect/idempotency ledger, provider-side budget enforcement, real AppServices tool dispatch, consent-based Tauri agent run endpoints or autonomous Studio UI.
 - Require nine workflows and installed-app proof on one exact post-v7 SHA. Earlier fully green P0 baseline at 22ce84a must not be presented as validation of v7.
+## First permitted production tool — local transcript inspection (Agent 00, 2026-11-13)
+
+- Added the `ReadStudyTranscript` runtime input and tool kind; it is deny-by-default and cannot invoke a remote service.
+- Wired `AppServices` to the durable v7 SQLite agent engine with explicit approval, cancellation, recovery and project/study-scoped audit. The only tool confirms a linked, present transcript up to 250,000 bytes on the user's device; no transcript bodies or credentials are persisted in the checkpoint.
+- Added three exact Tauri commands, TypeScript API/mock parity and compact bilingual Studio approval/denial controls. The active project and source attachment are validated at execution and restart; foreign or archived Studies fail closed.
+- Extended the Linux installed-app IPC fixture to prepare a run against a real completed transcript, restart with approval still pending, approve the read, restart again and verify the immutable completed state. This is backend/packaging evidence, NOT a complete graphical WebView test.
+- Tests cover denial without dispatch, wrong-project/wrong-study/not-attached sources, no provider calls, read-only budget and durable run reopening.
+- **Not yet done:** any payment-bearing AI request, autonomous script writing, source claim verification, research agent tool chain or external side-effect ledger. All nine exact-HEAD CI checks required before declaring even this local slice validated.
+
 ## Test evidence and gates
 
 - The 8acb185 integrated snapshot passed Rust foundation, CI, MCP E2E, Desktop UI, security hygiene, GUI QA, Tauri migration and Linux package. Windows installer was later cancelled by additional commits; do **not** count it as passed.

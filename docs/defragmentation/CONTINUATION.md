@@ -1,3 +1,14 @@
+# LATEST CHECKPOINT — P1 local inspection integration (2026-11-13)
+
+- **Owner branch:** `integration/scriptotar-defragmentation-agent00-20261113`; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114; `main` remains unchanged. Retrieve and verify the actual current HEAD before continuing; do not infer success from this document.
+- **Earlier fully passing baseline:** `218fc97c101da7993c133587c88353dee7319034` passed all nine CI/package workflows for durable v7 checkpoint storage, but predates the new local inspection commands.
+- **New production-facing vertical slice:** `read_study_transcript` is the only enabled agent tool. Users select an already-attached transcript in Studio, prepare a durable run, explicitly approve or deny its local read, and reopen exact run state after restart. Each dispatch rechecks active-project, Study and transcript ownership, has a strict byte/CPU/cost limit and sends **no network request**, calls **no AI provider**, and creates **no external side effect**.
+- Tauri commands: `start_local_inspection`, `list_local_inspections`, `decide_local_inspection`. Typed ScriptotarApi/Tauri/mock bindings, EN/AR Studio controls and contract tests are included. Installed Linux mock-runtime IPC test now covers approval and two restart cycles using a real transcription artifact. Full graphical WebView acceptance is **not** proved by this mock-runtime test.
+- **Scope strictly limited:** This is not yet autonomous research or AI script writing. External tools, factual verification, pay-per-call budget authorization, service-side idempotent-effect ledger, controlled publishing, and writing agent integration are **NOT enabled**. Do not claim P1 GO or release.
+- **Next actions:** verify all nine workflows pass at the new exact head; then implement effect deduplication and user-visible tool budgets, wire Agent 05/06 to provenance-backed studies, certify real installed WebView journeys and native performance, and finish P3 professional UI de-cluttering/RTL without removing safety warnings.
+
+---
+
 # CURRENT CHECKPOINT — Agent 00 integration (2026-11-13)
 
 **Use this checkpoint instead of the older planning-only state below.**
