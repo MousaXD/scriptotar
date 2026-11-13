@@ -377,3 +377,50 @@ impl SqliteStore {
         tx.commit().map_err(db_error)
     }
 }
+
+
+impl SqliteStore {
+    pub fn attach_source_to_draft(
+        &self,
+        project_id: Uuid,
+        draft_id: Uuid,
+        study_source_id: Uuid,
+    ) -> RepositoryResult<()> {
+        let draft = self.get_draft(project_id, draft_id)?;
+        if draft.archived_at.is_some() {
+            return Err(RepositoryError::Conflict("cannot attach to archived draft".into()));
+        }
+        self.get_study_source(project_id, draft.study_id, study_source_id)?;
+        let db = database(self)?;
+        require_active_study(&db, project_id, draft.study_id)?;
+        db.execute(
+            "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
+             VALUES(?1,?2,?3,?4)",
+            params![project_id.to_string(), draft_id.to_string(),
+                    study_source_id.to_string(), now_rfc3339()],
+        ).map_err(db_error)?;
+        Ok(())
+    }
+
+    pub fn list_draft_source_ids(
+        &self,
+        project_id: Uuid,
+        draft_id: Uuid,
+    ) -> RepositoryResult<Vec<Uuid>> {
+        self.get_draft(project_id, draft_id)?;
+        let db = database(self)?;
+        let mut stmt = db.prepare(
+            "SELECT link.study_source_id FROM draft_source_links link
+             JOIN creative_drafts d ON d.id=link.draft_id
+             JOIN study_sources ss ON ss.id=link.study_source_id
+             WHERE link.project_id=?1 AND link.draft_id=?2 AND d.project_id=?1
+               AND ss.project_id=?1 AND ss.study_id=d.study_id
+             ORDER BY link.attached_at, link.study_source_id"
+        ).map_err(db_error)?;
+        let rows = stmt.query_map(
+            params![project_id.to_string(), draft_id.to_string()],
+            |row| uuid_at(row, 0),
+        ).map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+    }
+}
