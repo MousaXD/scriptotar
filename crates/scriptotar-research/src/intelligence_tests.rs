@@ -5,8 +5,8 @@ use uuid::Uuid;
 use crate::intelligence::{
     compare_creator_views, deduplicate_snapshots, extract_transcript_outline, observed_view_growth,
     ComparisonLimitation, CreativeBeat, CreatorComparison, GrowthLimitation, IntelligenceError,
-    MetricSnapshot, PublicationDate, SourceAccess, SourceConfidence, TranscriptScope,
-    TranscriptSegment,
+    MetricSnapshot, PublicationDate, SourceAccess, SourceConfidence, TranscriptFeature,
+    TranscriptScope, TranscriptSegment, propose_transcript_hypothesis, count_transcript_features,
 };
 
 fn item(project: Uuid, creator: Option<Uuid>, id: Uuid, url: &str, days_old: i64, views: Option<i64>) -> ResearchItem {
@@ -259,4 +259,65 @@ fn silent_transcripts_do_not_fabricate_hooks() {
     let result = extract_transcript_outline(&scope, &[], SourceAccess::Available).unwrap();
     assert!(result.observations.is_empty());
     assert_eq!(result.warnings.len(), 1);
+}
+
+#[test]
+fn transcript_hypotheses_stay_uncertain_and_project_scoped() {
+    let project = Uuid::new_v4();
+    let scope = TranscriptScope {
+        project_id: project,
+        research_item_id: Uuid::new_v4(),
+        transcript_id: Uuid::new_v4(),
+        transcript_revision: "r1".into(),
+    };
+    let segment = TranscriptSegment {
+        segment_id: "hook".into(),
+        start_ms: 0,
+        end_ms: 2000,
+        text: "Opening phrase".into(),
+    };
+    let first = extract_transcript_outline(&scope, &[segment], SourceAccess::Available)
+        .unwrap()
+        .observations
+        .remove(0)
+        .evidence;
+    let hook = propose_transcript_hypothesis(
+        TranscriptFeature::Hook,
+        "The spoken opening may be a question",
+        vec![first.clone()],
+    ).unwrap();
+    assert_eq!(hook.confidence, SourceConfidence::InferredFromTranscript);
+    assert!(hook.limitations[0].contains("frames"));
+    let stats = count_transcript_features(project, &[hook.clone(), hook]).unwrap();
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].sources_with_hypothesis, 1);
+    assert_eq!(
+        count_transcript_features(Uuid::new_v4(), &[]).unwrap().len(),
+        0
+    );
+    assert_eq!(
+        count_transcript_features(Uuid::new_v4(), &[propose_transcript_hypothesis(
+            TranscriptFeature::Payoff, "Proposed", vec![first]
+        ).unwrap()]).unwrap_err(),
+        IntelligenceError::ProjectMismatch
+    );
+}
+
+#[test]
+fn conflicting_peer_observations_cannot_determine_creator_median() {
+    let p = Uuid::new_v4();
+    let c = Some(Uuid::new_v4());
+    let target = MetricSnapshot::from_research_item(
+        &item(p, c, Uuid::new_v4(), &url(1), 10, Some(300))
+    ).unwrap();
+    let a = MetricSnapshot::from_research_item(
+        &item(p, c, Uuid::new_v4(), &url(2), 10, Some(100))
+    ).unwrap();
+    let mut b = a.clone();
+    b.research_item_id = Uuid::new_v4();
+    b.views = Some(200);
+    assert_eq!(
+        compare_creator_views(&target, &[a, b], Utc::now(), 1).unwrap_err(),
+        IntelligenceError::ContradictoryObservation
+    );
 }
