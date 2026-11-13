@@ -632,10 +632,7 @@ async fn get_watchlist_statuses(
             .into_iter()
             .map(|status| (status.watchlist_id, status))
             .collect::<HashMap<_, _>>();
-        let auto_watch = store
-            .load_settings()
-            .map_err(command_error)?
-            .auto_watch;
+        let auto_watch = store.load_settings().map_err(command_error)?.auto_watch;
 
         Ok(watchlists
             .into_iter()
