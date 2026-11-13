@@ -157,17 +157,17 @@ pub fn audit_draft(
             })
         });
         match claim.status {
-            ClaimStatus::Supported if !support => advisories.push(note(
-                AdvisoryKind::UnsupportedClaim,
-                AdvisoryLevel::NeedsReview,
-                Some(&claim.beat_id),
-                "Claim labeled supported but has no declared corroborated independent reference.",
-            )),
             ClaimStatus::Supported if claim.evidence_ids.is_empty() => advisories.push(note(
                 AdvisoryKind::MissingCitation,
                 AdvisoryLevel::NeedsReview,
                 Some(&claim.beat_id),
                 "Supported factual claim needs a citation.",
+            )),
+            ClaimStatus::Supported if !support => advisories.push(note(
+                AdvisoryKind::UnsupportedClaim,
+                AdvisoryLevel::NeedsReview,
+                Some(&claim.beat_id),
+                "Claim labeled supported but has no declared corroborated independent reference.",
             )),
             ClaimStatus::Unverified | ClaimStatus::Disputed => {
                 let beat_text = draft
