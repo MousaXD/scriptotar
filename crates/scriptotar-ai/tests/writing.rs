@@ -379,3 +379,14 @@ fn empty_outline_beats_are_rejected_and_no_op_revision_keeps_citations() {
     };
     assert_eq!(apply_beat_revision(&draft, &same).unwrap(), draft);
 }
+
+#[test]
+fn missing_citations_are_reported_as_missing_not_validated() {
+    let mut draft = fixture_draft();
+    draft.claims[0].evidence_ids.clear();
+    let report = audit_draft(&draft, &brief("en"), &evidence());
+    assert!(report
+        .advisories
+        .iter()
+        .any(|item| item.kind == AdvisoryKind::MissingCitation));
+}
