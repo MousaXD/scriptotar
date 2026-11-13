@@ -41,7 +41,11 @@ class BaselineContractTests(unittest.TestCase):
         for row in cases:
             with self.subTest(case=row["id"]):
                 self.assertTrue(all(isinstance(row[key], str) and len(row[key]) > 8
-                                    for key in ("steps", "expected", "environment")))
+                                    for key in ("steps", "expected")))
+                self.assertIn(row["environment"], {
+                    "native-installed", "rust-ipc", "browser-mock", "mcp-e2e",
+                    "agent-fixture", "research-fixture", "manual-native"
+                })
                 self.assertEqual(row["automation"], "NOT_WIRED")
                 self.assertEqual(row["result"], "NOT_RUN")
                 self.assertTrue(re.fullmatch(r"p[0-3]-[a-z0-9-]+", row["id"]))
