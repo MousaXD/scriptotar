@@ -414,64 +414,22 @@ impl SqliteStore {
         let fp = fingerprint(input.kind, &identity);
         let id = Uuid::new_v4();
         let now = now_rfc3339();
-        let (research, source, media, transcript, job, ai): (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ) = match input.kind {
-            StudySourceKind::ResearchItem => (
-                reference_id.map(|v| v.to_string()),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            StudySourceKind::Source => (
-                None,
-                reference_id.map(|v| v.to_string()),
-                None,
-                None,
-                None,
-                None,
-            ),
-            StudySourceKind::Media => (
-                None,
-                None,
-                reference_id.map(|v| v.to_string()),
-                None,
-                None,
-                None,
-            ),
-            StudySourceKind::Transcript => (
-                None,
-                None,
-                None,
-                reference_id.map(|v| v.to_string()),
-                None,
-                None,
-            ),
-            StudySourceKind::Job => (
-                None,
-                None,
-                None,
-                None,
-                reference_id.map(|v| v.to_string()),
-                None,
-            ),
-            StudySourceKind::AiRun => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                reference_id.map(|v| v.to_string()),
-            ),
-            StudySourceKind::Manual => (None, None, None, None, None, None),
+        // Each existing origin type has exactly one non-NULL foreign key.
+        // An indexed array keeps the SQL binding list explicit without
+        // introducing a deeply nested, error-prone tuple type.
+        let mut origin_keys: [Option<String>; 6] = Default::default();
+        let origin_index = match input.kind {
+            StudySourceKind::ResearchItem => Some(0),
+            StudySourceKind::Source => Some(1),
+            StudySourceKind::Media => Some(2),
+            StudySourceKind::Transcript => Some(3),
+            StudySourceKind::Job => Some(4),
+            StudySourceKind::AiRun => Some(5),
+            StudySourceKind::Manual => None,
         };
+        if let Some(index) = origin_index {
+            origin_keys[index] = reference_id.map(|value| value.to_string());
+        }
         db.execute(
             "INSERT INTO study_sources (
                  id,project_id,study_id,kind,reference_id,research_id,legacy_source_id,
@@ -486,12 +444,12 @@ impl SqliteStore {
                 study_id.to_string(),
                 input.kind.as_str(),
                 reference_id.map(|v| v.to_string()),
-                research,
-                source,
-                media,
-                transcript,
-                job,
-                ai,
+                origin_keys[0],
+                origin_keys[1],
+                origin_keys[2],
+                origin_keys[3],
+                origin_keys[4],
+                origin_keys[5],
                 locator,
                 manual_text,
                 fp,
@@ -582,7 +540,7 @@ impl SqliteStore {
         optional_text("uncertainty note", input.uncertainty_note.as_deref(), 4000)?;
         if input
             .timestamp_seconds
-            .is_some_and(|value| !value.is_finite() || value < 0.0 || value >= 1e9)
+            .is_some_and(|value| !(0.0..1e9).contains(&value))
         {
             return Err(RepositoryError::Validation(
                 "invalid evidence timestamp".into(),
