@@ -23,15 +23,15 @@ use super::{
 };
 use crate::{
     __cmd__bootstrap_app, __cmd__create_project, __cmd__create_study,
-    __cmd__decide_local_inspection, __cmd__enqueue_local_media, __cmd__get_study,
-    __cmd__list_jobs, __cmd__list_local_inspections, __cmd__list_studies,
-    __cmd__save_study, __cmd__select_project, __cmd__start_local_inspection,
-    __tauri_command_name_bootstrap_app, __tauri_command_name_create_project,
-    __tauri_command_name_create_study, __tauri_command_name_decide_local_inspection,
-    __tauri_command_name_enqueue_local_media, __tauri_command_name_get_study,
-    __tauri_command_name_list_jobs, __tauri_command_name_list_local_inspections,
-    __tauri_command_name_list_studies, __tauri_command_name_save_study,
-    __tauri_command_name_select_project, __tauri_command_name_start_local_inspection,
+    __cmd__decide_local_inspection, __cmd__enqueue_local_media, __cmd__get_study, __cmd__list_jobs,
+    __cmd__list_local_inspections, __cmd__list_studies, __cmd__save_study, __cmd__select_project,
+    __cmd__start_local_inspection, __tauri_command_name_bootstrap_app,
+    __tauri_command_name_create_project, __tauri_command_name_create_study,
+    __tauri_command_name_decide_local_inspection, __tauri_command_name_enqueue_local_media,
+    __tauri_command_name_get_study, __tauri_command_name_list_jobs,
+    __tauri_command_name_list_local_inspections, __tauri_command_name_list_studies,
+    __tauri_command_name_save_study, __tauri_command_name_select_project,
+    __tauri_command_name_start_local_inspection,
 };
 
 const EXPECTED_TRANSCRIPT: &str = "installed fixture transcript survives restart";
@@ -368,10 +368,15 @@ fn installed_app_e2e_round_trip_survives_restart() {
         json!({"projectId": project_id, "studyId": study_id, "transcriptId": transcript_id}),
     );
     let inspection_id = planned_inspection["plan"]["id"]
-        .as_str().expect("durable local inspection run ID").to_owned();
+        .as_str()
+        .expect("durable local inspection run ID")
+        .to_owned();
     assert_eq!(planned_inspection["state"], "awaiting_approval");
     assert_eq!(planned_inspection["usage"]["tool_calls"], 0);
-    assert_eq!(planned_inspection["plan"]["steps"][0]["estimate"]["cost_microusd"], 0);
+    assert_eq!(
+        planned_inspection["plan"]["steps"][0]["estimate"]["cost_microusd"],
+        0
+    );
 
     drop(webview);
     drop(app);
@@ -427,5 +432,8 @@ fn installed_app_e2e_round_trip_survives_restart() {
         json!({"projectId": project_id, "studyId": study_id}),
     );
     assert_eq!(persisted[0]["state"], "completed");
-    assert_eq!(persisted[0]["steps"][0]["output"]["artifact_id"], transcript_id);
+    assert_eq!(
+        persisted[0]["steps"][0]["output"]["artifact_id"],
+        transcript_id
+    );
 }

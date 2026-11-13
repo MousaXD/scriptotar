@@ -9,7 +9,7 @@ use scriptotar_agent::{
 };
 #[cfg(test)]
 use scriptotar_core::ProjectRepository;
-use scriptotar_core::{ContentRepository, RepositoryError, RepositoryResult, StudySourceKind};
+use scriptotar_core::{RepositoryError, RepositoryResult, StudySourceKind};
 use scriptotar_db::ScopedAgentCheckpointStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
