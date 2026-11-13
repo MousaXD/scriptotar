@@ -103,7 +103,10 @@
   function queueSave() {
     status = '';
     prompt = '';
+    // New brief/source/draft changes invalidate any in-flight local prompt.
+    // Allow a new preparation immediately; an older response cannot revive it.
     promptRequest++;
+    preparing = false;
     if (!record || !gateway) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveTimer = undefined; void save(); }, 900);
@@ -570,7 +573,6 @@
   .source-picker summary { cursor: pointer; font-size: var(--text-sm); font-weight: 700; }
   .source-picker input[type="search"] { width: 100%; margin-top: 10px; }
   .source-option { display: flex; align-items: start; gap: 8px; padding: 7px 0; font-size: var(--text-xs); cursor: pointer; overflow-wrap: anywhere; }
-  .source-option input { flex: 0 0 auto; margin-top: 2px; }
   .studio-activity li { display: grid; gap: 3px; font-size: var(--text-xs); padding-block: 7px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
   .studio-activity li strong { color: var(--color-text-muted); font-weight: 600; }
   .studio-activity li small { color: var(--color-text-muted); }
