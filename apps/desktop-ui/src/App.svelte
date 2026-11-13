@@ -31,6 +31,7 @@
   let selectedTranscriptId = '';
   let studioIncoming: (StudySourceRef & { projectId: string }) | null = null;
   let studioIncomingArtifactId = '';
+  let studioVisitedProjectId = '';
   let firstProjectName = '';
   let jobRefreshGeneration: number | undefined;
   let jobRefreshTimer: number | undefined;
@@ -52,6 +53,9 @@
   // Never silently show data from another project when the backend returns a stale ID.
   $: activeProject = data?.projects.find((project) => project.id === data?.activeProjectId);
   $: activeJobs = data?.jobs.filter((job) => activeStates.has(job.state)).length || 0;
+  // Keep the editor mounted after first opening, so navigating between expert
+  // views does not discard in-memory edits while the durable API is pending.
+  $: if (activeView === 'studio' && data && activeProject) studioVisitedProjectId = data.activeProjectId;
   $: searchResults = data && globalSearch.trim() ? buildSearchResults(data, globalSearch, new Set(transcriptSearchIds)) : [];
   $: scheduleTranscriptSearch(globalSearch, data?.activeProjectId || '');
 
@@ -575,6 +579,13 @@
     {#if operationalError}
       <ErrorState title={$translator('error.backgroundTitle')} message={operationalError} onRetry={refreshOperationalStatus} />
     {/if}
+    {#if studioVisitedProjectId === data.activeProjectId}
+      <div hidden={activeView !== 'studio'} class="studio-host">
+        {#key data.activeProjectId}
+          <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
+        {/key}
+      </div>
+    {/if}
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
@@ -584,9 +595,7 @@
     {:else if activeView === 'transcript'}
       <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} onUseInStudio={(id) => useInStudio('transcript', id)} />
     {:else if activeView === 'studio'}
-      {#key data.activeProjectId}
-        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
-      {/key}
+      <!-- Studio remains in the project-local hidden host below. -->
     {:else if activeView === 'ai'}
       {#key data.activeProjectId}
         <AiStudioView {api} transcripts={data.transcripts} />
