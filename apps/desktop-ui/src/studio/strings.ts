@@ -1,5 +1,11 @@
 export const studioStrings = {
   en: {
+    localInspect: 'Local transcript check', localInspectPrivacy: 'Reads only an attached transcript on this device. No network or AI charges.',
+    inspectTranscript: 'Prepare local check', inspectionWaiting: 'Awaiting your approval; nothing has been read yet.',
+    inspectionCompleted: 'Transcript checked locally. No AI analysis was generated.',
+    inspectionDenied: 'You declined this check.', inspectionBlocked: 'Interrupted; reconcile the local read before proceeding.',
+    inspectionPending: 'Local check is recorded.', approveInspection: 'Approve local read',
+    denyInspection: 'Decline', reconcileInspection: 'Recover check', inspectionError: 'The local check could not complete.',
     heading: 'Studio', studies: 'Content studies', newStudy: 'Create study', openStudy: 'Open study',
     studyName: 'Study name', goal: 'Creative goal', audience: 'Audience', platform: 'Platform',
     language: 'Script language', duration: 'Duration (seconds)', style: 'Voice and style',
@@ -34,6 +40,12 @@ export const studioStrings = {
     selectStudy: 'Select a study', none: 'Choose…'
   },
   ar: {
+    localInspect: 'فحص التفريغ محلياً', localInspectPrivacy: 'يقرأ تفريغاً مرفقاً بهذه الدراسة على الجهاز فقط دون إنترنت أو رسوم ذكاء اصطناعي.',
+    inspectTranscript: 'تحضير الفحص المحلي', inspectionWaiting: 'بانتظار موافقتك؛ لم يُقرأ أي محتوى بعد.',
+    inspectionCompleted: 'تم فحص التفريغ محلياً دون توليد تحليل ذكاء اصطناعي.',
+    inspectionDenied: 'رفضت هذا الفحص.', inspectionBlocked: 'توقف الفحص؛ تحقق من القراءة المحلية قبل المتابعة.',
+    inspectionPending: 'سُجّل الفحص المحلي.', approveInspection: 'الموافقة على القراءة المحلية',
+    denyInspection: 'رفض', reconcileInspection: 'استعادة الفحص', inspectionError: 'تعذر إكمال الفحص المحلي.',
     heading: 'الاستوديو', studies: 'دراسات المحتوى', newStudy: 'إنشاء دراسة', openStudy: 'فتح دراسة',
     studyName: 'اسم الدراسة', goal: 'الهدف الإبداعي', audience: 'الجمهور', platform: 'المنصة',
     language: 'لغة النص', duration: 'المدة (ثوانٍ)', style: 'النبرة والأسلوب',

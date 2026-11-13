@@ -111,6 +111,35 @@ describe('Content Study Studio', () => {
     expect(screen.getByRole('textbox', { name: 'Script draft' })).not.toHaveAttribute('readonly');
   });
 
+  it('requires approval for a durable local source check and never calls a provider', async () => {
+    const api = createMockClient();
+    const provider = vi.spyOn(api, 'runAi');
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Local source audit' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
+    const prepare = await screen.findByRole('button', { name: 'Prepare local check' });
+    await fireEvent.click(prepare);
+    expect(await screen.findByText(/Awaiting your approval/)).toBeInTheDocument();
+    expect(provider).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Approve local read' }));
+    expect(await screen.findByText(/Transcript checked locally/)).toBeInTheDocument();
+    expect(provider).not.toHaveBeenCalled();
+    view.unmount();
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Local source audit' }));
+    expect(await screen.findByText(/Transcript checked locally/)).toBeInTheDocument();
+  });
+
   it('opens evidence without guessing title links and rejects wrong-project responses', async () => {
     const api = createMockClient({
       getTranscript: async (id) => ({ ...mockBootstrap.transcripts.find((item) => item.id === id)!, projectId: 'p-client-a' })

@@ -6,6 +6,7 @@
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
   import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef } from '../studio/contract';
+  import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
@@ -39,6 +40,11 @@
   let historyLoading = false;
   let historyError = '';
   let historyEpoch = 0;
+  let inspectionEpoch = 0;
+  let localInspections: LocalInspectionRun[] = [];
+  let activeInspection: LocalInspectionRun | null = null;
+  let inspectionBusy = false;
+  let inspectionError = '';
   let consumedArtifactId = '';
   let preparing = false;
   let busy = false;
@@ -92,6 +98,7 @@
     sourceRequest++;
     promptRequest++;
     historyEpoch++;
+    inspectionEpoch++;
     if (saveTimer) clearTimeout(saveTimer);
   });
 
@@ -170,6 +177,9 @@
       selectedSource = null;
       transcriptDetail = null;
       status = '';
+      activeInspection = null;
+      localInspections = [];
+      void loadInspections(id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorLoad);
     } finally {
@@ -195,6 +205,10 @@
       if (epoch !== currentRequest) return;
       if (created.projectId !== projectId) throw new Error(t.invalidStudy);
       record = created;
+      inspectionEpoch++;
+      localInspections = [];
+      activeInspection = null;
+      inspectionError = '';
       studyId = created.id;
       brief = currentBrief;
       refs = currentRefs;
@@ -277,6 +291,65 @@
       if (epoch === sourceRequest) sourceError = message(cause, t.sourceNotLoaded);
     } finally {
       if (epoch === sourceRequest) sourceLoading = false;
+    }
+  }
+
+  async function loadInspections(forStudy: string) {
+    if (!gateway?.listLocalInspections) return;
+    const epoch = ++inspectionEpoch;
+    inspectionError = '';
+    try {
+      const result = await gateway.listLocalInspections(projectId, forStudy);
+      if (epoch !== inspectionEpoch || studyId !== forStudy) return;
+      localInspections = result.filter((run) => run.plan.project_id === projectId && run.plan.study_id === forStudy);
+      activeInspection = localInspections.find((run) => ['awaiting_approval', 'blocked', 'running'].includes(run.state))
+        ?? localInspections[0] ?? null;
+    } catch (cause) {
+      if (epoch === inspectionEpoch) inspectionError = message(cause, t.errorLoad);
+    }
+  }
+
+  async function startInspection() {
+    if (!gateway?.startLocalInspection || inspectionBusy || !record || !selectedTranscript) return;
+    const selectedId = selectedTranscript.id;
+    const ownerStudy = studyId;
+    inspectionBusy = true;
+    inspectionError = '';
+    try {
+      // The backend only sees a source after the Study attachment was committed.
+      await flushPendingSave();
+      if (studyId !== ownerStudy) return;
+      const run = await gateway.startLocalInspection(projectId, ownerStudy, selectedId);
+      if (studyId !== ownerStudy) return;
+      if (run.plan.project_id !== projectId || run.plan.study_id !== ownerStudy ||
+        run.plan.steps[0]?.input.transcript_id !== selectedId) throw new Error(t.invalidStudy);
+      activeInspection = run;
+      localInspections = [run, ...localInspections.filter((item) => item.plan.id !== run.plan.id)];
+    } catch (cause) {
+      inspectionError = message(cause, t.inspectionError);
+    } finally {
+      inspectionBusy = false;
+    }
+  }
+
+  async function decideInspection(action: 'approve' | 'deny' | 'recover') {
+    if (!gateway?.decideLocalInspection || !activeInspection || inspectionBusy || !record) return;
+    const id = activeInspection.plan.id;
+    const forStudy = studyId;
+    inspectionBusy = true;
+    inspectionError = '';
+    try {
+      const run = await gateway.decideLocalInspection(projectId, forStudy, id, action);
+      if (studyId !== forStudy) return;
+      if (run.plan.id !== id || run.plan.project_id !== projectId || run.plan.study_id !== forStudy) {
+        throw new Error(t.invalidStudy);
+      }
+      activeInspection = run;
+      localInspections = [run, ...localInspections.filter((item) => item.plan.id !== run.plan.id)];
+    } catch (cause) {
+      inspectionError = message(cause, t.inspectionError);
+    } finally {
+      inspectionBusy = false;
     }
   }
 
@@ -431,6 +504,36 @@
         {/each}
       </details>
     </section>
+    {#if gateway?.startLocalInspection && gateway?.listLocalInspections && record}
+      <section class="panel studio-agent-check">
+        <div class="section-heading"><h2>{t.localInspect}</h2></div>
+        <p class="muted">{t.localInspectPrivacy}</p>
+        {#if selectedTranscript}
+          <button type="button" class="button secondary" disabled={inspectionBusy || loading}
+            on:click={() => void startInspection()}>{t.inspectTranscript}</button>
+        {/if}
+        {#if activeInspection}
+          <p role="status" class="muted">
+            {activeInspection.state === 'awaiting_approval' ? t.inspectionWaiting :
+              activeInspection.state === 'completed' ? t.inspectionCompleted :
+              activeInspection.state === 'cancelled' ? t.inspectionDenied :
+              activeInspection.state === 'blocked' ? t.inspectionBlocked : t.inspectionPending}
+          </p>
+          {#if activeInspection.state === 'awaiting_approval'}
+            <div class="draft-actions">
+              <button type="button" class="button primary" disabled={inspectionBusy}
+                on:click={() => void decideInspection('approve')}>{t.approveInspection}</button>
+              <button type="button" class="button secondary" disabled={inspectionBusy}
+                on:click={() => void decideInspection('deny')}>{t.denyInspection}</button>
+            </div>
+          {:else if activeInspection.state === 'blocked'}
+            <button type="button" class="button secondary" disabled={inspectionBusy}
+              on:click={() => void decideInspection('recover')}>{t.reconcileInspection}</button>
+          {/if}
+        {/if}
+        {#if inspectionError}<p role="alert" class="studio-error">{inspectionError}</p>{/if}
+      </section>
+    {/if}
     <section class="panel studio-history">
       <h2>{t.history}</h2>
       {#each savedRuns.slice(0, 15) as run (run.id)}
