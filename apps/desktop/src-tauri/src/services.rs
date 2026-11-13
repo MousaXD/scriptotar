@@ -274,9 +274,10 @@ impl AppServices {
 
     pub fn enqueue_local_media(&self, project_id: Uuid, path: String) -> RepositoryResult<Job> {
         // A delayed/stale UI command must never enqueue work in another project.
-        let active = self.active_project.lock().map_err(|_| {
-            RepositoryError::Storage("active project lock poisoned".to_owned())
-        })?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
         if *active != project_id {
             return Err(RepositoryError::NotFound(
                 "project is not active".to_owned(),
@@ -304,9 +305,10 @@ impl AppServices {
     }
 
     pub fn enqueue_url(&self, project_id: Uuid, url: String) -> RepositoryResult<Job> {
-        let active = self.active_project.lock().map_err(|_| {
-            RepositoryError::Storage("active project lock poisoned".to_owned())
-        })?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
         if *active != project_id {
             return Err(RepositoryError::NotFound(
                 "project is not active".to_owned(),
@@ -325,9 +327,10 @@ impl AppServices {
     }
 
     pub fn cancel_job(&self, job_id: Uuid) -> RepositoryResult<()> {
-        let active = self.active_project.lock().map_err(|_| {
-            RepositoryError::Storage("active project lock poisoned".to_owned())
-        })?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
         let job = self.store.get_job(job_id)?;
         if job.project_id != *active {
             return Err(RepositoryError::NotFound(
@@ -340,9 +343,10 @@ impl AppServices {
     }
 
     pub fn retry_job(&self, job_id: Uuid) -> RepositoryResult<Job> {
-        let active = self.active_project.lock().map_err(|_| {
-            RepositoryError::Storage("active project lock poisoned".to_owned())
-        })?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
         let previous = self.store.get_job(job_id)?;
         if previous.project_id != *active {
             return Err(RepositoryError::NotFound(
@@ -1803,7 +1807,10 @@ mod tests {
             services.store.get_job(foreign_job.id).unwrap().state,
             JobState::Queued
         );
-        assert_eq!(services.store.list_jobs(Some(other_project)).unwrap().len(), 0);
+        assert_eq!(
+            services.store.list_jobs(Some(other_project)).unwrap().len(),
+            0
+        );
     }
 
     #[test]
