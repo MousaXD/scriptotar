@@ -136,7 +136,10 @@ fn proposed_angles_are_distinct_in_fixture_and_have_valid_evidence() {
         serde_json::from_str(include_str!("fixtures/angles.json")).unwrap();
     altered.angles[0].evidence_ids = vec!["fabricated-source".to_owned()];
     let text = serde_json::to_string(&altered).unwrap();
-    assert_eq!(parse_angles(&text, &request).unwrap_err(), WritingError::InvalidIdentifier);
+    assert_eq!(
+        parse_angles(&text, &request).unwrap_err(),
+        WritingError::InvalidIdentifier
+    );
 }
 
 #[test]
@@ -253,7 +256,10 @@ fn review_findings_must_point_to_real_beats_and_sources() {
     let valid = r#"{"findings":[{"beat_id":"hook","concern":"Hook could be sharper","recommendation":"Lead with the audience benefit","evidence_ids":["pattern"],"needs_human_review":false}]}"#;
     assert_eq!(parse_review(valid, &request).unwrap().findings.len(), 1);
     let invalid = valid.replace(r#""beat_id":"hook""#, r#""beat_id":"unknown""#);
-    assert_eq!(parse_review(&invalid, &request).unwrap_err(), WritingError::InvalidIdentifier);
+    assert_eq!(
+        parse_review(&invalid, &request).unwrap_err(),
+        WritingError::InvalidIdentifier
+    );
 }
 
 #[test]
@@ -274,7 +280,10 @@ fn audit_marks_duration_uncertainty_and_possible_copying_as_advisory() {
         AdvisoryKind::CtaMismatch,
     ] {
         assert!(
-            report.advisories.iter().any(|advisory| advisory.kind == kind),
+            report
+                .advisories
+                .iter()
+                .any(|advisory| advisory.kind == kind),
             "missing advisory {kind:?}"
         );
     }
@@ -307,7 +316,8 @@ fn arabic_language_and_dialect_survive_prompt_serialization() {
     assert!(prompt.contains("نص أصلي قصير"));
     let mut draft = fixture_draft();
     draft.language = "ar".to_owned();
-    draft.beats[0].narration = "هل تعلم أن مكتبتك القريبة قد تقدم نشاطاً مجتمعياً هذا الأسبوع؟".to_owned();
+    draft.beats[0].narration =
+        "هل تعلم أن مكتبتك القريبة قد تقدم نشاطاً مجتمعياً هذا الأسبوع؟".to_owned();
     let audit = audit_draft(&draft, &request.brief, &request.evidence);
     assert_eq!(audit.duration.assumed_words_per_minute, 125);
 }
