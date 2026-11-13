@@ -253,16 +253,18 @@ impl AppServices {
         self.store.save_studio_bundle(
             project_id,
             study_id,
-            expected_revision,
-            &StudyEdit {
-                title: brief.title.clone(),
-                goal: brief.goal.clone(),
-                status: study.status,
+            scriptotar_db::StudioBundleUpdate {
+                expected_revision,
+                edit: &StudyEdit {
+                    title: brief.title.clone(),
+                    goal: brief.goal.clone(),
+                    status: study.status,
+                },
+                brief: &input,
+                brief_changed: brief != old.brief,
+                sources: &selected_sources,
+                draft: &draft,
             },
-            &input,
-            brief != old.brief,
-            &selected_sources,
-            &draft,
         )?;
         self.read_studio_bundle(project_id, study_id)
     }

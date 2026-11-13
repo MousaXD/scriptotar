@@ -14,4 +14,5 @@ mod studies;
 mod studies_schema;
 
 mod studies_atomic;
+pub use studies_atomic::StudioBundleUpdate;
 mod studies_drafts;

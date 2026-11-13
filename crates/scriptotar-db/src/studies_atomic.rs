@@ -80,6 +80,16 @@ fn insert_draft(
     Ok(())
 }
 
+/// One editor mutation bundled as a typed value, not a positional argument list.
+pub struct StudioBundleUpdate<'a> {
+    pub expected_revision: i64,
+    pub edit: &'a StudyEdit,
+    pub brief: &'a CreativeBriefInput,
+    pub brief_changed: bool,
+    pub sources: &'a [(StudySourceKind, Uuid)],
+    pub draft: &'a str,
+}
+
 impl SqliteStore {
     /// The initial study, validated brief, initial draft, and version zero
     /// must either all exist or none exist, including on SQL failure.
@@ -132,13 +142,16 @@ impl SqliteStore {
         &self,
         project: Uuid,
         study: Uuid,
-        expected_revision: i64,
-        edit: &StudyEdit,
-        brief: &CreativeBriefInput,
-        brief_changed: bool,
-        sources: &[(StudySourceKind, Uuid)],
-        draft: &str,
+        patch: StudioBundleUpdate<'_>,
     ) -> RepositoryResult<()> {
+        let StudioBundleUpdate {
+            expected_revision,
+            edit,
+            brief,
+            brief_changed,
+            sources,
+            draft,
+        } = patch;
         required_text("study title", &edit.title, 200)?;
         optional_text("study goal", Some(&edit.goal), 20_000)?;
         optional_text("draft body", Some(draft), 2_000_000)?;
