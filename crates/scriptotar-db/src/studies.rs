@@ -5,8 +5,8 @@ use std::time::Duration;
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use scriptotar_core::{
     now_rfc3339, ContentStudy, EvidenceCertainty, EvidenceInput, EvidenceReference,
-    RepositoryError, RepositoryResult, StudyEdit, StudySource, StudySourceInput,
-    StudySourceKind, StudyStatus,
+    RepositoryError, RepositoryResult, StudyEdit, StudySource, StudySourceInput, StudySourceKind,
+    StudyStatus,
 };
 use uuid::Uuid;
 
@@ -14,7 +14,8 @@ use crate::SqliteStore;
 
 pub(crate) fn database(store: &SqliteStore) -> RepositoryResult<Connection> {
     let db = Connection::open(store.path()).map_err(db_error)?;
-    db.pragma_update(None, "foreign_keys", true).map_err(db_error)?;
+    db.pragma_update(None, "foreign_keys", true)
+        .map_err(db_error)?;
     db.busy_timeout(Duration::from_secs(5)).map_err(db_error)?;
     Ok(db)
 }
@@ -128,22 +129,35 @@ impl SqliteStore {
                  (id,project_id,title,goal,status,revision,created_at,updated_at)
                  SELECT ?1, id, ?2, ?3, 'active', 1, ?4, ?4
                  FROM projects WHERE id=?5 AND archived_at IS NULL",
-                params![id.to_string(), title.trim(), goal, now, project_id.to_string()],
+                params![
+                    id.to_string(),
+                    title.trim(),
+                    goal,
+                    now,
+                    project_id.to_string()
+                ],
             )
             .map_err(db_error)?;
         if count == 0 {
-            return Err(RepositoryError::NotFound(format!("active project {project_id}")));
+            return Err(RepositoryError::NotFound(format!(
+                "active project {project_id}"
+            )));
         }
         self.get_study(project_id, id)
     }
 
     pub fn get_study(&self, project_id: Uuid, study_id: Uuid) -> RepositoryResult<ContentStudy> {
         let db = database(self)?;
-        let sql = format!("SELECT {STUDY_COLUMNS} FROM content_studies WHERE project_id=?1 AND id=?2");
-        db.query_row(&sql, params![project_id.to_string(), study_id.to_string()], study_row)
-            .optional()
-            .map_err(db_error)?
-            .ok_or_else(|| RepositoryError::NotFound(format!("study {study_id}")))
+        let sql =
+            format!("SELECT {STUDY_COLUMNS} FROM content_studies WHERE project_id=?1 AND id=?2");
+        db.query_row(
+            &sql,
+            params![project_id.to_string(), study_id.to_string()],
+            study_row,
+        )
+        .optional()
+        .map_err(db_error)?
+        .ok_or_else(|| RepositoryError::NotFound(format!("study {study_id}")))
     }
 
     pub fn search_studies(
@@ -164,7 +178,12 @@ impl SqliteStore {
         let mut stmt = db.prepare(&sql).map_err(db_error)?;
         let rows = stmt
             .query_map(
-                params![project_id.to_string(), include_archived as i64, query, limit.clamp(1, 200) as i64],
+                params![
+                    project_id.to_string(),
+                    include_archived as i64,
+                    query,
+                    limit.clamp(1, 200) as i64
+                ],
                 study_row,
             )
             .map_err(db_error)?;
@@ -181,7 +200,9 @@ impl SqliteStore {
         required_text("study title", &edit.title, 200)?;
         optional_text("study goal", Some(&edit.goal), 20_000)?;
         if expected_revision < 1 {
-            return Err(RepositoryError::Validation("expected revision must be positive".into()));
+            return Err(RepositoryError::Validation(
+                "expected revision must be positive".into(),
+            ));
         }
         let db = database(self)?;
         let count = db
@@ -191,14 +212,21 @@ impl SqliteStore {
                  WHERE project_id=?5 AND id=?6 AND revision=?7 AND archived_at IS NULL
                    AND EXISTS(SELECT 1 FROM projects p WHERE p.id=?5 AND p.archived_at IS NULL)",
                 params![
-                    edit.title.trim(), edit.goal, edit.status.as_str(), now_rfc3339(),
-                    project_id.to_string(), study_id.to_string(), expected_revision,
+                    edit.title.trim(),
+                    edit.goal,
+                    edit.status.as_str(),
+                    now_rfc3339(),
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    expected_revision,
                 ],
             )
             .map_err(db_error)?;
         if count == 0 {
             self.get_study(project_id, study_id)?;
-            return Err(RepositoryError::Conflict("study was modified or archived".into()));
+            return Err(RepositoryError::Conflict(
+                "study was modified or archived".into(),
+            ));
         }
         self.get_study(project_id, study_id)
     }
@@ -225,7 +253,12 @@ impl SqliteStore {
                  SET archived_at=?1, revision=revision+1, updated_at=?2
                  WHERE project_id=?3 AND id=?4 AND
                     EXISTS (SELECT 1 FROM projects WHERE id=?3 AND archived_at IS NULL)",
-                params![when, now_rfc3339(), project_id.to_string(), study_id.to_string()],
+                params![
+                    when,
+                    now_rfc3339(),
+                    project_id.to_string(),
+                    study_id.to_string()
+                ],
             )
             .map_err(db_error)?;
         if count == 0 {
@@ -236,14 +269,20 @@ impl SqliteStore {
 }
 
 fn escape_like(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// Existing source text is not concatenated or interpreted as instructions.
 /// A stable v5 identity digest is sufficient for deduplication, not authenticity.
 fn fingerprint(kind: StudySourceKind, identity: &str) -> String {
     let identity = format!("scriptotar/study-source/v1/{}/{}", kind.as_str(), identity);
-    format!("uuid-v5:{}", Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes()))
+    format!(
+        "uuid-v5:{}",
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, identity.as_bytes())
+    )
 }
 
 fn origin_locator(
@@ -337,23 +376,30 @@ impl SqliteStore {
             StudySourceKind::Manual => {
                 if input.reference_id.is_some() {
                     return Err(RepositoryError::Validation(
-                        "manual source must not reference a stored entity".into()
+                        "manual source must not reference a stored entity".into(),
                     ));
                 }
                 let text = input.manual_text.as_deref().unwrap_or("");
                 required_text("manual source text", text, 500_000)?;
                 let locator = input.locator.as_deref().unwrap_or("pasted note").trim();
                 required_text("manual source locator", locator, 4096)?;
-                (locator.to_owned(), Some(text.to_owned()), None, text.to_owned())
+                (
+                    locator.to_owned(),
+                    Some(text.to_owned()),
+                    None,
+                    text.to_owned(),
+                )
             }
             other => {
                 if input.manual_text.is_some() {
                     return Err(RepositoryError::Validation(
-                        "stored sources cannot contain an independent pasted text snapshot".into()
+                        "stored sources cannot contain an independent pasted text snapshot".into(),
                     ));
                 }
                 let id = input.reference_id.ok_or_else(|| {
-                    RepositoryError::Validation("stored source must have an exact reference ID".into())
+                    RepositoryError::Validation(
+                        "stored source must have an exact reference ID".into(),
+                    )
                 })?;
                 let locator = origin_locator(&db, project_id, other, id)?;
                 (locator, None, Some(id), id.to_string())
@@ -364,15 +410,61 @@ impl SqliteStore {
         let id = Uuid::new_v4();
         let now = now_rfc3339();
         let (research, source, media, transcript, job, ai): (
-            Option<String>, Option<String>, Option<String>,
-            Option<String>, Option<String>, Option<String>
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
         ) = match input.kind {
-            StudySourceKind::ResearchItem => (reference_id.map(|v| v.to_string()), None, None, None, None, None),
-            StudySourceKind::Source => (None, reference_id.map(|v| v.to_string()), None, None, None, None),
-            StudySourceKind::Media => (None, None, reference_id.map(|v| v.to_string()), None, None, None),
-            StudySourceKind::Transcript => (None, None, None, reference_id.map(|v| v.to_string()), None, None),
-            StudySourceKind::Job => (None, None, None, None, reference_id.map(|v| v.to_string()), None),
-            StudySourceKind::AiRun => (None, None, None, None, None, reference_id.map(|v| v.to_string())),
+            StudySourceKind::ResearchItem => (
+                reference_id.map(|v| v.to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            StudySourceKind::Source => (
+                None,
+                reference_id.map(|v| v.to_string()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            StudySourceKind::Media => (
+                None,
+                None,
+                reference_id.map(|v| v.to_string()),
+                None,
+                None,
+                None,
+            ),
+            StudySourceKind::Transcript => (
+                None,
+                None,
+                None,
+                reference_id.map(|v| v.to_string()),
+                None,
+                None,
+            ),
+            StudySourceKind::Job => (
+                None,
+                None,
+                None,
+                None,
+                reference_id.map(|v| v.to_string()),
+                None,
+            ),
+            StudySourceKind::AiRun => (
+                None,
+                None,
+                None,
+                None,
+                None,
+                reference_id.map(|v| v.to_string()),
+            ),
             StudySourceKind::Manual => (None, None, None, None, None, None),
         };
         db.execute(
@@ -384,10 +476,24 @@ impl SqliteStore {
                  ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18
              )",
             params![
-                id.to_string(), project_id.to_string(), study_id.to_string(),
-                input.kind.as_str(), reference_id.map(|v| v.to_string()), research, source,
-                media, transcript, job, ai, locator, manual_text, fp,
-                input.source_revision, now, input.uncertainty, now
+                id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                input.kind.as_str(),
+                reference_id.map(|v| v.to_string()),
+                research,
+                source,
+                media,
+                transcript,
+                job,
+                ai,
+                locator,
+                manual_text,
+                fp,
+                input.source_revision,
+                now,
+                input.uncertainty,
+                now
             ],
         )
         .map_err(db_error)?;
@@ -407,7 +513,11 @@ impl SqliteStore {
         );
         db.query_row(
             &sql,
-            params![project_id.to_string(), study_id.to_string(), source_id.to_string()],
+            params![
+                project_id.to_string(),
+                study_id.to_string(),
+                source_id.to_string()
+            ],
             source_row,
         )
         .optional()
@@ -428,7 +538,10 @@ impl SqliteStore {
         );
         let mut stmt = db.prepare(&sql).map_err(db_error)?;
         let rows = stmt
-            .query_map(params![project_id.to_string(), study_id.to_string()], source_row)
+            .query_map(
+                params![project_id.to_string(), study_id.to_string()],
+                source_row,
+            )
             .map_err(db_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
@@ -445,8 +558,7 @@ fn evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceReference> {
             claim: row.get(4)?,
             locator: row.get(5)?,
             timestamp_seconds: row.get(6)?,
-            certainty: EvidenceCertainty::parse(&certainty)
-                .ok_or(rusqlite::Error::InvalidQuery)?,
+            certainty: EvidenceCertainty::parse(&certainty).ok_or(rusqlite::Error::InvalidQuery)?,
             uncertainty_note: row.get(8)?,
         },
         created_at: row.get(9)?,
@@ -463,8 +575,13 @@ impl SqliteStore {
         required_text("evidence claim", &input.claim, 20_000)?;
         required_text("evidence locator", &input.locator, 4000)?;
         optional_text("uncertainty note", input.uncertainty_note.as_deref(), 4000)?;
-        if input.timestamp_seconds.is_some_and(|value| !value.is_finite() || value < 0.0 || value >= 1e9) {
-            return Err(RepositoryError::Validation("invalid evidence timestamp".into()));
+        if input
+            .timestamp_seconds
+            .is_some_and(|value| !value.is_finite() || value < 0.0 || value >= 1e9)
+        {
+            return Err(RepositoryError::Validation(
+                "invalid evidence timestamp".into(),
+            ));
         }
         self.get_study_source(project_id, study_id, input.study_source_id)?;
         let db = database(self)?;
@@ -476,9 +593,15 @@ impl SqliteStore {
                 certainty,uncertainty_note,created_at
              ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
             params![
-                id.to_string(), project_id.to_string(), study_id.to_string(),
-                input.study_source_id.to_string(), input.claim, input.locator,
-                input.timestamp_seconds, input.certainty.as_str(), input.uncertainty_note,
+                id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                input.study_source_id.to_string(),
+                input.claim,
+                input.locator,
+                input.timestamp_seconds,
+                input.certainty.as_str(),
+                input.uncertainty_note,
                 now_rfc3339()
             ],
         )
@@ -497,7 +620,11 @@ impl SqliteStore {
             "SELECT id,project_id,study_id,study_source_id,claim,locator,
                     timestamp_seconds,certainty,uncertainty_note,created_at
              FROM study_evidence WHERE project_id=?1 AND study_id=?2 AND id=?3",
-            params![project_id.to_string(), study_id.to_string(), evidence_id.to_string()],
+            params![
+                project_id.to_string(),
+                study_id.to_string(),
+                evidence_id.to_string()
+            ],
             evidence_row,
         )
         .optional()
@@ -512,18 +639,22 @@ impl SqliteStore {
     ) -> RepositoryResult<Vec<EvidenceReference>> {
         self.get_study(project_id, study_id)?;
         let db = database(self)?;
-        let mut stmt = db.prepare(
-            "SELECT id,project_id,study_id,study_source_id,claim,locator,
+        let mut stmt = db
+            .prepare(
+                "SELECT id,project_id,study_id,study_source_id,claim,locator,
                     timestamp_seconds,certainty,uncertainty_note,created_at
-             FROM study_evidence WHERE project_id=?1 AND study_id=?2 ORDER BY created_at, id"
-        ).map_err(db_error)?;
-        let rows = stmt.query_map(
-            params![project_id.to_string(), study_id.to_string()], evidence_row
-        ).map_err(db_error)?;
+             FROM study_evidence WHERE project_id=?1 AND study_id=?2 ORDER BY created_at, id",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![project_id.to_string(), study_id.to_string()],
+                evidence_row,
+            )
+            .map_err(db_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 }
-
 
 impl SqliteStore {
     /// Explicit association from selected origin to a job. A job's final
@@ -538,20 +669,28 @@ impl SqliteStore {
         self.get_study_source(project_id, study_id, study_source_id)?;
         let db = database(self)?;
         require_active_study(&db, project_id, study_id)?;
-        let owns_job: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND project_id=?2)",
-            params![job_id.to_string(), project_id.to_string()],
-            |row| row.get(0),
-        ).map_err(db_error)?;
+        let owns_job: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND project_id=?2)",
+                params![job_id.to_string(), project_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
         if !owns_job {
             return Err(RepositoryError::NotFound(format!("job {job_id}")));
         }
         db.execute(
             "INSERT INTO study_source_jobs(project_id,study_id,study_source_id,job_id,linked_at)
              VALUES(?1,?2,?3,?4,?5)",
-            params![project_id.to_string(), study_id.to_string(), study_source_id.to_string(),
-                    job_id.to_string(), now_rfc3339()],
-        ).map_err(db_error)?;
+            params![
+                project_id.to_string(),
+                study_id.to_string(),
+                study_source_id.to_string(),
+                job_id.to_string(),
+                now_rfc3339()
+            ],
+        )
+        .map_err(db_error)?;
         Ok(())
     }
 
@@ -563,15 +702,23 @@ impl SqliteStore {
     ) -> RepositoryResult<Vec<Uuid>> {
         self.get_study_source(project_id, study_id, study_source_id)?;
         let db = database(self)?;
-        let mut stmt = db.prepare(
-            "SELECT j.job_id FROM study_source_jobs j JOIN jobs job ON job.id=j.job_id
+        let mut stmt = db
+            .prepare(
+                "SELECT j.job_id FROM study_source_jobs j JOIN jobs job ON job.id=j.job_id
              WHERE j.project_id=?1 AND j.study_id=?2 AND j.study_source_id=?3
-               AND job.project_id=?1 ORDER BY j.linked_at, j.job_id"
-        ).map_err(db_error)?;
-        let rows = stmt.query_map(
-            params![project_id.to_string(), study_id.to_string(), study_source_id.to_string()],
-            |row| uuid_at(row, 0),
-        ).map_err(db_error)?;
+               AND job.project_id=?1 ORDER BY j.linked_at, j.job_id",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    study_source_id.to_string()
+                ],
+                |row| uuid_at(row, 0),
+            )
+            .map_err(db_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 }
