@@ -5,8 +5,8 @@ use std::thread;
 
 use rusqlite::{params, Connection};
 use scriptotar_agent::{
-    AuditKind, CheckpointStore, Estimate, Limits, Plan, RunSnapshot, RunState, StepInput,
-    StepPlan, StepRecord, StepState, StoreError, Usage,
+    AuditKind, CheckpointStore, Estimate, Limits, Plan, RunSnapshot, RunState, StepInput, StepPlan,
+    StepRecord, StepState, StoreError, Usage,
 };
 use scriptotar_core::{Project, ProjectRepository};
 use scriptotar_db::SqliteStore;
@@ -18,7 +18,9 @@ fn fixture() -> (TempDir, SqliteStore, Project, Uuid) {
     let store = SqliteStore::open(dir.path().join("agent.sqlite3")).unwrap();
     let project = Project::new("Agent tests");
     store.create_project(&project).unwrap();
-    let study = store.create_study(project.id, "Safe agent", "Original script").unwrap();
+    let study = store
+        .create_study(project.id, "Safe agent", "Original script")
+        .unwrap();
     (dir, store, project, study.id)
 }
 
@@ -103,7 +105,9 @@ fn scoped_checkpoint_survives_restart_with_exact_append_only_history() {
     drop(scoped);
     let reopened = SqliteStore::open(temp.path().join("agent.sqlite3")).unwrap();
     assert_eq!(reopened.schema_version().unwrap(), 7);
-    let same_scope = reopened.scoped_agent_checkpoints(project.id, study).unwrap();
+    let same_scope = reopened
+        .scoped_agent_checkpoints(project.id, study)
+        .unwrap();
     assert_eq!(same_scope.load(&run.plan.id).unwrap(), Some(saved.clone()));
     assert_eq!(same_scope.create(run), Err(StoreError::Exists));
     let conn = Connection::open(reopened.path()).unwrap();
@@ -245,6 +249,12 @@ fn simultaneous_writers_get_one_checkpoint_commit() {
         .map(|handle| handle.join().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
-    assert_eq!(results.iter().filter(|result| result == &&Err(StoreError::Conflict)).count(), 1);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result == &&Err(StoreError::Conflict))
+            .count(),
+        1
+    );
     assert_eq!(scoped.load(&run.plan.id).unwrap().unwrap().revision, 1);
 }

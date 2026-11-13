@@ -47,9 +47,11 @@ impl ScopedAgentCheckpointStore {
             || snapshot.current_step > snapshot.steps.len()
             || snapshot.events.is_empty()
             || snapshot.events.len() > MAX_AUDIT_EVENTS
-            || snapshot.events.iter().enumerate().any(|(i, event)| {
-                event.sequence != i as u64 + 1
-            })
+            || snapshot
+                .events
+                .iter()
+                .enumerate()
+                .any(|(i, event)| event.sequence != i as u64 + 1)
             || snapshot
                 .steps
                 .iter()
@@ -79,7 +81,11 @@ impl ScopedAgentCheckpointStore {
             .query_row(
                 "SELECT revision,snapshot_json FROM agent_runs
                  WHERE id=?1 AND project_id=?2 AND study_id=?3",
-                params![run_id, self.project_id.to_string(), self.study_id.to_string()],
+                params![
+                    run_id,
+                    self.project_id.to_string(),
+                    self.study_id.to_string()
+                ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()
@@ -92,7 +98,8 @@ impl ScopedAgentCheckpointStore {
         }
         let snapshot: RunSnapshot =
             serde_json::from_str(&raw).map_err(|_| StoreError::Unavailable)?;
-        self.verify_snapshot(&snapshot).map_err(|_| StoreError::Unavailable)?;
+        self.verify_snapshot(&snapshot)
+            .map_err(|_| StoreError::Unavailable)?;
         if snapshot.plan.id != run_id || i64::try_from(snapshot.revision).ok() != Some(revision) {
             return Err(StoreError::Unavailable);
         }
@@ -215,16 +222,18 @@ impl CheckpointStore for ScopedAgentCheckpointStore {
     ) -> Result<(), StoreError> {
         let json = self.serialize(&next)?;
         let expected = i64::try_from(expected_revision).map_err(|_| StoreError::Conflict)?;
-        if next.revision != expected_revision.checked_add(1).ok_or(StoreError::Conflict)? {
+        if next.revision
+            != expected_revision
+                .checked_add(1)
+                .ok_or(StoreError::Conflict)?
+        {
             return Err(StoreError::Conflict);
         }
         let mut db = database(&self.db).map_err(|_| StoreError::Unavailable)?;
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| StoreError::Unavailable)?;
-        let Some((current_revision, current)) =
-            self.read_checkpoint(&tx, &next.plan.id)?
-        else {
+        let Some((current_revision, current)) = self.read_checkpoint(&tx, &next.plan.id)? else {
             return Err(StoreError::NotFound);
         };
         if current_revision != expected
