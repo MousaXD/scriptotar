@@ -90,16 +90,22 @@ impl ObservationTimestamp {
         }
         let offset = match bytes.get(index) {
             Some(&b'Z') | Some(&b'z') if index + 1 == bytes.len() => 0_i64,
-            Some(&sign) if matches!(sign, b'+' | b'-')
-                && index + 6 == bytes.len()
-                && bytes[index + 3] == b':' => {
+            Some(&sign)
+                if matches!(sign, b'+' | b'-')
+                    && index + 6 == bytes.len()
+                    && bytes[index + 3] == b':' =>
+            {
                 let offset_hours = digits(index + 1, index + 3)?;
                 let offset_minutes = digits(index + 4, index + 6)?;
                 if offset_hours > 23 || offset_minutes > 59 {
                     return None;
                 }
                 let seconds = i64::from(offset_hours * 3_600 + offset_minutes * 60);
-                if sign == b'+' { seconds } else { -seconds }
+                if sign == b'+' {
+                    seconds
+                } else {
+                    -seconds
+                }
             }
             _ => return None,
         };
@@ -193,9 +199,15 @@ fn publication_date(value: Option<&str>) -> PublicationDate {
     let bytes = value.as_bytes();
     if bytes.len() == 10 && bytes[4] == b'-' && bytes[7] == b'-' {
         if let (Ok(year), Ok(month), Ok(day)) = (
-            std::str::from_utf8(&bytes[0..4]).unwrap_or("").parse::<i64>(),
-            std::str::from_utf8(&bytes[5..7]).unwrap_or("").parse::<u32>(),
-            std::str::from_utf8(&bytes[8..10]).unwrap_or("").parse::<u32>(),
+            std::str::from_utf8(&bytes[0..4])
+                .unwrap_or("")
+                .parse::<i64>(),
+            std::str::from_utf8(&bytes[5..7])
+                .unwrap_or("")
+                .parse::<u32>(),
+            std::str::from_utf8(&bytes[8..10])
+                .unwrap_or("")
+                .parse::<u32>(),
         ) {
             if let Some(epoch_day) = validated_civil_day(year, month, day) {
                 return PublicationDate::Known(epoch_day);
