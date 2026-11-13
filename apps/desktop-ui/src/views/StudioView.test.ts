@@ -151,7 +151,31 @@ describe('App integration with legacy expert tools', () => {
     expect(await screen.findByRole('heading', { name: 'Jobs' })).toBeInTheDocument();
   });
 
-  it('opens the activity interface with real failure details', async () => {
+  it('reopens the exact saved AI artifact from Library when the detail API is available', async () => {
+    const { gateway } = studyFixture();
+    const detail = vi.fn(async (projectId: string, runId: string) => ({
+      id: runId, projectId, task: 'Viral breakdown', title: 'Caption pacing breakdown',
+      prompt: 'Original prompt', result: 'Exactly saved answer from the historic run',
+      createdAt: '2026-11-13T12:00:00Z'
+    }));
+    render(App, { props: { api: createMockClient(), studioGateway: { ...gateway, getAiArtifact: detail } } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: /Library/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open AI run: Caption pacing breakdown' }));
+    expect(await screen.findByText('Exactly saved answer from the historic run')).toBeInTheDocument();
+    expect(detail).toHaveBeenCalledWith('p-creator-lab', 'a-1');
+  });
+
+  it('does not invent an old AI answer without a detail API', async () => {
+    render(App, { props: { api: createMockClient() } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: /Library/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open AI run: Caption pacing breakdown' }));
+    expect(await screen.findByText(/Exact AI history is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText('Exactly saved answer from the historic run')).not.toBeInTheDocument();
+  });
+
+    it('opens the activity interface with real failure details', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: 'Show activity' }));
