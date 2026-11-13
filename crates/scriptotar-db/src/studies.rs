@@ -292,26 +292,33 @@ fn origin_locator(
     id: Uuid,
 ) -> RepositoryResult<String> {
     let query = match kind {
-        StudySourceKind::ResearchItem =>
-            "SELECT source_url FROM research_items WHERE id=?1 AND project_id=?2",
-        StudySourceKind::Source =>
-            "SELECT locator FROM sources WHERE id=?1 AND project_id=?2",
-        StudySourceKind::Media =>
+        StudySourceKind::ResearchItem => {
+            "SELECT source_url FROM research_items WHERE id=?1 AND project_id=?2"
+        }
+        StudySourceKind::Source => "SELECT locator FROM sources WHERE id=?1 AND project_id=?2",
+        StudySourceKind::Media => {
             "SELECT s.locator FROM media m JOIN sources s ON s.id=m.source_id
-             WHERE m.id=?1 AND s.project_id=?2",
-        StudySourceKind::Transcript =>
+             WHERE m.id=?1 AND s.project_id=?2"
+        }
+        StudySourceKind::Transcript => {
             "SELECT s.locator FROM transcripts t JOIN media m ON m.id=t.media_id
              JOIN sources s ON s.id=m.source_id
-             WHERE t.id=?1 AND s.project_id=?2",
-        StudySourceKind::Job =>
-            "SELECT input_value FROM jobs WHERE id=?1 AND project_id=?2",
-        StudySourceKind::AiRun =>
-            "SELECT task FROM ai_runs WHERE id=?1 AND project_id=?2",
-        StudySourceKind::Manual =>
-            return Err(RepositoryError::Validation("manual sources have no reference ID".into())),
+             WHERE t.id=?1 AND s.project_id=?2"
+        }
+        StudySourceKind::Job => "SELECT input_value FROM jobs WHERE id=?1 AND project_id=?2",
+        StudySourceKind::AiRun => "SELECT task FROM ai_runs WHERE id=?1 AND project_id=?2",
+        StudySourceKind::Manual => {
+            return Err(RepositoryError::Validation(
+                "manual sources have no reference ID".into(),
+            ))
+        }
     };
     let result: Option<String> = db
-        .query_row(query, params![id.to_string(), project_id.to_string()], |row| row.get(0))
+        .query_row(
+            query,
+            params![id.to_string(), project_id.to_string()],
+            |row| row.get(0),
+        )
         .optional()
         .map_err(db_error)?;
     result
@@ -322,9 +329,7 @@ fn origin_locator(
                 locator
             }
         })
-        .ok_or_else(|| RepositoryError::NotFound(format!(
-            "{kind:?} {id} in project {project_id}"
-        )))
+        .ok_or_else(|| RepositoryError::NotFound(format!("{kind:?} {id} in project {project_id}")))
 }
 
 fn source_row(row: &Row<'_>) -> rusqlite::Result<StudySource> {
