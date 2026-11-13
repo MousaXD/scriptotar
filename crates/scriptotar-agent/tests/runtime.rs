@@ -82,7 +82,7 @@ fn step(id: &str) -> StepPlan {
     StepPlan {
         id: id.into(),
         input: StepInput::SelectResearch { source_ids: vec!["source_1".into()] },
-        estimate: Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000 },
+        estimate: Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 },
         max_attempts: 2,
         requires_approval: false,
     }
@@ -92,7 +92,7 @@ fn paid_step() -> StepPlan {
     StepPlan {
         id: "s1".into(),
         input: StepInput::DraftScript { brief_id: "brief_1".into() },
-        estimate: Estimate { tokens: 10, cost_microusd: 50, max_output_bytes: 1000 },
+        estimate: Estimate { tokens: 10, cost_microusd: 50, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 },
         max_attempts: 2,
         requires_approval: true,
     }
@@ -106,7 +106,7 @@ fn plan(steps: Vec<StepPlan>) -> Plan {
         steps,
         limits: Limits {
             max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 100,
-            max_elapsed_ms: 1000, max_output_bytes: 1000,
+            max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10,
         },
     }
 }
@@ -272,14 +272,14 @@ fn missing_tool_registration_is_fail_closed() {
 #[test]
 fn call_token_cost_time_and_output_limits_block_safely() {
     for (limits, estimate, time) in [
-        (Limits { max_tool_calls: 1, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000 },
-            Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 0, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000 },
-            Estimate { tokens: 1, cost_microusd: 0, max_output_bytes: 1000 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 0, max_elapsed_ms: 1000, max_output_bytes: 1000 },
-            Estimate { tokens: 0, cost_microusd: 1, max_output_bytes: 1000 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1, max_output_bytes: 1000 },
-            Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000 }, 2),
+        (Limits { max_tool_calls: 1, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+            Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
+        (Limits { max_tool_calls: 3, max_tokens: 0, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+            Estimate { tokens: 1, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
+        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 0, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+            Estimate { tokens: 0, cost_microusd: 1, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
+        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+            Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 2),
     ] {
         let d = FakeDriver::default();
         let e = engine(d.clone());
