@@ -31,7 +31,13 @@
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
-    getAiArtifact: (projectId: string, runId: string) => api.getAiRun(projectId, runId)
+    getAiArtifact: (projectId: string, runId: string) => api.getAiRun(projectId, runId),
+    listLocalInspections: (projectId: string, studyId: string) => api.listLocalInspections(projectId, studyId),
+    startLocalInspection: (projectId: string, studyId: string, transcriptId: string) =>
+      api.startLocalInspection(projectId, studyId, transcriptId),
+    decideLocalInspection: (projectId: string, studyId: string, runId: string,
+      action: 'approve' | 'deny' | 'cancel' | 'recover') =>
+      api.decideLocalInspection(projectId, studyId, runId, action)
   } satisfies StudioGateway;
   let data: BootstrapSummaryData | null = null;
   let loading = true;
