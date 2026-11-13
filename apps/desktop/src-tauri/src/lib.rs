@@ -702,9 +702,11 @@ async fn start_local_inspection(
     let transcript_id = artifact_uuid(&transcript_id, "transcript id")?;
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.start_local_inspection(project_id, study_id, transcript_id)
+        service
+            .start_local_inspection(project_id, study_id, transcript_id)
             .map_err(command_error)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -717,9 +719,11 @@ async fn list_local_inspections(
     let study_id = artifact_uuid(&study_id, "study id")?;
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.list_local_inspections(project_id, study_id)
+        service
+            .list_local_inspections(project_id, study_id)
             .map_err(command_error)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -740,9 +744,11 @@ async fn decide_local_inspection(
     }
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.decide_local_inspection(project_id, study_id, &run_id, &action)
+        service
+            .decide_local_inspection(project_id, study_id, &run_id, &action)
             .map_err(command_error)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]

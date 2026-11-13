@@ -7,7 +7,9 @@ use scriptotar_agent::{
     ProbeResult, RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor,
     ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
 };
-use scriptotar_core::{RepositoryError, RepositoryResult, StudySourceKind};
+use scriptotar_core::{ContentRepository, RepositoryError, RepositoryResult, StudySourceKind};
+#[cfg(test)]
+use scriptotar_core::ProjectRepository;
 use scriptotar_db::ScopedAgentCheckpointStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
