@@ -400,7 +400,7 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
 }
 
 #[test]
-fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
+fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("historical-v4.sqlite3");
     let store = SqliteStore::open(&path).unwrap();
@@ -416,9 +416,33 @@ fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
     settings.active_project_id = Some(project.id);
     store.save_settings(&settings).unwrap();
 
-    // Reconstruct the exact v4 schema shape from v5 by undoing only v5's
-    // additive triggers and ledger rows. Existing project/job data remains untouched.
+    // Reconstruct a real v4 shape by removing only the additive v6 objects,
+    // then v5 triggers/ledger. Existing project/job data remains untouched.
     let connection = Connection::open(&path).unwrap();
+
+    // An open v6 store already contains v6 tables and triggers. Removing
+    // only its version number would fabricate an inconsistent legacy fixture.
+    let mut triggers = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger'
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')"
+    ).unwrap();
+    let names = triggers.query_map([], |row| row.get::<_, String>(0)).unwrap()
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    drop(triggers);
+    for name in names {
+        connection.execute_batch(&format!("DROP TRIGGER \"{name}\";")).unwrap();
+    }
+    connection.execute_batch(
+        "DROP TABLE draft_source_links;
+         DROP TABLE study_source_jobs;
+         DROP TABLE draft_versions;
+         DROP TABLE creative_drafts;
+         DROP TABLE study_briefs;
+         DROP TABLE study_evidence;
+         DROP TABLE study_sources;
+         DROP TABLE content_studies;
+         DELETE FROM schema_migrations WHERE version=6;"
+    ).unwrap();
     connection
         .execute_batch(
             "DROP TRIGGER creators_project_reassignment_guard;
@@ -440,7 +464,7 @@ fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 5);
+    assert_eq!(upgraded.schema_version().unwrap(), 6);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     assert_eq!(
