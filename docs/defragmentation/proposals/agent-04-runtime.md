@@ -44,7 +44,7 @@ Plan -> pending step -> approval (if required) -> policy recheck
 - One `tick()` dispatches at most one step. Concurrent ticks contend on the same persisted CAS claim; a failed CAS never executes the tool.
 - Idempotency key `<run_id>:<ordinal>:<step_id>` is stable across retries/restarts. The application service must deduplicate it transactionally or maintain an effect ledger; the runtime cannot guarantee exactly-once execution against non-idempotent providers by itself.
 - `ToolReceipt::Applied` is **only** legal after the actual action is committed. `ToolReceipt::Accepted` is a queued request, not a completed transcript or saved draft. `reconcile()` must verify the exact effect using the existing job or application-service ledger.
-- On crash, `recover()` never replays a running or cancelling effect; it marks it blocked for `probe()`. `NotApplied` permits bounded retry; `Unknown` forbids automatic retry. Retrying an API call with unknown provider status is unsafe without provider-side idempotency.
+- On crash, `recover()` never replays a running, cancelling or paused in-flight effect; it marks it blocked for `probe()`. `recheck_blocked()` only permits a previously blocked **pending/no-effect** step to restart after the tool registry and project policy permit it again; ambiguous effects cannot use this bypass. `NotApplied` permits bounded retry; `Unknown` forbids automatic retry. Retrying an API call with unknown provider status is unsafe without provider-side idempotency.
 - `cancel()` commits intent first and calls the adapter's best-effort `request_cancel`. A concurrent successful side effect is recorded truthfully as a completed **step** inside a cancelled **run**, not discarded or portrayed as unperformed.
 - `pause()` prevents the next dispatch; for a running request, it pauses after the result. An accepted background job may still run while the agent is paused; pause is not a job cancel.
 - Audit events only contain step ID, event type, sequence and timestamp; raw provider responses, bearer tokens and error strings must not appear. Unknown error messages become `tool_failure`.
@@ -74,7 +74,7 @@ All service methods need `project_id`, `study_id`, `idempotency_key`, request/ap
 
 ## Validation and limits of this PR
 
-The fixture suite contains **34 authored tests** covering plan validation, approval/denial, missing tool, policy revocation, actual-versus-queued completion, retries, stable keys, uncertain effects, failures, partial progress, resource/time/cost/output limits, cancellation and pause races, serialization/restart, corrupted checkpoint, competing CAS claims and late receipt attribution. They have **not** been executed in a Rust-capable environment. Test code is deterministic and makes no network or paid requests.
+The fixture suite contains **37 authored tests** covering plan validation, approval/denial, missing tool, policy revocation, actual-versus-queued completion, retries, stable keys, uncertain effects, failures, partial progress, resource/time/cost/output limits, cancellation and pause races, serialization/restart, corrupted checkpoint, competing CAS claims and late receipt attribution. They have **not** been executed in a Rust-capable environment. Test code is deterministic and makes no network or paid requests.
 
 Run after checkout on a Rust-capable worker:
 
