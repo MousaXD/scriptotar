@@ -1,3 +1,23 @@
+# CURRENT CHECKPOINT — Agent 00 integration (2026-11-13)
+
+**Use this checkpoint instead of the older planning-only state below.**
+
+- Integration PR: https://github.com/MousaXD/scriptotar/pull/114 (draft)
+- Integration branch: integration/scriptotar-defragmentation-agent00-20261113
+- Main/released 1.4.1 remains untouched. No release authorization or release-certification claim.
+- Seven scoped agent implementation branches have been incorporated without overwriting overlapping paths.
+- P0 implementation now includes canonical v6 studies/sources/evidence/briefs/drafts, exact AI/research artifact retrieval, explicit saved Copy Prompt, source-to-Studio navigation, a project-scoped Tauri/TS Study gateway, revision-checked atomic SQLite Study creation/saves, pending-autosave project-switch guards, real-ID provenance/restart/rollback fixtures, and shallow Studio list queries.
+- Security: quinn-proto 0.11.19 and quinn-udp 0.5.16 lockfile updates included; root scriptotar-agent crate version aligned to 1.4.1; no ignored audit findings.
+- Latest GitHub integration SHA is a **candidate**, not a GO; consult current PR #114 exact-head checks. Earlier Rust, UI, CI, MCP, migration, security and GUI actions passed at different intermediate SHA values. Do not combine those into an exact-head GO or count superseded/cancelled installer builds as passing.
+- P1 agent coordinator, research analytics, and evidence-aware writing exist as tested or to-be-tested isolated Rust foundations but are **not yet a functioning end-to-end production agent**. In particular no durable SQLite run checkpoint/real tool adapters/production Tauri agent operation is wired.
+- P0 still lacks full evidence editing, native packaged WebView journey/restart certification, and independent native scale/latency/RSS evidence (issue #100). P1–P3 exit criteria remain unmet. Do not merge to main or publish yet.
+- Exact acceptance still needed: all nine workflows succeed on one commit, clean installation + quit/reopen on Windows and Linux, real multi-source Study-to-script journey with evidence, source access limitations, budget/approval tests, native perf 100/1k/10k fixture and EN/AR/RTL real UI validation.
+- Read docs/defragmentation/handoffs/agent-00-integration.md for owner decisions and remaining blockers.
+
+---
+
+## Historical planning snapshot (superseded by the checkpoint above)
+
 # Continuation checkpoint — start here in the next chat
 
 **Prepared:** 2026-11-13 UTC+04 (planning task; no application code changed).
