@@ -8,7 +8,10 @@ use thiserror::Error;
 use crate::AiRequest;
 
 mod quality;
-pub use quality::{audit_draft, compare_angles, Advisory, AdvisoryKind, AdvisoryLevel, DraftAudit, DurationEstimate};
+pub use quality::{
+    audit_draft, compare_angles, Advisory, AdvisoryKind, AdvisoryLevel, DraftAudit,
+    DurationEstimate,
+};
 
 const MAX_INPUT_CHARS: usize = 100_000;
 const MAX_TEXT_CHARS: usize = 4_000;
@@ -175,9 +178,15 @@ pub struct ScriptDraft {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WritingTask {
-    ProposeAngles { count: u8 },
-    Draft { angle: AngleOption },
-    Review { draft: ScriptDraft },
+    ProposeAngles {
+        count: u8,
+    },
+    Draft {
+        angle: AngleOption,
+    },
+    Review {
+        draft: ScriptDraft,
+    },
     ReviseBeat {
         draft: ScriptDraft,
         beat_id: String,
@@ -239,7 +248,9 @@ pub enum WritingError {
     Invalid(&'static str),
     #[error("duplicate or unknown evidence, finding, angle, beat, or claim identifier")]
     InvalidIdentifier,
-    #[error("a supported factual claim does not reference declared corroborated independent evidence")]
+    #[error(
+        "a supported factual claim does not reference declared corroborated independent evidence"
+    )]
     UnsupportedClaim,
     #[error("model response is not valid structured JSON")]
     MalformedResponse,
@@ -253,7 +264,8 @@ pub enum WritingError {
 /// explicit, credential-requiring action controlled by the existing app boundary.
 pub fn prepare_writing_request(input: &WritingInput) -> Result<AiRequest, WritingError> {
     validate_input(input)?;
-    let payload = serde_json::to_string_pretty(input).map_err(|_| WritingError::MalformedResponse)?;
+    let payload =
+        serde_json::to_string_pretty(input).map_err(|_| WritingError::MalformedResponse)?;
     let operation = match &input.task {
         WritingTask::ProposeAngles { count } => format!(
             "Propose exactly {count} materially different original angles with different opening mechanisms. Return a JSON object with an angles array of AngleOption objects."
@@ -331,7 +343,11 @@ pub fn parse_review(text: &str, input: &WritingInput) -> Result<ReviewResponse, 
     }
     for finding in &response.findings {
         check_text(&finding.concern, "review concern", MAX_TEXT_CHARS)?;
-        check_text(&finding.recommendation, "review recommendation", MAX_TEXT_CHARS)?;
+        check_text(
+            &finding.recommendation,
+            "review recommendation",
+            MAX_TEXT_CHARS,
+        )?;
         if finding
             .beat_id
             .as_ref()
@@ -359,7 +375,11 @@ pub fn parse_revision_proposal(
     if &proposal.beat_id != beat_id {
         return Err(WritingError::InvalidIdentifier);
     }
-    check_text(&proposal.replacement_narration, "replacement", MAX_TEXT_CHARS)?;
+    check_text(
+        &proposal.replacement_narration,
+        "replacement",
+        MAX_TEXT_CHARS,
+    )?;
     Ok(proposal)
 }
 
@@ -451,7 +471,12 @@ fn validate_input(input: &WritingInput) -> Result<(), WritingError> {
     if !(5..=600).contains(&brief.duration_seconds) {
         return Err(WritingError::Invalid("duration must be 5 to 600 seconds"));
     }
-    for value in [&brief.region, &brief.dialect, &brief.tone, &brief.desired_cta] {
+    for value in [
+        &brief.region,
+        &brief.dialect,
+        &brief.tone,
+        &brief.desired_cta,
+    ] {
         check_optional(value)?;
     }
     if brief.constraints.len() > 20 {
@@ -464,7 +489,11 @@ fn validate_input(input: &WritingInput) -> Result<(), WritingError> {
         if guide.preferred_vocabulary.len() > 30 || guide.avoided_phrases.len() > 30 {
             return Err(WritingError::LimitExceeded("style guide"));
         }
-        for value in guide.preferred_vocabulary.iter().chain(&guide.avoided_phrases) {
+        for value in guide
+            .preferred_vocabulary
+            .iter()
+            .chain(&guide.avoided_phrases)
+        {
             check_text(value, "style guide", MAX_TEXT_CHARS)?;
         }
         check_optional(&guide.pacing_notes)?;
@@ -530,9 +559,10 @@ fn validate_evidence_links(ids: &[String], evidence: &[EvidenceRef]) -> Result<(
         return Err(WritingError::LimitExceeded("citation count"));
     }
     let mut seen = HashSet::new();
-    if ids.iter().any(|id| {
-        !seen.insert(id.as_str()) || !evidence.iter().any(|item| item.id == *id)
-    }) {
+    if ids
+        .iter()
+        .any(|id| !seen.insert(id.as_str()) || !evidence.iter().any(|item| item.id == *id))
+    {
         Err(WritingError::InvalidIdentifier)
     } else {
         Ok(())
@@ -550,7 +580,10 @@ fn check_text(value: &str, field: &'static str, limit: usize) -> Result<(), Writ
 }
 
 fn check_optional(value: &Option<String>) -> Result<(), WritingError> {
-    if value.as_ref().is_some_and(|text| text.chars().count() > MAX_TEXT_CHARS) {
+    if value
+        .as_ref()
+        .is_some_and(|text| text.chars().count() > MAX_TEXT_CHARS)
+    {
         Err(WritingError::LimitExceeded("optional text"))
     } else {
         Ok(())
