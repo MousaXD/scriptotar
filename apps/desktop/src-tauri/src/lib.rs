@@ -18,7 +18,8 @@ use std::{
 
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
-    UiResearchItemDetail, UiSettings, UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
+    UiResearchItemDetail, UiSettings, UiStudioBrief, UiStudioStudy, UiStudioStudyPatch,
+    UiStudioStudySummary, UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -619,6 +620,59 @@ async fn save_copy_prompt(
     on_blocking_worker(move || services.save_copy_prompt(project_id, &input)).await
 }
 
+
+#[tauri::command]
+async fn list_studies(
+    project_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<UiStudioStudySummary>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.list_studio_studies(project_id).map_err(command_error)).await
+}
+
+#[tauri::command]
+async fn create_study(
+    project_id: String,
+    brief: UiStudioBrief,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.create_studio_study(project_id, brief).map_err(command_error)).await
+}
+
+#[tauri::command]
+async fn get_study(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.get_studio_study(project_id, study_id).map_err(command_error)).await
+}
+
+#[tauri::command]
+async fn save_study(
+    project_id: String,
+    study_id: String,
+    expected_revision: i64,
+    patch: UiStudioStudyPatch,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .save_studio_study(project_id, study_id, expected_revision, patch)
+            .map_err(command_error)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
@@ -1038,6 +1092,10 @@ pub fn run() {
             get_ai_run,
             get_research_item,
             save_copy_prompt,
+            list_studies,
+            create_study,
+            get_study,
+            save_study,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

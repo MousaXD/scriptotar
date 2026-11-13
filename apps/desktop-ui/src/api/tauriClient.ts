@@ -1,4 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
+import type { ContentStudy, CreativeBrief } from '../studio/contract';
 import type {
   AiRunDetail,
   ResearchItemDetail,
@@ -49,6 +50,11 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     getAiRun: (projectId, aiRunId) => invoke<AiRunDetail>('get_ai_run', { projectId, aiRunId }),
     getResearchItem: (projectId, researchItemId) => invoke<ResearchItemDetail>('get_research_item', { projectId, researchItemId }),
     saveCopyPrompt: (projectId, input) => invoke<AiRunDetail>('save_copy_prompt', { projectId, input }),
+    listStudies: (projectId) => invoke<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>('list_studies', { projectId }),
+    createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
+    getStudy: (projectId, studyId) => invoke<ContentStudy>('get_study', { projectId, studyId }),
+    saveStudy: (projectId, studyId, expectedRevision, patch) =>
+      invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

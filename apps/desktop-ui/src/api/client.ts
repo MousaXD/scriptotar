@@ -15,6 +15,7 @@ import type {
   Transcript,
   WatchlistStatus
 } from '../types';
+import type { ContentStudy, CreativeBrief, StudySourceRef } from '../studio/contract';
 
 export interface ResearchQuery {
   profileUrl: string;
@@ -46,6 +47,12 @@ export interface ScriptotarApi {
   getAiRun(projectId: string, aiRunId: string): Promise<AiRunDetail>;
   getResearchItem(projectId: string, researchItemId: string): Promise<ResearchItemDetail>;
   saveCopyPrompt(projectId: string, input: AiPromptInput): Promise<AiRunDetail>;
+  listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
+  createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
+  getStudy(projectId: string, studyId: string): Promise<ContentStudy>;
+  saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
+    brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
+  }): Promise<ContentStudy>;
   subscribeJobChanges(listener: (jobId: string) => void): Promise<() => void>;
   getWatchlistStatuses(): Promise<WatchlistStatus[]>;
   getMigrationStatus(): Promise<MigrationStatus>;
