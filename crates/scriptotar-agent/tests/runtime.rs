@@ -293,6 +293,10 @@ fn call_token_cost_time_and_output_limits_block_safely() {
             assert_eq!(e.tick("run_1", 2).unwrap().state, RunState::Blocked);
         } else {
             e.create(p, 0).unwrap();
+            if estimate.cost_microusd > 0 {
+                assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::AwaitingApproval);
+                e.approve("run_1", "s1", 1).unwrap();
+            }
             assert_eq!(e.tick("run_1", time).unwrap().state, RunState::Blocked);
         }
     }
@@ -419,9 +423,9 @@ fn persisted_failed_receipts_do_not_leak_tool_error_text() {
     let e = engine(d);
     e.create(plan(vec![step("s1")]), 0).unwrap();
     let r = e.tick("run_1", 1).unwrap();
-    assert_eq!(r.steps[0].failure_code.as_deref(), Some("secretkeyABC123providerdown"));
+    assert_eq!(r.steps[0].failure_code.as_deref(), Some("tool_failure"));
     // Adapter contracts require standardized, secret-free codes; never persist the raw error.
-    assert!(serde_json::to_string(&r.events).unwrap().contains("failed"));
+    assert!(!serde_json::to_string(&r).unwrap().contains("ABC123"));\n    assert!(serde_json::to_string(&r.events).unwrap().contains("failed"));
 }
 
 #[test]
