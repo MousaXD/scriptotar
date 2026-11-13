@@ -16,9 +16,11 @@
   import LibraryView from './views/LibraryView.svelte';
   import SettingsView from './views/SettingsView.svelte';
   import StudioView from './views/StudioView.svelte';
-  import type { StudySourceRef } from './studio/contract';
+  import type { StudioGateway, StudySourceRef } from './studio/contract';
 
   export let api: ScriptotarApi = getApi();
+  /** Test/integration injection; never backs production with a fake repository. */
+  export let studioGateway: StudioGateway | undefined = undefined;
   let data: BootstrapSummaryData | null = null;
   let loading = true;
   let error = '';
@@ -28,6 +30,7 @@
   let globalSearch = '';
   let selectedTranscriptId = '';
   let studioIncoming: (StudySourceRef & { projectId: string }) | null = null;
+  let studioIncomingArtifactId = '';
   let firstProjectName = '';
   let jobRefreshGeneration: number | undefined;
   let jobRefreshTimer: number | undefined;
@@ -271,6 +274,7 @@
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
        studioIncoming = null;
+       studioIncomingArtifactId = '';
       return true;
     } catch (cause) {
       if (generation === workspaceGeneration) {
@@ -319,6 +323,7 @@
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
        studioIncoming = null;
+       studioIncomingArtifactId = '';
       activeView = 'dashboard';
     } catch (cause) {
       if (generation === workspaceGeneration) {
@@ -405,6 +410,16 @@
     await refresh();
   }
 
+  function openSavedAiRun(id: string) {
+    if (!data?.aiRuns.some((item) => item.id === id)) {
+      switchError = 'The selected AI result is not available in the active project.';
+      return;
+    }
+    studioIncoming = null;
+    studioIncomingArtifactId = id;
+    activeView = 'studio';
+  }
+
   function useInStudio(kind: StudySourceRef['kind'], id: string) {
     if (!data) return;
     const available = kind === 'research'
@@ -412,6 +427,7 @@
       : data.transcripts.some((item) => item.id === id && item.projectId === data.activeProjectId);
     if (!available) { switchError = 'The selected source is not available in this project.'; return; }
     studioIncoming = { kind, id, projectId: data.activeProjectId };
+    studioIncomingArtifactId = '';
     activeView = 'studio';
   }
 
@@ -443,8 +459,16 @@
       openTranscript(embeddedId);
       return;
     }
-    if (item.kind === 'Research' || item.kind === 'Creator') activeView = 'research';
-    else if (item.kind === 'AI run') activeView = 'ai';
+    if (item.kind === 'Research') {
+      const id = item.id.startsWith('research:') ? item.id.slice('research:'.length) : '';
+      if (!id) throw new Error('The library research entry has no stable identifier.');
+      useInStudio('research', id);
+    } else if (item.kind === 'Creator') activeView = 'research';
+    else if (item.kind === 'AI run') {
+      const id = item.id.startsWith('ai:') ? item.id.slice('ai:'.length) : '';
+      if (!id) throw new Error('The library AI entry has no stable identifier.');
+      openSavedAiRun(id);
+    }
   }
 
   async function openSearchResult(result: WorkspaceSearchResult) {
@@ -458,8 +482,18 @@
       }
       selectedTranscriptId = result.targetId;
     }
-    activeView = result.view;
+    if (result.kind === 'AI run' && result.targetId) openSavedAiRun(result.targetId);
+    else if (result.kind === 'Research' && result.targetId) useInStudio('research', result.targetId);
+    else activeView = result.view;
     globalSearch = '';
+  }
+
+  function navigateTo(view: ViewId) {
+    if (view === 'studio') {
+      studioIncoming = null;
+      studioIncomingArtifactId = '';
+    }
+    activeView = view;
   }
 
   async function settingsSaved(settings: AppSettings) {
@@ -528,7 +562,7 @@
 </script>
 <svelte:window onkeydown={keyNav} />
 
-<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} jobActivity={data?.jobs || []} busy={loading || switchingProject || creatingProject || savingWatchlist} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} jobActivity={data?.jobs || []} busy={loading || switchingProject || creatingProject || savingWatchlist} bind:globalSearch {searchResults} onNavigate={navigateTo} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
   {#if loading || switchingProject}
     <WorkspaceSkeleton />
   {:else if error}
@@ -550,7 +584,7 @@
       <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} onUseInStudio={(id) => useInStudio('transcript', id)} />
     {:else if activeView === 'studio'}
       {#key data.activeProjectId}
-        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} incoming={studioIncoming} onNavigate={(view) => activeView = view} />
+        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onNavigate={(view) => activeView = view} />
       {/key}
     {:else if activeView === 'ai'}
       {#key data.activeProjectId}
