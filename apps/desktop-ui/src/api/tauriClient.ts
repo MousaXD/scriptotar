@@ -24,6 +24,7 @@ export type TauriListen = <T>(
 type BootstrapStatus = Pick<BootstrapData, 'watchlistStatuses' | 'migrationStatus'>;
 type CoreBootstrapData = Omit<BootstrapData, keyof BootstrapStatus>;
 type CoreBootstrapSummaryData = Omit<BootstrapSummaryData, keyof BootstrapStatus>;
+type UiStudioStudySummary = Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>;
 
 async function hydrateBootstrap<T extends CoreBootstrapData | CoreBootstrapSummaryData>(
   invoke: TauriInvoke,
@@ -50,7 +51,7 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     getAiRun: (projectId, aiRunId) => invoke<AiRunDetail>('get_ai_run', { projectId, aiRunId }),
     getResearchItem: (projectId, researchItemId) => invoke<ResearchItemDetail>('get_research_item', { projectId, researchItemId }),
     saveCopyPrompt: (projectId, input) => invoke<AiRunDetail>('save_copy_prompt', { projectId, input }),
-    listStudies: (projectId) => invoke<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>('list_studies', { projectId }),
+    listStudies: (projectId) => invoke<UiStudioStudySummary[]>('list_studies', { projectId }),
     createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
     getStudy: (projectId, studyId) => invoke<ContentStudy>('get_study', { projectId, studyId }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>

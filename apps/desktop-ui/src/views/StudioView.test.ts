@@ -201,16 +201,16 @@ describe('App integration with legacy expert tools', () => {
     expect(screen.queryByText('Exactly saved answer from the historic run')).not.toBeInTheDocument();
   });
 
-  it('does not invent an old AI answer without a detail API', async () => {
+  it('opens saved Copy Prompt history without inventing a generated answer', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: /Library/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Open AI run: Caption pacing breakdown' }));
-    expect(await screen.findByText(/Exact AI history is unavailable/)).toBeInTheDocument();
+    expect(await screen.findByText('Saved prompt for Viral breakdown')).toBeInTheDocument();
     expect(screen.queryByText('Exactly saved answer from the historic run')).not.toBeInTheDocument();
   });
 
-    it('keeps unsaved local draft edits when switching between Studio and Discover', async () => {
+    it('keeps local draft edits when switching between Studio and Discover', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
@@ -222,7 +222,7 @@ describe('App integration with legacy expert tools', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
     expect(screen.getByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('A draft not yet saved to the backend');
-    expect(screen.getByText(/unsaved workspace; export your script/)).toBeInTheDocument();
+    expect(screen.queryByText(/unsaved workspace; export your script/)).not.toBeInTheDocument();
   });
 
   it('opens the activity interface with real failure details', async () => {
