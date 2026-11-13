@@ -292,7 +292,7 @@ fn queued_is_not_completed_until_service_proves_completion() {
     assert_eq!(e.reconcile("run_1", 2).unwrap().state, RunState::NeedsInput);
     let done = e.reconcile("run_1", 3).unwrap();
     assert_eq!(done.state, RunState::Completed);
-    assert_eq!(done.steps[0].output.unwrap().artifact_id, "transcript_1");
+    assert_eq!(done.steps[0].output.as_ref().unwrap().artifact_id, "transcript_1");
     assert_eq!(d.calls(), 1);
 }
 
@@ -815,7 +815,7 @@ fn late_receipt_cannot_be_recorded_against_a_subsequent_step() {
     let reconciled = e.reconcile("run_1", 2).unwrap();
     assert_eq!(reconciled.current_step, 1);
     assert_eq!(
-        reconciled.steps[0].output.unwrap().artifact_id,
+        reconciled.steps[0].output.as_ref().unwrap().artifact_id,
         "first_from_probe"
     );
     barrier.wait();
