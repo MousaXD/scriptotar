@@ -3,13 +3,13 @@
 //! AI provider or job mutation can be reached through this tool registry.
 use super::AppServices;
 use scriptotar_agent::{
-    Certainty, CheckpointStore, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
+    Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
     ProbeResult, RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor,
     ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
 };
-use scriptotar_core::{ContentRepository, RepositoryError, RepositoryResult, StudySourceKind};
 #[cfg(test)]
 use scriptotar_core::ProjectRepository;
+use scriptotar_core::{ContentRepository, RepositoryError, RepositoryResult, StudySourceKind};
 use scriptotar_db::ScopedAgentCheckpointStore;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
