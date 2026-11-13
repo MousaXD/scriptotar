@@ -115,7 +115,11 @@ pub trait ToolExecutor: Send + Sync {
         _input: &StepInput,
         _pending_effect_id: Option<&str>,
     ) -> Result<(), ToolFailure> {
-        Err(ToolFailure { code: "cancel_unavailable".into(), retryable: false, certainty: Certainty::UnknownEffect })
+        Err(ToolFailure {
+            code: "cancel_unavailable".into(),
+            retryable: false,
+            certainty: Certainty::UnknownEffect,
+        })
     }
 }
 
@@ -128,7 +132,12 @@ pub struct Engine<S, D, P> {
 
 impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
     pub fn new(store: S, driver: D, policy: P, registry: ToolRegistry) -> Self {
-        Self { store, driver, policy, registry }
+        Self {
+            store,
+            driver,
+            policy,
+            registry,
+        }
     }
 
     pub fn get(&self, id: &str) -> Result<RunSnapshot, RuntimeError> {
@@ -137,13 +146,23 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             || !run.plan.validate()
             || run.steps.len() != run.plan.steps.len()
             || run.current_step > run.steps.len()
-            || run.steps.iter().zip(&run.plan.steps).any(|(record, step)| record.id != step.id)
+            || run
+                .steps
+                .iter()
+                .zip(&run.plan.steps)
+                .any(|(record, step)| record.id != step.id)
             || run.steps.iter().enumerate().any(|(i, record)| {
                 record.idempotency_key != format!("{}:{}:{}", run.plan.id, i, record.id)
                     || (record.state == StepState::Completed && record.output.is_none())
             })
-            || run.events.iter().enumerate().any(|(i, event)| event.sequence != i as u64 + 1)
-            || run.steps[..run.current_step].iter().any(|step| step.state != StepState::Completed)
+            || run
+                .events
+                .iter()
+                .enumerate()
+                .any(|(i, event)| event.sequence != i as u64 + 1)
+            || run.steps[..run.current_step]
+                .iter()
+                .any(|step| step.state != StepState::Completed)
             || (run.state == RunState::Completed && run.current_step != run.steps.len())
             || run.usage.tool_calls > run.plan.limits.max_tool_calls
             || run.usage.reserved_tokens > run.plan.limits.max_tokens
@@ -159,17 +178,22 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if !plan.validate() {
             return Err(RuntimeError::InvalidPlan);
         }
-        let steps = plan.steps.iter().enumerate().map(|(index, step)| StepRecord {
-            id: step.id.clone(),
-            state: StepState::Pending,
-            attempts: 0,
-            approved: false,
-            // The stable key survives retry and process restart; service must deduplicate it.
-            idempotency_key: format!("{}:{}:{}", plan.id, index, step.id),
-            pending_effect_id: None,
-            output: None,
-            failure_code: None,
-        }).collect();
+        let steps = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| StepRecord {
+                id: step.id.clone(),
+                state: StepState::Pending,
+                attempts: 0,
+                approved: false,
+                // The stable key survives retry and process restart; service must deduplicate it.
+                idempotency_key: format!("{}:{}:{}", plan.id, index, step.id),
+                pending_effect_id: None,
+                output: None,
+                failure_code: None,
+            })
+            .collect();
         let mut run = RunSnapshot {
             schema_version: 1,
             plan,
@@ -188,7 +212,12 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         Ok(run)
     }
 
-    pub fn approve(&self, run_id: &str, step_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
+    pub fn approve(
+        &self,
+        run_id: &str,
+        step_id: &str,
+        now: u64,
+    ) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(run_id)?;
         if run.state != RunState::AwaitingApproval {
             return Err(RuntimeError::WrongState);
@@ -229,7 +258,10 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if matches!(run.state, RunState::Cancelling | RunState::Blocked) {
             return Err(RuntimeError::WrongState);
         }
-        let executing = run.steps.get(run.current_step).is_some_and(|step| step.state == StepState::Running);
+        let executing = run
+            .steps
+            .get(run.current_step)
+            .is_some_and(|step| step.state == StepState::Running);
         if executing {
             run.pause_requested = true;
         } else {
@@ -245,7 +277,11 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             return Err(RuntimeError::WrongState);
         }
         run.pause_requested = false;
-        run.state = if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::AwaitingResult) {
+        run.state = if run
+            .steps
+            .get(run.current_step)
+            .is_some_and(|s| s.state == StepState::AwaitingResult)
+        {
             RunState::NeedsInput
         } else {
             RunState::Running
@@ -263,13 +299,24 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             matches!(step.state, StepState::Running | StepState::AwaitingResult)
         });
         run.cancel_requested = true;
-        run.state = if running { RunState::Cancelling } else { RunState::Cancelled };
+        run.state = if running {
+            RunState::Cancelling
+        } else {
+            RunState::Cancelled
+        };
         if !running {
             if let Some(step) = run.steps.get_mut(run.current_step) {
                 step.state = StepState::Cancelled;
             }
         }
-        run.event(now, if running { AuditKind::CancelRequested } else { AuditKind::Cancelled });
+        run.event(
+            now,
+            if running {
+                AuditKind::CancelRequested
+            } else {
+                AuditKind::Cancelled
+            },
+        );
         let run = self.save(run)?;
         if running {
             // Request cancellation only after recording intent. The adapter must check policy again.
@@ -295,7 +342,9 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             return Err(RuntimeError::WrongState);
         }
         let step = &run.plan.steps[run.current_step];
-        if !self.registry.contains(step.input.kind()) || self.policy.authorize(&run.plan, step).is_err() {
+        if !self.registry.contains(step.input.kind())
+            || self.policy.authorize(&run.plan, step).is_err()
+        {
             return Err(RuntimeError::PolicyDenied);
         }
         run.state = RunState::Running;
@@ -311,16 +360,26 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         }
         // Even a paused run might have a tool in flight at shutdown.
         // The next session must probe, never issue a duplicate request.
-        if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::Running)
+        if run
+            .steps
+            .get(run.current_step)
+            .is_some_and(|s| s.state == StepState::Running)
             || (matches!(run.state, RunState::Running | RunState::Cancelling)
-                && run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::AwaitingResult))
+                && run
+                    .steps
+                    .get(run.current_step)
+                    .is_some_and(|s| s.state == StepState::AwaitingResult))
         {
             run.state = RunState::Blocked;
             run.event(now, AuditKind::Interrupted);
             return self.save(run);
         }
         if run.cancel_requested {
-            if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::AwaitingResult) {
+            if run
+                .steps
+                .get(run.current_step)
+                .is_some_and(|s| s.state == StepState::AwaitingResult)
+            {
                 run.state = RunState::Blocked;
                 run.event(now, AuditKind::Interrupted);
             } else {
@@ -373,10 +432,26 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         let estimate = step.estimate;
         let over_limit = now < run.started_ms
             || now.saturating_sub(run.started_ms) > run.plan.limits.max_elapsed_ms
-            || run.usage.tool_calls.checked_add(1).is_none_or(|n| n > run.plan.limits.max_tool_calls)
-            || run.usage.reserved_tokens.checked_add(estimate.tokens).is_none_or(|n| n > run.plan.limits.max_tokens)
-            || run.usage.reserved_cost_microusd.checked_add(estimate.cost_microusd).is_none_or(|n| n > run.plan.limits.max_cost_microusd)
-            || run.usage.reserved_cpu_ms.checked_add(estimate.cpu_ms).is_none_or(|n| n > run.plan.limits.max_cpu_ms)
+            || run
+                .usage
+                .tool_calls
+                .checked_add(1)
+                .is_none_or(|n| n > run.plan.limits.max_tool_calls)
+            || run
+                .usage
+                .reserved_tokens
+                .checked_add(estimate.tokens)
+                .is_none_or(|n| n > run.plan.limits.max_tokens)
+            || run
+                .usage
+                .reserved_cost_microusd
+                .checked_add(estimate.cost_microusd)
+                .is_none_or(|n| n > run.plan.limits.max_cost_microusd)
+            || run
+                .usage
+                .reserved_cpu_ms
+                .checked_add(estimate.cpu_ms)
+                .is_none_or(|n| n > run.plan.limits.max_cpu_ms)
             || estimate.peak_memory_mib > run.plan.limits.max_peak_memory_mib;
         if over_limit {
             run.state = RunState::Blocked;
@@ -411,31 +486,62 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             return Err(RuntimeError::WrongState);
         }
         let step = &run.plan.steps[run.current_step];
-        if !self.registry.contains(step.input.kind()) || self.policy.authorize(&run.plan, step).is_err() {
+        if !self.registry.contains(step.input.kind())
+            || self.policy.authorize(&run.plan, step).is_err()
+        {
             return Err(RuntimeError::PolicyDenied);
         }
         let ctx = context(&run);
-        let result = self.driver.probe(&ctx, &step.input, record.pending_effect_id.as_deref());
+        let result = self
+            .driver
+            .probe(&ctx, &step.input, record.pending_effect_id.as_deref());
         match result {
-            Ok(ProbeResult::Applied(output)) => self.finish(run_id, run.current_step, record.attempts, now, Ok(ToolReceipt::Applied(output))),
-            Ok(ProbeResult::NotApplied) => self.mark_not_applied(run_id, run.current_step, record.attempts, now),
-            Ok(ProbeResult::Failed(failure)) => self.finish(run_id, run.current_step, record.attempts, now, Err(failure)),
-            Ok(ProbeResult::Pending) => self.mark_pending(run_id, run.current_step, record.attempts, now, false),
-            Ok(ProbeResult::Unknown) | Err(_) => self.mark_pending(run_id, run.current_step, record.attempts, now, true),
+            Ok(ProbeResult::Applied(output)) => self.finish(
+                run_id,
+                run.current_step,
+                record.attempts,
+                now,
+                Ok(ToolReceipt::Applied(output)),
+            ),
+            Ok(ProbeResult::NotApplied) => {
+                self.mark_not_applied(run_id, run.current_step, record.attempts, now)
+            }
+            Ok(ProbeResult::Failed(failure)) => {
+                self.finish(run_id, run.current_step, record.attempts, now, Err(failure))
+            }
+            Ok(ProbeResult::Pending) => {
+                self.mark_pending(run_id, run.current_step, record.attempts, now, false)
+            }
+            Ok(ProbeResult::Unknown) | Err(_) => {
+                self.mark_pending(run_id, run.current_step, record.attempts, now, true)
+            }
         }
     }
 
-    fn finish(&self, run_id: &str, expected_step: usize, expected_attempt: u8, now: u64, receipt: Result<ToolReceipt, ToolFailure>) -> Result<RunSnapshot, RuntimeError> {
+    fn finish(
+        &self,
+        run_id: &str,
+        expected_step: usize,
+        expected_attempt: u8,
+        now: u64,
+        receipt: Result<ToolReceipt, ToolFailure>,
+    ) -> Result<RunSnapshot, RuntimeError> {
         // A cancellation/pause can CAS while the external service is executing.
         for _ in 0..16 {
             let mut run = self.get(run_id)?;
             // The original attempt and an async status probe can settle concurrently.
             // Never record a late receipt against a newly advanced step.
-            if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
+            if run.current_step != expected_step
+                || run.steps[expected_step].attempts != expected_attempt
+            {
                 return Err(RuntimeError::WrongState);
             }
             let i = expected_step;
-            if run.steps.get(i).is_none_or(|s| !matches!(s.state, StepState::Running | StepState::AwaitingResult)) {
+            if run
+                .steps
+                .get(i)
+                .is_none_or(|s| !matches!(s.state, StepState::Running | StepState::AwaitingResult))
+            {
                 return Err(RuntimeError::WrongState);
             }
             let estimate = run.plan.steps[i].estimate;
@@ -468,7 +574,11 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                 Ok(ToolReceipt::Accepted { effect_id }) if valid_id(effect_id) => {
                     run.steps[i].state = StepState::AwaitingResult;
                     run.steps[i].pending_effect_id = Some(effect_id.clone());
-                    run.state = if run.cancel_requested { RunState::Cancelling } else { RunState::NeedsInput };
+                    run.state = if run.cancel_requested {
+                        RunState::Cancelling
+                    } else {
+                        RunState::NeedsInput
+                    };
                     run.event(now, AuditKind::Accepted);
                 }
                 Ok(_) => {
@@ -486,7 +596,9 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                         run.steps[i].state = StepState::Cancelled;
                         run.state = RunState::Cancelled;
                         run.event(now, AuditKind::Cancelled);
-                    } else if failure.retryable && run.steps[i].attempts < run.plan.steps[i].max_attempts {
+                    } else if failure.retryable
+                        && run.steps[i].attempts < run.plan.steps[i].max_attempts
+                    {
                         run.steps[i].state = StepState::Pending;
                         run.state = RunState::Paused;
                         run.event(now, AuditKind::RetryReady);
@@ -509,7 +621,10 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                     // A cancellation may have raced with a newly accepted background job.
                     // Now the durable job/effect ID is available for service-side cancellation.
                     if committed.cancel_requested
-                        && committed.steps.get(i).is_some_and(|s| s.state == StepState::AwaitingResult)
+                        && committed
+                            .steps
+                            .get(i)
+                            .is_some_and(|s| s.state == StepState::AwaitingResult)
                     {
                         let ctx = context(&committed);
                         let step = &committed.plan.steps[i];
@@ -524,13 +639,24 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         Err(RuntimeError::Store(StoreError::Conflict))
     }
 
-    fn mark_not_applied(&self, id: &str, expected_step: usize, expected_attempt: u8, now: u64) -> Result<RunSnapshot, RuntimeError> {
+    fn mark_not_applied(
+        &self,
+        id: &str,
+        expected_step: usize,
+        expected_attempt: u8,
+        now: u64,
+    ) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(id)?;
-        if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
+        if run.current_step != expected_step
+            || run.steps[expected_step].attempts != expected_attempt
+        {
             return Err(RuntimeError::WrongState);
         }
         let i = expected_step;
-        if !matches!(run.steps[i].state, StepState::Running | StepState::AwaitingResult) {
+        if !matches!(
+            run.steps[i].state,
+            StepState::Running | StepState::AwaitingResult
+        ) {
             return Err(RuntimeError::WrongState);
         }
         if run.cancel_requested {
@@ -550,21 +676,44 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         self.save(run)
     }
 
-    fn mark_pending(&self, id: &str, expected_step: usize, expected_attempt: u8, now: u64, unknown: bool) -> Result<RunSnapshot, RuntimeError> {
+    fn mark_pending(
+        &self,
+        id: &str,
+        expected_step: usize,
+        expected_attempt: u8,
+        now: u64,
+        unknown: bool,
+    ) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(id)?;
-        if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
+        if run.current_step != expected_step
+            || run.steps[expected_step].attempts != expected_attempt
+        {
             return Err(RuntimeError::WrongState);
         }
-        if !matches!(run.steps[expected_step].state, StepState::Running | StepState::AwaitingResult) {
+        if !matches!(
+            run.steps[expected_step].state,
+            StepState::Running | StepState::AwaitingResult
+        ) {
             return Err(RuntimeError::WrongState);
         }
-        let next = if unknown || run.cancel_requested { RunState::Blocked } else { RunState::NeedsInput };
+        let next = if unknown || run.cancel_requested {
+            RunState::Blocked
+        } else {
+            RunState::NeedsInput
+        };
         if run.state == next && run.steps[run.current_step].state == StepState::AwaitingResult {
             return Ok(run); // Polling must not grow a limitless audit stream.
         }
         run.steps[run.current_step].state = StepState::AwaitingResult;
         run.state = next;
-        run.event(now, if unknown { AuditKind::Blocked } else { AuditKind::Reconciled });
+        run.event(
+            now,
+            if unknown {
+                AuditKind::Blocked
+            } else {
+                AuditKind::Reconciled
+            },
+        );
         self.save(run)
     }
 
@@ -585,7 +734,9 @@ fn context(run: &RunSnapshot) -> ExecutionContext {
         study_id: run.plan.study_id.clone(),
         step_id: step.id.clone(),
         idempotency_key: record.idempotency_key.clone(),
-        deadline_ms: run.started_ms.saturating_add(run.plan.limits.max_elapsed_ms),
+        deadline_ms: run
+            .started_ms
+            .saturating_add(run.plan.limits.max_elapsed_ms),
         estimate: step.estimate,
     }
 }
@@ -593,8 +744,12 @@ fn context(run: &RunSnapshot) -> ExecutionContext {
 fn safe_code(s: &str) -> String {
     // Never copy arbitrary provider exceptions, tokens, URLs or user content into a checkpoint.
     match s {
-        "provider_unavailable" | "provider_timeout" | "source_denied"
-        | "not_found" | "effect_unknown" | "request_rejected" => s.to_owned(),
+        "provider_unavailable"
+        | "provider_timeout"
+        | "source_denied"
+        | "not_found"
+        | "effect_unknown"
+        | "request_rejected" => s.to_owned(),
         _ => "tool_failure".to_owned(),
     }
 }

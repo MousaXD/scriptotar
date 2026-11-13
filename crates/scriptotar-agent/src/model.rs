@@ -60,7 +60,8 @@ impl StepInput {
 pub fn valid_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 128
-        && s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -143,9 +144,11 @@ impl Plan {
                     && s.estimate.max_output_bytes <= self.limits.max_output_bytes
                     && s.estimate.peak_memory_mib <= self.limits.max_peak_memory_mib
             })
-            && self.steps.iter().enumerate().all(|(i, s)| {
-                !self.steps[..i].iter().any(|prior| prior.id == s.id)
-            })
+            && self
+                .steps
+                .iter()
+                .enumerate()
+                .all(|(i, s)| !self.steps[..i].iter().any(|prior| prior.id == s.id))
     }
 }
 
