@@ -103,6 +103,16 @@ pub trait ToolExecutor: Send + Sync {
         input: &StepInput,
         pending_effect_id: Option<&str>,
     ) -> Result<ProbeResult, ToolFailure>;
+
+    /// Best-effort stop signal; a cancellation is not settled until probe confirms the effect.
+    fn request_cancel(
+        &self,
+        _context: &ExecutionContext,
+        _input: &StepInput,
+        _pending_effect_id: Option<&str>,
+    ) -> Result<(), ToolFailure> {
+        Err(ToolFailure { code: "cancel_unavailable".into(), retryable: false, certainty: Certainty::UnknownEffect })
+    }
 }
 
 pub struct Engine<S, D, P> {
@@ -236,7 +246,15 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             }
         }
         run.event(now, if running { AuditKind::CancelRequested } else { AuditKind::Cancelled });
-        self.save(run)
+        let run = self.save(run)?;
+        if running {
+            // Request cancellation only after recording intent. The adapter must check policy again.
+            let ctx = context(&run);
+            let step = &run.plan.steps[run.current_step];
+            let effect = run.steps[run.current_step].pending_effect_id.as_deref();
+            let _ = self.driver.request_cancel(&ctx, &step.input, effect);
+        }
+        Ok(run)
     }
 
     /// Must run at startup before issuing any new work; uncertain effects require reconciliation.
@@ -435,8 +453,12 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
 
     fn mark_pending(&self, id: &str, now: u64, unknown: bool) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(id)?;
+        let next = if unknown || run.cancel_requested { RunState::Blocked } else { RunState::NeedsInput };
+        if run.state == next && run.steps[run.current_step].state == StepState::AwaitingResult {
+            return Ok(run); // Polling must not grow a limitless audit stream.
+        }
         run.steps[run.current_step].state = StepState::AwaitingResult;
-        run.state = if unknown || run.cancel_requested { RunState::Blocked } else { RunState::NeedsInput };
+        run.state = next;
         run.event(now, if unknown { AuditKind::Blocked } else { AuditKind::Reconciled });
         self.save(run)
     }
