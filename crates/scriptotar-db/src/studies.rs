@@ -275,9 +275,17 @@ fn origin_locator(
         .query_row(query, params![id.to_string(), project_id.to_string()], |row| row.get(0))
         .optional()
         .map_err(db_error)?;
-    result.ok_or_else(|| RepositoryError::NotFound(format!(
-        "{kind:?} {id} in project {project_id}"
-    )))
+    result
+        .map(|locator| {
+            if kind == StudySourceKind::AiRun {
+                format!("ai-run:{id}")
+            } else {
+                locator
+            }
+        })
+        .ok_or_else(|| RepositoryError::NotFound(format!(
+            "{kind:?} {id} in project {project_id}"
+        )))
 }
 
 fn source_row(row: &Row<'_>) -> rusqlite::Result<StudySource> {
