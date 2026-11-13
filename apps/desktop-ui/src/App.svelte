@@ -584,7 +584,7 @@
       <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} onUseInStudio={(id) => useInStudio('transcript', id)} />
     {:else if activeView === 'studio'}
       {#key data.activeProjectId}
-        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onNavigate={(view) => activeView = view} />
+        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
       {/key}
     {:else if activeView === 'ai'}
       {#key data.activeProjectId}
