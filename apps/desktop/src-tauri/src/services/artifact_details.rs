@@ -71,5 +71,7 @@ pub(super) fn is_research_source_queued(
             params![project_id.to_string(), source_url],
             |row| row.get::<_, bool>(0),
         )
-        .map_err(|_| RepositoryError::Storage("research queue status could not be loaded".to_owned()))
+        .map_err(|_| {
+            RepositoryError::Storage("research queue status could not be loaded".to_owned())
+        })
 }
