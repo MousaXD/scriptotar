@@ -596,7 +596,9 @@ fn validate_angle(angle: &AngleOption, evidence: &[EvidenceRef]) -> Result<(), W
     for beat in &angle.outline {
         check_text(&beat.intent, "outline beat", MAX_TEXT_CHARS)?;
         if beat.estimated_seconds == 0 || beat.estimated_seconds > 600 {
-            return Err(WritingError::Invalid("outline beat duration must be 1 to 600 seconds"));
+            return Err(WritingError::Invalid(
+                "outline beat duration must be 1 to 600 seconds",
+            ));
         }
     }
     validate_evidence_links(&angle.evidence_ids, evidence)

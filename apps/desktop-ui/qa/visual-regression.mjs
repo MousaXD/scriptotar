@@ -58,10 +58,10 @@ async function routeTo(page, view) {
   if (view.index === null) {
     await page.locator('.sidebar-utility .settings-link[aria-current="page"]').waitFor({ timeout: 5000 });
   } else {
-    await page.waitForFunction((index) => {
-      const buttons = document.querySelectorAll('.primary-nav button');
-      return buttons[index]?.getAttribute('aria-current') === 'page';
-    }, view.index, { timeout: 5000 });
+    // Stable view identity: adding Studio must not change existing QA routes.
+    const viewId = view.name === 'ai-studio' ? 'ai' : view.name;
+    await page.locator(`.primary-nav button[data-view-id="${viewId}"][aria-current="page"]`)
+      .waitFor({ timeout: 5000 });
   }
   return performance.now() - start;
 }

@@ -243,7 +243,7 @@
       <section class="nav-group" aria-label={$translator('nav.work')}>
         <span class="nav-group-label">{$translator('nav.work')}</span>
         {#each workNav as item}
-          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button data-view-id={item.id} class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
             {#if item.id === 'jobs' && activeJobs > 0}<b class="activity-count" aria-label={$translator('jobs.active', { count: activeJobs })}>{activeJobs}</b>{/if}
@@ -254,7 +254,7 @@
       <section class="nav-group" aria-label={$translator('nav.create')}>
         <span class="nav-group-label">{$translator('nav.create')}</span>
         {#each createNav as item}
-          <button class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button data-view-id={item.id} class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
           </button>
