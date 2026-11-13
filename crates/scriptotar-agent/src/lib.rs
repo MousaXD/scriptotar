@@ -281,6 +281,28 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         Ok(run)
     }
 
+    /// User-initiated unblock only when NO external side effect was claimed.
+    /// An in-flight or ambiguous effect must be reconciled, never retriggered here.
+    pub fn recheck_blocked(&self, run_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
+        let mut run = self.get(run_id)?;
+        if run.state != RunState::Blocked || run.cancel_requested {
+            return Err(RuntimeError::WrongState);
+        }
+        let Some(step_record) = run.steps.get(run.current_step) else {
+            return Err(RuntimeError::WrongState);
+        };
+        if step_record.state != StepState::Pending {
+            return Err(RuntimeError::WrongState);
+        }
+        let step = &run.plan.steps[run.current_step];
+        if !self.registry.contains(step.input.kind()) || self.policy.authorize(&run.plan, step).is_err() {
+            return Err(RuntimeError::PolicyDenied);
+        }
+        run.state = RunState::Running;
+        run.event(now, AuditKind::Resumed);
+        self.save(run)
+    }
+
     /// Must run at startup before issuing any new work; uncertain effects require reconciliation.
     pub fn recover(&self, run_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(run_id)?;
