@@ -51,7 +51,7 @@ Plan -> pending step -> approval (if required) -> policy recheck
 
 ### Budget/permission contract
 
-Limits include cumulative tool calls, reserved tokens, reserved micro-USD, reserved CPU milliseconds, elapsed milliseconds, maximum response bytes and peak memory MiB. Dispatch checks the estimates, records reservations before execution, and validates reported receipt totals. These are **adapter-side upper bounds**, not measured provider bills or enforceable OS quotas: the real provider/media service must enforce timeout, output length, tokens, network egress and resource caps, and report actual amounts conservatively. Wall-time is assessed at dispatch using a supplied monotonic timestamp; a service adapter must additionally enforce an in-flight timeout.
+Limits include cumulative tool calls, reserved tokens, reserved micro-USD, reserved CPU milliseconds, elapsed milliseconds, maximum response bytes and peak memory MiB. Dispatch checks the estimates, records reservations before execution, and validates reported receipt totals. These are **adapter-side upper bounds**, not measured provider bills or enforceable OS quotas: the real provider/media service must enforce timeout, output length, tokens, network egress and resource caps, and report actual amounts conservatively. Persisted `started_ms` and callback `now_ms` must use the **same restart-stable UTC epoch-millisecond clock**. A backward clock jump blocks new dispatches; the application service must additionally enforce a monotonic in-flight deadline. The `ExecutionContext.deadline_ms` field is an epoch-millisecond deadline derived from the saved run start. Absolute time budgets cannot be reliably enforced by the coordinator alone if the host clock changes.
 
 **Approval is necessary but not sufficient.** `PolicyGate` must separately validate active project, Study membership, source IDs, current provider/session access, user-granted egress and paid-provider consent. `ToolExecutor` should call the policy-checked `AppServices` functions, never raw database writes or unscoped MCP execution.
 
@@ -74,7 +74,7 @@ All service methods need `project_id`, `study_id`, `idempotency_key`, request/ap
 
 ## Validation and limits of this PR
 
-The fixture suite covers plan validation, approval/denial, missing tool, policy revocation, actual-versus-queued completion, retries, stable keys, uncertain effects, failures, partial progress, resource/time/cost/output limits, cancellation and pause races, serialization/restart, corrupted checkpoint and duplicate dispatch. Test code is deterministic and makes no network or paid requests.
+The fixture suite contains **34 authored tests** covering plan validation, approval/denial, missing tool, policy revocation, actual-versus-queued completion, retries, stable keys, uncertain effects, failures, partial progress, resource/time/cost/output limits, cancellation and pause races, serialization/restart, corrupted checkpoint, competing CAS claims and late receipt attribution. They have **not** been executed in a Rust-capable environment. Test code is deterministic and makes no network or paid requests.
 
 Run after checkout on a Rust-capable worker:
 
