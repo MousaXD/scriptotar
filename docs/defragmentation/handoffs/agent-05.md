@@ -8,8 +8,8 @@
 ## Delivered within exclusive ownership
 
 - `crates/scriptotar-research/src/intelligence.rs`: offline metric snapshot normalizer, project-scoped exact-URL/time dedupe, creator/age-matched median comparisons, two-observation view deltas and timestamped literal transcript outline.
-- `crates/scriptotar-research/src/intelligence_tests.rs`: fake data for missing counts, real zeros, negatives, invalid dates, rejected URLs, project collision, duplicates, contradictory metrics, missing/age-incompatible creator peers, stale data, counter decreases, empty/partial/denied transcripts, invalid timecodes.
-- `crates/scriptotar-research/Cargo.toml` + `src/lib.rs`: expose the new independent module and use the existing workspace `chrono` dependency.
+- `crates/scriptotar-research/src/intelligence_tests.rs`: deterministic fixed-time fixtures for missing counts, real zeros, negatives, malformed/offset/leap-year timestamps, rejected URLs, project collision, duplicates, contradictory metrics, missing/age-incompatible creator peers, stale data, counter decreases, empty/partial/denied transcripts, invalid timecodes, semantic hypotheses and feature support.
+- `crates/scriptotar-research/src/lib.rs`: expose the new independent module and its deterministic test module. No dependency or lockfile changes.
 - `docs/defragmentation/proposals/agent-05-research.md`: proposal for Agent 00/01/02 and integration/P2 design.
 
 ## What actually runs
@@ -21,9 +21,9 @@ The existing research provider/yt-dlp behavior and watchlist/queue paths were **
 ## Verification notes
 
 - Offline deterministic unit tests are included in the crate but are not equivalent to running them.
-- No local Rust toolchain is available in the editing environment. Rustfmt, Cargo check, Clippy and workspace tests require the PR's GitHub Actions `Rust foundation` and `CI` checks.
+- No local Rust toolchain is available in the editing environment. Earlier CI runs caught formatting problems and a transient dependency/lockfile mismatch. The added dependency was **removed**; all Rustfmt corrections from the available runner diffs were applied to the research files. Verify exact newest PR HEAD again in `Rust foundation` and `CI`.
 - No real provider scan, installed app, media frame check or live-authenticated platform access was executed in this task.
-- As of handoff creation, PR CI verdict is **pending / unverified**. Update after inspecting exact-head checks; do not claim green prematurely.
+- The latest exact-head PR CI verdict remains **pending / unverified** at this checkpoint; do not treat cancelled or older failed runs as green. Full compilation, Clippy, and unit tests still require fresh Actions evidence.
 
 ## Integration blockers and contract requests
 
@@ -38,7 +38,7 @@ The existing research provider/yt-dlp behavior and watchlist/queue paths were **
 - Exact normalized URL is treated as source identity; equivalent alternative social URLs are **not** merged without a future canonical provider ID.
 - Dates without recognizable YYYY-MM-DD or `unix:<seconds>` become Unrecognized and cannot qualify for age matching.
 - Observational counters alone do not prove real account-wide reach, retention, share rate, post timing causality or guaranteed virality.
-- Only opening/middle/closing transcript excerpts are extracted today; hook taxonomy, creative pattern hypotheses, payoffs and CTA detection await an evidence-grounded extractor and review.
+- Only opening/middle/closing transcript excerpts are **extracted** today; typed hook/narrative/pacing/payoff/CTA hypotheses and distinct-source feature counts are supported as caller-provided contracts, but no automatic semantic detector or frame analyzer exists.
 - Historical metrics will be available only once a separately approved migration records **real** successive snapshots.
 
 ## Next independent actions
