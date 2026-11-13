@@ -30,6 +30,12 @@ During P0 we retain visible Queue/Transcripts/AI expert navigation and palette c
 
 The present optional `StudioGateway` accepts a `ContentStudy` snapshot with `revision`, `brief`, `sources[]`, `draft` and immutable `draftVersions[]`. It requires project validation on each read and mutation, and an expected-revision failure (not last-write-wins). Source IDs are kind-prefixed; duplicate and foreign-project transcript IDs are rejected in the UI and MUST be checked again by Rust. Saved AI results require exact ID + project match; a missing endpoint shows an explicit error instead of a fabricated history result.
 
+### Newly verified parallel contract proposals (2026-11-13)
+
+- Agent 01 [PR #108](https://github.com/MousaXD/scriptotar/pull/108) proposes migration v6 with **separate** `ContentStudy` (study title/goal), `CreativeBrief` (revision), `CreativeDraft` (revision + immutable versions), and independently referenced/tombstoned `StudySource` and `EvidenceReference`. The simplified frontend `saveStudy` port is a **test fixture facade**, not a schema instruction. Agent 00 must map it to approved project-scoped, optimistic-concurrency-safe transactions; do not flatten distinct draft/brief revisions into one unsound write.
+- Agent 02 [PR #103](https://github.com/MousaXD/scriptotar/pull/103) implements project-scoped `get_ai_run({ projectId, aiRunId })` and `get_research_item({ projectId, researchItemId })` in an independent Rust branch. `UiAiRunDetail.result` is nullable; the UI already distinguishes saved prompt from generated response. These commands are not in the planning branch's production frontend API yet.
+- The Agent 02 branch cannot pass API-surface parity until Agent 00 directs an approved frontend `ScriptotarApi`/Tauri-client/mock mapping and the independent QA command inventory is updated. Do **not** bypass this regression gate.
+
 **Integration owner action:** install a real gateway in `App.svelte` only after Agent 00 accepts the DTO/method names and Agent 02 implements Tauri handlers. Do not implement the interface with sessionStorage/localStorage, guessed IPC commands, or cross-project name/title matching.
 
 ## Implementation prepared on this branch
