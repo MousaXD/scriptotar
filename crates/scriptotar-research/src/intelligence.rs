@@ -162,6 +162,10 @@ pub fn deduplicate_snapshots(
             {
                 return Err(IntelligenceError::ContradictoryObservation);
             }
+            // Stable identity choice for duplicate observations with equal data.
+            if snapshot.research_item_id < previous.research_item_id {
+                seen.insert(key, snapshot);
+            }
             continue;
         }
         seen.insert(key, snapshot);
@@ -244,12 +248,20 @@ pub fn compare_creator_views(
         if peer_url == target_url {
             continue;
         }
-        if newest_by_url
-            .get(&peer_url)
-            .is_none_or(|previous| peer.observed_at > previous.observed_at)
-        {
-            newest_by_url.insert(peer_url, peer);
+        if let Some(previous) = newest_by_url.get(&peer_url) {
+            if peer.observed_at == previous.observed_at
+                && (peer.views != previous.views
+                    || peer.likes != previous.likes
+                    || peer.comments != previous.comments
+                    || peer.published != previous.published)
+            {
+                return Err(IntelligenceError::ContradictoryObservation);
+            }
+            if peer.observed_at <= previous.observed_at {
+                continue;
+            }
         }
+        newest_by_url.insert(peer_url, peer);
     }
     let mut peer_views = Vec::new();
     for peer in newest_by_url.values() {
