@@ -1,3 +1,14 @@
+# LATEST CHECKPOINT — P1 local agent effect fencing (2026-11-13)
+
+- **Owner branch:** integration/scriptotar-defragmentation-agent00-20261113; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114. Main remains unchanged.
+- **Last verified all-green exact SHA:** c21016939b55253c4d249d496b7f31fa72c9d5d0, with nine green workflows including SQLite v8 agent-effects tests and Linux/Windows packaging. This precedes the new live effect adapter.
+- **New candidate work:** the approved, zero-cost ReadStudyTranscript production tool reserves a v8 effect key only after the agent Engine has committed its Running-intent checkpoint. It records a durable Applied or NotApplied receipt before reporting completion. Existing claims never permit duplicate dispatch; missing or ambiguous evidence blocks.
+- **Recovery:** a user-initiated reconciliation probes the persisted effect and only re-inspects this specifically repeatable *local* read. This is not permission for network, paid or mutating operations. Tests inject a claim failure and restart a reserved read; denial leaves no ledger claim.
+- **Resource safety:** the scoped SQLite transcript-attachment and UTF-8 byte-length query avoids loading arbitrary-sized bodies for tool admission; oversized text is refused before a new run.
+- **Not complete:** permitted external research tools, independent factual evidence verification, original script generation using Agent 06, real provider-cost/approval policy, native graphical WebView acceptance/performance, and P3 UI consolidation. The app is not a full production autonomous researcher/script writer.
+- **Verification:** retrieve current PR #114 HEAD and require all nine workflows at that *new* SHA. Do not present the c210 green baseline as validation for later changes. Draft/NO-GO for merge and release.
+
+---
 # LATEST CHECKPOINT — P1 local inspection integration (2026-11-13)
 
 - **Owner branch:** `integration/scriptotar-defragmentation-agent00-20261113`; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114; `main` remains unchanged. Retrieve and verify the actual current HEAD before continuing; do not infer success from this document.

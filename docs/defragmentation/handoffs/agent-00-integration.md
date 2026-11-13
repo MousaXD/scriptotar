@@ -51,6 +51,14 @@ Seven isolated branches were combined by Git tree changes without duplicate edit
 - Tests cover denial without dispatch, wrong-project/wrong-study/not-attached sources, no provider calls, read-only budget and durable run reopening.
 - **Not yet done:** any payment-bearing AI request, autonomous script writing, source claim verification, research agent tool chain or external side-effect ledger. All nine exact-HEAD CI checks required before declaring even this local slice validated.
 
+## P1 live effect-fence continuation — Agent 00
+
+- Wired live local transcript inspection into the SQLite v8 effect ledger. The agent must first persist Running intent and approval; the service then claims its durable idempotency key before reading. The durable result receipt is committed before the agent can report completion.
+- Already-reserved keys cannot dispatch again. Lost, ambiguous or failed ledger writes fail closed; missing claims are never treated as proof that an external action did not happen.
+- Explicit recovery of a reserved entry is supported **only for an approved, repeatable, local read**. Tests exercise restart with pending claim, injected claim failure, no effect on denial, and project/study/source guards.
+- Added an exact scoped SQL join to check active Study attachment and transcript byte length without materializing potentially huge transcript bodies. Oversized source data is rejected before creating an agent run.
+- Current exact final commit needs nine green workflows and native package/restart checks. Previously fully green c210 baseline predates the live driver changes. External provider adapters, paid AI, original script generation, independent factual evidence and P3 polish are still unwired.
+
 ## Test evidence and gates
 
 - The 8acb185 integrated snapshot passed Rust foundation, CI, MCP E2E, Desktop UI, security hygiene, GUI QA, Tauri migration and Linux package. Windows installer was later cancelled by additional commits; do **not** count it as passed.
