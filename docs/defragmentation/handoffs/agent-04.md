@@ -15,12 +15,12 @@
 - Added CAS-before-side-effect checkpoint port, versioned serializable snapshots and metadata-only audit events with safe error-code redaction.
 - Added token/API cost/tool-call/CPU/time/output-byte/memory budgets and fail-closed receipt validation.
 - Added truthful queued-versus-completed semantics and non-replaying crash recovery requiring status probe.
-- Added **34 deterministic fake-service tests** for every run state, retries, simultaneous CAS claims, stale completion races, duplicate dispatch, approval denial, cancellation races, paused queue progress, provider failure, resource limits and snapshot corruption. These tests are authored but **not yet executed**.
+- Added **37 deterministic fake-service tests** for every run state, retries, simultaneous CAS claims, stale completion races, duplicate dispatch, approval denial, cancellation races, paused queue progress, provider failure, resource limits and snapshot corruption. These tests are authored but **not yet executed**.
 - Added architecture and proposed integration contract in `docs/defragmentation/proposals/agent-04-runtime.md`.
 
 ## Independent runtime functions
 
-These functions are implemented without changing any P0 crate: `Engine::create`, `get`, `approve`, `deny`, `tick`, `pause`, `resume`, `cancel`, `recover`, and `reconcile`; typed `ToolRegistry`, `ToolExecutor`, `PolicyGate`, `CheckpointStore` and test `MemoryStore`.
+These functions are implemented without changing any P0 crate: `Engine::create`, `get`, `approve`, `deny`, `tick`, `pause`, `resume`, `cancel`, `recover`, `reconcile`, and `recheck_blocked`; typed `ToolRegistry`, `ToolExecutor`, `PolicyGate`, `CheckpointStore` and test `MemoryStore`.
 
 This is a **source-level implementation status**, not a claim of executed unit tests or a usable AI agent.
 
