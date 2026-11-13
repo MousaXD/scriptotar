@@ -138,6 +138,11 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             || run.steps.len() != run.plan.steps.len()
             || run.current_step > run.steps.len()
             || run.steps.iter().zip(&run.plan.steps).any(|(record, step)| record.id != step.id)
+            || run.steps.iter().enumerate().any(|(i, record)| {
+                record.idempotency_key != format!("{}:{}:{}", run.plan.id, i, record.id)
+                    || (record.state == StepState::Completed && record.output.is_none())
+            })
+            || run.events.iter().enumerate().any(|(i, event)| event.sequence != i as u64 + 1)
             || run.steps[..run.current_step].iter().any(|step| step.state != StepState::Completed)
             || (run.state == RunState::Completed && run.current_step != run.steps.len())
             || run.usage.tool_calls > run.plan.limits.max_tool_calls
