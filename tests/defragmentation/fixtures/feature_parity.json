@@ -1,0 +1,154 @@
+{
+  "baseline_sha": "2948918865c1960260a8c602e4dfe261c82cd0d0",
+  "scope": "source-presence guards; NOT functional certification",
+  "items": [
+    {
+      "id": "project-create-switch",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "createProject(",
+        "selectProject("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "project-switch-race",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/App.svelte",
+      "markers": [
+        "reconcileFailedProjectMutation",
+        "workspaceGeneration"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "research-watchlist",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "saveWatchlist(",
+        "scanCreator(",
+        "queueResearch("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "media-local-url",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "enqueueLocalMedia(",
+        "enqueueUrl("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "jobs-recovery-controls",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "retryJob(",
+        "cancelJob("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "transcript-detail-search",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "getTranscript(",
+        "searchTranscripts("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "transcript-summary-startup",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/App.svelte",
+      "markers": [
+        "api.bootstrapSummary()",
+        "api.getWatchlistStatuses()"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "ai-copy-and-provider",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "buildAiPrompt(",
+        "runAi("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "ai-source-id-validation",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/views/AiStudioView.svelte",
+      "markers": [
+        "transcript.projectId !== expected.projectId",
+        "api.getTranscript(id)"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "library-item-opening",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/App.svelte",
+      "markers": [
+        "openLibraryItem(item: LibraryItem)",
+        "item.kind === 'AI run'"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "settings-mcp-permissions",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/api/client.ts",
+      "markers": [
+        "getSettings(",
+        "saveSettings(",
+        "getMcpPermissions(",
+        "saveMcpPermissions("
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "localization-rtl",
+      "phase": "P0",
+      "path": "apps/desktop-ui/src/rtl.css",
+      "markers": [],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "installed-ipc-smoke",
+      "phase": "P0",
+      "path": "docs/INSTALLED_APP_E2E.md",
+      "markers": [
+        "mock-runtime IPC",
+        "does not currently automate WebView clicks"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "browser-mock-label",
+      "phase": "P0",
+      "path": "apps/desktop-ui/qa/visual-regression.mjs",
+      "markers": [
+        "NOT a native Tauri/database benchmark"
+      ],
+      "verification": "source-presence-only"
+    },
+    {
+      "id": "native-control-allowlist",
+      "phase": "P3",
+      "path": "apps/desktop-ui/qa/native-control-allowlist.json",
+      "markers": [
+        "nativeSelectors"
+      ],
+      "verification": "source-presence-only"
+    }
+  ]
+}
