@@ -523,3 +523,24 @@ fn corrupt_checkpoint_is_rejected_without_issuing_tools() {
     assert_eq!(restarted.recover("run_1", 1), Err(RuntimeError::InvalidPlan));
     assert_eq!(d.calls(), 0);
 }
+
+#[test]
+fn queued_terminal_failure_uses_typed_service_evidence() {
+    let d = FakeDriver::default();
+    d.receipt(Ok(ToolReceipt::Accepted { effect_id: "job_1".into() }));
+    d.probe_result(Ok(ProbeResult::Failed(not_applied(false))));
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::NeedsInput);
+    assert_eq!(e.reconcile("run_1", 2).unwrap().state, RunState::Failed);
+    assert_eq!(d.calls(), 1);
+}
+
+#[test]
+fn backwards_clock_movement_fails_closed_instead_of_resetting_time_limit() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 100).unwrap();
+    assert_eq!(e.tick("run_1", 99).unwrap().state, RunState::Blocked);
+    assert_eq!(d.calls(), 0);
+}
