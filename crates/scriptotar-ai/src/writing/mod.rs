@@ -2,7 +2,7 @@
 //! resolve source IDs, perform fact checking, or persist drafts.
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::AiRequest;
@@ -14,6 +14,7 @@ pub use quality::{
 };
 
 const MAX_INPUT_CHARS: usize = 100_000;
+const MAX_OUTPUT_CHARS: usize = 100_000;
 const MAX_TEXT_CHARS: usize = 4_000;
 const MAX_EXCERPT_CHARS: usize = 1_200;
 const MAX_EVIDENCE: usize = 40;
@@ -294,21 +295,16 @@ pub fn parse_angles(text: &str, input: &WritingInput) -> Result<Vec<AngleOption>
     let WritingTask::ProposeAngles { count } = &input.task else {
         return Err(WritingError::Invalid("expected angle task"));
     };
-    let response: AngleResponse =
-        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    let response: AngleResponse = parse_model_json(text)?;
     if response.angles.len() != usize::from(*count) {
         return Err(WritingError::Invalid("unexpected angle count"));
     }
     let mut ids = HashSet::new();
     for angle in &response.angles {
-        check_text(&angle.id, "angle ID", 120)?;
-        check_text(&angle.approach, "approach", MAX_TEXT_CHARS)?;
-        check_text(&angle.hook, "hook", MAX_TEXT_CHARS)?;
-        check_text(&angle.promise, "promise", MAX_TEXT_CHARS)?;
-        if !ids.insert(angle.id.as_str()) || angle.outline.is_empty() || angle.outline.len() > 16 {
+        validate_angle(angle, &input.evidence)?;
+        if !ids.insert(angle.id.as_str()) {
             return Err(WritingError::InvalidIdentifier);
         }
-        validate_evidence_links(&angle.evidence_ids, &input.evidence)?;
     }
     Ok(response.angles)
 }
@@ -319,9 +315,16 @@ pub fn parse_draft(text: &str, input: &WritingInput) -> Result<ScriptDraft, Writ
     if !matches!(input.task, WritingTask::Draft { .. }) {
         return Err(WritingError::Invalid("expected draft task"));
     }
-    let draft: ScriptDraft =
-        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    let mut draft: ScriptDraft = parse_model_json(text)?;
     validate_draft(&draft, &input.evidence)?;
+    if !same_language(&draft.language, &input.brief.language) {
+        return Err(WritingError::Invalid("draft language differs from brief"));
+    }
+    // Only the editor can designate human-authored text. A provider cannot
+    // forge manual-edit protection on a new generated candidate.
+    for beat in &mut draft.beats {
+        beat.manually_edited = false;
+    }
     if let WritingTask::Draft { angle } = &input.task {
         if draft.angle_id != angle.id {
             return Err(WritingError::InvalidIdentifier);
@@ -336,12 +339,13 @@ pub fn parse_review(text: &str, input: &WritingInput) -> Result<ReviewResponse, 
     let WritingTask::Review { draft } = &input.task else {
         return Err(WritingError::Invalid("expected review task"));
     };
-    let response: ReviewResponse =
-        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    let mut response: ReviewResponse = parse_model_json(text)?;
     if response.findings.len() > 40 {
         return Err(WritingError::LimitExceeded("review findings"));
     }
-    for finding in &response.findings {
+    for finding in &mut response.findings {
+        // AI review is always a proposal until a person accepts it.
+        finding.needs_human_review = true;
         check_text(&finding.concern, "review concern", MAX_TEXT_CHARS)?;
         check_text(
             &finding.recommendation,
@@ -370,8 +374,7 @@ pub fn parse_revision_proposal(
     let WritingTask::ReviseBeat { beat_id, .. } = &input.task else {
         return Err(WritingError::Invalid("expected revision task"));
     };
-    let proposal: RevisionProposal =
-        serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)?;
+    let proposal: RevisionProposal = parse_model_json(text)?;
     if &proposal.beat_id != beat_id {
         return Err(WritingError::InvalidIdentifier);
     }
@@ -452,7 +455,19 @@ pub fn apply_beat_revision(
     if beat.manually_edited && !revision.overwrite_manual_edit {
         return Err(WritingError::ProtectedManualEdit);
     }
-    beat.narration.clone_from(&revision.replacement_narration);
+    if beat.narration != revision.replacement_narration {
+        beat.narration.clone_from(&revision.replacement_narration);
+        // Evidence for the previous narration does not automatically support
+        // newly written text. Keep the old claim record for human review but
+        // remove its supported status and stale citation links.
+        beat.evidence_ids.clear();
+        for claim in &mut updated.claims {
+            if claim.beat_id == revision.beat_id {
+                claim.status = ClaimStatus::Unverified;
+                claim.evidence_ids.clear();
+            }
+        }
+    }
     // An explicit override must not remove protection for subsequent revisions.
     Ok(updated)
 }
@@ -533,10 +548,7 @@ fn validate_input(input: &WritingInput) -> Result<(), WritingError> {
         WritingTask::ProposeAngles { count } if !(2..=5).contains(count) => {
             Err(WritingError::Invalid("request two to five angles"))
         }
-        WritingTask::Draft { angle } => {
-            check_text(&angle.id, "angle ID", 120)?;
-            validate_evidence_links(&angle.evidence_ids, &input.evidence)
-        }
+        WritingTask::Draft { angle } => validate_angle(angle, &input.evidence),
         WritingTask::Review { draft } => validate_draft(draft, &input.evidence),
         WritingTask::ReviseBeat {
             draft,
@@ -552,6 +564,42 @@ fn validate_input(input: &WritingInput) -> Result<(), WritingError> {
         }
         _ => Ok(()),
     }
+}
+
+fn parse_model_json<T: DeserializeOwned>(text: &str) -> Result<T, WritingError> {
+    if text.chars().count() > MAX_OUTPUT_CHARS {
+        return Err(WritingError::LimitExceeded("model response"));
+    }
+    serde_json::from_str(text).map_err(|_| WritingError::MalformedResponse)
+}
+
+/// Only compares declared metadata; it cannot identify a language from prose.
+fn same_language(draft: &str, requested: &str) -> bool {
+    let normalized = |value: &str| -> String {
+        match value.trim().to_lowercase().as_str() {
+            "ar" | "arabic" | "العربية" | "عربي" => "ar".to_owned(),
+            "en" | "english" | "الإنجليزية" => "en".to_owned(),
+            other => other.to_owned(),
+        }
+    };
+    normalized(draft) == normalized(requested)
+}
+
+fn validate_angle(angle: &AngleOption, evidence: &[EvidenceRef]) -> Result<(), WritingError> {
+    check_text(&angle.id, "angle ID", 120)?;
+    check_text(&angle.approach, "approach", MAX_TEXT_CHARS)?;
+    check_text(&angle.hook, "hook", MAX_TEXT_CHARS)?;
+    check_text(&angle.promise, "promise", MAX_TEXT_CHARS)?;
+    if angle.outline.is_empty() || angle.outline.len() > 16 {
+        return Err(WritingError::Invalid("angle needs one to sixteen beats"));
+    }
+    for beat in &angle.outline {
+        check_text(&beat.intent, "outline beat", MAX_TEXT_CHARS)?;
+        if beat.estimated_seconds == 0 || beat.estimated_seconds > 600 {
+            return Err(WritingError::Invalid("outline beat duration must be 1 to 600 seconds"));
+        }
+    }
+    validate_evidence_links(&angle.evidence_ids, evidence)
 }
 
 fn validate_evidence_links(ids: &[String], evidence: &[EvidenceRef]) -> Result<(), WritingError> {
