@@ -95,6 +95,21 @@
     if (saveTimer) clearTimeout(saveTimer);
   });
 
+  // Prevent project changes from destroying the keyed Studio before the
+  // pending debounce has durably committed. Failure leaves the editor intact.
+  export async function flushPendingSave(): Promise<void> {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined; }
+    if (!gateway || !record) {
+      if (draft.trim() || brief.title.trim() || refs.length > 0) {
+        throw new Error(t.missingTitle);
+      }
+      return;
+    }
+    if (saving) throw new Error(t.errorSave);
+    if (changed()) await save();
+    if (saving || changed()) throw new Error(error || t.errorSave);
+  }
+
   function changed(): boolean {
     return !!record && (JSON.stringify(brief) !== JSON.stringify(record.brief)
       || !sameRefs(refs, record.sources) || draft !== record.draft);

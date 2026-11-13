@@ -44,6 +44,8 @@
   let studioIncoming: (StudySourceRef & { projectId: string }) | null = null;
   let studioIncomingArtifactId = '';
   let studioVisitedProjectId = '';
+  let studioInstance: InstanceType<typeof StudioView> | undefined;
+  let studioExitPending = false;
   let firstProjectName = '';
   let jobRefreshGeneration: number | undefined;
   let jobRefreshTimer: number | undefined;
@@ -271,8 +273,19 @@
   }
 
   async function selectProject(id: string): Promise<boolean> {
-    if (switchingProject || creatingProject || savingWatchlist || !data) return false;
+    if (switchingProject || creatingProject || savingWatchlist || studioExitPending || !data) return false;
     if (id === data.activeProjectId) return true;
+    studioExitPending = true;
+    try {
+      if (studioInstance && studioVisitedProjectId === data.activeProjectId) {
+        await studioInstance.flushPendingSave();
+      }
+    } catch (cause) {
+      switchError = cause instanceof Error ? cause.message : 'Save your study before switching projects.';
+      return false;
+    } finally {
+      studioExitPending = false;
+    }
     const previousProjectId = data.activeProjectId;
     const generation = ++workspaceGeneration;
     let inconsistentResponse = false;
@@ -311,6 +324,15 @@
   }
 
   async function createProject(name: string) {
+    if (studioExitPending) return;
+    studioExitPending = true;
+    try {
+      if (studioInstance && studioVisitedProjectId === data?.activeProjectId) {
+        await studioInstance.flushPendingSave();
+      }
+    } finally {
+      studioExitPending = false;
+    }
     if (savingWatchlist) throw new Error('Finish saving the watchlist before creating a project.');
     if (switchingProject || creatingProject) return;
     const hadActiveProject = Boolean(activeProject);
@@ -594,7 +616,7 @@
     {#if studioVisitedProjectId === data.activeProjectId}
       <div hidden={activeView !== 'studio'} class="studio-host">
         {#key data.activeProjectId}
-          <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={resolvedStudioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
+          <StudioView bind:this={studioInstance} {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={resolvedStudioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
         {/key}
       </div>
     {/if}
