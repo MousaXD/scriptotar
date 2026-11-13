@@ -2991,6 +2991,7 @@ name = "scriptotar-db"
 version = "1.4.1"
 dependencies = [
  "rusqlite",
+ "scriptotar-agent",
  "scriptotar-core",
  "serde_json",
  "tempfile",
