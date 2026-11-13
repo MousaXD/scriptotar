@@ -49,7 +49,9 @@ class BaselineContractTests(unittest.TestCase):
     def test_native_evidence_gate_refuses_missing_proof(self):
         from .verify_evidence import verify
         record = {"source_sha": "a" * 40, "scope": "native-installed",
-                  "outcome": "PASS", "measurements": {"cold_start_ms": 5}}
+                  "outcome": "PASS", "run_url": "https://github.com/MousaXD/scriptotar/actions/runs/1",
+                  "observed_at": "2026-11-13T00:00:00Z",
+                  "measurements": {"cold_start_ms": 5}}
         with self.assertRaisesRegex(ValueError, "package_sha256"):
             verify(record)
         record.update(package_sha256="b" * 64, executable_sha256="c" * 64,
