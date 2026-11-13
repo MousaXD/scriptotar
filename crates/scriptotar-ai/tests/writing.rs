@@ -340,3 +340,22 @@ fn existing_ai_provider_contract_is_not_replaced() {
     let request = prepare_writing_request(&input(WritingTask::ProposeAngles { count: 3 })).unwrap();
     let _: scriptotar_ai::AiRequest = request;
 }
+
+#[test]
+fn model_response_limits_and_mismatched_language_are_rejected() {
+    let angles = input(WritingTask::ProposeAngles { count: 3 });
+    let oversized = "x".repeat(100_001);
+    assert_eq!(
+        parse_angles(&oversized, &angles).unwrap_err(),
+        WritingError::LimitExceeded("model response")
+    );
+    let draft_task = input(WritingTask::Draft {
+        angle: fixture_angles()[0].clone(),
+    });
+    let mut wrong = fixture_draft();
+    wrong.language = "ar".to_owned();
+    assert_eq!(
+        parse_draft(&serde_json::to_string(&wrong).unwrap(), &draft_task).unwrap_err(),
+        WritingError::Invalid("draft language differs from brief")
+    );
+}
