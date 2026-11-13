@@ -36,3 +36,12 @@ crates/scriptotar-ai/tests/writing.rs tests structured prompts, distinct angles,
 - No P0 draft schema/wiring, offline LLM execution, provider integration testing or installed app validation is performed by this implementation.
 
 **Integration verdict:** ISOLATED FOUNDATION / NOT PRODUCTION-READY until owner-reviewed shared contracts and end-to-end tests.
+
+## Continuation hardening
+
+- Model outputs now have a separate 100,000-character parse ceiling, with empty/zero-duration outline beat validation.
+- Draft language metadata must agree with the brief (English/Arabic aliases recognized); actual language detection remains unsupported.
+- New generated drafts cannot set manual-edit ownership; model review findings are always treated as needing human review.
+- Approved narration changes clear stale beat citations and downgrade that beat's existing factual claims to unverified (claim citation links cleared). A no-op revision leaves provenance unchanged.
+- Added regression coverage for manual flags, language mismatch, response bounds, revised factual support and no-op edits.
+- Keep this draft PR unmerged until exact-head CI validation and the P0 source/draft contract is approved.
