@@ -259,7 +259,9 @@ fn review_findings_must_point_to_real_beats_and_sources() {
         draft: fixture_draft(),
     });
     let valid = r#"{"findings":[{"beat_id":"hook","concern":"Hook could be sharper","recommendation":"Lead with the audience benefit","evidence_ids":["pattern"],"needs_human_review":false}]}"#;
-    assert_eq!(parse_review(valid, &request).unwrap().findings.len(), 1);
+    let review = parse_review(valid, &request).unwrap();
+    assert_eq!(review.findings.len(), 1);
+    assert!(review.findings[0].needs_human_review);
     let invalid = valid.replace(r#""beat_id":"hook""#, r#""beat_id":"unknown""#);
     assert_eq!(
         parse_review(&invalid, &request).unwrap_err(),
