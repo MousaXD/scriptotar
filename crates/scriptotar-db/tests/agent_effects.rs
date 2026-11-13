@@ -374,7 +374,7 @@ fn effect_write_failure_rolls_back_old_state_and_retry_is_exactly_once() {
 fn two_claimers_share_one_durable_claim_and_no_other_dispatch() {
     let (_dir, db, project, study) = fixture();
     let run = running(&db, project.id, study);
-    let key = run.steps[0].idempotency_key;
+    let key = run.steps[0].idempotency_key.clone();
     let run_id = run.plan.id;
     let barrier = Arc::new(Barrier::new(3));
     let workers = (0..2)

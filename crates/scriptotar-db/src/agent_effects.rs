@@ -153,7 +153,7 @@ fn verified_scope(
         || snapshot.plan.project_id != project.to_string()
         || snapshot.plan.study_id != study.to_string()
         || !snapshot.plan.validate()
-        || snapshot.current_step >= snapshot.plan.steps.len()
+        || snapshot.current_step > snapshot.plan.steps.len()
         || snapshot.steps.len() != snapshot.plan.steps.len()
     {
         return Err(RepositoryError::Storage(
@@ -210,6 +210,11 @@ impl SqliteStore {
             }
             tx.commit().map_err(db_error)?;
             return Ok(EffectClaim::Existing(effect));
+        }
+        if snapshot.current_step == snapshot.plan.steps.len() {
+            return Err(RepositoryError::Conflict(
+                "completed agent run cannot reserve a new effect".into(),
+            ));
         }
         let step = &snapshot.plan.steps[snapshot.current_step];
         let record = &snapshot.steps[snapshot.current_step];
