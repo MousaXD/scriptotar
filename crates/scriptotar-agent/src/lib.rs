@@ -348,7 +348,7 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         let run = self.save(run)?; // CAS, then effect. Conflict means no execution.
         let context = context(&run);
         let receipt = self.driver.execute(&context, &step.input);
-        self.finish(run_id, index, now, receipt)
+        self.finish(run_id, index, run.steps[index].attempts, now, receipt)
     }
 
     /// Poll/query the service-side ledger after queued work or a crash.
@@ -371,21 +371,21 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         let ctx = context(&run);
         let result = self.driver.probe(&ctx, &step.input, record.pending_effect_id.as_deref());
         match result {
-            Ok(ProbeResult::Applied(output)) => self.finish(run_id, run.current_step, now, Ok(ToolReceipt::Applied(output))),
-            Ok(ProbeResult::NotApplied) => self.mark_not_applied(run_id, run.current_step, now),
-            Ok(ProbeResult::Failed(failure)) => self.finish(run_id, run.current_step, now, Err(failure)),
-            Ok(ProbeResult::Pending) => self.mark_pending(run_id, run.current_step, now, false),
-            Ok(ProbeResult::Unknown) | Err(_) => self.mark_pending(run_id, run.current_step, now, true),
+            Ok(ProbeResult::Applied(output)) => self.finish(run_id, run.current_step, record.attempts, now, Ok(ToolReceipt::Applied(output))),
+            Ok(ProbeResult::NotApplied) => self.mark_not_applied(run_id, run.current_step, record.attempts, now),
+            Ok(ProbeResult::Failed(failure)) => self.finish(run_id, run.current_step, record.attempts, now, Err(failure)),
+            Ok(ProbeResult::Pending) => self.mark_pending(run_id, run.current_step, record.attempts, now, false),
+            Ok(ProbeResult::Unknown) | Err(_) => self.mark_pending(run_id, run.current_step, record.attempts, now, true),
         }
     }
 
-    fn finish(&self, run_id: &str, expected_step: usize, now: u64, receipt: Result<ToolReceipt, ToolFailure>) -> Result<RunSnapshot, RuntimeError> {
+    fn finish(&self, run_id: &str, expected_step: usize, expected_attempt: u8, now: u64, receipt: Result<ToolReceipt, ToolFailure>) -> Result<RunSnapshot, RuntimeError> {
         // A cancellation/pause can CAS while the external service is executing.
         for _ in 0..16 {
             let mut run = self.get(run_id)?;
             // The original attempt and an async status probe can settle concurrently.
             // Never record a late receipt against a newly advanced step.
-            if run.current_step != expected_step {
+            if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
                 return Err(RuntimeError::WrongState);
             }
             let i = expected_step;
@@ -473,9 +473,11 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         Err(RuntimeError::Store(StoreError::Conflict))
     }
 
-    fn mark_not_applied(&self, id: &str, expected_step: usize, now: u64) -> Result<RunSnapshot, RuntimeError> {
+    fn mark_not_applied(&self, id: &str, expected_step: usize, expected_attempt: u8, now: u64) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(id)?;
-        if run.current_step != expected_step { return Err(RuntimeError::WrongState); }
+        if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
+            return Err(RuntimeError::WrongState);
+        }
         let i = expected_step;
         if !matches!(run.steps[i].state, StepState::Running | StepState::AwaitingResult) {
             return Err(RuntimeError::WrongState);
@@ -497,9 +499,11 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         self.save(run)
     }
 
-    fn mark_pending(&self, id: &str, expected_step: usize, now: u64, unknown: bool) -> Result<RunSnapshot, RuntimeError> {
+    fn mark_pending(&self, id: &str, expected_step: usize, expected_attempt: u8, now: u64, unknown: bool) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(id)?;
-        if run.current_step != expected_step { return Err(RuntimeError::WrongState); }
+        if run.current_step != expected_step || run.steps[expected_step].attempts != expected_attempt {
+            return Err(RuntimeError::WrongState);
+        }
         if !matches!(run.steps[expected_step].state, StepState::Running | StepState::AwaitingResult) {
             return Err(RuntimeError::WrongState);
         }
