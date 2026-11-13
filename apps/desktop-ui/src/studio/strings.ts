@@ -28,6 +28,8 @@ export const studioStrings = {
     mixedWarning: 'Review source claims independently before using them in a script.',
     workNotSaved: 'Unsaved session', idle: 'No operations needing attention',
     languageArabic: 'Arabic', languageEnglish: 'English', languageMixed: 'Arabic + English',
+    history: 'Saved AI results', historyUnavailable: 'Exact AI history is unavailable until the saved-result API is connected.',
+    openHistory: 'Reopen saved result', result: 'Saved result', closeHistory: 'Close result',
     loadingStudies: 'Loading studies…', invalidStudy: 'This study belongs to a different project.',
     selectStudy: 'Select a study', none: 'Choose…'
   },
@@ -61,6 +63,8 @@ export const studioStrings = {
     mixedWarning: 'تحقق من ادعاءات المصادر بشكل مستقل قبل استخدامها في النص.',
     workNotSaved: 'جلسة غير محفوظة', idle: 'لا توجد عمليات تحتاج الانتباه',
     languageArabic: 'العربية', languageEnglish: 'الإنجليزية', languageMixed: 'العربية والإنجليزية',
+    history: 'نتائج الذكاء الاصطناعي المحفوظة', historyUnavailable: 'إعادة فتح النتائج بدقة غير متاحة حتى اتصال واجهة النتائج المحفوظة.',
+    openHistory: 'فتح النتيجة المحفوظة', result: 'النتيجة المحفوظة', closeHistory: 'إغلاق النتيجة',
     loadingStudies: 'جارٍ تحميل الدراسات…', invalidStudy: 'هذه الدراسة تابعة لمشروع آخر.',
     selectStudy: 'اختر دراسة', none: 'اختر…'
   }
