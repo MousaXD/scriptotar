@@ -3,8 +3,8 @@
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import type { ScriptotarApi } from '../api/client';
-  import type { Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, StudioGateway, StudySourceRef } from '../studio/contract';
+  import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef } from '../studio/contract';
   import { emptyBrief } from '../studio/contract';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
@@ -14,6 +14,8 @@
   export let research: ResearchItem[] = [];
   export let transcripts: TranscriptSummary[] = [];
   export let jobs: Job[] = [];
+  export let savedRuns: AiRun[] = [];
+  export let incomingArtifactId = '';
   export let gateway: StudioGateway | undefined = undefined;
   export let incoming: (StudySourceRef & { projectId: string }) | null = null;
   export let onNavigate: (view: ViewId) => void = () => {};
@@ -31,6 +33,11 @@
   let sourceError = '';
   let sourceQuery = '';
   let prompt = '';
+  let historical: HistoricalAiArtifact | null = null;
+  let historyLoading = false;
+  let historyError = '';
+  let historyEpoch = 0;
+  let consumedArtifactId = '';
   let preparing = false;
   let busy = false;
   let saving = false;
@@ -45,6 +52,10 @@
   let consumedIncoming = '';
 
   $: t = studioStrings[$locale];
+  $: if (incomingArtifactId && incomingArtifactId !== consumedArtifactId) {
+    consumedArtifactId = incomingArtifactId;
+    void openArtifact(incomingArtifactId);
+  }
   $: selectedResearch = selectedSource?.kind === 'research'
     ? research.find((item) => item.id === selectedSource?.id) : undefined;
   $: selectedTranscript = selectedSource?.kind === 'transcript'
@@ -73,6 +84,7 @@
     currentRequest++;
     sourceRequest++;
     promptRequest++;
+    historyEpoch++;
     if (saveTimer) clearTimeout(saveTimer);
   });
 
@@ -292,6 +304,31 @@
     }
   }
 
+  async function openArtifact(id: string) {
+    const epoch = ++historyEpoch;
+    historical = null;
+    historyError = '';
+    if (!savedRuns.some((run) => run.id === id)) {
+      historyError = t.previewUnavailable;
+      return;
+    }
+    if (!gateway?.getAiArtifact) {
+      historyError = t.historyUnavailable;
+      return;
+    }
+    historyLoading = true;
+    try {
+      const item = await gateway.getAiArtifact(projectId, id);
+      if (epoch !== historyEpoch) return;
+      if (item.id !== id || item.projectId !== projectId) throw new Error(t.invalidStudy);
+      historical = item;
+    } catch (cause) {
+      if (epoch === historyEpoch) historyError = message(cause, t.errorLoad);
+    } finally {
+      if (epoch === historyEpoch) historyLoading = false;
+    }
+  }
+
   function exportDraft(extension: 'txt' | 'md') {
     if (!draft.trim()) { error = t.emptyDraft; return; }
     const basename = (brief.title || 'script').replace(/[^a-zA-Z0-9\u0600-\u06FF_-]+/g, '-').slice(0, 60) || 'script';
@@ -373,6 +410,15 @@
         {/each}
       </details>
     </section>
+    <section class="panel studio-history">
+      <h2>{t.history}</h2>
+      {#each savedRuns.slice(0, 15) as run (run.id)}
+        <button class="history-entry" type="button" on:click={() => void openArtifact(run.id)}
+          aria-label={t.openHistory + ': ' + run.title} dir="auto">{run.title}</button>
+      {/each}
+      {#if historyLoading}<p role="status">{t.sourceLoading}</p>{/if}
+      {#if historyError}<p role="alert">{historyError}</p>{/if}
+    </section>
     <section class="panel studio-activity">
       <div class="section-heading"><h2>{t.activity}</h2><button class="text-button" type="button" on:click={() => onNavigate('jobs')}>{t.openQueue}</button></div>
       {#if attention.length}
@@ -402,11 +448,19 @@
           { value: 'Arabic', label: t.languageArabic }, { value: 'English', label: t.languageEnglish },
           { value: 'Arabic + English', label: t.languageMixed }
         ]} onChange={(value) => { brief.language = value; queueSave(); }} />
-        <label>{t.duration}<input type="number" min="5" max="600" bind:value={brief.duration} on:input={queueSave} /></label>
+        <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" bind:value={brief.duration} on:input={queueSave} /></label>
         <label class="wide">{t.style}<input bind:value={brief.style} on:input={queueSave} dir="auto" placeholder={t.stylePlaceholder} /></label>
       </div>
     </section>
 
+    {#if historical}
+      <section class="panel studio-historical">
+        <div class="section-heading"><h2>{t.result}: {historical.title}</h2>
+          <button type="button" class="text-button" on:click={() => historical = null}>{t.closeHistory}</button>
+        </div>
+        <pre dir="auto">{historical.result}</pre>
+      </section>
+    {/if}
     <section class="panel studio-editor">
       <div class="section-heading">
         <h2>{t.script}</h2>
@@ -501,6 +555,9 @@
   .brief-grid > label { display: grid; min-width: 0; gap: 6px; color: var(--color-text); font-size: var(--text-sm); font-weight: 600; }
   .brief-grid .wide { grid-column: 1 / -1; }
   .brief-grid input, .brief-grid textarea { min-width: 0; width: 100%; resize: vertical; }
+  .history-entry { display: block; width: 100%; padding: 8px; margin: 3px 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; text-align: start; overflow-wrap: anywhere; font-size: var(--text-xs); }
+  .history-entry:hover, .history-entry:focus-visible { border-color: var(--color-border-strong); background: var(--color-surface-raised); }
+  .studio-historical pre { max-height: 250px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--text-sm); }
   .source-list, .studio-activity ul { display: grid; gap: 7px; padding: 0; margin: 0 0 12px; list-style: none; }
   .source-list li { display: flex; align-items: center; min-width: 0; }
   .source-list li > button:first-child { flex: 1; min-width: 0; padding: 7px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; overflow-wrap: anywhere; text-align: start; font-size: var(--text-xs); }
