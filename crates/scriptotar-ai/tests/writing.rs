@@ -151,6 +151,7 @@ fn typed_drafts_require_declared_supported_facts() {
     let draft = parse_draft(include_str!("fixtures/draft.json"), &request).unwrap();
     assert_eq!(draft.claims[0].status, ClaimStatus::Supported);
     assert_eq!(draft.beats.len(), 3);
+    assert!(draft.beats.iter().all(|beat| !beat.manually_edited));
 
     let mut invalid = draft.clone();
     invalid.claims[0].evidence_ids = vec!["pattern".to_owned()];
