@@ -1,16 +1,22 @@
-use chrono::{Duration, Utc};
 use scriptotar_core::ResearchItem;
 use uuid::Uuid;
 
 use crate::intelligence::{
     compare_creator_views, deduplicate_snapshots, extract_transcript_outline, observed_view_growth,
     ComparisonLimitation, CreativeBeat, CreatorComparison, GrowthLimitation, IntelligenceError,
-    MetricSnapshot, PublicationDate, SourceAccess, SourceConfidence, TranscriptFeature,
+    MetricSnapshot, ObservationTimestamp, PublicationDate, SourceAccess, SourceConfidence, TranscriptFeature,
     TranscriptScope, TranscriptSegment, propose_transcript_hypothesis, count_transcript_features,
 };
 
 fn item(project: Uuid, creator: Option<Uuid>, id: Uuid, url: &str, days_old: i64, views: Option<i64>) -> ResearchItem {
-    let observed_at = Utc::now();
+    let publication = match days_old {
+        2 => "2026-11-11",
+        5 => "2026-11-08",
+        8 => "2026-11-05",
+        10 => "2026-11-03",
+        150 => "2026-06-16",
+        _ => "2026-11-03",
+    };
     ResearchItem {
         id,
         project_id: project,
@@ -21,10 +27,10 @@ fn item(project: Uuid, creator: Option<Uuid>, id: Uuid, url: &str, days_old: i64
         view_count: views,
         like_count: Some(8),
         comment_count: Some(2),
-        published_at: Some((observed_at - Duration::days(days_old)).format("%Y-%m-%d").to_string()),
+        published_at: Some(publication.to_owned()),
         duration_seconds: None,
         raw_json: None,
-        scanned_at: observed_at.to_rfc3339(),
+        scanned_at: "2026-11-13T10:00:00Z".into(),
     }
 }
 
@@ -137,7 +143,7 @@ fn same_creator_age_matched_comparison_does_not_mix_projects_or_sources() {
             &item(p, c, Uuid::new_v4(), &url(n), 10, Some((n as i64 - 1) * 100))
         ).unwrap())
         .collect();
-    let result = compare_creator_views(&target, &peers, Utc::now(), 1).unwrap();
+    let result = compare_creator_views(&target, &peers, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap();
     match result {
         CreatorComparison::Observed { peer_count, median_peer_views, views_relative_to_peer_median, .. } => {
             assert_eq!(peer_count, 3);
@@ -152,16 +158,16 @@ fn same_creator_age_matched_comparison_does_not_mix_projects_or_sources() {
         peer
     }).collect::<Vec<_>>();
     assert!(matches!(
-        compare_creator_views(&target, &mismatched_project, Utc::now(), 1).unwrap(),
+        compare_creator_views(&target, &mismatched_project, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
         CreatorComparison::Unavailable {
             reason: ComparisonLimitation::InsufficientAgeMatchedPeers,
             eligible_peers: 0
         }
     ));
     let mut stale = target.clone();
-    stale.observed_at -= Duration::days(70);
+    stale.observed_at = stale.observed_at.add_seconds(-70 * 86_400);
     assert!(matches!(
-        compare_creator_views(&stale, &peers, Utc::now(), 30).unwrap(),
+        compare_creator_views(&stale, &peers, ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 30).unwrap(),
         CreatorComparison::Unavailable { reason: ComparisonLimitation::StaleObservation, .. }
     ));
 }
@@ -173,7 +179,7 @@ fn missing_or_age_incompatible_peers_do_not_make_a_rank() {
     let target = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(1), 5, Some(100))).unwrap();
     let peer = MetricSnapshot::from_research_item(&item(p, c, Uuid::new_v4(), &url(2), 150, Some(500))).unwrap();
     assert!(matches!(
-        compare_creator_views(&target, &[peer], Utc::now(), 1).unwrap(),
+        compare_creator_views(&target, &[peer], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
         CreatorComparison::Unavailable {
             reason: ComparisonLimitation::InsufficientAgeMatchedPeers,
             eligible_peers: 0
@@ -182,7 +188,7 @@ fn missing_or_age_incompatible_peers_do_not_make_a_rank() {
     let mut unknown = target.clone();
     unknown.published = PublicationDate::Missing;
     assert!(matches!(
-        compare_creator_views(&unknown, &[], Utc::now(), 1).unwrap(),
+        compare_creator_views(&unknown, &[], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap(),
         CreatorComparison::Unavailable { reason: ComparisonLimitation::UnknownUploadDate, .. }
     ));
 }
@@ -192,7 +198,7 @@ fn growth_requires_two_monotonic_timestamps_and_counters() {
     let p = Uuid::new_v4();
     let older = MetricSnapshot::from_research_item(&item(p, None, Uuid::new_v4(), &url(1), 8, Some(100))).unwrap();
     let mut newer = older.clone();
-    newer.observed_at += Duration::hours(12);
+    newer.observed_at = newer.observed_at.add_seconds(12 * 3_600);
     newer.views = Some(150);
     let growth = observed_view_growth(&older, &newer).unwrap().unwrap();
     assert_eq!(growth.observed_view_increase, 50);
@@ -317,7 +323,21 @@ fn conflicting_peer_observations_cannot_determine_creator_median() {
     b.research_item_id = Uuid::new_v4();
     b.views = Some(200);
     assert_eq!(
-        compare_creator_views(&target, &[a, b], Utc::now(), 1).unwrap_err(),
+        compare_creator_views(&target, &[a, b], ObservationTimestamp::parse_rfc3339("2026-11-13T18:00:00Z").unwrap(), 1).unwrap_err(),
         IntelligenceError::ContradictoryObservation
     );
+}
+
+#[test]
+fn utc_offsets_and_calendar_validation_are_unambiguous() {
+    let utc = ObservationTimestamp::parse_rfc3339("2026-11-13T10:00:00Z").unwrap();
+    let offset = ObservationTimestamp::parse_rfc3339("2026-11-13T14:00:00+04:00").unwrap();
+    assert_eq!(utc, offset);
+    let fractional = ObservationTimestamp::parse_rfc3339("2026-11-13T10:00:00.123456789Z").unwrap();
+    assert_eq!(fractional.unix_seconds, utc.unix_seconds);
+    assert_eq!(fractional.nanosecond, 123456789);
+    assert!(ObservationTimestamp::parse_rfc3339("2026-02-29T10:00:00Z").is_none());
+    assert!(ObservationTimestamp::parse_rfc3339("2026-11-13T10:00:00+99:00").is_none());
+    assert!(ObservationTimestamp::parse_rfc3339("2026-11-13T10:00:00").is_none());
+    assert!(ObservationTimestamp::parse_rfc3339("2024-02-29T10:00:00Z").is_some());
 }
