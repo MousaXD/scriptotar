@@ -333,3 +333,54 @@ fn deleting_project_cascades_study_history_without_orphans() {
         assert_eq!(count, 0, "orphaned records in {table}");
     }
 }
+
+
+#[test]
+fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
+    let (temp, store, project, _) = fixture();
+    let job = Job::new(project.id, JobInput::LocalFile("/tmp/legacy-v5.mp4".into()));
+    store.insert_job(&job).unwrap();
+    drop(store);
+
+    // Strip only the unmerged v6 additions to model a genuine 1.4.1 v5 file.
+    // A fake v5 user_version over an existing v6 schema is not a valid fixture.
+    let path = temp.path().join("scriptotar.sqlite");
+    let conn = Connection::open(&path).unwrap();
+    let mut stmt = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger'
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')"
+    ).unwrap();
+    let names = stmt.query_map([], |row| row.get::<_, String>(0)).unwrap()
+        .collect::<Result<Vec<_>, _>>().unwrap();
+    drop(stmt);
+    for trigger in names {
+        conn.execute_batch(&format!("DROP TRIGGER \"{trigger}\";")).unwrap();
+    }
+    conn.execute_batch(
+        "DROP TABLE draft_source_links;
+         DROP TABLE study_source_jobs;
+         DROP TABLE draft_versions;
+         DROP TABLE creative_drafts;
+         DROP TABLE study_briefs;
+         DROP TABLE study_evidence;
+         DROP TABLE study_sources;
+         DROP TABLE content_studies;
+         DELETE FROM schema_migrations WHERE version = 6;
+         PRAGMA user_version = 5;"
+    ).unwrap();
+    assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(), 5);
+    drop(conn);
+
+    let upgraded = SqliteStore::open(&path).unwrap();
+    upgraded.run_integration_migrations().unwrap();
+    assert_eq!(upgraded.schema_version().unwrap(), 6);
+    assert_eq!(upgraded.get_project(project.id).unwrap(), project);
+    assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
+    let study = upgraded.create_study(project.id, "Fresh", "after upgrade").unwrap();
+    assert_eq!(upgraded.get_study(project.id, study.id).unwrap().title, "Fresh");
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM schema_migrations WHERE version=6",
+                       [], |row| row.get::<_, i64>(0)).unwrap(), 1
+    );
+}
