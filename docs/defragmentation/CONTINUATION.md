@@ -3,6 +3,7 @@
 **Prepared:** 2026-11-13 UTC+04 (planning task; no application code changed).
 **Repo:** https://github.com/MousaXD/scriptotar
 **Working branch:** plan/scriptotar-defragmentation
+**Open draft planning PR:** https://github.com/MousaXD/scriptotar/pull/102 (do not merge merely because the plan exists)
 **Base main SHA at branch creation:** 69e60f91c0b00560332dac06b732fc2259c1d632
 **Docs:** [README](README.md) and [P0–P3 roadmap](ROADMAP_P0_P3.md)
 **Current implementation status:** PLANNING COMPLETE ONLY; P0-00/P0-01 not implemented, no claims of new QA or released behavior.
