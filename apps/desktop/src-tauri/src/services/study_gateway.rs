@@ -448,6 +448,97 @@ mod tests {
     }
 
     #[test]
+    fn studio_keeps_real_source_provenance_and_rejects_linked_source_removal_atomically() {
+        let dir = TempDir::new().unwrap();
+        let project_id;
+        let study_id;
+        let research_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let evidence_id;
+        {
+            let services = AppServices::new(dir.path()).unwrap();
+            project_id = services.active_project_id().unwrap();
+            let source_id = Uuid::new_v4();
+            let media_id = Uuid::new_v4();
+            let conn = rusqlite::Connection::open(services.store.path()).unwrap();
+            conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+            conn.execute(
+                "INSERT INTO research_items(id,project_id,source_url,platform,scanned_at)
+                 VALUES(?1,?2,'https://example.org/study/source','sample','2026-11-13T10:00:00Z')",
+                rusqlite::params![research_id.to_string(), project_id.to_string()],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+                 VALUES(?1,?2,NULL,'url','https://example.org/study/source','2026-11-13T10:00:00Z')",
+                rusqlite::params![source_id.to_string(), project_id.to_string()],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO media(id,source_id,local_path,created_at)
+                 VALUES(?1,?2,'/tmp/study-fixture.mp4','2026-11-13T10:00:00Z')",
+                rusqlite::params![media_id.to_string(), source_id.to_string()],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+                 VALUES(?1,?2,'Source with a timecode','2026-11-13T10:00:00Z','2026-11-13T10:00:00Z')",
+                rusqlite::params![transcript_id.to_string(), media_id.to_string()],
+            ).unwrap();
+            let study = services.create_studio_study(project_id, example_brief()).unwrap();
+            study_id = Uuid::parse_str(&study.id).unwrap();
+            let sources = vec![
+                UiStudioSourceRef { kind: "research".into(), id: research_id.to_string() },
+                UiStudioSourceRef { kind: "transcript".into(), id: transcript_id.to_string() },
+            ];
+            let saved = services.save_studio_study(
+                project_id, study_id, study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(sources.clone()),
+                    draft: Some("Original referenced draft".into()),
+                },
+            ).unwrap();
+            assert_eq!(saved.sources, sources);
+            assert_eq!(saved.draft, "Original referenced draft");
+            let stored_sources = services.store.list_study_sources(project_id, study_id).unwrap();
+            assert_eq!(stored_sources.len(), 2);
+            let transcript_source = stored_sources.iter()
+                .find(|item| item.reference_id == Some(transcript_id)).unwrap();
+            let evidence = services.store.add_evidence_reference(
+                project_id, study_id,
+                &scriptotar_core::EvidenceInput {
+                    study_source_id: transcript_source.id,
+                    claim: "Transcript contains a literal spoken example".into(),
+                    locator: "0:00-0:05".into(),
+                    timestamp_seconds: Some(0.0),
+                    certainty: scriptotar_core::EvidenceCertainty::Unverified,
+                    uncertainty_note: None,
+                },
+            ).unwrap();
+            evidence_id = evidence.id;
+            assert!(matches!(
+                services.save_studio_study(
+                    project_id, study_id, saved.revision,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: Some(vec![sources[0].clone()]),
+                        draft: Some("Must not commit this edit".into()),
+                    },
+                ),
+                Err(RepositoryError::Conflict(_))
+            ));
+            let unchanged = services.get_studio_study(project_id, study_id).unwrap();
+            assert_eq!(unchanged.revision, saved.revision);
+            assert_eq!(unchanged.sources, sources);
+            assert_eq!(unchanged.draft, saved.draft);
+        }
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let restored = reopened.get_studio_study(project_id, study_id).unwrap();
+        assert_eq!(restored.sources.len(), 2);
+        assert_eq!(restored.draft, "Original referenced draft");
+        let evidence = reopened.store.get_evidence_reference(project_id, study_id, evidence_id).unwrap();
+        assert_eq!(evidence.input.locator, "0:00-0:05");
+    }
+
+    #[test]
     fn invalid_source_is_rejected_before_study_revision_changes() {
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
