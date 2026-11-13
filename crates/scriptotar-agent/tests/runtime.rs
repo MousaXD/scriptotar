@@ -385,6 +385,13 @@ fn every_state_is_serializable_and_recovery_does_not_claim_false_success() {
         if matches!(state, RunState::Running | RunState::Cancelling | RunState::NeedsInput | RunState::Blocked) {
             r.steps[0].state = StepState::Running;
         }
+        if state == RunState::Completed {
+            r.steps[0].state = StepState::Completed;
+            r.steps[0].output = Some(output("artifact_1"));
+            r.current_step = 1;
+        }
+        if state == RunState::Failed { r.steps[0].state = StepState::Failed; }
+        if state == RunState::Cancelled { r.steps[0].state = StepState::Cancelled; }
         let bytes = serde_json::to_vec(&r).unwrap();
         let decoded: RunSnapshot = serde_json::from_slice(&bytes).unwrap();
         let restarted = Engine::new(MemoryStore::from_snapshots([decoded]), d.clone(), e.policy.clone(), e.registry.clone());
@@ -504,4 +511,15 @@ fn pending_service_step_can_pause_without_discarding_service_id() {
     assert_eq!(e.reconcile("run_1", 2), Err(RuntimeError::WrongState));
     assert_eq!(e.resume("run_1", 3).unwrap().state, RunState::NeedsInput);
     assert_eq!(e.get("run_1").unwrap().steps[0].pending_effect_id.as_deref(), Some("job_1"));
+}
+
+#[test]
+fn corrupt_checkpoint_is_rejected_without_issuing_tools() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    let mut snapshot = e.create(plan(vec![step("s1")]), 0).unwrap();
+    snapshot.current_step = usize::MAX;
+    let restarted = Engine::new(MemoryStore::from_snapshots([snapshot]), d.clone(), e.policy.clone(), e.registry.clone());
+    assert_eq!(restarted.recover("run_1", 1), Err(RuntimeError::InvalidPlan));
+    assert_eq!(d.calls(), 0);
 }
