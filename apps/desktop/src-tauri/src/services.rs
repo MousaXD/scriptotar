@@ -273,6 +273,15 @@ impl AppServices {
     }
 
     pub fn enqueue_local_media(&self, project_id: Uuid, path: String) -> RepositoryResult<Job> {
+        // A delayed/stale UI command must never enqueue work in another project.
+        let active = self.active_project.lock().map_err(|_| {
+            RepositoryError::Storage("active project lock poisoned".to_owned())
+        })?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let input_path = Path::new(path.trim());
         if !input_path.is_file() {
@@ -295,6 +304,14 @@ impl AppServices {
     }
 
     pub fn enqueue_url(&self, project_id: Uuid, url: String) -> RepositoryResult<Job> {
+        let active = self.active_project.lock().map_err(|_| {
+            RepositoryError::Storage("active project lock poisoned".to_owned())
+        })?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let validated = NetworkPolicy
             .validate(url.trim())
@@ -308,13 +325,30 @@ impl AppServices {
     }
 
     pub fn cancel_job(&self, job_id: Uuid) -> RepositoryResult<()> {
-        self.store.get_job(job_id)?;
+        let active = self.active_project.lock().map_err(|_| {
+            RepositoryError::Storage("active project lock poisoned".to_owned())
+        })?;
+        let job = self.store.get_job(job_id)?;
+        if job.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         self.orchestrator
             .cancel(job_id)
             .map_err(|error| RepositoryError::Storage(error.to_string()))
     }
 
     pub fn retry_job(&self, job_id: Uuid) -> RepositoryResult<Job> {
+        let active = self.active_project.lock().map_err(|_| {
+            RepositoryError::Storage("active project lock poisoned".to_owned())
+        })?;
+        let previous = self.store.get_job(job_id)?;
+        if previous.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         let job = JobService::new(self.store.clone()).retry(job_id)?;
         self.orchestrator
             .enqueue(job.id)
@@ -1728,6 +1762,48 @@ mod tests {
                 .id,
             research_id.to_string()
         );
+    }
+
+    #[test]
+    fn job_mutations_and_enqueue_reject_foreign_and_stale_project_commands() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let original_project = bootstrap_active_id(&services.bootstrap().unwrap());
+        let foreign_job = Job::new(
+            original_project,
+            JobInput::Url("https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()),
+        );
+        services.store.insert_job(&foreign_job).unwrap();
+
+        let other_project =
+            bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        assert_ne!(original_project, other_project);
+
+        // These calls previously accepted any existing project's id or job.
+        assert!(matches!(
+            services.cancel_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.retry_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_url(
+                original_project,
+                "https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()
+            ),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_local_media(original_project, "/does/not/exist.mp4".to_owned()),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert_eq!(
+            services.store.get_job(foreign_job.id).unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(services.store.list_jobs(Some(other_project)).unwrap().len(), 0);
     }
 
     #[test]
