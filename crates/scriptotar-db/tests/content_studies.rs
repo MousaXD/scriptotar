@@ -417,6 +417,7 @@ fn job_and_draft_attachment_scopes_and_immutability() {
         .unwrap();
     let duplicate = db.duplicate_draft(a.id, draft.id).unwrap();
     assert_eq!(duplicate.body, "v1");
+    assert_eq!(db.list_draft_source_ids(a.id, duplicate.id).unwrap(), vec![source.id]);
     let version = db.list_draft_versions(a.id, draft.id).unwrap().remove(0);
     let conn = Connection::open(db.path()).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
