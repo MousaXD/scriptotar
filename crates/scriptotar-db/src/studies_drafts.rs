@@ -371,7 +371,9 @@ impl SqliteStore {
             .take(200)
             .collect::<String>();
         let mut db = database(self)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
         require_active_study(&tx, project_id, draft.study_id)?;
         let new_id = Uuid::new_v4();
         let now = now_rfc3339();
@@ -379,20 +381,40 @@ impl SqliteStore {
             "INSERT INTO creative_drafts(
                 id,project_id,study_id,title,body,revision,created_at,updated_at
              ) VALUES(?1,?2,?3,?4,?5,1,?6,?6)",
-            params![new_id.to_string(), project_id.to_string(), draft.study_id.to_string(),
-                    title, draft.body, now],
-        ).map_err(db_error)?;
+            params![
+                new_id.to_string(),
+                project_id.to_string(),
+                draft.study_id.to_string(),
+                title,
+                draft.body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
         tx.execute(
             "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
              VALUES(?1,?2,1,?3,?4,?5)",
-            params![Uuid::new_v4().to_string(), new_id.to_string(), title, draft.body, now],
-        ).map_err(db_error)?;
+            params![
+                Uuid::new_v4().to_string(),
+                new_id.to_string(),
+                title,
+                draft.body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
         tx.execute(
             "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
              SELECT project_id,?1,study_source_id,?2
              FROM draft_source_links WHERE project_id=?3 AND draft_id=?4",
-            params![new_id.to_string(), now, project_id.to_string(), draft_id.to_string()],
-        ).map_err(db_error)?;
+            params![
+                new_id.to_string(),
+                now,
+                project_id.to_string(),
+                draft_id.to_string()
+            ],
+        )
+        .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         self.get_draft(project_id, new_id)
     }
