@@ -57,11 +57,16 @@ impl ScopedAgentCheckpointStore {
             .map_err(|_| StoreError::Unavailable)?;
         let rows = statement
             .query_map(
-                params![self.project_id.to_string(), self.study_id.to_string(), limit as i64],
+                params![
+                    self.project_id.to_string(),
+                    self.study_id.to_string(),
+                    limit as i64
+                ],
                 |row| row.get::<_, String>(0),
             )
             .map_err(|_| StoreError::Unavailable)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|_| StoreError::Unavailable)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| StoreError::Unavailable)
     }
 
     fn verify_snapshot(&self, snapshot: &RunSnapshot) -> Result<(), StoreError> {

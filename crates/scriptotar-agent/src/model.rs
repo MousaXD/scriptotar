@@ -18,16 +18,34 @@ pub enum ToolKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "tool", rename_all = "snake_case")]
 pub enum StepInput {
-    DiscoverResearch { query: String },
-    SelectResearch { source_ids: Vec<String> },
-    QueueTranscript { source_id: String },
-    ReadTranscript { job_id: String },
+    DiscoverResearch {
+        query: String,
+    },
+    SelectResearch {
+        source_ids: Vec<String>,
+    },
+    QueueTranscript {
+        source_id: String,
+    },
+    ReadTranscript {
+        job_id: String,
+    },
     /// A specific already-attached transcript, never an arbitrary job ID.
-    ReadStudyTranscript { transcript_id: String },
-    AnalyzeEvidence { source_ids: Vec<String> },
-    DraftScript { brief_id: String },
-    ReviseScript { draft_id: String },
-    SaveArtifact { draft_id: String },
+    ReadStudyTranscript {
+        transcript_id: String,
+    },
+    AnalyzeEvidence {
+        source_ids: Vec<String>,
+    },
+    DraftScript {
+        brief_id: String,
+    },
+    ReviseScript {
+        draft_id: String,
+    },
+    SaveArtifact {
+        draft_id: String,
+    },
 }
 
 impl StepInput {

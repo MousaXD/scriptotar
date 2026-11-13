@@ -30,8 +30,9 @@ fn unavailable() -> RepositoryError {
 
 fn run_error(error: RuntimeError) -> RepositoryError {
     match error {
-        RuntimeError::Store(scriptotar_agent::StoreError::NotFound)
-        | RuntimeError::NotFound => RepositoryError::NotFound("agent run".into()),
+        RuntimeError::Store(scriptotar_agent::StoreError::NotFound) | RuntimeError::NotFound => {
+            RepositoryError::NotFound("agent run".into())
+        }
         RuntimeError::Store(scriptotar_agent::StoreError::Conflict) => {
             RepositoryError::Conflict("agent run changed during another operation".into())
         }
@@ -72,15 +73,21 @@ fn checked_source(
                 && entry.reference_id == Some(id)
         });
     if !attached {
-        return Err(RepositoryError::NotFound("transcript not attached to study".into()));
+        return Err(RepositoryError::NotFound(
+            "transcript not attached to study".into(),
+        ));
     }
     let bundle = services.store.get_transcript_bundle(id)?;
     if bundle.project_id != project {
-        return Err(RepositoryError::NotFound("transcript in active project".into()));
+        return Err(RepositoryError::NotFound(
+            "transcript in active project".into(),
+        ));
     }
     let bytes = bundle.transcript.text.len() as u64;
     if bytes > MAX_LOCAL_TRANSCRIPT_BYTES {
-        return Err(RepositoryError::Validation("local transcript exceeds inspection limit".into()));
+        return Err(RepositoryError::Validation(
+            "local transcript exceeds inspection limit".into(),
+        ));
     }
     services.require_active_project(project)?;
     Ok(bytes)
@@ -113,7 +120,11 @@ struct LocalStudyDriver {
     gate: LocalStudyGate,
 }
 impl LocalStudyDriver {
-    fn inspect(&self, ctx: &ExecutionContext, input: &StepInput) -> Result<StepOutput, ToolFailure> {
+    fn inspect(
+        &self,
+        ctx: &ExecutionContext,
+        input: &StepInput,
+    ) -> Result<StepOutput, ToolFailure> {
         let fail = || ToolFailure {
             code: "not_found".into(),
             retryable: false,
@@ -178,15 +189,25 @@ impl AppServices {
         ))
     }
 
-    fn validate_local_run(&self, run: &RunSnapshot, project: Uuid, study: Uuid) -> RepositoryResult<()> {
+    fn validate_local_run(
+        &self,
+        run: &RunSnapshot,
+        project: Uuid,
+        study: Uuid,
+    ) -> RepositoryResult<()> {
         if run.plan.project_id != project.to_string()
             || run.plan.study_id != study.to_string()
             || run.plan.steps.len() != 1
-            || !matches!(run.plan.steps[0].input, StepInput::ReadStudyTranscript { .. })
+            || !matches!(
+                run.plan.steps[0].input,
+                StepInput::ReadStudyTranscript { .. }
+            )
             || run.plan.steps[0].estimate.cost_microusd != 0
             || run.plan.steps[0].estimate.tokens != 0
         {
-            return Err(RepositoryError::Validation("unsupported agent run type".into()));
+            return Err(RepositoryError::Validation(
+                "unsupported agent run type".into(),
+            ));
         }
         Ok(())
     }
@@ -234,9 +255,14 @@ impl AppServices {
         engine.tick(&run.plan.id, now).map_err(run_error)
     }
 
-    pub fn list_local_inspections(&self, project: Uuid, study: Uuid) -> RepositoryResult<Vec<RunSnapshot>> {
+    pub fn list_local_inspections(
+        &self,
+        project: Uuid,
+        study: Uuid,
+    ) -> RepositoryResult<Vec<RunSnapshot>> {
         let engine = self.local_engine(project, study)?;
-        engine.store
+        engine
+            .store
             .list_run_ids(25)
             .map_err(|_| unavailable())?
             .into_iter()
@@ -270,14 +296,19 @@ impl AppServices {
                 // The approved action is only a locally bounded, already-attached read.
                 engine.tick(&approved.plan.id, now).map_err(run_error)?
             }
-            "deny" => engine.deny(run_id, "inspect_transcript", now).map_err(run_error)?,
+            "deny" => engine
+                .deny(run_id, "inspect_transcript", now)
+                .map_err(run_error)?,
             "cancel" => engine.cancel(run_id, now).map_err(run_error)?,
             "recover" => {
                 let result = engine.recover(run_id, now).map_err(run_error)?;
                 if result.state == scriptotar_agent::RunState::Blocked
                     && result.steps.first().is_some_and(|step| {
-                        matches!(step.state, scriptotar_agent::StepState::Running
-                            | scriptotar_agent::StepState::AwaitingResult)
+                        matches!(
+                            step.state,
+                            scriptotar_agent::StepState::Running
+                                | scriptotar_agent::StepState::AwaitingResult
+                        )
                     })
                 {
                     engine.reconcile(run_id, now).map_err(run_error)?
@@ -285,7 +316,11 @@ impl AppServices {
                     result
                 }
             }
-            _ => return Err(RepositoryError::Validation("unsupported agent action".into())),
+            _ => {
+                return Err(RepositoryError::Validation(
+                    "unsupported agent action".into(),
+                ))
+            }
         };
         self.validate_local_run(&next, project, study)?;
         Ok(next)
@@ -307,27 +342,34 @@ mod tests {
             "INSERT INTO sources(id,project_id,source_type,locator,created_at)
              VALUES(?1,?2,'local_file','fixture.mp4','2026-11-13T10:00:00Z')",
             params![source.to_string(), project.to_string()],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO media(id,source_id,local_path,created_at)
              VALUES(?1,?2,'fixture.mp4','2026-11-13T10:00:00Z')",
             params![media.to_string(), source.to_string()],
-        ).unwrap();
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
              VALUES(?1,?2,'A locally stored transcript','2026-11-13T10:00:00Z','2026-11-13T10:00:00Z')",
             params![transcript.to_string(), media.to_string()],
         ).unwrap();
-        services.store.add_study_source(
-            project, study, &scriptotar_core::StudySourceInput {
-                kind: StudySourceKind::Transcript,
-                reference_id: Some(transcript),
-                locator: None,
-                manual_text: None,
-                source_revision: None,
-                uncertainty: None,
-            }
-        ).unwrap();
+        services
+            .store
+            .add_study_source(
+                project,
+                study,
+                &scriptotar_core::StudySourceInput {
+                    kind: StudySourceKind::Transcript,
+                    reference_id: Some(transcript),
+                    locator: None,
+                    manual_text: None,
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
         transcript
     }
 
@@ -338,9 +380,15 @@ mod tests {
         {
             let services = AppServices::new(temp.path()).unwrap();
             project = services.active_project_id().unwrap();
-            study = services.store.create_study(project, "Inspect", "").unwrap().id;
+            study = services
+                .store
+                .create_study(project, "Inspect", "")
+                .unwrap()
+                .id;
             transcript = attached_transcript(&services, project, study);
-            let run = services.start_local_inspection(project, study, transcript).unwrap();
+            let run = services
+                .start_local_inspection(project, study, transcript)
+                .unwrap();
             assert_eq!(run.state, scriptotar_agent::RunState::AwaitingApproval);
             assert_eq!(run.usage.tool_calls, 0);
             id = run.plan.id;
@@ -349,11 +397,18 @@ mod tests {
         let previous = reopened.list_local_inspections(project, study).unwrap();
         assert_eq!(previous.len(), 1);
         assert_eq!(previous[0].plan.id, id);
-        let approved = reopened.decide_local_inspection(project, study, &id, "approve").unwrap();
+        let approved = reopened
+            .decide_local_inspection(project, study, &id, "approve")
+            .unwrap();
         assert_eq!(approved.state, scriptotar_agent::RunState::Completed);
-        assert_eq!(approved.steps[0].output.as_ref().unwrap().artifact_id, transcript.to_string());
+        assert_eq!(
+            approved.steps[0].output.as_ref().unwrap().artifact_id,
+            transcript.to_string()
+        );
         assert_eq!(approved.usage.reserved_cost_microusd, 0);
-        assert!(reopened.decide_local_inspection(project, study, &id, "approve").is_err());
+        assert!(reopened
+            .decide_local_inspection(project, study, &id, "approve")
+            .is_err());
     }
 
     #[test]
@@ -361,19 +416,39 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let services = AppServices::new(temp.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let study = services.store.create_study(project, "Inspect", "").unwrap().id;
+        let study = services
+            .store
+            .create_study(project, "Inspect", "")
+            .unwrap()
+            .id;
         let random = Uuid::new_v4();
-        assert!(services.start_local_inspection(project, study, random).is_err());
+        assert!(services
+            .start_local_inspection(project, study, random)
+            .is_err());
         let transcript = attached_transcript(&services, project, study);
-        let other_study = services.store.create_study(project, "Other", "").unwrap().id;
-        assert!(services.start_local_inspection(project, other_study, transcript).is_err());
-        let run = services.start_local_inspection(project, study, transcript).unwrap();
+        let other_study = services
+            .store
+            .create_study(project, "Other", "")
+            .unwrap()
+            .id;
+        assert!(services
+            .start_local_inspection(project, other_study, transcript)
+            .is_err());
+        let run = services
+            .start_local_inspection(project, study, transcript)
+            .unwrap();
         let other_project = scriptotar_core::Project::new("Other project");
         services.store.create_project(&other_project).unwrap();
-        assert!(services.list_local_inspections(other_project.id, study).is_err());
-        assert!(services.decide_local_inspection(project, other_study, &run.plan.id, "approve").is_err());
+        assert!(services
+            .list_local_inspections(other_project.id, study)
+            .is_err());
+        assert!(services
+            .decide_local_inspection(project, other_study, &run.plan.id, "approve")
+            .is_err());
         services.store.archive_study(project, study).unwrap();
-        assert!(services.decide_local_inspection(project, study, &run.plan.id, "approve").is_err());
+        assert!(services
+            .decide_local_inspection(project, study, &run.plan.id, "approve")
+            .is_err());
     }
 
     #[test]
@@ -381,12 +456,22 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let services = AppServices::new(temp.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let study = services.store.create_study(project, "Inspect", "").unwrap().id;
+        let study = services
+            .store
+            .create_study(project, "Inspect", "")
+            .unwrap()
+            .id;
         let transcript = attached_transcript(&services, project, study);
-        let run = services.start_local_inspection(project, study, transcript).unwrap();
-        let denied = services.decide_local_inspection(project, study, &run.plan.id, "deny").unwrap();
+        let run = services
+            .start_local_inspection(project, study, transcript)
+            .unwrap();
+        let denied = services
+            .decide_local_inspection(project, study, &run.plan.id, "deny")
+            .unwrap();
         assert_eq!(denied.state, scriptotar_agent::RunState::Cancelled);
         assert_eq!(denied.usage.tool_calls, 0);
-        assert!(services.decide_local_inspection(project, study, &run.plan.id, "approve").is_err());
+        assert!(services
+            .decide_local_inspection(project, study, &run.plan.id, "approve")
+            .is_err());
     }
 }
