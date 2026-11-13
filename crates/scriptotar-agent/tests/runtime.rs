@@ -668,3 +668,24 @@ fn repeated_pause_and_cancel_are_idempotent() {
     let canceled_again = e.cancel("run_1", 4).unwrap();
     assert_eq!(canceled.revision, canceled_again.revision);
 }
+
+#[test]
+fn forged_checkpoint_audit_sequence_and_missing_completed_artifact_are_rejected() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    let base = e.create(plan(vec![step("s1")]), 0).unwrap();
+    let mut bad_audit = base.clone();
+    bad_audit.events[0].sequence = 3;
+    let store = MemoryStore::from_snapshots([bad_audit]);
+    let reloaded = Engine::new(store, d.clone(), e.policy.clone(), e.registry.clone());
+    assert_eq!(reloaded.get("run_1"), Err(RuntimeError::InvalidPlan));
+
+    let mut missing_output = base;
+    missing_output.state = RunState::Completed;
+    missing_output.current_step = 1;
+    missing_output.steps[0].state = StepState::Completed;
+    let store = MemoryStore::from_snapshots([missing_output]);
+    let reloaded = Engine::new(store, d.clone(), e.policy.clone(), e.registry.clone());
+    assert_eq!(reloaded.get("run_1"), Err(RuntimeError::InvalidPlan));
+    assert_eq!(d.calls(), 0);
+}
