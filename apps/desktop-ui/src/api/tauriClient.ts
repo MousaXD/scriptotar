@@ -1,5 +1,6 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
 import type { ContentStudy, CreativeBrief } from '../studio/contract';
+import type { LocalInspectionRun } from '../studio/agent';
 import type {
   AiRunDetail,
   ResearchItemDetail,
@@ -56,6 +57,12 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     getStudy: (projectId, studyId) => invoke<ContentStudy>('get_study', { projectId, studyId }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
+    startLocalInspection: (projectId, studyId, transcriptId) =>
+      invoke<LocalInspectionRun>('start_local_inspection', { projectId, studyId, transcriptId }),
+    listLocalInspections: (projectId, studyId) =>
+      invoke<LocalInspectionRun[]>('list_local_inspections', { projectId, studyId }),
+    decideLocalInspection: (projectId, studyId, runId, action) =>
+      invoke<LocalInspectionRun>('decide_local_inspection', { projectId, studyId, runId, action }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

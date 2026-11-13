@@ -42,9 +42,14 @@ export interface HistoricalAiArtifact {
   result: string | null;
   createdAt: string;
 }
+import type { LocalInspectionRun } from './agent';
+
 export interface StudioGateway {
   /** Optional until Agent 02's project-scoped exact-run detail endpoint is integrated. */
   getAiArtifact?(projectId: string, runId: string): Promise<HistoricalAiArtifact>;
+  listLocalInspections?(projectId: string, studyId: string): Promise<LocalInspectionRun[]>;
+  startLocalInspection?(projectId: string, studyId: string, transcriptId: string): Promise<LocalInspectionRun>;
+  decideLocalInspection?(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string): Promise<ContentStudy>;

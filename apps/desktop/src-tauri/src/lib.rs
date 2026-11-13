@@ -16,6 +16,8 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
+use scriptotar_agent::RunSnapshot;
+
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
     UiResearchItemDetail, UiSettings, UiStudioBrief, UiStudioStudy, UiStudioStudyPatch,
@@ -687,6 +689,62 @@ async fn save_study(
     .await
 }
 
+/// A read-only plan. Nothing executes before explicit approval.
+#[tauri::command]
+async fn start_local_inspection(
+    project_id: String,
+    study_id: String,
+    transcript_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let transcript_id = artifact_uuid(&transcript_id, "transcript id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service.start_local_inspection(project_id, study_id, transcript_id)
+            .map_err(command_error)
+    }).await
+}
+
+#[tauri::command]
+async fn list_local_inspections(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<RunSnapshot>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service.list_local_inspections(project_id, study_id)
+            .map_err(command_error)
+    }).await
+}
+
+#[tauri::command]
+async fn decide_local_inspection(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    action: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    if !scriptotar_agent::valid_id(&run_id) {
+        return Err("invalid agent run ID".into());
+    }
+    if !matches!(action.as_str(), "approve" | "deny" | "cancel" | "recover") {
+        return Err("unsupported agent action".into());
+    }
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service.decide_local_inspection(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    }).await
+}
+
 #[tauri::command]
 async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
@@ -1110,6 +1168,9 @@ pub fn run() {
             create_study,
             get_study,
             save_study,
+            start_local_inspection,
+            list_local_inspections,
+            decide_local_inspection,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,
