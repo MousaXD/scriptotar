@@ -544,3 +544,27 @@ fn backwards_clock_movement_fails_closed_instead_of_resetting_time_limit() {
     assert_eq!(e.tick("run_1", 99).unwrap().state, RunState::Blocked);
     assert_eq!(d.calls(), 0);
 }
+
+#[test]
+fn late_receipt_cannot_be_recorded_against_a_subsequent_step() {
+    let barrier = Arc::new(Barrier::new(2));
+    let d = FakeDriver { barrier: Some(barrier.clone()), ..Default::default() };
+    d.probe_result(Ok(ProbeResult::Applied(output("first_from_probe"))));
+    let e = Arc::new(engine(d.clone()));
+    e.create(plan(vec![step("s1"), step("s2")]), 0).unwrap();
+
+    let e2 = e.clone();
+    let original = thread::spawn(move || e2.tick("run_1", 1));
+    barrier.wait();
+    let reconciled = e.reconcile("run_1", 2).unwrap();
+    assert_eq!(reconciled.current_step, 1);
+    assert_eq!(reconciled.steps[0].output.unwrap().artifact_id, "first_from_probe");
+    barrier.wait();
+
+    // The first attempt finished late; its receipt cannot mutate step two.
+    assert_eq!(original.join().unwrap(), Err(RuntimeError::WrongState));
+    let final_state = e.get("run_1").unwrap();
+    assert_eq!(final_state.steps[1].state, StepState::Pending);
+    assert!(final_state.steps[1].output.is_none());
+    assert_eq!(d.calls(), 1);
+}
