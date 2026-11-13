@@ -1,0 +1,33 @@
+# Agent 07 — defragmentation QA handoff
+
+**Date:** 2026-11-13 UTC+04. **Base:** plan/scriptotar-defragmentation @ 2948918865c1960260a8c602e4dfe261c82cd0d0. **Branch:** agent-07/defragmentation-independent-qa. **Owner:** independent QA only.
+
+## Delivered
+
+1. Source-presence parity inventory across 15 existing feature/security/UI/contracts with strict change-detection tests. These are not runtime proofs.
+2. P0–P3 catalog of 25 **not-wired, not-run** approval, recovery, source, provenance, cost, security, Arabic, GUI, and scale cases.
+3. Fail-closed evidence-label validator and unit test guarding against false native PASS claims.
+4. Operator-usable process-only native startup/RSS sampler and read-only SQLite scale diagnostic, both explicitly NOT_CERTIFIED with no invented observations.
+5. Existing Chromium QA runner integration via QA-owned tooling.nodecheck.mjs; no workflow or application changes.
+6. Proposal with exact SHA and CI evidence, feature parity table, known source-level continuity gaps, performance methodology, and independent phase GO/NO-GO criteria.
+
+## Independent findings
+
+- **Confirmed by source:** Library's AI/research entries do not hand off exact artifact IDs to the destination view. Report owner: Agent 02 + Agent 03. Reproduce using two saved artifacts and compare IDs; test wrong-project/deleted handling.
+- **Clarify and test:** local Copy Prompt uses buildAiPrompt while backend has persisted run path; prompt preview versus saved history must be explicit. Owner: Agent 02 + Agent 06.
+- **Existing issue #100 remains blocking:** native installed WebView startup, memory, scale and UI evidence is not provided by browser mock timings. Do not merge based on this QA PR.
+- **Previous work preserved:** summary bootstrap, on-demand transcript detail, shell-first skeleton, project-switch safety, Chromium control tests and packaged IPC fixture infrastructure.
+
+## Status
+
+P0-00 **PARTIAL / NO-GO**. P0, P1, P2, P3 exit gates **NO-GO**, awaiting actual integrated implementation and native tests. This branch never runs an AI provider, network media download, SQLite migration or native installed application; no such PASS is claimed.
+
+## Next steps for Agent 00
+
+- Review this PR against planning branch, ensure only QA-owned paths changed, and confirm the new Node→Python guard passes at the **new PR HEAD**.
+- Freeze typed study/source/draft interfaces; assign exact-ID navigation failure and Copy Prompt history to their owners.
+- Make a required exact-integrated-SHA gate covering QA metadata plus genuine Rust/SQLite/IPC and package acceptance, without weakening existing workflows.
+- Collect genuine installed Windows/Linux performance baselines (hardware, package/exe hashes, cold/warm policy, native WebView readiness, real IPC payload, child-process RSS) and 100/1k/10k isolated datasets before performance claims.
+- Request an independent re-audit after each P0-P3 integration slice; keep main and releases untouched.
+
+This handoff is NOT a release signoff.
