@@ -200,11 +200,7 @@ impl AppServices {
 
     /// A historical AI run must be resolved by ID within its originating project.
     /// Unlike bootstrap(), this returns the exact stored prompt and result.
-    pub fn get_ai_run(
-        &self,
-        project_id: Uuid,
-        ai_run_id: Uuid,
-    ) -> RepositoryResult<UiAiRunDetail> {
+    pub fn get_ai_run(&self, project_id: Uuid, ai_run_id: Uuid) -> RepositoryResult<UiAiRunDetail> {
         self.require_active_project(project_id)?;
         let run = artifact_details::read_ai_run(&self.store, project_id, ai_run_id)?;
         self.require_active_project(project_id)?;
@@ -222,7 +218,9 @@ impl AppServices {
             .get_research_items(&[research_item_id])?
             .into_iter()
             .next()
-            .ok_or_else(|| RepositoryError::NotFound(format!("research item {research_item_id}")))?;
+            .ok_or_else(|| {
+                RepositoryError::NotFound(format!("research item {research_item_id}"))
+            })?;
         if item.project_id != project_id {
             return Err(RepositoryError::NotFound(format!(
                 "research item {research_item_id} in active project"
@@ -233,11 +231,8 @@ impl AppServices {
             .iter()
             .map(|creator| (creator.id, creator))
             .collect::<HashMap<_, _>>();
-        let queued = artifact_details::is_research_source_queued(
-            &self.store,
-            project_id,
-            &item.source_url,
-        )?;
+        let queued =
+            artifact_details::is_research_source_queued(&self.store, project_id, &item.source_url)?;
         self.require_active_project(project_id)?;
         let queued_sources = if queued {
             HashSet::from([item.source_url.clone()])
@@ -1640,7 +1635,6 @@ mod tests {
         temp.path().join("scriptotar.sqlite3")
     }
 
-
     #[test]
     fn exact_artifact_details_are_project_scoped_and_survive_restart() {
         let temp = TempDir::new().unwrap();
@@ -1727,7 +1721,11 @@ mod tests {
         assert_eq!(restored.prompt, prompt);
         assert_eq!(restored.result.as_deref(), Some(result));
         assert_eq!(
-            reopened.get_research_item(project_id, research_id).unwrap().item.id,
+            reopened
+                .get_research_item(project_id, research_id)
+                .unwrap()
+                .item
+                .id,
             research_id.to_string()
         );
     }
@@ -1741,16 +1739,26 @@ mod tests {
         input.mode = "copy".to_owned();
         input.api_key = None;
         let prompt = services.build_ai_prompt(&input).unwrap();
-        assert!(services.store.list_ai_runs(Some(project_id)).unwrap().is_empty());
+        assert!(services
+            .store
+            .list_ai_runs(Some(project_id))
+            .unwrap()
+            .is_empty());
         let saved = services.save_copy_prompt(project_id, &input).unwrap();
         assert_eq!(saved.prompt, prompt);
         assert_eq!(saved.result, None);
         assert_eq!(saved.summary.mode, "copy");
-        assert_eq!(services.store.list_ai_runs(Some(project_id)).unwrap().len(), 1);
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
 
         input.api_key = Some("never-persist-me".to_owned());
         assert!(services.save_copy_prompt(project_id, &input).is_err());
-        assert_eq!(services.store.list_ai_runs(Some(project_id)).unwrap().len(), 1);
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
 
         let other = bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
         input.api_key = None;
@@ -1761,7 +1769,13 @@ mod tests {
         drop(services);
         let reopened = AppServices::new(temp.path()).unwrap();
         let persisted_id = Uuid::parse_str(&saved.summary.id).unwrap();
-        assert_eq!(reopened.get_ai_run(project_id, persisted_id).unwrap().prompt, prompt);
+        assert_eq!(
+            reopened
+                .get_ai_run(project_id, persisted_id)
+                .unwrap()
+                .prompt,
+            prompt
+        );
     }
 
     #[test]
