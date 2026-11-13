@@ -285,6 +285,82 @@ mod tests {
         }
     }
 
+    /// A late SQL error must not consume the study's optimistic-concurrency
+    /// revision or strand half-written brief/draft state. Restart-proof.
+    #[test]
+    fn studio_save_rolls_back_all_resources_after_late_sql_failure() {
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project_id = services.active_project_id().unwrap();
+        let initial = services.create_studio_study(project_id, example_brief()).unwrap();
+        let study_id = Uuid::parse_str(&initial.id).unwrap();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER test_fail_draft_write BEFORE UPDATE ON creative_drafts
+             BEGIN SELECT RAISE(ABORT, 'simulated draft write interruption'); END;",
+        )
+        .unwrap();
+        let mut revised = example_brief();
+        revised.title = "Changed title".into();
+        revised.audience = "Creators and producers".into();
+        assert!(services
+            .save_studio_study(
+                project_id,
+                study_id,
+                initial.revision,
+                UiStudioStudyPatch {
+                    brief: Some(revised.clone()),
+                    sources: Some(Vec::new()),
+                    draft: Some("new script that must roll back".into()),
+                },
+            )
+            .is_err());
+        let unchanged = services.get_studio_study(project_id, study_id).unwrap();
+        assert_eq!(unchanged.revision, initial.revision);
+        assert_eq!(unchanged.brief, initial.brief);
+        assert_eq!(unchanged.draft, "");
+        assert_eq!(unchanged.draft_versions.len(), 1);
+        db.execute_batch("DROP TRIGGER test_fail_draft_write;").unwrap();
+        let saved = services
+            .save_studio_study(
+                project_id,
+                study_id,
+                initial.revision,
+                UiStudioStudyPatch {
+                    brief: Some(revised.clone()),
+                    sources: Some(Vec::new()),
+                    draft: Some("persisted after recovery".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(saved.revision, initial.revision + 1);
+        assert_eq!(saved.brief, revised);
+        assert_eq!(saved.draft_versions.len(), 2);
+    }
+
+    #[test]
+    fn studio_create_rolls_back_study_when_initial_draft_fails() {
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project_id = services.active_project_id().unwrap();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER test_fail_initial_version BEFORE INSERT ON draft_versions
+             BEGIN SELECT RAISE(ABORT, 'simulated failed first version'); END;",
+        )
+        .unwrap();
+        assert!(services
+            .create_studio_study(project_id, example_brief())
+            .is_err());
+        assert!(services.list_studio_studies(project_id).unwrap().is_empty());
+        db.execute_batch("DROP TRIGGER test_fail_initial_version;").unwrap();
+        let created = services
+            .create_studio_study(project_id, example_brief())
+            .unwrap();
+        assert_eq!(created.draft_versions.len(), 1);
+        assert_eq!(services.list_studio_studies(project_id).unwrap().len(), 1);
+    }
+
     #[test]
     fn studio_persists_draft_versions_and_reopens_after_restart() {
         let dir = TempDir::new().unwrap();
