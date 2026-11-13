@@ -30,6 +30,19 @@ Agent 00 must freeze canonical DTOs, then Agent 01 supplies study/draft storage 
 
 ## Validation evidence
 
-Source files and baseline roadmap were inspected from GitHub. Unit/component tests were added in `src/studio/selection.test.ts` and `src/views/StudioView.test.ts`. **Result pending CI; do not claim passing tests yet.** Local cloning from this runtime was blocked by DNS resolution to github.com; GitHub Actions may provide the executable check.
+Baseline and source files were inspected from GitHub. Unit/component tests in `src/studio/selection.test.ts` and `src/views/StudioView.test.ts` cover exact IDs, mock study reopening, version history, metadata truthfulness, source-to-script navigation, copy-only saved AI history, prompt invalidation, project boundaries, EN/AR and stale response rejection.
+
+- **Verified green at code SHA `4a55b7bf08adbba5c3ff08030eaacfe50da39838`:** [Desktop UI workflow #43444899153](https://github.com/MousaXD/scriptotar/actions/runs/43444899153) — typecheck **0 errors**, all **197/197 tests in 24 files**, production Vite build **passed**. A harmless unused Studio selector warning was subsequently fixed.
+- Subsequent commits fix a pending-prompt invalidation edge case and support nullable exact saved AI results; **the final head must pass its own exact-commit checks** before accepting the frontend handoff. See [PR #109 checks](https://github.com/MousaXD/scriptotar/pull/109/checks) for latest run status, not only the earlier green baseline.
+- Installed-app rendering/screenshot/performance certification is **not** supplied by the unit tests. Agent 07 owns `apps/desktop-ui/qa/**`. CI tests with a mock gateway **do not** certify real database persistence, process restart or native autosave.
+
+Local clone was blocked in this environment by unavailable DNS resolution to github.com, so code changes and test logs were inspected through the GitHub connector.
+
+## Cross-agent coordination
+
+- Agent 01 [PR #108](https://github.com/MousaXD/scriptotar/pull/108) has a proposed migration v6 with independently revisioned Study, CreativeBrief and Draft models; do not mistake the frontend's single `saveStudy` testing facade for the approved backend write contract.
+- Agent 02 [PR #103](https://github.com/MousaXD/scriptotar/pull/103) has project-scoped `get_ai_run` and `get_research_item` on its **unmerged** branch, requiring frontend bindings and API-surface parity updates after Agent 00 approval.
+- The independent QA work [PR #106](https://github.com/MousaXD/scriptotar/pull/106) has been notified of exact Studio test paths and RTL/activity scenarios.
+- **Do not merge this draft PR yet:** Agent 00 must integrate/freeze the contracts and verify the P0 durable path under real installed-app conditions.
 
 **Safety verdict:** suitable as an isolated draft frontend slice; **NOT GO** for P0 completion, merge, installed package or release.
