@@ -515,3 +515,55 @@ impl SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 }
+
+
+impl SqliteStore {
+    /// Explicit association from selected origin to a job. A job's final
+    /// transcript remains discoverable via existing job_transcript_links.
+    pub fn attach_job_to_study_source(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        study_source_id: Uuid,
+        job_id: Uuid,
+    ) -> RepositoryResult<()> {
+        self.get_study_source(project_id, study_id, study_source_id)?;
+        let db = database(self)?;
+        require_active_study(&db, project_id, study_id)?;
+        let owns_job: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND project_id=?2)",
+            params![job_id.to_string(), project_id.to_string()],
+            |row| row.get(0),
+        ).map_err(db_error)?;
+        if !owns_job {
+            return Err(RepositoryError::NotFound(format!("job {job_id}")));
+        }
+        db.execute(
+            "INSERT INTO study_source_jobs(project_id,study_id,study_source_id,job_id,linked_at)
+             VALUES(?1,?2,?3,?4,?5)",
+            params![project_id.to_string(), study_id.to_string(), study_source_id.to_string(),
+                    job_id.to_string(), now_rfc3339()],
+        ).map_err(db_error)?;
+        Ok(())
+    }
+
+    pub fn list_study_source_job_ids(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        study_source_id: Uuid,
+    ) -> RepositoryResult<Vec<Uuid>> {
+        self.get_study_source(project_id, study_id, study_source_id)?;
+        let db = database(self)?;
+        let mut stmt = db.prepare(
+            "SELECT j.job_id FROM study_source_jobs j JOIN jobs job ON job.id=j.job_id
+             WHERE j.project_id=?1 AND j.study_id=?2 AND j.study_source_id=?3
+               AND job.project_id=?1 ORDER BY j.linked_at, j.job_id"
+        ).map_err(db_error)?;
+        let rows = stmt.query_map(
+            params![project_id.to_string(), study_id.to_string(), study_source_id.to_string()],
+            |row| uuid_at(row, 0),
+        ).map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+    }
+}
