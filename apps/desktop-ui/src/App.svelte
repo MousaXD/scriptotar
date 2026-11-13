@@ -422,9 +422,10 @@
 
   function useInStudio(kind: StudySourceRef['kind'], id: string) {
     if (!data) return;
+    const snapshot = data;
     const available = kind === 'research'
-      ? data.research.some((item) => item.id === id)
-      : data.transcripts.some((item) => item.id === id && item.projectId === data.activeProjectId);
+      ? snapshot.research.some((item) => item.id === id)
+      : snapshot.transcripts.some((item) => item.id === id && item.projectId === snapshot.activeProjectId);
     if (!available) { switchError = 'The selected source is not available in this project.'; return; }
     studioIncoming = { kind, id, projectId: data.activeProjectId };
     studioIncomingArtifactId = '';
