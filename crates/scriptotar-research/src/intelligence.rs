@@ -123,9 +123,9 @@ impl MetricSnapshot {
     }
 
     fn video_age_days(&self) -> Option<i64> {
-        match self.published {
+        match &self.published {
             PublicationDate::Known(date) => {
-                let age = self.observed_at.date_naive().signed_duration_since(date).num_days();
+                let age = self.observed_at.date_naive().signed_duration_since(*date).num_days();
                 (age >= 1).then_some(age)
             }
             PublicationDate::Missing | PublicationDate::Unrecognized => None,
@@ -138,13 +138,18 @@ impl MetricSnapshot {
 pub fn deduplicate_snapshots(
     snapshots: impl IntoIterator<Item = MetricSnapshot>,
 ) -> Result<Vec<MetricSnapshot>, IntelligenceError> {
-    let mut seen_ids = HashMap::new();
+    let mut seen_ids = HashMap::<Uuid, (Uuid, String)>::new();
     let mut seen = HashMap::<(Uuid, String, DateTime<Utc>), MetricSnapshot>::new();
     for mut snapshot in snapshots {
         snapshot.source_url = canonical_source(&snapshot.source_url)?;
-        if let Some(project) = seen_ids.insert(snapshot.research_item_id, snapshot.project_id) {
+        if let Some((project, source)) =
+            seen_ids.insert(snapshot.research_item_id, (snapshot.project_id, snapshot.source_url.clone()))
+        {
             if project != snapshot.project_id {
                 return Err(IntelligenceError::ProjectMismatch);
+            }
+            if source != snapshot.source_url {
+                return Err(IntelligenceError::ContradictoryObservation);
             }
         }
         let key = (
@@ -213,6 +218,7 @@ pub fn compare_creator_views(
     as_of: DateTime<Utc>,
     max_stale_days: i64,
 ) -> Result<CreatorComparison, IntelligenceError> {
+    let target_url = canonical_source(&target.source_url)?;
     let unavailable = |reason, eligible_peers| CreatorComparison::Unavailable {
         reason,
         eligible_peers,
@@ -229,7 +235,6 @@ pub fn compare_creator_views(
     if target.is_stale_at(as_of, max_stale_days) {
         return Ok(unavailable(ComparisonLimitation::StaleObservation, 0));
     }
-    let target_url = canonical_source(&target.source_url)?;
     let mut newest_by_url: HashMap<String, &MetricSnapshot> = HashMap::new();
     for peer in available {
         if peer.research_item_id == target.research_item_id
@@ -310,6 +315,7 @@ pub struct ViewGrowth {
 pub enum GrowthLimitation {
     UnavailableCounts,
     NonIncreasingTime,
+    InsufficientObservationWindow,
     CountersDecreased,
     DifferentSource,
 }
@@ -323,7 +329,9 @@ pub fn observed_view_growth(
     if older.project_id != newer.project_id {
         return Err(IntelligenceError::ProjectMismatch);
     }
-    if canonical_source(&older.source_url)? != canonical_source(&newer.source_url)? {
+    if older.platform != newer.platform
+        || canonical_source(&older.source_url)? != canonical_source(&newer.source_url)?
+    {
         return Ok(Err(GrowthLimitation::DifferentSource));
     }
     let (Some(start_views), Some(end_views)) = (older.views, newer.views) else {
@@ -332,6 +340,9 @@ pub fn observed_view_growth(
     let elapsed = newer.observed_at.signed_duration_since(older.observed_at).num_seconds();
     if elapsed <= 0 {
         return Ok(Err(GrowthLimitation::NonIncreasingTime));
+    }
+    if elapsed < 3_600 {
+        return Ok(Err(GrowthLimitation::InsufficientObservationWindow));
     }
     if end_views < start_views {
         return Ok(Err(GrowthLimitation::CountersDecreased));
@@ -394,6 +405,109 @@ pub struct CreativeObservation {
     pub confidence: SourceConfidence,
     /// This extractor does not infer hook type, payoff, CTA, visual pacing or retention.
     pub interpretation: String,
+}
+
+/// Semantic analysis contracts are deliberately distinct from direct excerpts:
+/// no model or heuristic implementation is implied by these types.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptFeature {
+    Hook,
+    OpeningPromise,
+    NarrativeSetup,
+    NarrativeTurn,
+    SpokenPacing,
+    Payoff,
+    CallToAction,
+    RhetoricalDevice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TranscriptHypothesis {
+    pub feature: TranscriptFeature,
+    pub statement: String,
+    pub evidence: Vec<EvidenceRef>,
+    pub confidence: SourceConfidence,
+    /// Transcript-only hypotheses are never evidence of what the frames show.
+    pub limitations: Vec<String>,
+}
+
+/// Validate support and conservatively label a proposed interpretation as inferred.
+/// This API records a hypothesis; it does not determine whether the hypothesis is true.
+pub fn propose_transcript_hypothesis(
+    feature: TranscriptFeature,
+    statement: &str,
+    evidence: Vec<EvidenceRef>,
+) -> Result<TranscriptHypothesis, IntelligenceError> {
+    if statement.trim().is_empty()
+        || statement.chars().count() > 500
+        || evidence.is_empty()
+        || evidence.len() > 12
+    {
+        return Err(IntelligenceError::InvalidSegment);
+    }
+    let first_scope = &evidence[0].scope;
+    if evidence.iter().any(|reference| {
+        reference.scope != *first_scope
+            || reference.segment_id.is_empty()
+            || reference.start_ms >= reference.end_ms
+            || reference.excerpt.trim().is_empty()
+            || reference.excerpt.chars().count() > MAX_EXCERPT_CHARS
+    }) {
+        return Err(IntelligenceError::InvalidSegment);
+    }
+    Ok(TranscriptHypothesis {
+        feature,
+        statement: statement.trim().to_owned(),
+        evidence,
+        confidence: SourceConfidence::InferredFromTranscript,
+        limitations: vec![
+            "Transcript-only interpretation; frames, edits and audience behavior were not inspected."
+                .into(),
+        ],
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeatureSupport {
+    pub project_id: Uuid,
+    pub feature: TranscriptFeature,
+    /// Number of distinct research sources with a proposed interpretation.
+    /// Absence of a hypothesis is not a negative observation.
+    pub sources_with_hypothesis: usize,
+}
+
+/// Deterministically count proposed features across distinct sources.
+/// Does not label a feature as successful, causal or independently corroborated.
+pub fn count_transcript_features(
+    project_id: Uuid,
+    hypotheses: &[TranscriptHypothesis],
+) -> Result<Vec<FeatureSupport>, IntelligenceError> {
+    let mut counts: HashMap<TranscriptFeature, HashSet<Uuid>> = HashMap::new();
+    for hypothesis in hypotheses {
+        if hypothesis.evidence.is_empty()
+            || hypothesis
+                .evidence
+                .iter()
+                .any(|e| e.scope.project_id != project_id)
+        {
+            return Err(IntelligenceError::ProjectMismatch);
+        }
+        counts
+            .entry(hypothesis.feature)
+            .or_default()
+            .insert(hypothesis.evidence[0].scope.research_item_id);
+    }
+    let mut result: Vec<_> = counts
+        .into_iter()
+        .map(|(feature, sources)| FeatureSupport {
+            project_id,
+            feature,
+            sources_with_hypothesis: sources.len(),
+        })
+        .collect();
+    result.sort_by_key(|item| item.feature);
+    Ok(result)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
