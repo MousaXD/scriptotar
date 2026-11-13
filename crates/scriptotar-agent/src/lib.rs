@@ -129,7 +129,18 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
 
     pub fn get(&self, id: &str) -> Result<RunSnapshot, RuntimeError> {
         let run = self.store.load(id)?.ok_or(RuntimeError::NotFound)?;
-        if run.schema_version != 1 || run.steps.len() != run.plan.steps.len() {
+        if run.schema_version != 1
+            || !run.plan.validate()
+            || run.steps.len() != run.plan.steps.len()
+            || run.current_step > run.steps.len()
+            || run.steps.iter().zip(&run.plan.steps).any(|(record, step)| record.id != step.id)
+            || run.steps[..run.current_step].iter().any(|step| step.state != StepState::Completed)
+            || (run.state == RunState::Completed && run.current_step != run.steps.len())
+            || run.usage.tool_calls > run.plan.limits.max_tool_calls
+            || run.usage.reserved_tokens > run.plan.limits.max_tokens
+            || run.usage.reserved_cost_microusd > run.plan.limits.max_cost_microusd
+            || run.usage.reserved_cpu_ms > run.plan.limits.max_cpu_ms
+        {
             return Err(RuntimeError::InvalidPlan);
         }
         Ok(run)
