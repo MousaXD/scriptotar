@@ -1,6 +1,6 @@
 use std::{sync::{Arc, Barrier}, thread};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use scriptotar_core::{
     CreativeBriefInput, EvidenceCertainty, EvidenceInput, Job, JobInput, JobRepository,
     Project, ProjectRepository, RepositoryError, StudyEdit, StudySourceInput,
