@@ -99,3 +99,11 @@ test('approved hashes pass unchanged and reject modified screenshot bytes', asyn
     assert.ok(comparison.differences.some((line) => line.includes('001.png')));
   });
 });
+
+test('defragmentation QA fixtures and source-contract footprint remain valid', () => {
+  const result = spawnSync('python3', ['-m', 'unittest', 'discover', '-s', 'tests',
+    '-p', 'test_baseline_contract.py', '-v'], {
+    cwd: resolve('..', '..'), encoding: 'utf8', timeout: 30000
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr + String(result.error || ''));
+});
