@@ -625,53 +625,53 @@ async fn get_watchlist_statuses(
 ) -> Result<Vec<UiWatchlistStatus>, String> {
     let store = state.store.clone();
     on_blocking_worker(move || {
-    let watchlists = store.list_watchlists(None).map_err(command_error)?;
-    let persisted = store
-        .list_watchlist_refresh_status(None)
-        .map_err(command_error)?
-        .into_iter()
-        .map(|status| (status.watchlist_id, status))
-        .collect::<HashMap<_, _>>();
-    let auto_watch = store
-        .load_settings()
-        .map_err(command_error)?
-        .auto_watch;
+        let watchlists = store.list_watchlists(None).map_err(command_error)?;
+        let persisted = store
+            .list_watchlist_refresh_status(None)
+            .map_err(command_error)?
+            .into_iter()
+            .map(|status| (status.watchlist_id, status))
+            .collect::<HashMap<_, _>>();
+        let auto_watch = store
+            .load_settings()
+            .map_err(command_error)?
+            .auto_watch;
 
-    Ok(watchlists
-        .into_iter()
-        .map(|watchlist| {
-            let status = persisted.get(&watchlist.id);
-            let mut state_name = status
-                .map(|status| status.state.as_str())
-                .unwrap_or_else(|| {
-                    if watchlist.last_scan_at.is_some() {
-                        "healthy"
+        Ok(watchlists
+            .into_iter()
+            .map(|watchlist| {
+                let status = persisted.get(&watchlist.id);
+                let mut state_name = status
+                    .map(|status| status.state.as_str())
+                    .unwrap_or_else(|| {
+                        if watchlist.last_scan_at.is_some() {
+                            "healthy"
+                        } else {
+                            "never_scanned"
+                        }
+                    })
+                    .to_owned();
+                if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
+                    state_name = "failed".to_owned();
+                }
+                UiWatchlistStatus {
+                    watchlist_id: watchlist.id.to_string(),
+                    project_id: watchlist.project_id.to_string(),
+                    label: watchlist.label,
+                    state: state_name,
+                    last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
+                    last_successful_scan_at: status
+                        .and_then(|status| status.last_success_at.clone())
+                        .or(watchlist.last_scan_at),
+                    last_error: status.and_then(|status| status.last_error.clone()),
+                    next_retry_at: if auto_watch {
+                        status.and_then(|status| status.next_retry_at.clone())
                     } else {
-                        "never_scanned"
-                    }
-                })
-                .to_owned();
-            if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
-                state_name = "failed".to_owned();
-            }
-            UiWatchlistStatus {
-                watchlist_id: watchlist.id.to_string(),
-                project_id: watchlist.project_id.to_string(),
-                label: watchlist.label,
-                state: state_name,
-                last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
-                last_successful_scan_at: status
-                    .and_then(|status| status.last_success_at.clone())
-                    .or(watchlist.last_scan_at),
-                last_error: status.and_then(|status| status.last_error.clone()),
-                next_retry_at: if auto_watch {
-                    status.and_then(|status| status.next_retry_at.clone())
-                } else {
-                    None
-                },
-            }
-        })
-        .collect())
+                        None
+                    },
+                }
+            })
+            .collect())
     })
     .await
 }
