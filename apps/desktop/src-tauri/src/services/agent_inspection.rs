@@ -176,13 +176,19 @@ impl ToolExecutor for LocalStudyDriver {
         let output = match self.inspect(context, input) {
             Ok(output) => output,
             Err(failure) => {
-                if self.gate.services.store.record_agent_effect(
-                    self.gate.project,
-                    self.gate.study,
-                    &context.run_id,
-                    &context.idempotency_key,
-                    EffectUpdate::NotApplied,
-                ).is_err() {
+                if self
+                    .gate
+                    .services
+                    .store
+                    .record_agent_effect(
+                        self.gate.project,
+                        self.gate.study,
+                        &context.run_id,
+                        &context.idempotency_key,
+                        EffectUpdate::NotApplied,
+                    )
+                    .is_err()
+                {
                     return Err(unknown());
                 }
                 return Err(failure);
@@ -190,15 +196,19 @@ impl ToolExecutor for LocalStudyDriver {
         };
         // The tool's completion is not reported to the coordinator before
         // the service's durable receipt has committed.
-        self.gate.services.store.record_agent_effect(
-            self.gate.project,
-            self.gate.study,
-            &context.run_id,
-            &context.idempotency_key,
-            EffectUpdate::Applied {
-                artifact_id: output.artifact_id.clone(),
-            },
-        ).map_err(|_| unknown())?;
+        self.gate
+            .services
+            .store
+            .record_agent_effect(
+                self.gate.project,
+                self.gate.study,
+                &context.run_id,
+                &context.idempotency_key,
+                EffectUpdate::Applied {
+                    artifact_id: output.artifact_id.clone(),
+                },
+            )
+            .map_err(|_| unknown())?;
         Ok(ToolReceipt::Applied(output))
     }
 
@@ -213,12 +223,17 @@ impl ToolExecutor for LocalStudyDriver {
             retryable: false,
             certainty: Certainty::UnknownEffect,
         };
-        let effect = self.gate.services.store.get_agent_effect(
-            self.gate.project,
-            self.gate.study,
-            &context.run_id,
-            &context.idempotency_key,
-        ).map_err(|_| unknown())?;
+        let effect = self
+            .gate
+            .services
+            .store
+            .get_agent_effect(
+                self.gate.project,
+                self.gate.study,
+                &context.run_id,
+                &context.idempotency_key,
+            )
+            .map_err(|_| unknown())?;
         let Some(effect) = effect else {
             // No ledger row is not proof that an external effect did not run.
             return Ok(ProbeResult::Unknown);
@@ -237,15 +252,19 @@ impl ToolExecutor for LocalStudyDriver {
                 // This is exclusively a local, repeatable read. Never apply
                 // this path to paid, remote or mutating tools.
                 let output = self.inspect(context, input).map_err(|_| unknown())?;
-                self.gate.services.store.record_agent_effect(
-                    self.gate.project,
-                    self.gate.study,
-                    &context.run_id,
-                    &context.idempotency_key,
-                    EffectUpdate::Applied {
-                        artifact_id: output.artifact_id.clone(),
-                    },
-                ).map_err(|_| unknown())?;
+                self.gate
+                    .services
+                    .store
+                    .record_agent_effect(
+                        self.gate.project,
+                        self.gate.study,
+                        &context.run_id,
+                        &context.idempotency_key,
+                        EffectUpdate::Applied {
+                            artifact_id: output.artifact_id.clone(),
+                        },
+                    )
+                    .map_err(|_| unknown())?;
                 Ok(ProbeResult::Applied(output))
             }
         }
@@ -490,14 +509,16 @@ mod tests {
             transcript.to_string()
         );
         assert_eq!(approved.usage.reserved_cost_microusd, 0);
-        let effect = reopened.store.get_agent_effect(
-            project,
-            study,
-            &id,
-            &approved.steps[0].idempotency_key,
-        ).unwrap().expect("durable local read receipt");
+        let effect = reopened
+            .store
+            .get_agent_effect(project, study, &id, &approved.steps[0].idempotency_key)
+            .unwrap()
+            .expect("durable local read receipt");
         assert_eq!(effect.status, EffectStatus::Applied);
-        assert_eq!(effect.artifact_id.as_deref(), Some(transcript.to_string().as_str()));
+        assert_eq!(
+            effect.artifact_id.as_deref(),
+            Some(transcript.to_string().as_str())
+        );
         assert!(reopened
             .decide_local_inspection(project, study, &id, "approve")
             .is_err());
@@ -548,23 +569,38 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let services = AppServices::new(temp.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let study = services.store.create_study(project, "Claim failure", "").unwrap().id;
+        let study = services
+            .store
+            .create_study(project, "Claim failure", "")
+            .unwrap()
+            .id;
         let transcript = attached_transcript(&services, project, study);
-        let run = services.start_local_inspection(project, study, transcript).unwrap();
+        let run = services
+            .start_local_inspection(project, study, transcript)
+            .unwrap();
         let db = Connection::open(services.store.path()).unwrap();
         db.execute_batch(
             "CREATE TRIGGER local_test_fail_claim BEFORE INSERT ON agent_effects
              BEGIN SELECT RAISE(ABORT, 'injected ledger failure'); END;",
-        ).unwrap();
+        )
+        .unwrap();
         let blocked = services
             .decide_local_inspection(project, study, &run.plan.id, "approve")
             .unwrap();
         assert_eq!(blocked.state, scriptotar_agent::RunState::Blocked);
         assert!(blocked.steps[0].output.is_none());
-        assert!(services.store.get_agent_effect(
-            project, study, &run.plan.id, &blocked.steps[0].idempotency_key
-        ).unwrap().is_none());
-        db.execute_batch("DROP TRIGGER local_test_fail_claim;").unwrap();
+        assert!(services
+            .store
+            .get_agent_effect(
+                project,
+                study,
+                &run.plan.id,
+                &blocked.steps[0].idempotency_key
+            )
+            .unwrap()
+            .is_none());
+        db.execute_batch("DROP TRIGGER local_test_fail_claim;")
+            .unwrap();
         let still_blocked = services
             .decide_local_inspection(project, study, &run.plan.id, "recover")
             .unwrap();
@@ -582,12 +618,20 @@ mod tests {
         {
             let services = AppServices::new(temp.path()).unwrap();
             project = services.active_project_id().unwrap();
-            study = services.store.create_study(project, "Crash test", "").unwrap().id;
+            study = services
+                .store
+                .create_study(project, "Crash test", "")
+                .unwrap()
+                .id;
             transcript = attached_transcript(&services, project, study);
-            let pending = services.start_local_inspection(project, study, transcript).unwrap();
+            let pending = services
+                .start_local_inspection(project, study, transcript)
+                .unwrap();
             id = pending.plan.id;
             let engine = services.local_engine(project, study).unwrap();
-            let approved = engine.approve(&id, "inspect_transcript", current_ms()).unwrap();
+            let approved = engine
+                .approve(&id, "inspect_transcript", current_ms())
+                .unwrap();
             let mut running = approved.clone();
             running.revision += 1;
             running.state = scriptotar_agent::RunState::Running;
@@ -596,24 +640,43 @@ mod tests {
             running.usage.tool_calls = 1;
             running.usage.reserved_cpu_ms = 5_000;
             running.event(current_ms(), AuditKind::Dispatched);
-            engine.store.compare_and_swap(approved.revision, running.clone()).unwrap();
+            engine
+                .store
+                .compare_and_swap(approved.revision, running.clone())
+                .unwrap();
             assert!(matches!(
-                services.store.reserve_agent_effect(
-                    project, study, &id, "inspect_transcript", &running.steps[0].idempotency_key
-                ).unwrap(),
+                services
+                    .store
+                    .reserve_agent_effect(
+                        project,
+                        study,
+                        &id,
+                        "inspect_transcript",
+                        &running.steps[0].idempotency_key
+                    )
+                    .unwrap(),
                 EffectClaim::Claimed(_)
             ));
         }
         let restarted = AppServices::new(temp.path()).unwrap();
-        let recovered = restarted.decide_local_inspection(project, study, &id, "recover").unwrap();
+        let recovered = restarted
+            .decide_local_inspection(project, study, &id, "recover")
+            .unwrap();
         assert_eq!(recovered.state, scriptotar_agent::RunState::Completed);
-        assert_eq!(recovered.steps[0].output.as_ref().unwrap().artifact_id, transcript.to_string());
-        let effect = restarted.store.get_agent_effect(
-            project, study, &id, &recovered.steps[0].idempotency_key
-        ).unwrap().unwrap();
+        assert_eq!(
+            recovered.steps[0].output.as_ref().unwrap().artifact_id,
+            transcript.to_string()
+        );
+        let effect = restarted
+            .store
+            .get_agent_effect(project, study, &id, &recovered.steps[0].idempotency_key)
+            .unwrap()
+            .unwrap();
         assert_eq!(effect.status, EffectStatus::Applied);
         assert_eq!(effect.revision, 2);
-        assert!(restarted.decide_local_inspection(project, study, &id, "approve").is_err());
+        assert!(restarted
+            .decide_local_inspection(project, study, &id, "approve")
+            .is_err());
     }
 
     #[test]
@@ -635,12 +698,16 @@ mod tests {
             .unwrap();
         assert_eq!(denied.state, scriptotar_agent::RunState::Cancelled);
         assert_eq!(denied.usage.tool_calls, 0);
-        assert!(services.store.get_agent_effect(
-            project,
-            study,
-            &denied.plan.id,
-            &denied.steps[0].idempotency_key,
-        ).unwrap().is_none());
+        assert!(services
+            .store
+            .get_agent_effect(
+                project,
+                study,
+                &denied.plan.id,
+                &denied.steps[0].idempotency_key,
+            )
+            .unwrap()
+            .is_none());
         assert!(services
             .decide_local_inspection(project, study, &run.plan.id, "approve")
             .is_err());
