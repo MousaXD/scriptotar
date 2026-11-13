@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
+  import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
   import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef } from '../studio/contract';
@@ -395,19 +396,15 @@
         <input id="studio-source-filter" type="search" bind:value={sourceQuery} placeholder={t.selectSources} />
         <h3>{t.researchItems}</h3>
         {#each filteredResearch as item (item.id)}
-          <label class="source-option" dir="auto">
-            <input type="checkbox" checked={refs.some((ref) => ref.kind === 'research' && ref.id === item.id)}
-              on:change={() => toggleSource({ kind: 'research', id: item.id })} />
-            <span>{item.title}</span>
-          </label>
+          <div class="source-option" dir="auto"><Checkbox label={item.title}
+            checked={refs.some((ref) => ref.kind === 'research' && ref.id === item.id)}
+            onChange={() => toggleSource({ kind: 'research', id: item.id })} /></div>
         {/each}
         <h3>{t.transcripts}</h3>
         {#each filteredTranscripts as item (item.id)}
-          <label class="source-option" dir="auto">
-            <input type="checkbox" checked={refs.some((ref) => ref.kind === 'transcript' && ref.id === item.id)}
-              on:change={() => toggleSource({ kind: 'transcript', id: item.id })} />
-            <span>{item.title}</span>
-          </label>
+          <div class="source-option" dir="auto"><Checkbox label={item.title}
+            checked={refs.some((ref) => ref.kind === 'transcript' && ref.id === item.id)}
+            onChange={() => toggleSource({ kind: 'transcript', id: item.id })} /></div>
         {/each}
       </details>
     </section>
@@ -449,7 +446,7 @@
           { value: 'Arabic', label: t.languageArabic }, { value: 'English', label: t.languageEnglish },
           { value: 'Arabic + English', label: t.languageMixed }
         ]} onChange={(value) => { brief.language = value; queueSave(); }} />
-        <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" bind:value={brief.duration} on:input={queueSave} /></label>
+        <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]+" maxlength="3" bind:value={brief.duration} on:input={queueSave} /></label>
         <label class="wide">{t.style}<input bind:value={brief.style} on:input={queueSave} dir="auto" placeholder={t.stylePlaceholder} /></label>
       </div>
     </section>
