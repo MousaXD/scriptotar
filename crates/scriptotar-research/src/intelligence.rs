@@ -369,12 +369,12 @@ pub fn compare_creator_views(
     let Some(target_views) = target.views else {
         return Ok(unavailable(ComparisonLimitation::MissingViews, 0));
     };
-    let Some(age_days) = target.video_age_days() else {
-        return Ok(unavailable(ComparisonLimitation::UnknownUploadDate, 0));
-    };
     if target.is_stale_at(as_of, max_stale_days) {
         return Ok(unavailable(ComparisonLimitation::StaleObservation, 0));
     }
+    let Some(age_days) = target.video_age_days() else {
+        return Ok(unavailable(ComparisonLimitation::UnknownUploadDate, 0));
+    };
     let mut newest_by_url: HashMap<String, &MetricSnapshot> = HashMap::new();
     for peer in available {
         if peer.research_item_id == target.research_item_id && peer.project_id != target.project_id
