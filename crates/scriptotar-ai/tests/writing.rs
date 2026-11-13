@@ -214,6 +214,10 @@ fn targeted_revision_preserves_all_accepted_sections_and_manual_edits() {
     .unwrap();
     assert!(permitted.beats[1].manually_edited);
     assert_eq!(permitted.beats[0], draft.beats[0]);
+    assert!(permitted.beats[1].evidence_ids.is_empty());
+    assert_eq!(permitted.claims[0].status, ClaimStatus::Unverified);
+    assert!(permitted.claims[0].evidence_ids.is_empty());
+    assert_eq!(draft.claims[0].status, ClaimStatus::Supported);
 }
 
 #[test]
