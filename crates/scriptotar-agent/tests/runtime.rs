@@ -707,3 +707,34 @@ fn a_proven_failed_queued_attempt_clears_stale_job_locator_before_retry() {
     assert_eq!(e.tick("run_1", 4).unwrap().state, RunState::Completed);
     assert_eq!(d.calls(), 2);
 }
+
+#[test]
+fn policy_restoration_can_reopen_never_dispatched_blocked_step() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    e.policy.0.store(false, Ordering::SeqCst);
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::Blocked);
+    assert_eq!(e.recheck_blocked("run_1", 2), Err(RuntimeError::PolicyDenied));
+    e.policy.0.store(true, Ordering::SeqCst);
+    let opened = e.recheck_blocked("run_1", 3).unwrap();
+    assert_eq!(opened.state, RunState::Running);
+    assert_eq!(opened.steps[0].attempts, 0);
+    assert_eq!(e.tick("run_1", 4).unwrap().state, RunState::Completed);
+    assert_eq!(d.calls(), 1);
+}
+
+#[test]
+fn uncertain_inflight_work_cannot_bypass_reconciliation_by_policy_recheck() {
+    let d = FakeDriver::default();
+    d.receipt(Err(ToolFailure {
+        code: "provider_timeout".into(),
+        retryable: true,
+        certainty: Certainty::UnknownEffect,
+    }));
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::Blocked);
+    assert_eq!(e.recheck_blocked("run_1", 2), Err(RuntimeError::WrongState));
+    assert_eq!(d.calls(), 1);
+}
