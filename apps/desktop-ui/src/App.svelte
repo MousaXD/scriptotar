@@ -271,7 +271,6 @@
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
        studioIncoming = null;
-       studioIncoming = null;
       return true;
     } catch (cause) {
       if (generation === workspaceGeneration) {
@@ -319,6 +318,7 @@
       }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
+       studioIncoming = null;
       activeView = 'dashboard';
     } catch (cause) {
       if (generation === workspaceGeneration) {
@@ -528,7 +528,7 @@
 </script>
 <svelte:window onkeydown={keyNav} />
 
-<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} busy={loading || switchingProject || creatingProject || savingWatchlist} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
+<AppShell {activeView} activeProjectId={data?.activeProjectId || ''} projects={data?.projects || []} {activeJobs} jobActivity={data?.jobs || []} busy={loading || switchingProject || creatingProject || savingWatchlist} bind:globalSearch {searchResults} onNavigate={(view) => activeView = view} onProjectChange={selectProject} onSearchSelect={openSearchResult}>
   {#if loading || switchingProject}
     <WorkspaceSkeleton />
   {:else if error}
