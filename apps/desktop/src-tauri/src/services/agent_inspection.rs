@@ -10,7 +10,7 @@ use scriptotar_agent::{
 #[cfg(test)]
 use scriptotar_core::ProjectRepository;
 use scriptotar_core::{RepositoryError, RepositoryResult, StudySourceKind};
-use scriptotar_db::ScopedAgentCheckpointStore;
+use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate, ScopedAgentCheckpointStore};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -156,7 +156,50 @@ impl ToolExecutor for LocalStudyDriver {
         context: &ExecutionContext,
         input: &StepInput,
     ) -> Result<ToolReceipt, ToolFailure> {
-        self.inspect(context, input).map(ToolReceipt::Applied)
+        let unknown = || ToolFailure {
+            code: "effect_claim_unavailable".into(),
+            retryable: false,
+            certainty: Certainty::UnknownEffect,
+        };
+        // Claim the idempotency key only after the Engine's Running-intent CAS.
+        // A previous claim is *never* permission to execute this tool again.
+        match self.gate.services.store.reserve_agent_effect(
+            self.gate.project,
+            self.gate.study,
+            &context.run_id,
+            &context.step_id,
+            &context.idempotency_key,
+        ) {
+            Ok(EffectClaim::Claimed(_)) => {}
+            Ok(EffectClaim::Existing(_)) | Err(_) => return Err(unknown()),
+        }
+        let output = match self.inspect(context, input) {
+            Ok(output) => output,
+            Err(failure) => {
+                if self.gate.services.store.record_agent_effect(
+                    self.gate.project,
+                    self.gate.study,
+                    &context.run_id,
+                    &context.idempotency_key,
+                    EffectUpdate::NotApplied,
+                ).is_err() {
+                    return Err(unknown());
+                }
+                return Err(failure);
+            }
+        };
+        // The tool's completion is not reported to the coordinator before
+        // the service's durable receipt has committed.
+        self.gate.services.store.record_agent_effect(
+            self.gate.project,
+            self.gate.study,
+            &context.run_id,
+            &context.idempotency_key,
+            EffectUpdate::Applied {
+                artifact_id: output.artifact_id.clone(),
+            },
+        ).map_err(|_| unknown())?;
+        Ok(ToolReceipt::Applied(output))
     }
 
     fn probe(
@@ -165,8 +208,47 @@ impl ToolExecutor for LocalStudyDriver {
         input: &StepInput,
         _pending_effect_id: Option<&str>,
     ) -> Result<ProbeResult, ToolFailure> {
-        // Local reads can be rechecked without triggering an external effect.
-        self.inspect(context, input).map(ProbeResult::Applied)
+        let unknown = || ToolFailure {
+            code: "effect_probe_unavailable".into(),
+            retryable: false,
+            certainty: Certainty::UnknownEffect,
+        };
+        let effect = self.gate.services.store.get_agent_effect(
+            self.gate.project,
+            self.gate.study,
+            &context.run_id,
+            &context.idempotency_key,
+        ).map_err(|_| unknown())?;
+        let Some(effect) = effect else {
+            // No ledger row is not proof that an external effect did not run.
+            return Ok(ProbeResult::Unknown);
+        };
+        match effect.status {
+            EffectStatus::NotApplied => Ok(ProbeResult::NotApplied),
+            EffectStatus::Accepted => Ok(ProbeResult::Unknown),
+            EffectStatus::Applied => {
+                let output = self.inspect(context, input).map_err(|_| unknown())?;
+                if effect.artifact_id.as_deref() != Some(output.artifact_id.as_str()) {
+                    return Ok(ProbeResult::Unknown);
+                }
+                Ok(ProbeResult::Applied(output))
+            }
+            EffectStatus::Reserved | EffectStatus::Unknown => {
+                // This is exclusively a local, repeatable read. Never apply
+                // this path to paid, remote or mutating tools.
+                let output = self.inspect(context, input).map_err(|_| unknown())?;
+                self.gate.services.store.record_agent_effect(
+                    self.gate.project,
+                    self.gate.study,
+                    &context.run_id,
+                    &context.idempotency_key,
+                    EffectUpdate::Applied {
+                        artifact_id: output.artifact_id.clone(),
+                    },
+                ).map_err(|_| unknown())?;
+                Ok(ProbeResult::Applied(output))
+            }
+        }
     }
 }
 
@@ -408,6 +490,14 @@ mod tests {
             transcript.to_string()
         );
         assert_eq!(approved.usage.reserved_cost_microusd, 0);
+        let effect = reopened.store.get_agent_effect(
+            project,
+            study,
+            &id,
+            &approved.steps[0].idempotency_key,
+        ).unwrap().expect("durable local read receipt");
+        assert_eq!(effect.status, EffectStatus::Applied);
+        assert_eq!(effect.artifact_id.as_deref(), Some(transcript.to_string().as_str()));
         assert!(reopened
             .decide_local_inspection(project, study, &id, "approve")
             .is_err());
@@ -472,6 +562,12 @@ mod tests {
             .unwrap();
         assert_eq!(denied.state, scriptotar_agent::RunState::Cancelled);
         assert_eq!(denied.usage.tool_calls, 0);
+        assert!(services.store.get_agent_effect(
+            project,
+            study,
+            &denied.plan.id,
+            &denied.steps[0].idempotency_key,
+        ).unwrap().is_none());
         assert!(services
             .decide_local_inspection(project, study, &run.plan.id, "approve")
             .is_err());
