@@ -461,10 +461,10 @@
 
     {#if historical}
       <section class="panel studio-historical">
-        <div class="section-heading"><h2>{t.result}: {historical.title}</h2>
+        <div class="section-heading"><h2>{historical.result === null ? t.prompt : t.result}: {historical.title}</h2>
           <button type="button" class="text-button" on:click={() => historical = null}>{t.closeHistory}</button>
         </div>
-        <pre dir="auto">{historical.result}</pre>
+        <pre dir="auto">{historical.result ?? historical.prompt}</pre>
       </section>
     {/if}
     <section class="panel studio-editor">
