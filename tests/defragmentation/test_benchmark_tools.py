@@ -6,6 +6,8 @@ import unittest
 from .benchmarks.seed_workspace import seed_workspace
 
 SCHEMA = """
+PRAGMA user_version=5;
+CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,applied_at TEXT);
 CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
 CREATE TABLE creators(id TEXT PRIMARY KEY);
 CREATE TABLE sources(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),
@@ -24,13 +26,18 @@ CREATE TABLE jobs(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),
  input_kind TEXT,input_value TEXT,state TEXT,created_at TEXT,updated_at TEXT);
 """
 
+def blank_schema(conn):
+    conn.executescript(SCHEMA)
+    conn.executemany("INSERT INTO schema_migrations VALUES (?,?,?)",
+                     [(i, f"migration_{i}", "2026-01-01") for i in range(1, 6)])
+
 class SyntheticFixtureTests(unittest.TestCase):
     def test_creates_disjoint_copy_and_preserves_template(self):
         with tempfile.TemporaryDirectory() as folder:
             original = Path(folder) / "blank.db"
             output = Path(folder) / "synthetic.db"
             with sqlite3.connect(original) as conn:
-                conn.executescript(SCHEMA)
+                blank_schema(conn)
             result = seed_workspace(original, output, 100)
             self.assertEqual(result["record_count_per_collection"], 100)
             self.assertEqual(set(result["tables"].values()), {100})
@@ -47,10 +54,46 @@ class SyntheticFixtureTests(unittest.TestCase):
             original = Path(folder) / "private.db"
             output = Path(folder) / "synthetic.db"
             with sqlite3.connect(original) as conn:
-                conn.executescript(SCHEMA)
+                blank_schema(conn)
                 conn.execute("INSERT INTO projects VALUES (?,?,?)",
                              ("user", "Private project", "2026-01-01"))
-            with self.assertRaisesRegex(ValueError, "personal projects"):
+            with self.assertRaisesRegex(ValueError, "template is not empty: projects"):
+                seed_workspace(original, output, 100)
+            self.assertFalse(output.exists())
+
+
+    def test_refuses_settings_and_unrelated_data_even_when_projects_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "not-blank.db"
+            output = Path(folder) / "should-not-exist.db"
+            with sqlite3.connect(original) as conn:
+                blank_schema(conn)
+                conn.execute("CREATE TABLE application_settings(singleton INTEGER PRIMARY KEY,settings_json TEXT)")
+                conn.execute("INSERT INTO application_settings VALUES(1,?)", ('{"localSecret":"private"}',))
+            with self.assertRaisesRegex(ValueError, "template is not empty: application_settings"):
+                seed_workspace(original, output, 100)
+            self.assertFalse(output.exists())
+
+    def test_refuses_forged_or_unmigrated_schema(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "unmigrated.db"
+            output = Path(folder) / "output.db"
+            with sqlite3.connect(original) as conn:
+                blank_schema(conn)
+                conn.execute("DELETE FROM schema_migrations WHERE version=4")
+            with self.assertRaisesRegex(ValueError, "migration ledger"):
+                seed_workspace(original, output, 100)
+            self.assertFalse(output.exists())
+
+    def test_refuses_nonempty_extra_tables_and_unknown_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "other.db"
+            output = Path(folder) / "output.db"
+            with sqlite3.connect(original) as conn:
+                blank_schema(conn)
+                conn.execute("CREATE TABLE new_sensitive_history(id TEXT)")
+                conn.execute("INSERT INTO new_sensitive_history VALUES('private')")
+            with self.assertRaisesRegex(ValueError, "new_sensitive_history"):
                 seed_workspace(original, output, 100)
             self.assertFalse(output.exists())
 

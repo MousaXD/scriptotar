@@ -1,11 +1,12 @@
 """Seed synthetic 100/1000/10000-row workloads into an isolated migrated SQLite copy.
 
-Only use a freshly initialized scratch template, NEVER an ordinary user database.
+Only use an EMPTY schema-migrated scratch template, NEVER an ordinary user database.
 No production code is touched, and the source is opened read-only before backup.
 """
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 import uuid
@@ -13,7 +14,7 @@ import uuid
 SIZES = {100, 1000, 10000}
 EMPTY_TABLES = ("creators", "sources", "media", "transcripts", "research_items",
                 "analyses", "ai_runs", "jobs")
-NEEDED_TABLES = set(EMPTY_TABLES) | {"projects"}
+NEEDED_TABLES = set(EMPTY_TABLES) | {"projects", "schema_migrations"}
 STAMP = "2026-01-01T00:00:00Z"
 
 def identity(kind, n):
@@ -26,6 +27,33 @@ def digest(path):
             h.update(block)
     return h.hexdigest()
 
+def assert_blank_migrated_template(conn):
+    """Reject ALL preexisting user records; allow only the migration ledger and empty FTS internals."""
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if not NEEDED_TABLES.issubset(names):
+        raise ValueError("template must include the app migration ledger and domain tables")
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version < 5:
+        raise ValueError("template must be initialized by Scriptotar schema migration v5+")
+    versions = [row[0] for row in conn.execute(
+        "SELECT version FROM schema_migrations ORDER BY version")]
+    if versions != list(range(1, version + 1)):
+        raise ValueError("template migration ledger and user_version disagree")
+
+    # FTS5 shadow tables may hold internal bookkeeping even when index is empty.
+    # The virtual transcript_fts table itself is tested for zero visible rows.
+    shadows = {"transcript_fts_data", "transcript_fts_idx",
+               "transcript_fts_content", "transcript_fts_docsize",
+               "transcript_fts_config"}
+    for table in sorted(names):
+        if table.startswith("sqlite_") or table == "schema_migrations" or table in shadows:
+            continue
+        # Only table names provided by sqlite_master, not user parameters.
+        escaped = table.replace('"', '""')
+        if conn.execute(f'SELECT 1 FROM "{escaped}" LIMIT 1').fetchone():
+            raise ValueError(f"template is not empty: {table}; use a blank migrated scratch DB")
+
 def seed_workspace(template: Path, destination: Path, rows: int):
     template, destination = template.resolve(), destination.resolve()
     if rows not in SIZES:
@@ -37,23 +65,18 @@ def seed_workspace(template: Path, destination: Path, rows: int):
 
     original = sqlite3.connect(template.as_uri() + "?mode=ro", uri=True)
     try:
-        names = {r[0] for r in original.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'")}
-        if not NEEDED_TABLES.issubset(names):
-            raise ValueError("template must use the application's migrated SQLite schema")
-        for table in EMPTY_TABLES:
-            if original.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]:
-                raise ValueError(f"template is not empty: {table}; use a fresh scratch DB")
-        existing = original.execute("SELECT name FROM projects").fetchall()
-        if len(existing) > 1 or (existing and existing[0][0] != "Inbox"):
-            raise ValueError("template has personal projects; use a fresh Inbox-only scratch DB")
-        # A template is supplied by the operator. Never print or read settings_json.
+        assert_blank_migrated_template(original)
+        # Revalidate the copied snapshot before inserting; a user DB must never be seeded.
         created = False
         try:
-            target = sqlite3.connect(destination)
+            # Exclusive 0600 creation prevents overwriting files or racing a symlink.
+            descriptor = os.open(destination, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
             created = True
+            target = sqlite3.connect(destination)
             try:
                 original.backup(target)
+                assert_blank_migrated_template(target)
                 target.execute("PRAGMA foreign_keys=ON")
                 project = identity("project", rows)
                 with target:

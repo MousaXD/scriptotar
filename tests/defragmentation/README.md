@@ -38,3 +38,7 @@ python3 tests/defragmentation/benchmarks/seed_workspace.py --template /tmp/blank
 ```
 
 The seeder refuses occupied research/jobs/AI/transcript collections and non-Inbox personal projects, and verifies integrity/counts before reporting a file SHA. It does not create real playable media, real inference, or an installed-app startup metric.
+
+Fixture privacy hardening: the source database must have an application migration ledger (`PRAGMA user_version >= 5` with contiguous versions), and **every application table** except the migration ledger and empty FTS internal bookkeeping must be empty, including `projects` and `application_settings`. Even a normal installed workspace with an Inbox is rejected. The output file is created exclusively with owner-only permissions, and the copy is checked again before seeding. Do not use a live/user database as the template.
+
+Native-installed PASS evidence now requires the canonical exact-run GitHub Actions URL, timestamp with timezone, package + executable hashes, OS/CPU/RAM, a real automated installed WebView probe and positive measurements for cold/warm startup, workspace readiness, IPC bytes and peak process-tree memory. These are **structural prerequisites only**; independent review must still establish each result really came from that SHA/package.
