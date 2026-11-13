@@ -182,6 +182,25 @@ describe('App integration with legacy expert tools', () => {
     expect(detail).toHaveBeenCalledWith('p-creator-lab', 'a-1');
   });
 
+  it('reopens saved Copy Prompt artifacts without fabricating a generated result', async () => {
+    const { gateway } = studyFixture();
+    render(App, { props: {
+      api: createMockClient(), studioGateway: {
+        ...gateway,
+        getAiArtifact: async (projectId: string, id: string) => ({
+          id, projectId, task: 'Viral breakdown', title: 'Caption pacing breakdown',
+          prompt: 'Exact saved copy-only prompt', result: null,
+          createdAt: '2026-11-13T12:00:00Z'
+        })
+      }
+    } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: /Library/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open AI run: Caption pacing breakdown' }));
+    expect(await screen.findByText('Exact saved copy-only prompt')).toBeInTheDocument();
+    expect(screen.queryByText('Exactly saved answer from the historic run')).not.toBeInTheDocument();
+  });
+
   it('does not invent an old AI answer without a detail API', async () => {
     render(App, { props: { api: createMockClient() } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
