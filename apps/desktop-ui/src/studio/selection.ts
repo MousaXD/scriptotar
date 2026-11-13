@@ -26,6 +26,10 @@ export function sourceLabel(ref: StudySourceRef, research: ResearchItem[], trans
   return transcripts.find((item) => item.id === ref.id)?.title || ref.id;
 }
 
+/** Source attachments form an identity set, not a positional list. SQLite
+ * orders equal-timestamp source rows by UUID, which must not cause resaves. */
 export function sameRefs(a: StudySourceRef[], b: StudySourceRef[]): boolean {
-  return a.length === b.length && a.every((ref, i) => ref.id === b[i].id && ref.kind === b[i].kind);
+  if (a.length !== b.length) return false;
+  const seen = new Set(a.map((ref) => ref.kind + ':' + ref.id));
+  return seen.size === a.length && b.every((ref) => seen.has(ref.kind + ':' + ref.id));
 }

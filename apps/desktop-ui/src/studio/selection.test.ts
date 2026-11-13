@@ -18,8 +18,18 @@ describe('Studio source identity boundary', () => {
       { kind: 'research', id: 'r1' }, { kind: 'transcript', id: 't1' }
     ]);
   });
-  it('preserves stable ordered selection', () => {
+  it('compares exact source identity regardless of storage order', () => {
     expect(sameRefs([{ kind: 'transcript', id: 't1' }], [{ kind: 'transcript', id: 't1' }])).toBe(true);
+    expect(sameRefs([
+      { kind: 'transcript', id: 't1' }, { kind: 'research', id: 'r1' }
+    ], [
+      { kind: 'research', id: 'r1' }, { kind: 'transcript', id: 't1' }
+    ])).toBe(true);
     expect(sameRefs([{ kind: 'research', id: 'r1' }], [{ kind: 'transcript', id: 'r1' }])).toBe(false);
+    expect(sameRefs([
+      { kind: 'research', id: 'r1' }, { kind: 'research', id: 'r1' }
+    ], [
+      { kind: 'research', id: 'r1' }, { kind: 'transcript', id: 't1' }
+    ])).toBe(false);
   });
 });
