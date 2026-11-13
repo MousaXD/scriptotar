@@ -33,7 +33,18 @@ export interface ContentStudy {
   draft: string;
   draftVersions: DraftSnapshot[];
 }
+export interface HistoricalAiArtifact {
+  id: string;
+  projectId: string;
+  task: string;
+  title: string;
+  prompt: string;
+  result: string;
+  createdAt: string;
+}
 export interface StudioGateway {
+  /** Optional until Agent 02's project-scoped exact-run detail endpoint is integrated. */
+  getAiArtifact?(projectId: string, runId: string): Promise<HistoricalAiArtifact>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string): Promise<ContentStudy>;
