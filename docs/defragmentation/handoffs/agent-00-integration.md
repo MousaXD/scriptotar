@@ -34,6 +34,14 @@ Seven isolated branches were combined by Git tree changes without duplicate edit
 7. Added Rust acceptance tests: restart/durable version history; invalid-origin and cross-project guards; simulated late insert/update failure rollback; real research+transcript source association; evidence-linked source deletion failure without revision consumption. Existing project migration tests and parity must still pass on one exact head.
 8. Fixed Chromium index-dependent view assertions using stable view IDs; kept native/mocked performance signals distinct.
 
+## P1 checkpoint persistence continuation (Agent 00)
+
+- Added additive core migration v7 (`agent_checkpoint_ledger`) after the immutable v6 Content Study schema. Historical v4/v5 fixture upgrades strip v7 objects before reconstructing their pre-1.4.1 state.
+- Implemented project/study-bound `ScopedAgentCheckpointStore` for Agent 04's runtime with SQLite IMMEDIATE transactions, exact-revision CAS, bounded JSON snapshots, metadata-only append audit, immutable plan and audit prefixes, and fail-closed corruption checks.
+- Failed audit inserts roll back the snapshot revision and its events atomically. Tests cover restart, cross-project isolation, stale revisions, concurrent writers, archived studies, direct SQL tampering and late-write failures.
+- A real `Engine` smoke test restores an awaiting-approval checkpoint after database restart and records denial without executing any tool.
+- Agent 04's existing runtime remains isolated. This change does NOT provide a service effect/idempotency ledger, provider-side budget enforcement, real AppServices tool dispatch, consent-based Tauri agent run endpoints or autonomous Studio UI.
+- Require nine workflows and installed-app proof on one exact post-v7 SHA. Earlier fully green P0 baseline at 22ce84a must not be presented as validation of v7.
 ## Test evidence and gates
 
 - The 8acb185 integrated snapshot passed Rust foundation, CI, MCP E2E, Desktop UI, security hygiene, GUI QA, Tauri migration and Linux package. Windows installer was later cancelled by additional commits; do **not** count it as passed.
@@ -46,7 +54,7 @@ The absence of failure in a mocked Svelte test is not evidence of native perform
 
 **P0:** prove exact clean-install Windows/Linux restart, real project/Study/source/draft recovery, export and EN/AR/RTL. Expose evidence editing/verification and immutable draft history end-to-end; implement safe staged delete/undo, extended new-project/source continuity, and test 100/1k/10k project database scenarios. Audit the last content UI for misleading badges/subtexts. Avoid assuming a successful installer build is an installed WebView journey.
 
-**P1:** wire the isolated Agent 04 core to a production SQLite checkpoint/effect ledger, permitted AppServices tools, provider consent and cost ceilings, ID-based polling/reconciliation, durable user approvals, cancellation, and crash-safe no-duplicate retries. Adapt Agent 05 observations and Agent 06 evidence-aware writing to validated project-scoped sources and canonical drafts. Surface original multiple candidate scripts, citations, blocked claims and human changes in Studio.
+**P1:** SQLite checkpoint and audit persistence are now implemented as a candidate, but a separate **service-side effect/idempotency ledger**, permitted AppServices tool drivers, provider consent and cost ceilings, ID-based polling/reconciliation, user-facing approvals and crash-safe no-duplicate retries still need production wiring. Adapt Agent 05 observations and Agent 06 evidence-aware writing to validated project-scoped sources and canonical drafts. Surface original multiple candidate scripts, citations, blocked claims and human changes in Studio.
 
 **P2:** persist observational metric snapshots, relevant creator peer baselines and timing limitations; implement credible separate factual research with provenance/access rules and source rights. Run hardware-labeled native startup/IPC payload/RSS/render benchmarks, not fabricated or jsdom timings.
 
