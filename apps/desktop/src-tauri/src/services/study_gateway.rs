@@ -298,7 +298,9 @@ mod tests {
         {
             let services = AppServices::new(dir.path()).unwrap();
             project_id = services.active_project_id().unwrap();
-            let created = services.create_studio_study(project_id, partial.clone()).unwrap();
+            let created = services
+                .create_studio_study(project_id, partial.clone())
+                .unwrap();
             study_id = Uuid::parse_str(&created.id).unwrap();
             assert_eq!(created.brief, partial);
             assert!(created.draft.is_empty());
@@ -317,7 +319,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
         let project_id = services.active_project_id().unwrap();
-        let initial = services.create_studio_study(project_id, example_brief()).unwrap();
+        let initial = services
+            .create_studio_study(project_id, example_brief())
+            .unwrap();
         let study_id = Uuid::parse_str(&initial.id).unwrap();
         let db = rusqlite::Connection::open(services.store.path()).unwrap();
         db.execute_batch(
@@ -345,7 +349,8 @@ mod tests {
         assert_eq!(unchanged.brief, initial.brief);
         assert_eq!(unchanged.draft, "");
         assert_eq!(unchanged.draft_versions.len(), 1);
-        db.execute_batch("DROP TRIGGER test_fail_draft_write;").unwrap();
+        db.execute_batch("DROP TRIGGER test_fail_draft_write;")
+            .unwrap();
         let saved = services
             .save_studio_study(
                 project_id,
@@ -378,7 +383,8 @@ mod tests {
             .create_studio_study(project_id, example_brief())
             .is_err());
         assert!(services.list_studio_studies(project_id).unwrap().is_empty());
-        db.execute_batch("DROP TRIGGER test_fail_initial_version;").unwrap();
+        db.execute_batch("DROP TRIGGER test_fail_initial_version;")
+            .unwrap();
         let created = services
             .create_studio_study(project_id, example_brief())
             .unwrap();
