@@ -21,6 +21,18 @@
   export let api: ScriptotarApi = getApi();
   /** Test/integration injection; never backs production with a fake repository. */
   export let studioGateway: StudioGateway | undefined = undefined;
+  // Production and mock implementations share the typed ScriptotarApi. Test
+  // injection still overrides this adapter for isolated Studio interaction cases.
+  $: resolvedStudioGateway = studioGateway ?? {
+    listStudies: (projectId: string) => api.listStudies(projectId),
+    createStudy: (projectId: string, brief: Parameters<StudioGateway['createStudy']>[1]) =>
+      api.createStudy(projectId, brief),
+    getStudy: (projectId: string, studyId: string) => api.getStudy(projectId, studyId),
+    saveStudy: (projectId: string, studyId: string, revision: number,
+      patch: Parameters<StudioGateway['saveStudy']>[3]) =>
+      api.saveStudy(projectId, studyId, revision, patch),
+    getAiArtifact: (projectId: string, runId: string) => api.getAiRun(projectId, runId)
+  } satisfies StudioGateway;
   let data: BootstrapSummaryData | null = null;
   let loading = true;
   let error = '';
@@ -582,7 +594,7 @@
     {#if studioVisitedProjectId === data.activeProjectId}
       <div hidden={activeView !== 'studio'} class="studio-host">
         {#key data.activeProjectId}
-          <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={studioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
+          <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} savedRuns={data.aiRuns} incoming={studioIncoming} incomingArtifactId={studioIncomingArtifactId} gateway={resolvedStudioGateway} onOpenTranscript={openTranscript} onNavigate={(view) => activeView = view} />
         {/key}
       </div>
     {/if}

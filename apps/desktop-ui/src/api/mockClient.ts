@@ -1,4 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
+import type { ContentStudy } from '../studio/contract';
 import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
 export const mockBootstrap: BootstrapData = {
@@ -106,6 +107,14 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let migrationStatus = structuredClone(mockBootstrap.migrationStatus);
   let projects = structuredClone(mockBootstrap.projects);
   let projectCounter = 0;
+  let studyCounter = 0;
+  const studies = new Map<string, ContentStudy>();
+  const studyInProject = (projectId: string, studyId: string): ContentStudy => {
+    if (active !== projectId) throw new Error('Active project changed');
+    const study = studies.get(studyId);
+    if (!study || study.projectId !== projectId) throw new Error('Study not found');
+    return study;
+  };
   const snapshot = (): BootstrapData => ({
     ...structuredClone(mockBootstrap),
     projects: structuredClone(projects),
@@ -134,6 +143,51 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         .filter((transcript) => transcript.text.toLocaleLowerCase().includes(query))
         .slice(0, limit)
         .map((transcript) => transcript.id);
+    },
+    async listStudies(projectId: string) {
+      if (active !== projectId) throw new Error('Active project changed');
+      return [...studies.values()].filter((study) => study.projectId === projectId).map((study) => ({
+        id: study.id, projectId: study.projectId, brief: structuredClone(study.brief), revision: study.revision
+      }));
+    },
+    async createStudy(projectId, brief) {
+      if (active !== projectId) throw new Error('Active project changed');
+      if (!brief.title.trim()) throw new Error('Study title is required');
+      const study: ContentStudy = {
+        id: `mock-study-${++studyCounter}`, projectId, revision: 1,
+        brief: structuredClone(brief), sources: [], draft: '', draftVersions: []
+      };
+      studies.set(study.id, structuredClone(study));
+      return structuredClone(study);
+    },
+    async getStudy(projectId: string, studyId: string) {
+      return structuredClone(studyInProject(projectId, studyId));
+    },
+    async saveStudy(projectId, studyId, expectedRevision, patch) {
+      const old = studyInProject(projectId, studyId);
+      if (old.revision !== expectedRevision) throw new Error('Study changed by another editor');
+      const next = structuredClone(old);
+      if (patch.brief) {
+        if (!patch.brief.title.trim()) throw new Error('Study title is required');
+        next.brief = structuredClone(patch.brief);
+      }
+      if (patch.sources) {
+        const identities = patch.sources.map((ref) => `${ref.kind}:${ref.id}`);
+        if (new Set(identities).size !== identities.length) throw new Error('Duplicate source');
+        next.sources = structuredClone(patch.sources);
+      }
+      if (patch.draft !== undefined && patch.draft !== old.draft) {
+        next.draft = patch.draft;
+        next.draftVersions.push({
+          id: `${studyId}:v${next.draftVersions.length + 1}`,
+          revision: next.draftVersions.length + 1,
+          content: patch.draft,
+          createdAt: '2026-08-09T09:00:00+04:00'
+        });
+      }
+      next.revision += 1;
+      studies.set(studyId, next);
+      return structuredClone(next);
     },
     async getAiRun(projectId: string, aiRunId: string) {
       if (active !== projectId) throw new Error('Active project changed');
