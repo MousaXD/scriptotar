@@ -134,7 +134,12 @@ fn actual_agent_engine_restores_approval_and_denial_without_execution() {
     registry.allow(ToolKind::ReadTranscript);
     {
         let checkpoints = store.scoped_agent_checkpoints(project.id, study).unwrap();
-        let engine = Engine::new(checkpoints, NeverExecute, ApproveLocalScope, registry.clone());
+        let engine = Engine::new(
+            checkpoints,
+            NeverExecute,
+            ApproveLocalScope,
+            registry.clone(),
+        );
         engine.create(plan, 100).unwrap();
         let waiting = engine.tick(&id, 101).unwrap();
         assert_eq!(waiting.state, RunState::AwaitingApproval);
@@ -142,7 +147,9 @@ fn actual_agent_engine_restores_approval_and_denial_without_execution() {
     }
     drop(store);
     let reopened = SqliteStore::open(temp.path().join("agent.sqlite3")).unwrap();
-    let checkpoints = reopened.scoped_agent_checkpoints(project.id, study).unwrap();
+    let checkpoints = reopened
+        .scoped_agent_checkpoints(project.id, study)
+        .unwrap();
     let engine = Engine::new(checkpoints, NeverExecute, ApproveLocalScope, registry);
     let restored = engine.get(&id).unwrap();
     assert_eq!(restored.state, RunState::AwaitingApproval);
@@ -199,8 +206,7 @@ fn wrong_project_and_study_scope_cannot_read_or_mutate_run() {
     assert_eq!(foreign.create(run.clone()), Err(StoreError::Conflict));
     let mut foreign_collision = initial(other.id, other_study.id);
     foreign_collision.plan.id = run.plan.id.clone();
-    foreign_collision.steps[0].idempotency_key =
-        format!("{}:0:read_1", foreign_collision.plan.id);
+    foreign_collision.steps[0].idempotency_key = format!("{}:0:read_1", foreign_collision.plan.id);
     assert_eq!(foreign.create(foreign_collision), Err(StoreError::Conflict));
     assert_eq!(
         foreign.compare_and_swap(0, later(&run)),
