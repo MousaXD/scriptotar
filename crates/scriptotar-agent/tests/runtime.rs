@@ -1,5 +1,5 @@
 use scriptotar_agent::{
-    model::*, Certainty, CheckpointStore, Engine, ExecutionContext, MemoryStore, PolicyGate,
+    model::*, Certainty, Engine, ExecutionContext, MemoryStore, PolicyGate,
     ProbeResult, RuntimeError, ToolExecutor, ToolFailure, ToolReceipt, ToolRegistry,
 };
 use std::{
@@ -272,13 +272,13 @@ fn missing_tool_registration_is_fail_closed() {
 #[test]
 fn call_token_cost_time_and_output_limits_block_safely() {
     for (limits, estimate, time) in [
-        (Limits { max_tool_calls: 1, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+        (Limits { max_tool_calls: 1, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10 },
             Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 0, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+        (Limits { max_tool_calls: 3, max_tokens: 0, max_cost_microusd: 100, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10 },
             Estimate { tokens: 1, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 0, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 0, max_elapsed_ms: 1000, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10 },
             Estimate { tokens: 0, cost_microusd: 1, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 1),
-        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10, cpu_ms: 1, peak_memory_mib: 1 },
+        (Limits { max_tool_calls: 3, max_tokens: 100, max_cost_microusd: 100, max_elapsed_ms: 1, max_output_bytes: 1000, max_cpu_ms: 10, max_peak_memory_mib: 10 },
             Estimate { tokens: 0, cost_microusd: 0, max_output_bytes: 1000, cpu_ms: 1, peak_memory_mib: 1 }, 2),
     ] {
         let d = FakeDriver::default();
@@ -472,4 +472,36 @@ fn accepted_job_cancel_is_not_false_completion_and_reconciles_denial() {
     assert_eq!(e.cancel("run_1", 2).unwrap().state, RunState::Cancelling);
     assert_eq!(e.reconcile("run_1", 3).unwrap().state, RunState::Cancelled);
     assert_eq!(d.calls(), 1);
+}
+
+#[test]
+fn resource_reservations_cap_cumulative_cpu_and_peak_memory() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    let mut p = plan(vec![step("s1"), step("s2")]);
+    p.limits.max_cpu_ms = 1;
+    e.create(p, 0).unwrap();
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::Running);
+    assert_eq!(e.tick("run_1", 2).unwrap().state, RunState::Blocked);
+    assert_eq!(d.calls(), 1);
+
+    let mut invalid = plan(vec![StepPlan {
+        estimate: Estimate { peak_memory_mib: 11, ..step("s1").estimate },
+        ..step("s1")
+    }]);
+    invalid.id = "other_run".into();
+    assert_eq!(engine(FakeDriver::default()).create(invalid, 0), Err(RuntimeError::InvalidPlan));
+}
+
+#[test]
+fn pending_service_step_can_pause_without_discarding_service_id() {
+    let d = FakeDriver::default();
+    d.receipt(Ok(ToolReceipt::Accepted { effect_id: "job_1".into() }));
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    e.tick("run_1", 1).unwrap();
+    assert_eq!(e.pause("run_1", 2).unwrap().state, RunState::Paused);
+    assert_eq!(e.reconcile("run_1", 2), Err(RuntimeError::WrongState));
+    assert_eq!(e.resume("run_1", 3).unwrap().state, RunState::NeedsInput);
+    assert_eq!(e.get("run_1").unwrap().steps[0].pending_effect_id.as_deref(), Some("job_1"));
 }
