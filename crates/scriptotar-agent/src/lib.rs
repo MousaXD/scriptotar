@@ -428,6 +428,10 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                     run.steps[i].state = StepState::Completed;
                     run.steps[i].pending_effect_id = None;
                     run.event(now, AuditKind::Completed);
+                    // Keep both audit entries attributed to the effect that actually finished.
+                    if run.cancel_requested {
+                        run.event(now, AuditKind::Cancelled);
+                    }
                     run.current_step += 1;
                     run.state = if run.cancel_requested {
                         RunState::Cancelled
@@ -438,7 +442,6 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
                     } else {
                         RunState::Running
                     };
-                    if run.cancel_requested { run.event(now, AuditKind::Cancelled); }
                 }
                 Ok(ToolReceipt::Accepted { effect_id }) if valid_id(effect_id) => {
                     run.steps[i].state = StepState::AwaitingResult;
