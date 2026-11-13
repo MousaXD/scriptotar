@@ -26,11 +26,12 @@ All public types/functions below live under `scriptotar_research::intelligence`.
 | `observed_view_growth(older, newer)` | Two actual sequential timepoints of same project/source, two view counts, strictly increasing time and nondecreasing count. Return observed delta and views/day or a typed limitation; no extrapolation. |
 | `extract_transcript_outline(scope, segments, access)` | Deterministically produce bounded opening/middle/closing **spoken excerpts** with segment IDs and timecode millisecond ranges. Distinguish Partial/Denied/Unsupported, empty speech, invalid segments. No fake visual, hook type, CTA, payoff or inferred structure. |
 | `TranscriptScope`, `EvidenceRef`, `CreativeObservation`, `SourceConfidence` | Suggested evidence payloads for Agent 00 to map to persistent project-checked Content Study provenance after contract approval. |
+| `propose_transcript_hypothesis`, `TranscriptFeature`, `count_transcript_features` | Validate source-scoped evidence for *caller-provided* semantic hypotheses and count distinct contributing sources per proposed feature. Not an automatic hook, CTA, payoff or pacing detector. |
 
 ### Observed metrics vs uncertain claims
 
 - Views, likes and comments from yt-dlp are **observations**, not audited platform analytics. Counts can be delayed, inconsistent or suppressed by an inaccessible source.
-- Stale is explicit: callers supply an `as_of` instant and recency cap. No UI clock or historical backfill is fabricated.
+- Stale is explicit: callers supply an `as_of` instant and recency cap. The independently validated `ObservationTimestamp` parses RFC3339 time and offsets into UTC seconds/nanoseconds, without a new crate dependency or root Cargo.lock change. No UI clock or historical backfill is fabricated.
 - Publication date may be missing, recognized or unrecognized. The creator comparison intentionally abstains if target age is unavailable or the peer sample is too small.
 - The creator-relative views ratio is descriptive, not evidence of audience retention, engagement cause, platform boosting, or a future hit.
 - Growth is only the *difference between two observed snapshots*. It is not guaranteed growth of unique people or normalized reach.
@@ -39,7 +40,7 @@ All public types/functions below live under `scriptotar_research::intelligence`.
 
 `TranscriptScope` carries the real project/research/transcript IDs and a caller-supplied immutable transcript revision. `TranscriptSegment` requires a unique segment ID, ordered start/end times in **milliseconds**, and bounded text. `EvidenceRef` retains the source scope, segment ID, timecodes, and up to 160 Unicode characters of excerpt. This is a locator, not a whole copyrighted script.
 
-The offline outline is literal positional evidence, not semantic analysis. A later human-reviewed or AI-assisted extractor can attach *hook hypothesis, opening promise, narrative beat, pacing, payoff, CTA placement and rhetorical device* as structured **hypotheses** with these exact evidence references, explicit transcript-only modality, separate confidence, and counterexamples. Pacing inferred from words per second is a spoken-text estimate, never a visual edit/cut rate. No visual evidence or frame inspection is implemented here.
+The offline outline is literal positional evidence, not semantic analysis. A later human-reviewed or AI-assisted extractor can use the new typed contract to attach *hook hypothesis, opening promise, narrative beat, pacing, payoff, CTA placement and rhetorical device* as structured **hypotheses** with these exact evidence references, explicit transcript-only modality, separate confidence, and counterexamples. Pacing inferred from words per second is a spoken-text estimate, never a visual edit/cut rate. No visual evidence or frame inspection is implemented here.
 
 Before persistence, Agent 01/02 must verify each `project_id`, `research_item_id`, and `transcript_id` belongs to the same project and that the revision matches the stored source. A self-reported Rust struct is not database authorization. Factual assertions require independently corroborating sources; repeated reels are not independent fact verification.
 
