@@ -228,6 +228,27 @@ pub struct UiAiRun {
     pub status: String,
 }
 
+/// Exact persisted AI artifact, including its original prompt/result (never a credential).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiAiRunDetail {
+    #[serde(flatten)]
+    pub summary: UiAiRun,
+    pub project_id: String,
+    pub prompt: String,
+    pub result: Option<String>,
+}
+
+/// Exact research item, not a navigation-only library row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiResearchItemDetail {
+    #[serde(flatten)]
+    pub item: UiResearchItem,
+    pub project_id: String,
+    pub scanned_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiLibraryItem {
