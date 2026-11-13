@@ -139,6 +139,55 @@ CREATE TABLE draft_versions (
 );
 CREATE INDEX idx_draft_versions_draft ON draft_versions(draft_id, version DESC);
 
+-- Per-source job lineage extends existing authoritative job_transcript_links.
+CREATE TABLE study_source_jobs (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    study_id TEXT NOT NULL REFERENCES content_studies(id) ON DELETE CASCADE,
+    study_source_id TEXT NOT NULL REFERENCES study_sources(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    linked_at TEXT NOT NULL,
+    PRIMARY KEY(study_source_id, job_id)
+);
+CREATE INDEX idx_study_source_jobs_project ON study_source_jobs(project_id, study_id, job_id);
+CREATE TRIGGER study_source_jobs_guard BEFORE INSERT ON study_source_jobs
+WHEN NOT EXISTS(
+    SELECT 1 FROM study_sources ss
+    JOIN content_studies st ON st.id=ss.study_id
+    JOIN projects p ON p.id=st.project_id
+    JOIN jobs j ON j.id=NEW.job_id
+    WHERE ss.id=NEW.study_source_id AND ss.project_id=NEW.project_id
+      AND ss.study_id=NEW.study_id AND st.project_id=NEW.project_id
+      AND st.archived_at IS NULL AND p.archived_at IS NULL
+      AND j.project_id=NEW.project_id
+)
+BEGIN SELECT RAISE(ABORT, 'study source job must share project/study'); END;
+CREATE TRIGGER study_source_jobs_owner_immutable BEFORE UPDATE ON study_source_jobs
+BEGIN SELECT RAISE(ABORT, 'study source job link is immutable'); END;
+
+-- Draft attachments select exact study sources rather than copying prompt text.
+CREATE TABLE draft_source_links (
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    draft_id TEXT NOT NULL REFERENCES creative_drafts(id) ON DELETE CASCADE,
+    study_source_id TEXT NOT NULL REFERENCES study_sources(id) ON DELETE CASCADE,
+    attached_at TEXT NOT NULL,
+    PRIMARY KEY(draft_id, study_source_id)
+);
+CREATE INDEX idx_draft_source_links_source ON draft_source_links(study_source_id);
+CREATE TRIGGER draft_source_links_guard BEFORE INSERT ON draft_source_links
+WHEN NOT EXISTS(
+    SELECT 1 FROM creative_drafts d
+    JOIN content_studies st ON st.id=d.study_id
+    JOIN projects p ON p.id=st.project_id
+    JOIN study_sources ss ON ss.id=NEW.study_source_id
+    WHERE d.id=NEW.draft_id AND d.project_id=NEW.project_id
+      AND d.archived_at IS NULL AND st.archived_at IS NULL
+      AND p.archived_at IS NULL AND ss.project_id=NEW.project_id
+      AND ss.study_id=d.study_id
+)
+BEGIN SELECT RAISE(ABORT, 'draft source must share project and study'); END;
+CREATE TRIGGER draft_source_links_owner_immutable BEFORE UPDATE ON draft_source_links
+BEGIN SELECT RAISE(ABORT, 'draft source link is immutable'); END;
+
 -- A source's original identity/metadata is a snapshot. Only ON DELETE SET NULL
 -- can detach a legacy-origin FK. Updating it to another origin is not supported.
 CREATE TRIGGER study_source_identity_immutable
@@ -279,6 +328,11 @@ WHEN NEW.project_id <> OLD.project_id AND EXISTS (
     SELECT 1 FROM study_sources ss WHERE ss.job_id=OLD.id AND ss.project_id<>NEW.project_id
 )
 BEGIN SELECT RAISE(ABORT, 'job is linked to a different-project study'); END;
+CREATE TRIGGER study_source_job_reassignment_guard BEFORE UPDATE OF project_id ON jobs
+WHEN NEW.project_id <> OLD.project_id AND EXISTS (
+    SELECT 1 FROM study_source_jobs j WHERE j.job_id=OLD.id AND j.project_id<>NEW.project_id
+)
+BEGIN SELECT RAISE(ABORT, 'job has study source attachments'); END;
 CREATE TRIGGER study_ai_run_reassignment_guard BEFORE UPDATE OF project_id ON ai_runs
 WHEN NEW.project_id <> OLD.project_id AND EXISTS (
     SELECT 1 FROM study_sources ss WHERE ss.ai_run_id=OLD.id AND ss.project_id<>NEW.project_id
