@@ -243,7 +243,7 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
     pub fn recover(&self, run_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(run_id)?;
         if matches!(run.state, RunState::Running | RunState::Cancelling) {
-            if run.steps.get(run.current_step).is_some_and(|s| s.state == StepState::Running) {
+            if run.steps.get(run.current_step).is_some_and(|s| matches!(s.state, StepState::Running | StepState::AwaitingResult)) {
                 run.state = RunState::Blocked;
                 run.event(now, AuditKind::Interrupted);
                 return self.save(run);
@@ -463,6 +463,10 @@ fn context(run: &RunSnapshot) -> ExecutionContext {
 }
 
 fn safe_code(s: &str) -> String {
-    let filtered: String = s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(64).collect();
-    if filtered.is_empty() { "tool_failure".to_owned() } else { filtered }
+    // Never copy arbitrary provider exceptions, tokens, URLs or user content into a checkpoint.
+    match s {
+        "provider_unavailable" | "provider_timeout" | "source_denied"
+        | "not_found" | "effect_unknown" | "request_rejected" => s.to_owned(),
+        _ => "tool_failure".to_owned(),
+    }
 }
