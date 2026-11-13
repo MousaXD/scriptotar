@@ -9,3 +9,6 @@ mod ai_research;
 mod operational_status;
 mod watchlists;
 pub use operational_status::*;
+
+mod studies_schema;
+mod studies;
