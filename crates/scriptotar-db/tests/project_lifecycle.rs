@@ -422,18 +422,26 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
 
     // An open v6 store already contains v6 tables and triggers. Removing
     // only its version number would fabricate an inconsistent legacy fixture.
-    let mut triggers = connection.prepare(
-        "SELECT name FROM sqlite_master WHERE type='trigger'
-         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')"
-    ).unwrap();
-    let names = triggers.query_map([], |row| row.get::<_, String>(0)).unwrap()
-        .collect::<Result<Vec<_>, _>>().unwrap();
+    let mut triggers = connection
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='trigger'
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')",
+        )
+        .unwrap();
+    let names = triggers
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     drop(triggers);
     for name in names {
-        connection.execute_batch(&format!("DROP TRIGGER \"{name}\";")).unwrap();
+        connection
+            .execute_batch(&format!("DROP TRIGGER \"{name}\";"))
+            .unwrap();
     }
-    connection.execute_batch(
-        "DROP TABLE draft_source_links;
+    connection
+        .execute_batch(
+            "DROP TABLE draft_source_links;
          DROP TABLE study_source_jobs;
          DROP TABLE draft_versions;
          DROP TABLE creative_drafts;
@@ -441,8 +449,9 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
          DROP TABLE study_evidence;
          DROP TABLE study_sources;
          DROP TABLE content_studies;
-         DELETE FROM schema_migrations WHERE version=6;"
-    ).unwrap();
+         DELETE FROM schema_migrations WHERE version=6;",
+        )
+        .unwrap();
     connection
         .execute_batch(
             "DROP TRIGGER creators_project_reassignment_guard;
