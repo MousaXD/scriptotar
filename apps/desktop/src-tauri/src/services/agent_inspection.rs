@@ -544,6 +544,79 @@ mod tests {
     }
 
     #[test]
+    fn failed_effect_reservation_blocks_without_fabricating_completion() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services.store.create_study(project, "Claim failure", "").unwrap().id;
+        let transcript = attached_transcript(&services, project, study);
+        let run = services.start_local_inspection(project, study, transcript).unwrap();
+        let db = Connection::open(services.store.path()).unwrap();
+        db.execute_batch(
+            "CREATE TRIGGER local_test_fail_claim BEFORE INSERT ON agent_effects
+             BEGIN SELECT RAISE(ABORT, 'injected ledger failure'); END;",
+        ).unwrap();
+        let blocked = services
+            .decide_local_inspection(project, study, &run.plan.id, "approve")
+            .unwrap();
+        assert_eq!(blocked.state, scriptotar_agent::RunState::Blocked);
+        assert!(blocked.steps[0].output.is_none());
+        assert!(services.store.get_agent_effect(
+            project, study, &run.plan.id, &blocked.steps[0].idempotency_key
+        ).unwrap().is_none());
+        db.execute_batch("DROP TRIGGER local_test_fail_claim;").unwrap();
+        let still_blocked = services
+            .decide_local_inspection(project, study, &run.plan.id, "recover")
+            .unwrap();
+        assert_eq!(still_blocked.state, scriptotar_agent::RunState::Blocked);
+        assert!(still_blocked.steps[0].output.is_none());
+    }
+
+    #[test]
+    fn reserved_local_read_is_reconciled_from_ledger_after_restart() {
+        use scriptotar_agent::{AuditKind, CheckpointStore, StepState};
+        use scriptotar_db::EffectClaim;
+
+        let temp = TempDir::new().unwrap();
+        let (project, study, transcript, id);
+        {
+            let services = AppServices::new(temp.path()).unwrap();
+            project = services.active_project_id().unwrap();
+            study = services.store.create_study(project, "Crash test", "").unwrap().id;
+            transcript = attached_transcript(&services, project, study);
+            let pending = services.start_local_inspection(project, study, transcript).unwrap();
+            id = pending.plan.id;
+            let engine = services.local_engine(project, study).unwrap();
+            let approved = engine.approve(&id, "inspect_transcript", current_ms()).unwrap();
+            let mut running = approved.clone();
+            running.revision += 1;
+            running.state = scriptotar_agent::RunState::Running;
+            running.steps[0].state = StepState::Running;
+            running.steps[0].attempts = 1;
+            running.usage.tool_calls = 1;
+            running.usage.reserved_cpu_ms = 5_000;
+            running.event(current_ms(), AuditKind::Dispatched);
+            engine.store.compare_and_swap(approved.revision, running.clone()).unwrap();
+            assert!(matches!(
+                services.store.reserve_agent_effect(
+                    project, study, &id, "inspect_transcript", &running.steps[0].idempotency_key
+                ).unwrap(),
+                EffectClaim::Claimed(_)
+            ));
+        }
+        let restarted = AppServices::new(temp.path()).unwrap();
+        let recovered = restarted.decide_local_inspection(project, study, &id, "recover").unwrap();
+        assert_eq!(recovered.state, scriptotar_agent::RunState::Completed);
+        assert_eq!(recovered.steps[0].output.as_ref().unwrap().artifact_id, transcript.to_string());
+        let effect = restarted.store.get_agent_effect(
+            project, study, &id, &recovered.steps[0].idempotency_key
+        ).unwrap().unwrap();
+        assert_eq!(effect.status, EffectStatus::Applied);
+        assert_eq!(effect.revision, 2);
+        assert!(restarted.decide_local_inspection(project, study, &id, "approve").is_err());
+    }
+
+    #[test]
     fn local_inspection_denial_does_not_consume_a_tool_call() {
         let temp = TempDir::new().unwrap();
         let services = AppServices::new(temp.path()).unwrap();
