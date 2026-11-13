@@ -441,7 +441,9 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     }
     connection
         .execute_batch(
-            "DROP TABLE agent_audit_events;
+            "DROP TABLE agent_effects;
+         DELETE FROM schema_migrations WHERE version=8;
+         DROP TABLE agent_audit_events;
          DROP TABLE agent_runs;
          DELETE FROM schema_migrations WHERE version=7;
          DROP TABLE draft_source_links;
@@ -476,7 +478,7 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 7);
+    assert_eq!(upgraded.schema_version().unwrap(), 8);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     assert_eq!(

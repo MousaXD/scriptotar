@@ -172,7 +172,7 @@ fn scoped_checkpoint_survives_restart_with_exact_append_only_history() {
     drop(store);
     drop(scoped);
     let reopened = SqliteStore::open(temp.path().join("agent.sqlite3")).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 7);
+    assert_eq!(reopened.schema_version().unwrap(), 8);
     let same_scope = reopened
         .scoped_agent_checkpoints(project.id, study)
         .unwrap();
