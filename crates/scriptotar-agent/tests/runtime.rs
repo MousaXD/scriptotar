@@ -425,7 +425,8 @@ fn persisted_failed_receipts_do_not_leak_tool_error_text() {
     let r = e.tick("run_1", 1).unwrap();
     assert_eq!(r.steps[0].failure_code.as_deref(), Some("tool_failure"));
     // Adapter contracts require standardized, secret-free codes; never persist the raw error.
-    assert!(!serde_json::to_string(&r).unwrap().contains("ABC123"));\n    assert!(serde_json::to_string(&r.events).unwrap().contains("failed"));
+    assert!(!serde_json::to_string(&r).unwrap().contains("ABC123"));
+    assert!(serde_json::to_string(&r.events).unwrap().contains("failed"));
 }
 
 #[test]
@@ -458,4 +459,17 @@ fn ambiguous_crash_can_only_resume_after_safe_probe() {
     d.probe_result(Ok(ProbeResult::NotApplied));
     assert_eq!(isolated.reconcile("run_1", 3).unwrap().state, RunState::Paused);
     assert_eq!(d.calls(), 0);
+}
+
+#[test]
+fn accepted_job_cancel_is_not_false_completion_and_reconciles_denial() {
+    let d = FakeDriver::default();
+    d.receipt(Ok(ToolReceipt::Accepted { effect_id: "job_1".into() }));
+    d.probe_result(Ok(ProbeResult::NotApplied));
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::NeedsInput);
+    assert_eq!(e.cancel("run_1", 2).unwrap().state, RunState::Cancelling);
+    assert_eq!(e.reconcile("run_1", 3).unwrap().state, RunState::Cancelled);
+    assert_eq!(d.calls(), 1);
 }
