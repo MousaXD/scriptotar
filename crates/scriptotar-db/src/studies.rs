@@ -732,3 +732,17 @@ impl SqliteStore {
         tx.commit().map_err(db_error)
     }
 }
+
+impl SqliteStore {
+    /// Lightweight project-scoped origin validation before claiming the
+    /// editor's CAS token, avoiding partial writes for invalid source IDs.
+    pub fn validate_study_origin(
+        &self,
+        project_id: Uuid,
+        kind: StudySourceKind,
+        source_id: Uuid,
+    ) -> RepositoryResult<()> {
+        let db = database(self)?;
+        origin_locator(&db, project_id, kind, source_id).map(|_| ())
+    }
+}

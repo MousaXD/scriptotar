@@ -220,11 +220,24 @@ impl AppServices {
         if sources.len() > 100 {
             return Err(invalid("source count"));
         }
+        let prior_sources = self.store.list_study_sources(project_id, study_id)?;
+        let present: HashSet<(String, String)> = prior_sources
+            .iter()
+            .filter_map(ui_source)
+            .map(|item| (item.kind, item.id))
+            .collect();
         let mut unique = HashSet::new();
         for source in &sources {
-            source_input(source)?;
+            let input = source_input(source)?;
             if !unique.insert((source.kind.as_str(), source.id.as_str())) {
                 return Err(invalid("duplicate source"));
+            }
+            if !present.contains(&(source.kind.clone(), source.id.clone())) {
+                self.store.validate_study_origin(
+                    project_id,
+                    input.kind,
+                    input.reference_id.ok_or_else(|| invalid("source id"))?,
+                )?;
             }
         }
 
@@ -249,12 +262,11 @@ impl AppServices {
                 &input,
             )?;
         }
-        let existing = self.store.list_study_sources(project_id, study_id)?;
         let wanted: HashSet<(String, String)> = sources
             .iter()
             .map(|item| (item.kind.clone(), item.id.clone()))
             .collect();
-        for source in &existing {
+        for source in &prior_sources {
             if let Some(item) = ui_source(source) {
                 if !wanted.contains(&(item.kind, item.id)) {
                     self.store
@@ -262,11 +274,6 @@ impl AppServices {
                 }
             }
         }
-        let present: HashSet<(String, String)> = existing
-            .iter()
-            .filter_map(ui_source)
-            .map(|item| (item.kind, item.id))
-            .collect();
         for source in sources {
             if !present.contains(&(source.kind.clone(), source.id.clone())) {
                 self.store
@@ -291,5 +298,105 @@ impl AppServices {
                 .create_draft(project_id, study_id, &brief.title, &draft)?;
         }
         self.read_studio_bundle(project_id, study_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn example_brief() -> UiStudioBrief {
+        UiStudioBrief {
+            title: "Content study".into(),
+            goal: "Write an original script about a product".into(),
+            audience: "Regional creators".into(),
+            platform: "TikTok".into(),
+            language: "Arabic".into(),
+            duration: "40".into(),
+            style: "Clear".into(),
+        }
+    }
+
+    #[test]
+    fn studio_persists_draft_versions_and_reopens_after_restart() {
+        let dir = TempDir::new().unwrap();
+        let (project_id, study_id) = {
+            let services = AppServices::new(dir.path()).unwrap();
+            let project_id = services.active_project_id().unwrap();
+            let initial = services
+                .create_studio_study(project_id, example_brief())
+                .unwrap();
+            let study_id = Uuid::parse_str(&initial.id).unwrap();
+            assert_eq!(initial.revision, 1);
+            assert_eq!(initial.brief, example_brief());
+            let saved = services
+                .save_studio_study(
+                    project_id,
+                    study_id,
+                    1,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: Some(Vec::new()),
+                        draft: Some("An original saved script".into()),
+                    },
+                )
+                .unwrap();
+            assert_eq!(saved.revision, 2);
+            assert_eq!(saved.draft, "An original saved script");
+            assert_eq!(
+                saved.draft_versions.last().unwrap().content,
+                "An original saved script"
+            );
+            assert!(matches!(
+                services.save_studio_study(
+                    project_id,
+                    study_id,
+                    1,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: None,
+                        draft: Some("stale writer".into()),
+                    },
+                ),
+                Err(RepositoryError::Conflict(_))
+            ));
+            assert!(services.get_studio_study(Uuid::new_v4(), study_id).is_err());
+            (project_id, study_id)
+        };
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let restored = reopened.get_studio_study(project_id, study_id).unwrap();
+        assert_eq!(restored.revision, 2);
+        assert_eq!(restored.draft, "An original saved script");
+        assert_eq!(restored.draft_versions.len(), 2);
+    }
+
+    #[test]
+    fn invalid_source_is_rejected_before_study_revision_changes() {
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project_id = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(project_id, example_brief())
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let attempt = services.save_studio_study(
+            project_id,
+            study_id,
+            study.revision,
+            UiStudioStudyPatch {
+                brief: None,
+                sources: Some(vec![UiStudioSourceRef {
+                    kind: "transcript".into(),
+                    id: Uuid::new_v4().to_string(),
+                }]),
+                draft: Some("must not be saved".into()),
+            },
+        );
+        assert!(attempt.is_err());
+        let unchanged = services.get_studio_study(project_id, study_id).unwrap();
+        assert_eq!(unchanged.revision, study.revision);
+        assert_eq!(unchanged.draft, "");
+        assert!(unchanged.sources.is_empty());
     }
 }
