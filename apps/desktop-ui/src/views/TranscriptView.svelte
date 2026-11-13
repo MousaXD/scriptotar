@@ -10,6 +10,7 @@
   export let api: ScriptotarApi;
   export let transcripts: TranscriptSummary[];
   export let selectedId = '';
+  export let onUseInStudio: ((id: string) => void) | undefined = undefined;
 
   const LIST_KEY = 'scriptotar.transcriptListOpen';
   const DETAILS_KEY = 'scriptotar.transcriptDetailsOpen';
@@ -265,6 +266,7 @@
         <div class="reader-title"><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.platform}</p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
+          {#if onUseInStudio}<button class="button secondary" type="button" on:click={() => onUseInStudio?.(selected.id)}>{$locale === 'ar' ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
           <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
           <details class="export-menu">
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
