@@ -564,7 +564,9 @@ mod tests {
             let unchanged = services.get_studio_study(project_id, study_id).unwrap();
             assert_eq!(unchanged.revision, saved.revision);
             assert_eq!(unchanged.sources.len(), sources.len());
-            assert!(sources.iter().all(|source| unchanged.sources.contains(source)));
+            assert!(sources
+                .iter()
+                .all(|source| unchanged.sources.contains(source)));
             assert_eq!(unchanged.draft, saved.draft);
         }
         let reopened = AppServices::new(dir.path()).unwrap();
