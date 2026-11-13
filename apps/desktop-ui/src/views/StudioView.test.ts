@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, mockBootstrap } from '../api/mockClient';
 import { setLocale } from '../i18n';
@@ -66,6 +66,22 @@ describe('Content Study Studio', () => {
       target: { value: 'An original voice-over draft' }
     });
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('An original voice-over draft');
+  });
+
+  it('drops stale local prompts and unblocks new preparation when the brief changes', async () => {
+    let resolvePrompt!: (value: string) => void;
+    const pending = new Promise<string>((resolve) => { resolvePrompt = resolve; });
+    const api = createMockClient({ buildAiPrompt: async () => pending });
+    mount(undefined, { api });
+    const prepare = screen.getByRole('button', { name: 'Prepare writing prompt' });
+    await fireEvent.click(prepare);
+    expect(prepare).toBeDisabled();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+      target: { value: 'A different angle' }
+    });
+    expect(prepare).toBeEnabled();
+    await act(async () => { resolvePrompt('OUTDATED prompt'); await pending; });
+    expect(screen.queryByText('OUTDATED prompt')).not.toBeInTheDocument();
   });
 
   it('creates, attaches an exact transcript, versions the draft and reopens it', async () => {
