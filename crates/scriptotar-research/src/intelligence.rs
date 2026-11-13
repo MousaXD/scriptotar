@@ -35,7 +35,7 @@ pub enum IntelligenceError {
 
 /// UTC instant with nanosecond precision. Validates RFC3339 without a new
 /// workspace dependency, keeping root Cargo.lock owned by Agent 00.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObservationTimestamp {
     pub unix_seconds: i64,
     pub nanosecond: u32,
