@@ -285,6 +285,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn title_only_study_can_be_saved_and_reopened_without_inventing_brief_fields() {
+        let dir = TempDir::new().unwrap();
+        let project_id;
+        let study_id;
+        let mut partial = example_brief();
+        partial.title = "A new idea".into();
+        partial.goal.clear();
+        partial.audience.clear();
+        partial.style.clear();
+        {
+            let services = AppServices::new(dir.path()).unwrap();
+            project_id = services.active_project_id().unwrap();
+            let created = services.create_studio_study(project_id, partial.clone()).unwrap();
+            study_id = Uuid::parse_str(&created.id).unwrap();
+            assert_eq!(created.brief, partial);
+            assert!(created.draft.is_empty());
+            assert_eq!(created.revision, 1);
+        }
+        let services = AppServices::new(dir.path()).unwrap();
+        let opened = services.get_studio_study(project_id, study_id).unwrap();
+        assert_eq!(opened.brief, partial);
+        assert_eq!(opened.revision, 1);
+    }
+
     /// A late SQL error must not consume the study's optimistic-concurrency
     /// revision or strand half-written brief/draft state. Restart-proof.
     #[test]

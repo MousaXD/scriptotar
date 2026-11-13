@@ -14,6 +14,9 @@ use crate::{
 };
 
 pub(crate) fn validate_brief(input: &CreativeBriefInput) -> RepositoryResult<String> {
+    // Work-in-progress briefs may have empty fields; requiring a fully formed
+    // creative brief on the first save would make title-only Study creation
+    // impossible. Generation readiness is validated separately.
     for (field, value, max) in [
         ("audience", input.audience.as_str(), 4000),
         ("goal", input.goal.as_str(), 20_000),
@@ -22,7 +25,7 @@ pub(crate) fn validate_brief(input: &CreativeBriefInput) -> RepositoryResult<Str
         ("tone", input.tone.as_str(), 1000),
         ("objective", input.objective.as_str(), 4000),
     ] {
-        required_text(field, value, max)?;
+        optional_text(field, Some(value), max)?;
     }
     optional_text("region", input.region.as_deref(), 240)?;
     optional_text("CTA", input.cta.as_deref(), 4000)?;
