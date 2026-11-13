@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use rusqlite::{params, Connection, OptionalExtension, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use scriptotar_core::{
     now_rfc3339, ContentStudy, EvidenceCertainty, EvidenceInput, EvidenceReference,
     RepositoryError, RepositoryResult, StudyEdit, StudySource, StudySourceInput, StudySourceKind,
