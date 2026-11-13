@@ -685,3 +685,48 @@ impl SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 }
+
+/// Do not cascade-delete linked evidence, jobs or draft attachments when the
+/// user deselects a source in Studio.
+impl SqliteStore {
+    pub fn remove_study_source(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        source_id: Uuid,
+    ) -> RepositoryResult<()> {
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        let linked: i64 = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM study_evidence WHERE study_source_id=?1)
+                     OR EXISTS(SELECT 1 FROM draft_source_links WHERE study_source_id=?1)
+                     OR EXISTS(SELECT 1 FROM study_source_jobs WHERE study_source_id=?1)",
+                params![source_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if linked != 0 {
+            return Err(RepositoryError::Conflict(
+                "cannot remove a source referenced by evidence, drafts or jobs".into(),
+            ));
+        }
+        let changed = tx
+            .execute(
+                "DELETE FROM study_sources WHERE id=?1 AND project_id=?2 AND study_id=?3",
+                params![
+                    source_id.to_string(),
+                    project_id.to_string(),
+                    study_id.to_string()
+                ],
+            )
+            .map_err(db_error)?;
+        if changed != 1 {
+            return Err(RepositoryError::NotFound(format!("study source {source_id}")));
+        }
+        tx.commit().map_err(db_error)
+    }
+}

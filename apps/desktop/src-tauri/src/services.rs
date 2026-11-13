@@ -1,4 +1,5 @@
 mod artifact_details;
+mod study_gateway;
 #[cfg(test)]
 mod project_jobs;
 
