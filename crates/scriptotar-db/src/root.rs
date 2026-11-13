@@ -21,5 +21,5 @@ mod agent_checkpoints;
 mod agent_checkpoints_schema;
 mod agent_effects;
 mod agent_effects_schema;
-pub use agent_effects::{AgentEffect, EffectClaim, EffectStatus, EffectUpdate};
 pub use agent_checkpoints::ScopedAgentCheckpointStore;
+pub use agent_effects::{AgentEffect, EffectClaim, EffectStatus, EffectUpdate};

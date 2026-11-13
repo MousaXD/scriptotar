@@ -6,7 +6,10 @@ use scriptotar_agent::{valid_id, RunSnapshot, RunState, StepState};
 use scriptotar_core::{now_rfc3339, RepositoryError, RepositoryResult};
 use uuid::Uuid;
 
-use crate::{studies::{database, db_error}, SqliteStore};
+use crate::{
+    studies::{database, db_error},
+    SqliteStore,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectStatus {
@@ -153,7 +156,9 @@ fn verified_scope(
         || snapshot.current_step >= snapshot.plan.steps.len()
         || snapshot.steps.len() != snapshot.plan.steps.len()
     {
-        return Err(RepositoryError::Storage("agent checkpoint is invalid".into()));
+        return Err(RepositoryError::Storage(
+            "agent checkpoint is invalid".into(),
+        ));
     }
     Ok(snapshot)
 }
@@ -170,13 +175,16 @@ impl SqliteStore {
         step_id: &str,
         idempotency_key: &str,
     ) -> RepositoryResult<EffectClaim> {
-        if !valid_id(run_id) || !valid_id(step_id)
-            || idempotency_key.is_empty() || idempotency_key.len() > 256
+        if !valid_id(run_id)
+            || !valid_id(step_id)
+            || idempotency_key.is_empty()
+            || idempotency_key.len() > 256
         {
             return Err(invalid("identity"));
         }
         let mut db = database(self)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
         let snapshot = verified_scope(&tx, project, study, run_id)?;
         // Check existing claim before inspecting step state: after a restart
@@ -185,15 +193,19 @@ impl SqliteStore {
         let exists: Option<AgentEffect> = tx
             .query_row(
                 &format!("{EFFECT_SELECT} WHERE idempotency_key=?1"),
-                params![idempotency_key], effect_row
+                params![idempotency_key],
+                effect_row,
             )
-            .optional().map_err(db_error)?;
+            .optional()
+            .map_err(db_error)?;
         if let Some(effect) = exists {
-            if effect.run_id != run_id || effect.study_id != study
-                || effect.project_id != project || effect.step_id != step_id
+            if effect.run_id != run_id
+                || effect.study_id != study
+                || effect.project_id != project
+                || effect.step_id != step_id
             {
                 return Err(RepositoryError::Conflict(
-                    "agent effect identity belongs to a different scope".into()
+                    "agent effect identity belongs to a different scope".into(),
                 ));
             }
             tx.commit().map_err(db_error)?;
@@ -210,7 +222,7 @@ impl SqliteStore {
             || (step.approval_required() && !record.approved)
         {
             return Err(RepositoryError::Conflict(
-                "agent step was not durably approved and dispatched".into()
+                "agent step was not durably approved and dispatched".into(),
             ));
         }
         let tool_kind = format!("{:?}", step.input.kind());
@@ -221,10 +233,16 @@ impl SqliteStore {
                 status,revision,created_at,updated_at
              ) VALUES(?1,?2,?3,?4,?5,?6,'reserved',1,?7,?7)",
             params![
-                idempotency_key, run_id, project.to_string(), study.to_string(),
-                step_id, tool_kind, now
+                idempotency_key,
+                run_id,
+                project.to_string(),
+                study.to_string(),
+                step_id,
+                tool_kind,
+                now
             ],
-        ).map_err(db_error)?;
+        )
+        .map_err(db_error)?;
         let claimed = scoped_effect(&tx, project, study, run_id, idempotency_key)?
             .ok_or_else(|| RepositoryError::Storage("agent effect reservation missing".into()))?;
         tx.commit().map_err(db_error)?;
@@ -261,26 +279,42 @@ impl SqliteStore {
             _ => None,
         };
         let artifact = match &update {
-            EffectUpdate::Applied { artifact_id } if valid_id(artifact_id) => Some(artifact_id.as_str()),
+            EffectUpdate::Applied { artifact_id } if valid_id(artifact_id) => {
+                Some(artifact_id.as_str())
+            }
             EffectUpdate::Applied { .. } => return Err(invalid("artifact receipt")),
             _ => None,
         };
         let mut db = database(self)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
         verified_scope(&tx, project, study, run_id)?;
         let old = scoped_effect(&tx, project, study, run_id, idempotency_key)?
             .ok_or_else(|| RepositoryError::NotFound("agent effect reservation".into()))?;
         if !matches!(
             (old.status, update.status()),
-            (EffectStatus::Reserved, EffectStatus::Accepted | EffectStatus::Applied | EffectStatus::NotApplied | EffectStatus::Unknown)
-                | (EffectStatus::Accepted, EffectStatus::Applied | EffectStatus::NotApplied | EffectStatus::Unknown)
-                | (EffectStatus::Unknown, EffectStatus::Applied | EffectStatus::NotApplied)
+            (
+                EffectStatus::Reserved,
+                EffectStatus::Accepted
+                    | EffectStatus::Applied
+                    | EffectStatus::NotApplied
+                    | EffectStatus::Unknown
+            ) | (
+                EffectStatus::Accepted,
+                EffectStatus::Applied | EffectStatus::NotApplied | EffectStatus::Unknown
+            ) | (
+                EffectStatus::Unknown,
+                EffectStatus::Applied | EffectStatus::NotApplied
+            )
         ) {
-            return Err(RepositoryError::Conflict("agent effect transition forbidden".into()));
+            return Err(RepositoryError::Conflict(
+                "agent effect transition forbidden".into(),
+            ));
         }
-        let changed = tx.execute(
-            "UPDATE agent_effects SET status=?1,external_id=?2,artifact_id=?3,
+        let changed = tx
+            .execute(
+                "UPDATE agent_effects SET status=?1,external_id=?2,artifact_id=?3,
                 revision=revision+1,updated_at=?4
              WHERE idempotency_key=?5 AND run_id=?6 AND project_id=?7
                AND study_id=?8 AND revision=?9
@@ -289,14 +323,23 @@ impl SqliteStore {
                  WHERE s.id=?8 AND s.project_id=?7
                  AND s.archived_at IS NULL AND p.archived_at IS NULL
                )",
-            params![
-                update.status().as_str(), external.or(old.external_id.as_deref()), artifact,
-                now_rfc3339(), idempotency_key, run_id, project.to_string(),
-                study.to_string(), old.revision,
-            ],
-        ).map_err(db_error)?;
+                params![
+                    update.status().as_str(),
+                    external.or(old.external_id.as_deref()),
+                    artifact,
+                    now_rfc3339(),
+                    idempotency_key,
+                    run_id,
+                    project.to_string(),
+                    study.to_string(),
+                    old.revision,
+                ],
+            )
+            .map_err(db_error)?;
         if changed != 1 {
-            return Err(RepositoryError::Conflict("agent effect changed concurrently".into()));
+            return Err(RepositoryError::Conflict(
+                "agent effect changed concurrently".into(),
+            ));
         }
         let after = scoped_effect(&tx, project, study, run_id, idempotency_key)?
             .ok_or_else(|| RepositoryError::Storage("effect result missing".into()))?;
