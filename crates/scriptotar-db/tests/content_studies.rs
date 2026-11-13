@@ -192,7 +192,7 @@ fn study_multi_source_brief_evidence_drafts_survive_reopen_and_origin_deletion()
     drop(db);
     let reopened = SqliteStore::open(temp.path().join("scriptotar.sqlite")).unwrap();
     reopened.run_integration_migrations().unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 6);
+    assert_eq!(reopened.schema_version().unwrap(), 7);
     assert_eq!(
         reopened.get_study(project.id, study.id).unwrap().title,
         "Arabic Reels"
@@ -587,7 +587,10 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
             .unwrap();
     }
     conn.execute_batch(
-        "DROP TABLE draft_source_links;
+        "DROP TABLE agent_audit_events;
+         DROP TABLE agent_runs;
+         DELETE FROM schema_migrations WHERE version=7;
+         DROP TABLE draft_source_links;
          DROP TABLE study_source_jobs;
          DROP TABLE draft_versions;
          DROP TABLE creative_drafts;
@@ -608,7 +611,7 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
 
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 6);
+    assert_eq!(upgraded.schema_version().unwrap(), 7);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     let study = upgraded

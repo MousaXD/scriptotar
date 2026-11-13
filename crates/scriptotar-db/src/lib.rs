@@ -13,7 +13,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 6;
+pub const LATEST_SCHEMA_VERSION: u32 = 7;
 
 /// Per-project job counts and lexicographically latest persisted update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +283,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 6,
         name: "content_studies_and_drafts",
         apply: crate::studies_schema::migration_6,
+    },
+    Migration {
+        version: 7,
+        name: "agent_checkpoint_ledger",
+        apply: crate::agent_checkpoints_schema::migration_7,
     },
 ];
 

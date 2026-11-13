@@ -16,3 +16,7 @@ mod studies_schema;
 mod studies_atomic;
 pub use studies_atomic::StudioBundleUpdate;
 mod studies_drafts;
+
+mod agent_checkpoints;
+mod agent_checkpoints_schema;
+pub use agent_checkpoints::ScopedAgentCheckpointStore;
