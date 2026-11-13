@@ -488,10 +488,14 @@ fn migration_lock_status(error: MigrationLockError) -> UiMigrationStatus {
 }
 
 #[tauri::command]
-fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
-    Ok(BackendHealth {
-        schema_version: state.schema_version().map_err(command_error)?,
+async fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        Ok(BackendHealth {
+            schema_version: services.schema_version().map_err(command_error)?,
+        })
     })
+    .await
 }
 
 /// Retains the original full-data payload for existing callers. New callers
@@ -616,19 +620,19 @@ async fn save_copy_prompt(
 }
 
 #[tauri::command]
-fn get_watchlist_statuses(
+async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
 ) -> Result<Vec<UiWatchlistStatus>, String> {
-    let watchlists = state.store.list_watchlists(None).map_err(command_error)?;
-    let persisted = state
-        .store
+    let store = state.store.clone();
+    on_blocking_worker(move || {
+    let watchlists = store.list_watchlists(None).map_err(command_error)?;
+    let persisted = store
         .list_watchlist_refresh_status(None)
         .map_err(command_error)?
         .into_iter()
         .map(|status| (status.watchlist_id, status))
         .collect::<HashMap<_, _>>();
-    let auto_watch = state
-        .store
+    let auto_watch = store
         .load_settings()
         .map_err(command_error)?
         .auto_watch;
@@ -668,6 +672,8 @@ fn get_watchlist_statuses(
             }
         })
         .collect())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -857,12 +863,13 @@ async fn queue_research(
 }
 
 #[tauri::command]
-fn build_ai_prompt(
+async fn build_ai_prompt(
     input: AiPromptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.build_ai_prompt(&input)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.build_ai_prompt(&input)).await
 }
 
 #[tauri::command]
