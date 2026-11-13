@@ -19,6 +19,9 @@ CREATE TABLE content_studies (
 );
 CREATE INDEX idx_content_studies_project_updated
     ON content_studies(project_id, archived_at, updated_at DESC, id);
+CREATE TRIGGER content_study_owner_immutable
+BEFORE UPDATE OF project_id ON content_studies
+BEGIN SELECT RAISE(ABORT, 'study cannot change owning project'); END;
 
 CREATE TABLE study_sources (
     id TEXT PRIMARY KEY,
