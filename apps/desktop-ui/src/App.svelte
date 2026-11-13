@@ -15,6 +15,8 @@
   import AiStudioView from './views/AiStudioView.svelte';
   import LibraryView from './views/LibraryView.svelte';
   import SettingsView from './views/SettingsView.svelte';
+  import StudioView from './views/StudioView.svelte';
+  import type { StudySourceRef } from './studio/contract';
 
   export let api: ScriptotarApi = getApi();
   let data: BootstrapSummaryData | null = null;
@@ -25,6 +27,7 @@
   let activeView: ViewId = 'dashboard';
   let globalSearch = '';
   let selectedTranscriptId = '';
+  let studioIncoming: (StudySourceRef & { projectId: string }) | null = null;
   let firstProjectName = '';
   let jobRefreshGeneration: number | undefined;
   let jobRefreshTimer: number | undefined;
@@ -267,6 +270,8 @@
       }
       data = prepareData(next);
       selectedTranscriptId = data.transcripts[0]?.id || '';
+       studioIncoming = null;
+       studioIncoming = null;
       return true;
     } catch (cause) {
       if (generation === workspaceGeneration) {
@@ -400,6 +405,16 @@
     await refresh();
   }
 
+  function useInStudio(kind: StudySourceRef['kind'], id: string) {
+    if (!data) return;
+    const available = kind === 'research'
+      ? data.research.some((item) => item.id === id)
+      : data.transcripts.some((item) => item.id === id && item.projectId === data.activeProjectId);
+    if (!available) { switchError = 'The selected source is not available in this project.'; return; }
+    studioIncoming = { kind, id, projectId: data.activeProjectId };
+    activeView = 'studio';
+  }
+
   function openTranscript(id: string) {
     if (!data?.transcripts.some((item) => item.id === id)) {
       throw new Error('The selected transcript is not available in the active project.');
@@ -472,7 +487,7 @@
     // contenteditable fields and custom ARIA textboxes that are not native inputs.
     if (target instanceof Element &&
         target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="listbox"], [role="option"], [role="combobox"]')) return;
-    const shortcuts: Record<string, ViewId> = { d: 'dashboard', r: 'research', j: 'jobs', t: 'transcript', a: 'ai', l: 'library', ',': 'settings' };
+    const shortcuts: Record<string, ViewId> = { d: 'dashboard', r: 'research', s: 'studio', j: 'jobs', t: 'transcript', a: 'ai', l: 'library', ',': 'settings' };
     const destination = shortcuts[event.key.toLowerCase()];
     if (destination) {
       activeView = destination;
@@ -528,11 +543,15 @@
     {#if activeView === 'dashboard'}
       <DashboardView project={activeProject} creators={data.creators} jobs={data.jobs} transcripts={data.transcripts} aiRuns={data.aiRuns} onNavigate={(view) => activeView = view} onCreateProject={createProject} onOpenTranscript={openTranscript} />
     {:else if activeView === 'research'}
-      <ResearchView items={data.research} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={saveWatchlist} />
+      <ResearchView items={data.research} onUseInStudio={(item) => useInStudio('research', item.id)} watchlistStatuses={data.watchlistStatuses.filter((item) => item.projectId === data?.activeProjectId)} onQueue={async (ids) => { await api.queueResearch(ids); await refresh(); }} onScan={async (profileUrl, limit) => { await api.scanCreator({ profileUrl, limit }); await refresh(); }} onSave={saveWatchlist} />
     {:else if activeView === 'jobs'}
       <JobsView jobs={data.jobs} onCancel={cancelJob} onRetry={retryJob} onChooseLocal={() => api.chooseLocalMedia()} onEnqueueLocal={enqueueLocal} onEnqueueUrl={enqueueUrl} onOpenCompleted={openCompletedJob} />
     {:else if activeView === 'transcript'}
-      <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} />
+      <TranscriptView {api} transcripts={data.transcripts} bind:selectedId={selectedTranscriptId} onUseInStudio={(id) => useInStudio('transcript', id)} />
+    {:else if activeView === 'studio'}
+      {#key data.activeProjectId}
+        <StudioView {api} projectId={data.activeProjectId} research={data.research} transcripts={data.transcripts} jobs={data.jobs} incoming={studioIncoming} onNavigate={(view) => activeView = view} />
+      {/key}
     {:else if activeView === 'ai'}
       {#key data.activeProjectId}
         <AiStudioView {api} transcripts={data.transcripts} />
