@@ -203,9 +203,10 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if run.state.terminal() {
             return Err(RuntimeError::WrongState);
         }
-        let executing = run.steps.get(run.current_step).is_some_and(|step| {
-            matches!(step.state, StepState::Running | StepState::AwaitingResult)
-        });
+        if run.state == RunState::Cancelling {
+            return Err(RuntimeError::WrongState);
+        }
+        let executing = run.steps.get(run.current_step).is_some_and(|step| step.state == StepState::Running);
         if executing {
             run.pause_requested = true;
         } else {
@@ -312,7 +313,9 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         let over_limit = now.saturating_sub(run.started_ms) > run.plan.limits.max_elapsed_ms
             || run.usage.tool_calls.checked_add(1).is_none_or(|n| n > run.plan.limits.max_tool_calls)
             || run.usage.reserved_tokens.checked_add(estimate.tokens).is_none_or(|n| n > run.plan.limits.max_tokens)
-            || run.usage.reserved_cost_microusd.checked_add(estimate.cost_microusd).is_none_or(|n| n > run.plan.limits.max_cost_microusd);
+            || run.usage.reserved_cost_microusd.checked_add(estimate.cost_microusd).is_none_or(|n| n > run.plan.limits.max_cost_microusd)
+            || run.usage.reserved_cpu_ms.checked_add(estimate.cpu_ms).is_none_or(|n| n > run.plan.limits.max_cpu_ms)
+            || estimate.peak_memory_mib > run.plan.limits.max_peak_memory_mib;
         if over_limit {
             run.state = RunState::Blocked;
             run.event(now, AuditKind::LimitReached);
@@ -321,6 +324,7 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         run.usage.tool_calls += 1;
         run.usage.reserved_tokens += estimate.tokens;
         run.usage.reserved_cost_microusd += estimate.cost_microusd;
+        run.usage.reserved_cpu_ms += estimate.cpu_ms;
         run.steps[index].state = StepState::Running;
         run.steps[index].attempts += 1;
         run.state = RunState::Running;
@@ -339,6 +343,9 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
             return Ok(run);
         };
         if !matches!(record.state, StepState::Running | StepState::AwaitingResult) {
+            return Err(RuntimeError::WrongState);
+        }
+        if run.state == RunState::Paused || run.state.terminal() {
             return Err(RuntimeError::WrongState);
         }
         let step = &run.plan.steps[run.current_step];
