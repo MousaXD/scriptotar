@@ -76,3 +76,11 @@ No API keys are new model fields. No filesystem/network or credential capture is
 Target check: cargo test -p scriptotar-ai --locked; cargo fmt --all -- --check; cargo clippy -p scriptotar-ai --all-targets -- -D warnings. Current repo's CI should also check regressions in the existing provider fixtures. Real-provider tests need opt-in and must not be confused with offline tests.
 
 **Readiness:** ready for P0 contract review and isolated tests; not ready to merge into a working Content Study, ship as an autonomous writer, or release. Agent 00 alone decides integration.
+
+## Post-review hardening (continuation)
+
+Additional isolated checks now reject model responses above 100,000 characters and draft outputs that declare a different language from the requested brief (including common English/Arabic name/code aliases). Generated draft beats cannot assert editor-controlled manual-edit flags. Model review findings always remain human-review suggestions even if the model supplies a false negative review flag. Angle outline beats must be nonempty and have positive bounded estimated durations.
+
+The existing targeted-revision function now drops the modified beat's stale narration evidence links and downgrades any associated previously supported factual claims to **unverified**, clearing their old claim citations. This prevents an editor-approved rewrite from inheriting evidence that only justified its prior wording. Unchanged beats, claims, and no-op revisions retain their provenance. The app must still obtain fresh citations and a user-approved new DraftVersion before marking revised claims supported.
+
+These are structural checks on declared metadata; the module does not detect the actual spoken language, independently verify a factual assertion or reliably detect all copied phrasing. Integration and permissions remain Agent 00/01/02/04 responsibilities.
