@@ -81,11 +81,19 @@ pub fn audit_draft(
     if let Some(hook) = draft.beats.iter().find(|beat| beat.role == BeatRole::Hook) {
         let opening = hook.narration.trim().to_lowercase();
         let generic_starts = [
-            "in this video", "did you know", "hey guys", "today we're",
-            "let's talk about", "في هذا الفيديو", "هل تعلم", "اليوم سنتحدث",
+            "in this video",
+            "did you know",
+            "hey guys",
+            "today we're",
+            "let's talk about",
+            "في هذا الفيديو",
+            "هل تعلم",
+            "اليوم سنتحدث",
         ];
         if tokens(&opening).len() < 6
-            || generic_starts.iter().any(|phrase| opening.starts_with(phrase))
+            || generic_starts
+                .iter()
+                .any(|phrase| opening.starts_with(phrase))
         {
             advisories.push(note(
                 AdvisoryKind::GenericHook,
@@ -119,8 +127,9 @@ pub fn audit_draft(
     }
 
     let target = u32::from(brief.duration_seconds);
-    if target > 0 && (duration.approximate_seconds > target.saturating_mul(14) / 10
-        || duration.approximate_seconds.saturating_mul(10) < target.saturating_mul(6))
+    if target > 0
+        && (duration.approximate_seconds > target.saturating_mul(14) / 10
+            || duration.approximate_seconds.saturating_mul(10) < target.saturating_mul(6))
     {
         advisories.push(note(
             AdvisoryKind::DurationMismatch,
@@ -168,9 +177,18 @@ pub fn audit_draft(
                     .map(|beat| beat.narration.to_lowercase())
                     .unwrap_or_default();
                 let hedges = [
-                    "may", "might", "possibly", "reportedly", "unverified",
-                    "according to", "not confirmed", "قد", "ربما", "بحسب",
-                    "غير مؤكد", "يُقال",
+                    "may",
+                    "might",
+                    "possibly",
+                    "reportedly",
+                    "unverified",
+                    "according to",
+                    "not confirmed",
+                    "قد",
+                    "ربما",
+                    "بحسب",
+                    "غير مؤكد",
+                    "يُقال",
                 ];
                 if !hedges.iter().any(|hedge| beat_text.contains(hedge)) {
                     advisories.push(note(
@@ -224,7 +242,10 @@ pub fn audit_draft(
     }
     for beat in &draft.beats {
         let narration = tokens(&beat.narration);
-        if narration.windows(8).any(|group| source_windows.contains(&group.join(" "))) {
+        if narration
+            .windows(8)
+            .any(|group| source_windows.contains(&group.join(" ")))
+        {
             advisories.push(note(
                 AdvisoryKind::PotentialSourceOverlap,
                 AdvisoryLevel::NeedsReview,
@@ -234,7 +255,10 @@ pub fn audit_draft(
         }
     }
 
-    DraftAudit { duration, advisories }
+    DraftAudit {
+        duration,
+        advisories,
+    }
 }
 
 /// Detect similar hooks/angles. Similarity is lexical and advisory; different
