@@ -17,8 +17,8 @@ use std::{
 };
 
 use dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
+    UiResearchItemDetail, UiSettings, UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -558,6 +558,57 @@ async fn get_transcript(
     .await
 }
 
+fn artifact_uuid(raw: &str, label: &str) -> Result<Uuid, String> {
+    if raw.len() > 64 {
+        return Err(format!("invalid {label}"));
+    }
+    Uuid::parse_str(raw).map_err(|_| format!("invalid {label}"))
+}
+
+#[tauri::command]
+async fn get_ai_run(
+    project_id: String,
+    ai_run_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let ai_run_id = artifact_uuid(&ai_run_id, "AI run id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services.get_ai_run(project_id, ai_run_id).map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_research_item(
+    project_id: String,
+    research_item_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiResearchItemDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let research_item_id = artifact_uuid(&research_item_id, "research item id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_research_item(project_id, research_item_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_copy_prompt(
+    project_id: String,
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    security::validate_ai_input(&input)?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_copy_prompt(project_id, &input)).await
+}
+
 #[tauri::command]
 fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
@@ -958,6 +1009,9 @@ pub fn run() {
             list_jobs,
             search_transcripts,
             get_transcript,
+            get_ai_run,
+            get_research_item,
+            save_copy_prompt,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,
@@ -1068,6 +1122,14 @@ mod tests {
         .join();
         assert!(gateway.child.is_poisoned());
         assert!(stop_gateway(&gateway).is_ok());
+    }
+
+    #[test]
+    fn artifact_uuid_rejects_invalid_and_oversized_values() {
+        let valid = Uuid::new_v4();
+        assert_eq!(artifact_uuid(&valid.to_string(), "AI run id").unwrap(), valid);
+        assert!(artifact_uuid("not-a-uuid", "AI run id").is_err());
+        assert!(artifact_uuid(&"x".repeat(100), "AI run id").is_err());
     }
 
     #[test]
