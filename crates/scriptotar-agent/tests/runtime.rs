@@ -382,8 +382,12 @@ fn every_state_is_serializable_and_recovery_does_not_claim_false_success() {
     for state in variants {
         let mut r = initial.clone();
         r.state = state;
-        if matches!(state, RunState::Running | RunState::Cancelling | RunState::NeedsInput | RunState::Blocked) {
+        if matches!(state, RunState::Running | RunState::Cancelling | RunState::Blocked) {
             r.steps[0].state = StepState::Running;
+        }
+        if state == RunState::NeedsInput {
+            r.steps[0].state = StepState::AwaitingResult;
+            r.steps[0].pending_effect_id = Some("queued_1".into());
         }
         if state == RunState::Completed {
             r.steps[0].state = StepState::Completed;
@@ -567,4 +571,37 @@ fn late_receipt_cannot_be_recorded_against_a_subsequent_step() {
     assert_eq!(final_state.steps[1].state, StepState::Pending);
     assert!(final_state.steps[1].output.is_none());
     assert_eq!(d.calls(), 1);
+}
+
+#[test]
+fn paused_in_flight_crash_never_restarts_tool_without_probe() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    let mut paused = e.create(plan(vec![step("s1")]), 0).unwrap();
+    paused.state = RunState::Paused;
+    paused.steps[0].state = StepState::Running;
+    paused.steps[0].attempts = 1;
+    let restored = Engine::new(MemoryStore::from_snapshots([paused]), d.clone(), e.policy.clone(), e.registry.clone());
+    assert_eq!(restored.recover("run_1", 2).unwrap().state, RunState::Blocked);
+    assert_eq!(d.calls(), 0);
+}
+
+#[test]
+fn corrupted_exhausted_retry_count_fails_without_overflow_or_dispatch() {
+    let d = FakeDriver::default();
+    let e = engine(d.clone());
+    let mut stalled = e.create(plan(vec![step("s1")]), 0).unwrap();
+    stalled.steps[0].attempts = u8::MAX;
+    let restored = Engine::new(MemoryStore::from_snapshots([stalled]), d.clone(), e.policy.clone(), e.registry.clone());
+    assert_eq!(restored.tick("run_1", 1).unwrap().state, RunState::Failed);
+    assert_eq!(d.calls(), 0);
+}
+
+#[test]
+fn compound_id_separator_must_not_allow_colliding_idempotency_keys() {
+    let d = FakeDriver::default();
+    let e = engine(d);
+    let mut unsafe_plan = plan(vec![step("s1")]);
+    unsafe_plan.id = "a:0".into();
+    assert_eq!(e.create(unsafe_plan, 0), Err(RuntimeError::InvalidPlan));
 }
