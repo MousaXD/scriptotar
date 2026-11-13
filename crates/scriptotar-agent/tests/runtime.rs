@@ -689,3 +689,21 @@ fn forged_checkpoint_audit_sequence_and_missing_completed_artifact_are_rejected(
     assert_eq!(reloaded.get("run_1"), Err(RuntimeError::InvalidPlan));
     assert_eq!(d.calls(), 0);
 }
+
+#[test]
+fn a_proven_failed_queued_attempt_clears_stale_job_locator_before_retry() {
+    let d = FakeDriver::default();
+    d.receipt(Ok(ToolReceipt::Accepted { effect_id: "old_job_1".into() }));
+    d.probe_result(Ok(ProbeResult::Failed(not_applied(true))));
+    let e = engine(d.clone());
+    e.create(plan(vec![step("s1")]), 0).unwrap();
+    assert_eq!(e.tick("run_1", 1).unwrap().state, RunState::NeedsInput);
+    let paused = e.reconcile("run_1", 2).unwrap();
+    assert_eq!(paused.state, RunState::Paused);
+    assert_eq!(paused.steps[0].state, StepState::Pending);
+    assert!(paused.steps[0].pending_effect_id.is_none());
+    e.resume("run_1", 3).unwrap();
+    d.receipt(Ok(ToolReceipt::Applied(output("committed_2"))));
+    assert_eq!(e.tick("run_1", 4).unwrap().state, RunState::Completed);
+    assert_eq!(d.calls(), 2);
+}
