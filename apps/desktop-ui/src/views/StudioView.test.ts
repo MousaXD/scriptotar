@@ -60,7 +60,7 @@ describe('Content Study Studio', () => {
   it('never claims a production save when the study service is not connected', async () => {
     mount();
     expect(screen.getByRole('heading', { name: 'Studio' })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('unsaved workspace');
+    expect(screen.getByText(/unsaved workspace; export your script/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save changes' })).not.toBeInTheDocument();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Script draft' }), {
       target: { value: 'An original voice-over draft' }
@@ -75,7 +75,7 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
     await waitFor(() => expect(get()).toHaveLength(1));
 
-    await fireEvent.click(screen.getByText('Choose source material'));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Hook breakdown — Arabic sample' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Script draft' }), { target: { value: 'مرحبا بكم في الإطلاق' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
@@ -88,7 +88,7 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Arabic launch' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' })).toHaveValue('مرحبا بكم في الإطلاق');
-    expect(screen.getByText('Hook breakdown — Arabic sample')).toBeInTheDocument();
+    expect(screen.getAllByText('Hook breakdown — Arabic sample').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Version 2' }));
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveAttribute('readonly');
     await fireEvent.click(screen.getByRole('button', { name: 'Current draft' }));
@@ -118,7 +118,7 @@ describe('Content Study Studio', () => {
       api, projectId: 'p-creator-lab', research: [], transcripts: mockBootstrap.transcripts, jobs: [],
       incoming: { kind: 'transcript', id: 't-ar', projectId: 'p-creator-lab' }
     } });
-    await fireEvent.click(screen.getByText('Choose source material'));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Caption pacing breakdown' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Caption pacing breakdown' }));
     expect(await screen.findByText(/The caption is doing two jobs/)).toBeInTheDocument();
@@ -134,7 +134,7 @@ describe('Content Study Studio', () => {
     expect(screen.getByRole('heading', { name: 'الاستوديو' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'مسودة النص' })).toHaveAttribute('dir', 'auto');
     expect(await screen.findByText(/أول ثلاث ثواني هي المكان/)).toBeInTheDocument();
-    expect(screen.getByText('Hook breakdown — Arabic sample')).toBeInTheDocument();
+    expect(screen.getAllByText('Hook breakdown — Arabic sample').length).toBeGreaterThan(0);
   });
 });
 
