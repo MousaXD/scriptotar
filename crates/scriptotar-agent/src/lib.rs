@@ -218,6 +218,9 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
         if run.state.terminal() {
             return Err(RuntimeError::WrongState);
         }
+        if run.state == RunState::Paused {
+            return Ok(run);
+        }
         if matches!(run.state, RunState::Cancelling | RunState::Blocked) {
             return Err(RuntimeError::WrongState);
         }
@@ -248,8 +251,8 @@ impl<S: CheckpointStore, D: ToolExecutor, P: PolicyGate> Engine<S, D, P> {
 
     pub fn cancel(&self, run_id: &str, now: u64) -> Result<RunSnapshot, RuntimeError> {
         let mut run = self.get(run_id)?;
-        if run.state.terminal() {
-            return Ok(run);
+        if run.state.terminal() || run.cancel_requested {
+            return Ok(run); // Repeated cancellation cannot replay a service stop request.
         }
         let running = run.steps.get(run.current_step).is_some_and(|step| {
             matches!(step.state, StepState::Running | StepState::AwaitingResult)
