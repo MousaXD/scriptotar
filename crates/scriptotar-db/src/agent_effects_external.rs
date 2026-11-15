@@ -246,7 +246,7 @@ impl SqliteStore {
         provider: &str, limits: ExternalEffectLimits,
     ) -> RepositoryResult<ExternalReservation> {
         if !valid_id(key.run_id) || !valid_id(key.step_id)
-            || !valid_id(key.idempotency_key) || key.idempotency_key.len()>256
+            || key.idempotency_key.is_empty() || key.idempotency_key.len()>256
             || !fingerprint_ok(fingerprint) || !bounded_id(provider) || provider.len()>64
         { return Err(invalid("external identity")); }
         let tokens = to_i64(limits.tokens)?;
