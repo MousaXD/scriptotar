@@ -752,6 +752,23 @@ async fn set_study_draft_archived(
 }
 
 #[tauri::command]
+async fn prepare_study_angles(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<crate::dto::UiStudyAnglePrompt, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .prepare_studio_angle_prompt(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_study(
     project_id: String,
     study_id: String,
@@ -1321,6 +1338,7 @@ pub fn run() {
             duplicate_study_draft,
             rename_study_draft,
             set_study_draft_archived,
+            prepare_study_angles,
             save_study,
             list_study_evidence,
             add_study_evidence,

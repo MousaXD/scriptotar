@@ -2,8 +2,14 @@
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy,
+    UiStudyAnglePrompt,
     UiStudioStudyPatch, UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput,
     UiStudyEvidenceReview,
+};
+use scriptotar_ai::writing::{
+    self, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
+    EvidenceLocator as WritingLocator, EvidenceRef as WritingEvidence,
+    EvidenceStatus as WritingEvidenceStatus, WritingInput, WritingTask,
 };
 use scriptotar_core::{
     CreativeBriefInput, EvidenceCertainty, EvidenceInput, EvidenceReference, RepositoryError,
@@ -349,6 +355,171 @@ impl AppServices {
         } else {
             self.read_studio_bundle_for(project_id, study_id, Some(draft_id))
         }
+    }
+
+    /// P1 writing bridge: scoped, bounded, no provider call and no side effects.
+    /// Real transcript excerpts are attributed, not fact-checked. User notes
+    /// are unverified, and disputed observations never enter the prompt.
+    pub fn prepare_studio_angle_prompt(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<UiStudyAnglePrompt> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let bundle = self.read_studio_bundle(project_id, study_id)?;
+        let saved_sources = self.store.list_study_sources(project_id, study_id)?;
+        let mut limitations = Vec::new();
+        let active: Vec<_> = saved_sources.iter().filter(|source| source.available).collect();
+        if active.len() < 3 {
+            limitations.push("Fewer than three available Study sources were selected.".into());
+        }
+        if active.len() > 8 {
+            limitations.push("Only the first eight selected sources were inspected.".into());
+        }
+        if saved_sources.len() != active.len() {
+            limitations.push("Unavailable sources were omitted.".into());
+        }
+        let mut evidence = Vec::new();
+        let mut excerpt_count = 0;
+        for source in active.iter().take(8) {
+            if source.kind != StudySourceKind::Transcript {
+                limitations.push("Research metadata is not proof of spoken or visual claims.".into());
+                continue;
+            }
+            let Some(transcript_id) = source.reference_id else {
+                limitations.push("Transcript source has no durable reference ID.".into());
+                continue;
+            };
+            let transcript = self.store.get_transcript_bundle(transcript_id)?;
+            if transcript.project_id != project_id {
+                return Err(RepositoryError::NotFound("Study transcript in this project".into()));
+            }
+            let segments = super::parse_segments(transcript.transcript.segments_json.as_deref());
+            let mut selected = Vec::new();
+            if segments.is_empty() {
+                let sample: String = transcript.transcript.text.chars().take(960).collect();
+                if !sample.trim().is_empty() {
+                    evidence.push(WritingEvidence {
+                        id: format!("transcript:{transcript_id}:text"),
+                        locator: WritingLocator {
+                            source_id: transcript_id.to_string(),
+                            canonical_url: None,
+                            timestamp_seconds: None,
+                            document_section: Some("Untimed transcript beginning".into()),
+                            collected_at: Some(transcript.transcript.created_at.clone()),
+                        },
+                        excerpt: sample,
+                        kind: WritingEvidenceKind::SocialTranscript,
+                        status: WritingEvidenceStatus::Attributed,
+                    });
+                    excerpt_count += 1;
+                    limitations.push("One transcript lacked segment timecodes; its opening text is not timestamped.".into());
+                }
+                continue;
+            }
+            for index in [0, segments.len() / 2, segments.len() - 1] {
+                if !selected.contains(&index) {
+                    selected.push(index);
+                }
+            }
+            for index in selected {
+                let segment = &segments[index];
+                let excerpt: String = segment.text.chars().take(960).collect();
+                if excerpt.trim().is_empty() {
+                    continue;
+                }
+                let seconds = segment.start_seconds;
+                let timestamp_seconds = (seconds.is_finite()
+                    && seconds >= 0.0
+                    && seconds <= f64::from(u32::MAX))
+                .then_some(seconds as u32);
+                evidence.push(WritingEvidence {
+                    id: format!("transcript:{transcript_id}:{index}"),
+                    locator: WritingLocator {
+                        source_id: transcript_id.to_string(),
+                        canonical_url: None,
+                        timestamp_seconds,
+                        document_section: Some(format!("Transcript segment {index}")),
+                        collected_at: Some(transcript.transcript.created_at.clone()),
+                    },
+                    excerpt,
+                    kind: WritingEvidenceKind::SocialTranscript,
+                    status: WritingEvidenceStatus::Attributed,
+                });
+                excerpt_count += 1;
+            }
+        }
+        let attached: HashSet<Uuid> = active.iter().map(|source| source.id).collect();
+        let observations = self.store.list_evidence_references(project_id, study_id)?;
+        let mut note_count = 0;
+        for item in observations {
+            if item.input.certainty == EvidenceCertainty::Disputed
+                || !attached.contains(&item.input.study_source_id)
+                || evidence.len() >= 40
+            {
+                continue;
+            }
+            let note: String = item.input.claim.chars().take(960).collect();
+            evidence.push(WritingEvidence {
+                id: format!("observation:{}", item.id),
+                locator: WritingLocator {
+                    source_id: item.input.study_source_id.to_string(),
+                    canonical_url: None,
+                    timestamp_seconds: item.input.timestamp_seconds.and_then(|value| {
+                        (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX))
+                            .then_some(value as u32)
+                    }),
+                    document_section: Some(item.input.locator.chars().take(500).collect()),
+                    collected_at: Some(item.created_at),
+                },
+                excerpt: format!("Unverified user observation: {note}"),
+                kind: WritingEvidenceKind::CreativeObservation,
+                status: WritingEvidenceStatus::Unverified,
+            });
+            note_count += 1;
+        }
+        if evidence.is_empty() {
+            limitations.push("No attributable transcript excerpts or active observations were available.".into());
+        }
+        limitations.push(
+            "Transcript excerpts are not independently checked facts; no frames, audience retention or viral performance were analyzed.".into(),
+        );
+        let duration_seconds = bundle
+            .brief
+            .duration
+            .parse::<u16>()
+            .map_err(|_| invalid("writing duration"))?;
+        let input = WritingInput {
+            brief: WritingBrief {
+                goal: bundle.brief.goal,
+                audience: bundle.brief.audience,
+                platform: bundle.brief.platform,
+                language: bundle.brief.language,
+                region: None,
+                dialect: None,
+                tone: Some(bundle.brief.style),
+                duration_seconds,
+                objective: "Original short-form creative angles".into(),
+                desired_cta: None,
+                constraints: vec![
+                    "Do not present source text or user observations as verified facts.".into(),
+                ],
+                style_guide: None,
+            },
+            evidence,
+            findings: Vec::new(),
+            task: WritingTask::ProposeAngles { count: 3 },
+        };
+        let prompt = writing::prepare_writing_request(&input)
+            .map_err(|err| RepositoryError::Validation(format!("writing request: {err}")))?
+            .prompt;
+        Ok(UiStudyAnglePrompt {
+            prompt,
+            attached_source_count: active.len(),
+            transcript_excerpt_count: excerpt_count,
+            unverified_observation_count: note_count,
+            limitations,
+        })
     }
 
     pub fn create_studio_study(

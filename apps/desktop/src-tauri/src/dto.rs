@@ -315,6 +315,18 @@ pub struct UiStudioDraftVersion {
     pub created_at: String,
 }
 
+/// Local-only typed 3-angle prompt prepared from authorized Study material.
+/// This is NOT an AI result, fact verification or authorization to send data.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyAnglePrompt {
+    pub prompt: String,
+    pub attached_source_count: usize,
+    pub transcript_excerpt_count: usize,
+    pub unverified_observation_count: usize,
+    pub limitations: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiStudioDraftSummary {
