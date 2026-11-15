@@ -84,7 +84,7 @@ fn review(ctx: &VerificationContext, claim: &ClaimProposal) -> VerifiedReview {
 }
 
 fn evaluated(ctx: &VerificationContext, claim: &ClaimProposal) -> ClaimResult {
-    verify_claims(ctx, &[claim.clone()]).claims.remove(0)
+    verify_claims(ctx, std::slice::from_ref(claim)).claims.remove(0)
 }
 
 fn has(result: &ClaimResult, code: FindingCode) -> bool {
