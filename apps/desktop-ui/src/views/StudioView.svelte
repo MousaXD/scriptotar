@@ -41,6 +41,8 @@
   let historyLoading = false;
   let historyError = '';
   let historyEpoch = 0;
+  let confirmSavedImport = false;
+  let importingSavedResult = false;
   let evidenceEpoch = 0;
   let evidence: StudyEvidence[] = [];
   let evidenceBusy = false;
@@ -115,6 +117,7 @@
   // Prevent project changes from destroying the keyed Studio before the
   // pending debounce has durably committed. Failure leaves the editor intact.
   export async function flushPendingSave(): Promise<void> {
+    if (importingSavedResult) throw new Error(t.errorSave);
     if (saveTimer) { clearTimeout(saveTimer); saveTimer = undefined; }
     if (!gateway || !record) {
       if (draft.trim() || brief.title.trim() || refs.length > 0) {
@@ -529,7 +532,9 @@
   }
 
   async function openArtifact(id: string) {
+    if (importingSavedResult) return;
     const epoch = ++historyEpoch;
+    confirmSavedImport = false;
     historical = null;
     historyError = '';
     if (!savedRuns.some((run) => run.id === id)) {
@@ -550,6 +555,35 @@
       if (epoch === historyEpoch) historyError = message(cause, t.errorLoad);
     } finally {
       if (epoch === historyEpoch) historyLoading = false;
+    }
+  }
+
+  // Explicit opt-in: never overwrite the current script merely by opening
+  // an AI history item. Save pending edits first so all earlier versions remain.
+  async function importSavedAiResult() {
+    const artifact = historical;
+    const ownerStudy = studyId;
+    if (!artifact?.result?.trim() || !record || !gateway || busy || saving || importingSavedResult) return;
+    importingSavedResult = true;
+    busy = true;
+    error = '';
+    try {
+      if (changed()) await save();
+      if (changed() || saving) throw new Error(error || t.errorSave);
+      if (studyId !== ownerStudy || historical?.id !== artifact.id || record.projectId !== projectId) return;
+      if (draft !== artifact.result) {
+        draft = artifact.result;
+        queueSave();
+        await save();
+        if (changed() || saving) throw new Error(error || t.errorSave);
+      }
+      confirmSavedImport = false;
+      status = t.savedAiImported;
+    } catch (cause) {
+      error = message(cause, t.errorSave);
+    } finally {
+      importingSavedResult = false;
+      busy = false;
     }
   }
 
@@ -709,6 +743,20 @@
           <button type="button" class="text-button" on:click={() => historical = null}>{t.closeHistory}</button>
         </div>
         <pre dir="auto">{historical.result ?? historical.prompt}</pre>
+        {#if historical.result?.trim() && record && gateway}
+          {#if confirmSavedImport}
+            <p class="muted">{t.importAiWarning}</p>
+            <div class="draft-actions">
+              <button type="button" class="button primary" disabled={importingSavedResult || busy && !importingSavedResult}
+                on:click={() => void importSavedAiResult()}>{t.confirmAiImport}</button>
+              <button type="button" class="button secondary" disabled={importingSavedResult}
+                on:click={() => confirmSavedImport = false}>{t.cancelAiImport}</button>
+            </div>
+          {:else}
+            <button type="button" class="button secondary" disabled={busy || saving}
+              on:click={() => confirmSavedImport = true}>{t.importAiResult}</button>
+          {/if}
+        {/if}
       </section>
     {/if}
     <section class="panel studio-editor">

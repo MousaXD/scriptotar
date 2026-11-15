@@ -248,6 +248,50 @@ describe('Content Study Studio', () => {
     expect(built).not.toHaveBeenCalled();
   });
 
+  it('imports an exact historical AI output only after confirmation, preserving prior draft versions', async () => {
+    const api = createMockClient();
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Historical import' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Script draft' }), {
+      target: { value: 'My existing original script' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const study = (await api.listStudies('p-creator-lab'))[0];
+    await waitFor(async () =>
+      expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('My existing original script'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reopen saved result: Restaurant launch hook set' }));
+    expect(await screen.findByText('Saved output for Hook ideas')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Import AI result as draft' }));
+    expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('My existing original script');
+    expect(screen.getByText(/Earlier versions remain/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm import' }));
+    await waitFor(async () =>
+      expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('Saved output for Hook ideas'));
+    const stored = await api.getStudy('p-creator-lab', study.id);
+    expect(stored.draftVersions.map((version) => version.content)).toEqual([
+      'My existing original script', 'Saved output for Hook ideas'
+    ]);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reopen saved result: Caption pacing breakdown' }));
+    expect(await screen.findByText('Saved prompt for Viral breakdown')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Import AI result as draft' })).not.toBeInTheDocument();
+
+    view.unmount();
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Historical import' }));
+    expect(await screen.findByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('Saved output for Hook ideas');
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');

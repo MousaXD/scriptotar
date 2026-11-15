@@ -1,3 +1,13 @@
+# CONTINUATION — 2026-11-15 human-controlled historical AI output → versioned Studio draft (candidate)
+
+- Reopened **exact saved AI-run** results (not Copy Prompt-only runs, which have `result: null`) can now be copied into the active Content Study's draft only after an explicit confirmation. The old working script is saved first, and the new content goes through the existing revision-checked atomic Study-save path, creating a fresh immutable draft version rather than overwriting historical versions.
+- Only project-scoped, server-validated historical artifacts are eligible. Import is guarded against project switches, in-flight saves and stale history responses; a failed write keeps the unsaved working text visible for retry.
+- Added EN/AR labels and a frontend regression that verifies no changes before confirmation, exact imported output/version history, Copy Prompt refusal and reopen after app remount.
+- **This does not persist an independent AI-run provenance attachment to the new draft, verify generated claims, or generate new model output.** Full multi-draft provenance UX, P1 consented agent generation, native graphical WebView evidence, P2 perf and P3 polish remain open. Require all nine checks on whichever commit ultimately advances the integration ref; never describe this orphan Git object as integrated before the ref is advanced.
+- Keep PR #114 draft, main unchanged, no release.
+
+---
+
 # CONTINUATION — 2026-11-15 canonical evidence → local Copy Prompt candidate
 
 - Added a bounded, project-/Study-validated formatter for the existing persisted evidence references. The Studio local **Prepare writing prompt** path now fetches canonical evidence *after* pending Study saves, includes exact origin IDs/locators, explicitly labels creator observations as **not independently fact-checked**, and omits unavailable/deselected origin material. It never automatically makes an AI provider call or persists API credentials.
