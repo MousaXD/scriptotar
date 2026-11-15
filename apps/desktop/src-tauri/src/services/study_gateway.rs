@@ -365,7 +365,11 @@ impl AppServices {
         study_id: Uuid,
     ) -> RepositoryResult<UiStudyAnglePrompt> {
         let _project_guard = self.lock_studio_project(project_id)?;
-        let bundle = self.read_studio_bundle(project_id, study_id)?;
+        // Only the persisted brief is needed here; do not hydrate historical
+        // draft bodies/versions just to prepare a local writing request.
+        let study = self.store.get_study(project_id, study_id)?;
+        let saved_brief = self.store.get_creative_brief(project_id, study_id)?;
+        let brief = summarize_studio_brief(&study, saved_brief.as_ref());
         let saved_sources = self.store.list_study_sources(project_id, study_id)?;
         let mut limitations = Vec::new();
         let active: Vec<_> = saved_sources
@@ -502,20 +506,19 @@ impl AppServices {
         limitations.push(
             "Transcript excerpts are not independently checked facts; no frames, audience retention or viral performance were analyzed.".into(),
         );
-        let duration_seconds = bundle
-            .brief
+        let duration_seconds = brief
             .duration
             .parse::<u16>()
             .map_err(|_| invalid("writing duration"))?;
         let input = WritingInput {
             brief: WritingBrief {
-                goal: bundle.brief.goal,
-                audience: bundle.brief.audience,
-                platform: bundle.brief.platform,
-                language: bundle.brief.language,
+                goal: brief.goal,
+                audience: brief.audience,
+                platform: brief.platform,
+                language: brief.language,
                 region: None,
                 dialect: None,
-                tone: Some(bundle.brief.style),
+                tone: Some(brief.style),
                 duration_seconds,
                 objective: "Original short-form creative angles".into(),
                 desired_cta: None,
