@@ -800,13 +800,7 @@ async fn interpret_study_angles(
 async fn review_study_script(
     project_id: String,
     study_id: String,
-    expected_study_revision: i64,
-    angle_prompt: String,
-    angles_response_json: String,
-    selected_angle_id: String,
-    prepared_draft_prompt: String,
-    script_response_json: String,
-    accept_as_new_candidate: bool,
+    input: crate::dto::UiStudyScriptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<crate::dto::UiStudyScriptReview, String> {
     let project_id = artifact_uuid(&project_id, "project id")?;
@@ -814,17 +808,7 @@ async fn review_study_script(
     let services = state.inner().clone();
     on_blocking_worker(move || {
         services
-            .review_studio_script(
-                project_id,
-                study_id,
-                expected_study_revision,
-                &angle_prompt,
-                &angles_response_json,
-                &selected_angle_id,
-                &prepared_draft_prompt,
-                &script_response_json,
-                accept_as_new_candidate,
-            )
+            .review_studio_script(project_id, study_id, &input)
             .map_err(command_error)
     })
     .await

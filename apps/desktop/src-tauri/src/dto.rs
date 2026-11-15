@@ -348,6 +348,19 @@ pub struct UiStudyAngleInterpretation {
     pub limitations: Vec<String>,
 }
 
+/// Exact user-supplied script context. This does not grant provider execution.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyScriptInput {
+    pub expected_study_revision: i64,
+    pub angle_prompt: String,
+    pub angles_response_json: String,
+    pub selected_angle_id: String,
+    pub prepared_draft_prompt: String,
+    pub script_response_json: String,
+    pub accept_as_new_candidate: bool,
+}
+
 /// Locally validated model-proposed content, not independent fact verification.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

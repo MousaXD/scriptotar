@@ -170,10 +170,13 @@ describe('Tauri client command contract', () => {
       preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: 'angle-1'
     });
     expect(invokeMock).toHaveBeenCalledWith('review_study_script', {
-      projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
-      anglePrompt: 'angle prompt', anglesResponseJson: '{"angles":[]}',
-      selectedAngleId: 'angle-1', preparedDraftPrompt: 'draft prompt',
-      scriptResponseJson: '{"beats":[]}', acceptAsNewCandidate: false
+      projectId: 'project-id', studyId: 'study-id',
+      input: {
+        expectedStudyRevision: 7, anglePrompt: 'angle prompt',
+        anglesResponseJson: '{"angles":[]}', selectedAngleId: 'angle-1',
+        preparedDraftPrompt: 'draft prompt', scriptResponseJson: '{"beats":[]}',
+        acceptAsNewCandidate: false
+      }
     });
     expect(invokeMock).toHaveBeenCalledWith('prepare_study_angles', {
       projectId: 'project-id', studyId: 'study-id'

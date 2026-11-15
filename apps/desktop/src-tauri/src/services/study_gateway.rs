@@ -4,7 +4,7 @@ use crate::dto::{
     UiStudioAngleOption, UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion,
     UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch, UiStudioStudySummary,
     UiStudyAngleInterpretation, UiStudyAnglePrompt, UiStudyEvidence, UiStudyEvidenceInput,
-    UiStudyEvidenceReview, UiStudyScriptReview,
+    UiStudyEvidenceReview, UiStudyScriptInput, UiStudyScriptReview,
 };
 use scriptotar_ai::writing::{
     self, ClaimStatus, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
@@ -679,14 +679,15 @@ impl AppServices {
         &self,
         project_id: Uuid,
         study_id: Uuid,
-        expected_study_revision: i64,
-        angle_prompt: &str,
-        angles_response_json: &str,
-        selected_angle_id: &str,
-        prepared_draft_prompt: &str,
-        script_response_json: &str,
-        accept_as_new_candidate: bool,
+        request: &UiStudyScriptInput,
     ) -> RepositoryResult<UiStudyScriptReview> {
+        let expected_study_revision = request.expected_study_revision;
+        let angle_prompt = request.angle_prompt.as_str();
+        let angles_response_json = request.angles_response_json.as_str();
+        let selected_angle_id = request.selected_angle_id.as_str();
+        let prepared_draft_prompt = request.prepared_draft_prompt.as_str();
+        let script_response_json = request.script_response_json.as_str();
+        let accept_as_new_candidate = request.accept_as_new_candidate;
         if angle_prompt.len() > 100_000
             || angles_response_json.len() > 100_000
             || prepared_draft_prompt.len() > 100_000

@@ -72,8 +72,10 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     reviewStudyScript: (projectId, studyId, expectedStudyRevision, anglePrompt,
       anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) =>
       invoke<StudyScriptReview>('review_study_script', {
-        projectId, studyId, expectedStudyRevision, anglePrompt, anglesResponseJson,
-        selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate
+        projectId, studyId, input: {
+          expectedStudyRevision, anglePrompt, anglesResponseJson,
+          selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate
+        }
       }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
