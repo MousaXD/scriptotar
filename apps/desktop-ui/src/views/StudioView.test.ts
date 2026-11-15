@@ -499,7 +499,7 @@ describe('Content Study Studio', () => {
     await expect(api.prepareStudyAngles('p-other', saved.id)).rejects.toThrow();
     const result = await api.prepareStudyAngles('p-creator-lab', saved.id);
     expect(result.attachedSourceCount).toBe(3);
-    expect(result.transcriptExcerptCount).toBe(2);
+    expect(result.transcriptExcerptCount).toBe(3);
     expect(result.unverifiedObservationCount).toBe(1);
     expect(result.prompt).toContain('Propose exactly 3');
     expect(result.prompt).toContain('An unverified Arabic opening observation');

@@ -308,13 +308,29 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     },
     async prepareStudyAngles(projectId: string, studyId: string) {
       const study = studyInProject(projectId, studyId);
+      const { goal, audience, platform, language, duration } = study.brief;
+      if (![goal, audience, platform, language].every((field) => field.trim()) ||
+          !Number.isInteger(Number(duration)) || Number(duration) < 5 || Number(duration) > 600) {
+        throw new Error('Study brief is incomplete for a writing request');
+      }
       const selected = study.sources.slice(0, 8);
       const transcripts = selected.filter((source) => source.kind === 'transcript');
       const available = transcripts.filter((source) => mockBootstrap.transcripts.some((item) =>
         item.projectId === projectId && item.id === source.id));
-      const excerpts = available.map((ref) => {
+      const excerpts = available.flatMap((ref) => {
         const transcript = mockBootstrap.transcripts.find((item) => item.id === ref.id)!;
-        return { id: ref.id, excerpt: transcript.text.slice(0, 960), status: 'attributed, not fact checked' };
+        if (!transcript.segments.length) {
+          return [{ id: ref.id + ':text', excerpt: transcript.text.slice(0, 960),
+            locator: 'Untimed transcript beginning', status: 'attributed, not fact checked' }];
+        }
+        const indexes = [...new Set([0, Math.floor(transcript.segments.length / 2),
+          transcript.segments.length - 1])];
+        return indexes.map((index) => {
+          const segment = transcript.segments[index];
+          return { id: ref.id + ':' + index, excerpt: segment.text.slice(0, 960),
+            locator: `Transcript segment ${segment.id} (${segment.startSeconds.toFixed(3)}-${segment.endSeconds.toFixed(3)}s)`,
+            status: 'attributed, not fact checked' };
+        });
       });
       const notes = (studyEvidence.get(studyId) ?? []).filter((item) =>
         item.certainty !== 'disputed' && item.sourceAvailable &&
