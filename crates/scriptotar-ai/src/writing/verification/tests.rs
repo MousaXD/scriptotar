@@ -72,7 +72,11 @@ fn review(ctx: &VerificationContext, claim: &ClaimProposal) -> VerifiedReview {
         draft_revision: ctx.draft_revision,
         claim_id: claim.id.clone(),
         exact_statement: claim.statement.clone(),
-        evidence_ids: claim.citations.iter().map(|c| c.evidence_id.clone()).collect(),
+        evidence_ids: claim
+            .citations
+            .iter()
+            .map(|c| c.evidence_id.clone())
+            .collect(),
         exact_citations: claim.citations.clone(),
         decision: ReviewDecision::Accept,
         reviewed_at_epoch: 199,
@@ -107,7 +111,10 @@ fn two_independent_reviewed_sources_and_exact_current_human_decision_are_require
 
 #[test]
 fn model_claim_of_corroboration_does_not_verify() {
-    let mut ctx = scope(vec![source("a", "same-publisher"), source("b", "same-publisher")]);
+    let mut ctx = scope(vec![
+        source("a", "same-publisher"),
+        source("b", "same-publisher"),
+    ]);
     let claim = fact(&ctx.evidence);
     ctx.human_reviews.push(review(&ctx, &claim));
     let result = evaluated(&ctx, &claim);
@@ -137,8 +144,11 @@ fn unknown_and_forged_citation_fail_closed() {
 fn foreign_project_and_study_sources_never_pass() {
     for foreign_project in [true, false] {
         let mut src = source("a", "owner");
-        if foreign_project { src.project_id = "project-b".into(); }
-        else { src.study_id = "study-b".into(); }
+        if foreign_project {
+            src.project_id = "project-b".into();
+        } else {
+            src.study_id = "study-b".into();
+        }
         let ctx = scope(vec![src]);
         let result = evaluated(&ctx, &fact(&ctx.evidence));
         assert_eq!(result.status, VerificationStatus::Blocked);
@@ -165,7 +175,10 @@ fn disputed_revoked_untrusted_missing_and_unversioned_source_rejected() {
     let mut src = source("a", "owner");
     src.source_version = None;
     let ctx = scope(vec![src]);
-    assert!(has(&evaluated(&ctx, &fact(&ctx.evidence)), FindingCode::UnversionedSource));
+    assert!(has(
+        &evaluated(&ctx, &fact(&ctx.evidence)),
+        FindingCode::UnversionedSource
+    ));
 }
 
 #[test]
@@ -192,13 +205,19 @@ fn transcript_does_not_prove_visual_claim_or_uncited_spoken_segment() {
     let ctx = scope(vec![transcript.clone()]);
     let mut claim = fact(&ctx.evidence);
     claim.required_modality = Modality::VisualFrame;
-    assert!(has(&evaluated(&ctx, &claim), FindingCode::WrongEvidenceModality));
+    assert!(has(
+        &evaluated(&ctx, &claim),
+        FindingCode::WrongEvidenceModality
+    ));
     let mut unknown_time = transcript.clone();
     unknown_time.locator.segment_id = None;
     let ctx = scope(vec![unknown_time]);
     claim = fact(&ctx.evidence);
     claim.required_modality = Modality::SpokenTranscript;
-    assert!(has(&evaluated(&ctx, &claim), FindingCode::MissingSegmentOrTimestamp));
+    assert!(has(
+        &evaluated(&ctx, &claim),
+        FindingCode::MissingSegmentOrTimestamp
+    ));
 }
 
 #[test]
@@ -216,7 +235,12 @@ fn contradiction_beats_review_and_a_model_success_label() {
 fn consequential_claims_need_a_current_human_review_even_with_two_sources() {
     let ctx = scope(vec![source("a", "owner-a"), source("b", "owner-b")]);
     let mut claim = fact(&ctx.evidence);
-    for consequence in [Consequence::Legal, Consequence::Financial, Consequence::Health, Consequence::OtherHighStakes] {
+    for consequence in [
+        Consequence::Legal,
+        Consequence::Financial,
+        Consequence::Health,
+        Consequence::OtherHighStakes,
+    ] {
         claim.consequence = consequence;
         let result = evaluated(&ctx, &claim);
         assert_eq!(result.status, VerificationStatus::Unverified);
@@ -244,7 +268,10 @@ fn incomplete_or_untrusted_records_cannot_promote() {
     let claim = fact(&ctx.evidence);
     ctx.human_reviews.push(review(&ctx, &claim));
     ctx.evidence[1].state = EvidenceState::Unreviewed;
-    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Unverified);
+    assert_eq!(
+        evaluated(&ctx, &claim).status,
+        VerificationStatus::Unverified
+    );
     ctx.evidence[1].state = EvidenceState::Reviewed;
     ctx.evidence[1].collected_at_epoch = None;
     assert!(has(&evaluated(&ctx, &claim), FindingCode::UnknownFreshness));
@@ -254,24 +281,37 @@ fn incomplete_or_untrusted_records_cannot_promote() {
 fn generated_fact_claim_extraction_never_invents_verified_citations() {
     use crate::writing::{BeatRole, FactualClaim, ScriptBeat, ScriptDraft};
     let draft = ScriptDraft {
-        id: "d".into(), angle_id: "a".into(), title: "Test".into(),
+        id: "d".into(),
+        angle_id: "a".into(),
+        title: "Test".into(),
         language: "en".into(),
         beats: vec![
             ScriptBeat {
-                id: "b1".into(), role: BeatRole::Hook, narration: "Claim one".into(),
-                on_screen_text: None, shots: vec![], evidence_ids: vec![],
+                id: "b1".into(),
+                role: BeatRole::Hook,
+                narration: "Claim one".into(),
+                on_screen_text: None,
+                shots: vec![],
+                evidence_ids: vec![],
                 manually_edited: false,
             },
             ScriptBeat {
-                id: "b2".into(), role: BeatRole::Payoff, narration: "Unclassified statement".into(),
-                on_screen_text: None, shots: vec![], evidence_ids: vec![],
+                id: "b2".into(),
+                role: BeatRole::Payoff,
+                narration: "Unclassified statement".into(),
+                on_screen_text: None,
+                shots: vec![],
+                evidence_ids: vec![],
                 manually_edited: false,
             },
         ],
-        cta: None, caption: None,
+        cta: None,
+        caption: None,
         claims: vec![FactualClaim {
-            id: "c1".into(), beat_id: "b1".into(),
-            assertion: "Claim one".into(), status: ClaimStatus::Supported,
+            id: "c1".into(),
+            beat_id: "b1".into(),
+            assertion: "Claim one".into(),
+            status: ClaimStatus::Supported,
             evidence_ids: vec!["model-invented".into()],
         }],
     };
@@ -282,22 +322,30 @@ fn generated_fact_claim_extraction_never_invents_verified_citations() {
     assert_eq!(proposals[1].kind, ClaimKind::UnsupportedStatement);
     let result = verify_claims(&scope(vec![]), &proposals);
     assert!(result.publication_review_required);
-    assert!(result.claims.iter().all(|r| r.status != VerificationStatus::Verified));
+    assert!(result
+        .claims
+        .iter()
+        .all(|r| r.status != VerificationStatus::Verified));
 }
 
 #[test]
 fn duplicate_evidence_ids_are_ambiguous_not_arbitrarily_selected() {
     let ctx = scope(vec![source("a", "one"), source("a", "two")]);
-    assert!(has(&evaluated(&ctx, &fact(&ctx.evidence[..1])), FindingCode::UnknownCitation));
+    assert!(has(
+        &evaluated(&ctx, &fact(&ctx.evidence[..1])),
+        FindingCode::UnknownCitation
+    ));
 }
-
 
 #[test]
 fn old_review_cannot_verify_a_new_source_version_even_with_updated_citations() {
     let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
     let original = fact(&ctx.evidence);
     ctx.human_reviews.push(review(&ctx, &original));
-    assert_eq!(evaluated(&ctx, &original).status, VerificationStatus::Verified);
+    assert_eq!(
+        evaluated(&ctx, &original).status,
+        VerificationStatus::Verified
+    );
     // Underlying evidence identities remain unchanged, but the second content
     // version and quotation have changed since the reviewer saw them.
     ctx.evidence[1].source_version = Some("sha256:version2".into());
@@ -317,10 +365,13 @@ fn missing_claim_inventory_and_model_opinion_cannot_clear_publication_review() {
     assert!(!empty.inventory_complete);
 
     let opinion = ClaimProposal {
-        id: "opinion-1".into(), beat_id: "beat-1".into(),
+        id: "opinion-1".into(),
+        beat_id: "beat-1".into(),
         statement: "This new product is always the safest choice".into(),
-        kind: ClaimKind::Opinion, consequence: Consequence::Health,
-        required_modality: Modality::DocumentText, citations: vec![],
+        kind: ClaimKind::Opinion,
+        consequence: Consequence::Health,
+        required_modality: Modality::DocumentText,
+        citations: vec![],
         model_claims_verified: false,
     };
     let report = verify_claims(&ctx, &[opinion]);
@@ -331,7 +382,8 @@ fn missing_claim_inventory_and_model_opinion_cannot_clear_publication_review() {
 
 #[test]
 fn model_supplied_json_fixture_is_not_an_authorized_review_or_source() {
-    let proposal: ClaimProposal = serde_json::from_str(include_str!("fixtures/forged_visual_claim.json")).unwrap();
+    let proposal: ClaimProposal =
+        serde_json::from_str(include_str!("fixtures/forged_visual_claim.json")).unwrap();
     assert_eq!(proposal.consequence, Consequence::Health);
     let ctx = scope(vec![source("a", "publisher")]);
     let result = evaluated(&ctx, &proposal);
