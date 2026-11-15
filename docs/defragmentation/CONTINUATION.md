@@ -1,3 +1,11 @@
+# CHECKPOINT — 2026-11-15 independent Script candidates (candidate)
+
+- The canonical creative_drafts table already supported multiple drafts, but Studio read/saves always picked the most recently updated draft. Studio now exposes selectable draft candidates, explicit duplication, and separate immutable version histories per candidate, with EN/AR controls. The selected draft UUID and expected revision travel through typed Tauri/TS/mock APIs; SQLite's IMMEDIATE transaction compare-and-swaps both the Study and selected draft, preventing another candidate's content from being overwritten. Creating a duplicate snapshots the source content and draft-source links atomically under its own source revision guard. No additive migration or AI provider requests.
+- Switching candidates first saves pending edits and clears the old draft-version preview. New native and mocked tests cover stale revisions, wrong project/Study, copy and edit isolation, and restart. ScriptotarApi/Tauri command parity inventory updated for duplicate_study_draft.
+- **Candidate only until nine exact-head workflows pass.** This is hand-edited multi-candidate support, NOT Agent 05/06 three original scripts, independent factual verification, multi-draft rename/soft-delete/undo, provider consent/effect budget, or real installed WebView native certification. Draft selector lists at most 200 recent active drafts and reopen defaults to most recently updated draft; a user can explicitly select any listed candidate. Keep PR #114 draft; main unchanged.
+
+---
+
 # CHECKPOINT — 2026-11-15 evidence review history (candidate)
 
 - Human unverified↔disputed transitions now append an immutable SQLite v9 review event in the **same IMMEDIATE transaction** as the evidence status compare-and-swap. Failed/stale/foreign-project reviews cannot create events. The latest 50 are returned with each project-scoped evidence read and displayed in a collapsible EN/AR Studio review timeline; no new network or paid AI permissions.

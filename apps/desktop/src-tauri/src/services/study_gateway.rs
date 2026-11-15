@@ -994,4 +994,118 @@ mod tests {
         assert_eq!(unchanged.draft, "");
         assert!(unchanged.sources.is_empty());
     }
+
+    #[test]
+    fn selected_draft_candidates_keep_independent_versions_after_restart() {
+        let dir = TempDir::new().unwrap();
+        let project_id;
+        let study_id;
+        let original_id;
+        let copy_id;
+        {
+            let services = AppServices::new(dir.path()).unwrap();
+            project_id = services.active_project_id().unwrap();
+            let initial = services
+                .create_studio_study(project_id, example_brief())
+                .unwrap();
+            study_id = Uuid::parse_str(&initial.id).unwrap();
+            original_id = Uuid::parse_str(initial.draft_id.as_deref().unwrap()).unwrap();
+            let original = services
+                .save_studio_study(
+                    project_id,
+                    study_id,
+                    initial.revision,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: None,
+                        draft: Some("An independent original script".into()),
+                        draft_id: initial.draft_id.clone(),
+                        draft_revision: initial.draft_revision,
+                    },
+                )
+                .unwrap();
+            assert_eq!(original.draft, "An independent original script");
+            assert_eq!(original.drafts.len(), 1);
+            let copied = services
+                .duplicate_studio_draft(
+                    project_id,
+                    study_id,
+                    original_id,
+                    original.draft_revision.unwrap(),
+                )
+                .unwrap();
+            copy_id = Uuid::parse_str(copied.draft_id.as_deref().unwrap()).unwrap();
+            assert_ne!(copy_id, original_id);
+            assert_eq!(copied.drafts.len(), 2);
+            assert_eq!(copied.draft, original.draft);
+            assert_eq!(copied.draft_versions.len(), 1);
+            assert!(copied.drafts.iter().any(|item| item.id == original_id.to_string()));
+            assert!(matches!(
+                services.duplicate_studio_draft(project_id, study_id, original_id, 1),
+                Err(RepositoryError::Conflict(_))
+            ));
+            assert!(services
+                .duplicate_studio_draft(Uuid::new_v4(), study_id, original_id, 2)
+                .is_err());
+            let foreign_study = services
+                .create_studio_study(project_id, example_brief())
+                .unwrap();
+            let foreign_id = Uuid::parse_str(&foreign_study.id).unwrap();
+            assert!(services
+                .get_studio_study_draft(project_id, foreign_id, original_id)
+                .is_err());
+            assert!(services
+                .duplicate_studio_draft(project_id, foreign_id, original_id, 2)
+                .is_err());
+            let changed = services
+                .save_studio_study(
+                    project_id,
+                    study_id,
+                    copied.revision,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: None,
+                        draft: Some("A DIFFERENT second script".into()),
+                        draft_id: copied.draft_id.clone(),
+                        draft_revision: copied.draft_revision,
+                    },
+                )
+                .unwrap();
+            assert_eq!(changed.draft_id, copied.draft_id);
+            assert_eq!(changed.draft_versions.len(), 2);
+            assert!(matches!(
+                services.save_studio_study(
+                    project_id,
+                    study_id,
+                    changed.revision,
+                    UiStudioStudyPatch {
+                        brief: None,
+                        sources: None,
+                        draft: Some("Must fail stale draft revision".into()),
+                        draft_id: changed.draft_id.clone(),
+                        draft_revision: copied.draft_revision,
+                    },
+                ),
+                Err(RepositoryError::Conflict(_))
+            ));
+            let original_after = services
+                .get_studio_study_draft(project_id, study_id, original_id)
+                .unwrap();
+            assert_eq!(original_after.draft, original.draft);
+            assert_eq!(original_after.draft_versions.len(), original.draft_versions.len());
+            assert_eq!(changed.drafts.len(), 2);
+        }
+        let restarted = AppServices::new(dir.path()).unwrap();
+        let older = restarted
+            .get_studio_study_draft(project_id, study_id, original_id)
+            .unwrap();
+        let newer = restarted
+            .get_studio_study_draft(project_id, study_id, copy_id)
+            .unwrap();
+        assert_eq!(older.draft, "An independent original script");
+        assert_eq!(newer.draft, "A DIFFERENT second script");
+        assert_eq!(older.draft_versions.len(), 2);
+        assert_eq!(newer.draft_versions.len(), 2);
+        assert_eq!(newer.drafts.len(), 2);
+    }
 }

@@ -361,6 +361,67 @@ describe('Content Study Studio', () => {
     expect(paid).not.toHaveBeenCalled();
   });
 
+
+  it('duplicates a script into a separate candidate without replacing original versions', async () => {
+    const api = createMockClient();
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Two original directions' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    const chooser = await screen.findByRole('combobox', { name: 'Script candidates' });
+    expect(chooser).toBeInTheDocument();
+    const editor = screen.getByRole('textbox', { name: 'Script draft' });
+    await fireEvent.input(editor, { target: { value: 'The untouched first direction' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const study = (await api.listStudies('p-creator-lab'))[0];
+    await waitFor(async () => {
+      expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('The untouched first direction');
+    });
+    const first = await api.getStudy('p-creator-lab', study.id);
+    const firstId = first.draftId!;
+    await fireEvent.click(screen.getByRole('button', { name: 'Duplicate current script' }));
+    await waitFor(async () => {
+      expect((await api.getStudy('p-creator-lab', study.id)).drafts).toHaveLength(2);
+    });
+    const second = await api.getStudy('p-creator-lab', study.id);
+    expect(second.draftId).not.toBe(firstId);
+    expect(second.draft).toBe('The untouched first direction');
+    await expect(api.duplicateStudyDraft('p-creator-lab', study.id, second.draftId!, 0))
+      .rejects.toThrow();
+    await expect(api.duplicateStudyDraft('p-client-a', study.id, firstId, 2))
+      .rejects.toThrow();
+    await fireEvent.input(editor, { target: { value: 'Independent second direction' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(async () => {
+      expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('Independent second direction');
+    });
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Script candidates' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Two original directions' }));
+    expect(await screen.findByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('The untouched first direction');
+    const old = await api.getStudy('p-creator-lab', study.id, firstId);
+    expect(old.draftVersions.some((snapshot) => snapshot.content === 'Independent second direction')).toBe(false);
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Script candidates' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Copy of Two original directions' }));
+    expect(await screen.findByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('Independent second direction');
+    view.unmount();
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Two original directions' }));
+    expect(await screen.findByRole('combobox', { name: 'Script candidates' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Script candidates' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Two original directions' }));
+    expect(await screen.findByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('The untouched first direction');
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
