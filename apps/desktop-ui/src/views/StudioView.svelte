@@ -42,6 +42,7 @@
   let sourceError = '';
   let sourceQuery = '';
   let prompt = '';
+  let promptLimitations: string[] = [];
   let historical: HistoricalAiArtifact | null = null;
   let historyLoading = false;
   let historyError = '';
@@ -146,6 +147,7 @@
   function queueSave() {
     status = '';
     prompt = '';
+    promptLimitations = [];
     // New brief/source/draft changes invalidate any in-flight local prompt.
     // Allow a new preparation immediately; an older response cannot revive it.
     promptRequest++;
@@ -721,6 +723,7 @@
     preparing = true;
     error = '';
     prompt = '';
+    promptLimitations = [];
     try {
       // Read canonical evidence only after any pending Study edits are durable.
       // No provider is contacted; the user must still explicitly copy a prompt.
@@ -762,6 +765,32 @@
       if (epoch === promptRequest) prompt = result;
     } catch (cause) {
       if (epoch === promptRequest) error = message(cause, t.sourceNotLoaded);
+    } finally {
+      if (epoch === promptRequest) preparing = false;
+    }
+  }
+
+  async function prepareAnglePrompt() {
+    if (!gateway?.prepareStudyAngles || !record || preparing || busy || evidenceBusy || reviewBusy) return;
+    const epoch = ++promptRequest;
+    const ownerStudy = studyId;
+    preparing = true;
+    error = '';
+    prompt = '';
+    promptLimitations = [];
+    try {
+      await flushPendingSave();
+      if (epoch !== promptRequest || studyId !== ownerStudy) return;
+      const prepared = await gateway.prepareStudyAngles(projectId, ownerStudy);
+      if (epoch !== promptRequest || studyId !== ownerStudy) return;
+      if (!prepared.prompt.trim() || prepared.prompt.length > 100_000 ||
+          prepared.attachedSourceCount < 0 || prepared.transcriptExcerptCount < 0 ||
+          prepared.unverifiedObservationCount < 0) throw new Error(t.invalidStudy);
+      prompt = prepared.prompt;
+      promptLimitations = prepared.limitations.slice(0, 5);
+      status = t.angleReady;
+    } catch (cause) {
+      if (epoch === promptRequest) error = message(cause, t.anglePromptError);
     } finally {
       if (epoch === promptRequest) preparing = false;
     }
@@ -1110,6 +1139,11 @@
       {/if}
       <div class="studio-prompt-controls">
         <button type="button" class="button secondary" disabled={preparing || evidenceBusy || reviewBusy || loading || importingSavedResult} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
+        {#if record && gateway?.prepareStudyAngles}
+          <button type="button" class="button secondary"
+            disabled={preparing || evidenceBusy || reviewBusy || loading || busy || importingSavedResult}
+            on:click={() => void prepareAnglePrompt()}>{t.prepareAngles}</button>
+        {/if}
         <span>{t.promptPrivacy}</span>
       </div>
       {#if prompt}
@@ -1117,6 +1151,11 @@
           <textarea readonly rows="8" dir="auto" value={prompt}></textarea>
         </label>
         <button type="button" class="button secondary" on:click={() => void copyPrompt()}>{t.copyPrompt}</button>
+        {#if promptLimitations.length}
+          <div class="angle-limits">
+            {#each promptLimitations as note, index (index)}<small dir="auto">{note}</small>{/each}
+          </div>
+        {/if}
       {/if}
       {#if status}<p class="muted" role="status">{status}</p>{/if}
     </section>
@@ -1229,6 +1268,8 @@
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }
   .studio-candidates > :global(*) { min-width: 180px; }
+  .angle-limits { display: grid; gap: 4px; margin-block: 8px; }
+  .angle-limits small { font-size: var(--text-xs); color: var(--muted); }
   .draft-search { display: grid; gap: 6px; color: var(--text); font-size: var(--text-sm); font-weight: 600; }
   .draft-search input { min-height: var(--control-height); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); padding: 0 12px; font: inherit; }
   .studio-workspace { display: grid; grid-template-columns: minmax(210px, 0.85fr) minmax(350px, 2.2fr) minmax(220px, 1fr); gap: 14px; align-items: start; }
