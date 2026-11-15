@@ -422,6 +422,87 @@ impl SqliteStore {
         self.get_draft(project_id, new_id)
     }
 
+    /// An exact-revision duplication of one Study draft, including source links.
+    /// Inspect and clone under the SAME IMMEDIATE transaction so an external
+    /// editor cannot change the source body between admission and copy.
+    pub fn duplicate_study_draft_checked(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+        expected_revision: i64,
+    ) -> RepositoryResult<CreativeDraft> {
+        if expected_revision < 1 {
+            return Err(RepositoryError::Validation("invalid draft revision".into()));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        let source: Option<(String, String)> = tx
+            .query_row(
+                "SELECT title,body FROM creative_drafts
+                 WHERE project_id=?1 AND study_id=?2 AND id=?3
+                   AND revision=?4 AND archived_at IS NULL",
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    draft_id.to_string(),
+                    expected_revision
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let (title, body) = source.ok_or_else(|| {
+            RepositoryError::Conflict("draft changed or is not in this active Study".into())
+        })?;
+        let copy_title: String = format!("Copy of {title}").chars().take(200).collect();
+        let copy_id = Uuid::new_v4();
+        let now = now_rfc3339();
+        tx.execute(
+            "INSERT INTO creative_drafts(
+                id,project_id,study_id,title,body,revision,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,?5,1,?6,?6)",
+            params![
+                copy_id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                copy_title,
+                body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
+             VALUES(?1,?2,1,?3,?4,?5)",
+            params![
+                Uuid::new_v4().to_string(),
+                copy_id.to_string(),
+                copy_title,
+                body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
+             SELECT project_id,?1,study_source_id,?2
+             FROM draft_source_links WHERE project_id=?3 AND draft_id=?4",
+            params![
+                copy_id.to_string(),
+                now,
+                project_id.to_string(),
+                draft_id.to_string()
+            ],
+        )
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
+        self.get_draft(project_id, copy_id)
+    }
+
     pub fn search_drafts(
         &self,
         project_id: Uuid,
