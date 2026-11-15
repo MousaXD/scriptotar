@@ -328,3 +328,15 @@ fn missing_claim_inventory_and_model_opinion_cannot_clear_publication_review() {
     assert!(report.publication_review_required);
     assert!(!report.inventory_complete);
 }
+
+#[test]
+fn model_supplied_json_fixture_is_not_an_authorized_review_or_source() {
+    let proposal: ClaimProposal = serde_json::from_str(include_str!("fixtures/forged_visual_claim.json")).unwrap();
+    assert_eq!(proposal.consequence, Consequence::Health);
+    let ctx = scope(vec![source("a", "publisher")]);
+    let result = evaluated(&ctx, &proposal);
+    assert_eq!(result.status, VerificationStatus::Blocked);
+    assert!(has(&result, FindingCode::UnknownCitation));
+    assert!(has(&result, FindingCode::ModelPromotionAttempt));
+    assert!(has(&result, FindingCode::ConsequentialHumanReviewRequired));
+}
