@@ -488,9 +488,11 @@ impl SqliteStore {
         let mut db=database(self)?;
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
         may_execute(&tx,key)?; // repeated policy approval is also required in the service driver
+        let run=verified_scope(&tx,key.project,key.study,key.run_id)?;
+        let max_by_plan=i64::from(run.plan.steps[run.current_step].max_attempts);
         let old=checked(&tx,key)?;
         if old.revision!=expected_revision || old.status!=ExternalEffectStatus::NotExecuted
-           || old.cancel_requested || old.attempt>=MAX_ATTEMPTS {
+           || old.cancel_requested || old.attempt>=MAX_ATTEMPTS || old.attempt>=max_by_plan {
             return Err(conflict("retry requires fresh proven-nonexecution evidence"));
         }
         let evidence=old.reconciliation_id.as_deref()
