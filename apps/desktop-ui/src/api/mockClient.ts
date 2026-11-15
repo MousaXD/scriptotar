@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy } from '../studio/contract';
+import type { ContentStudy, StudyEvidence } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
@@ -111,6 +111,8 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let studyCounter = 0;
   const studies = new Map<string, ContentStudy>();
   const inspectionRuns = new Map<string, LocalInspectionRun>();
+  const studyEvidence = new Map<string, StudyEvidence[]>();
+  let evidenceCounter = 0;
   let inspectionCounter = 0;
   const studyInProject = (projectId: string, studyId: string): ContentStudy => {
     if (active !== projectId) throw new Error('Active project changed');
@@ -191,6 +193,28 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       next.revision += 1;
       studies.set(studyId, next);
       return structuredClone(next);
+    },
+    async listStudyEvidence(projectId: string, studyId: string) {
+      studyInProject(projectId, studyId);
+      return structuredClone(studyEvidence.get(studyId) ?? []);
+    },
+    async addStudyEvidence(projectId, studyId, input) {
+      const study = studyInProject(projectId, studyId);
+      if (!study.sources.some((source) => source.kind === input.source.kind && source.id === input.source.id)) {
+        throw new Error('Evidence source is not attached to this Study');
+      }
+      if (!input.claim.trim() || !input.locator.trim()) throw new Error('Claim and locator are required');
+      const item: StudyEvidence = {
+        id: 'mock-evidence-' + ++evidenceCounter,
+        projectId, studyId, source: structuredClone(input.source),
+        sourceLabel: input.source.id, sourceAvailable: true,
+        claim: input.claim, locator: input.locator,
+        timestampSeconds: input.timestampSeconds ?? null,
+        certainty: 'unverified', uncertaintyNote: input.uncertaintyNote ?? null,
+        createdAt: '2026-11-15T12:00:00Z'
+      };
+      studyEvidence.set(studyId, [...(studyEvidence.get(studyId) ?? []), item]);
+      return structuredClone(item);
     },
     async startLocalInspection(projectId: string, studyId: string, transcriptId: string) {
       const study = studyInProject(projectId, studyId);

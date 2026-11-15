@@ -32,6 +32,9 @@
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
     getAiArtifact: (projectId: string, runId: string) => api.getAiRun(projectId, runId),
+    listStudyEvidence: (projectId: string, studyId: string) => api.listStudyEvidence(projectId, studyId),
+    addStudyEvidence: (projectId: string, studyId: string, input: Parameters<ScriptotarApi['addStudyEvidence']>[2]) =>
+      api.addStudyEvidence(projectId, studyId, input),
     listLocalInspections: (projectId: string, studyId: string) => api.listLocalInspections(projectId, studyId),
     startLocalInspection: (projectId: string, studyId: string, transcriptId: string) =>
       api.startLocalInspection(projectId, studyId, transcriptId),

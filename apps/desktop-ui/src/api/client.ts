@@ -15,7 +15,7 @@ import type {
   Transcript,
   WatchlistStatus
 } from '../types';
-import type { ContentStudy, CreativeBrief, StudySourceRef } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudySourceRef, StudyEvidence, StudyEvidenceInput } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 
 export interface ResearchQuery {
@@ -54,6 +54,8 @@ export interface ScriptotarApi {
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
   }): Promise<ContentStudy>;
+  listStudyEvidence(projectId: string, studyId: string): Promise<StudyEvidence[]>;
+  addStudyEvidence(projectId: string, studyId: string, input: StudyEvidenceInput): Promise<StudyEvidence>;
   startLocalInspection(projectId: string, studyId: string, transcriptId: string): Promise<LocalInspectionRun>;
   listLocalInspections(projectId: string, studyId: string): Promise<LocalInspectionRun[]>;
   decideLocalInspection(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;

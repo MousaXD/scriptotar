@@ -33,6 +33,27 @@ export interface ContentStudy {
   draft: string;
   draftVersions: DraftSnapshot[];
 }
+export interface StudyEvidenceInput {
+  source: StudySourceRef;
+  claim: string;
+  locator: string;
+  timestampSeconds?: number | null;
+  uncertaintyNote?: string | null;
+}
+export interface StudyEvidence {
+  id: string;
+  projectId: string;
+  studyId: string;
+  source: StudySourceRef | null;
+  sourceLabel: string;
+  sourceAvailable: boolean;
+  claim: string;
+  locator: string;
+  timestampSeconds: number | null;
+  certainty: 'unverified' | 'estimated' | 'corroborated' | 'disputed';
+  uncertaintyNote: string | null;
+  createdAt: string;
+}
 export interface HistoricalAiArtifact {
   id: string;
   projectId: string;
@@ -50,6 +71,8 @@ export interface StudioGateway {
   listLocalInspections?(projectId: string, studyId: string): Promise<LocalInspectionRun[]>;
   startLocalInspection?(projectId: string, studyId: string, transcriptId: string): Promise<LocalInspectionRun>;
   decideLocalInspection?(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;
+  listStudyEvidence?(projectId: string, studyId: string): Promise<StudyEvidence[]>;
+  addStudyEvidence?(projectId: string, studyId: string, input: StudyEvidenceInput): Promise<StudyEvidence>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string): Promise<ContentStudy>;
