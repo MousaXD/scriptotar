@@ -340,14 +340,21 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Evidence claim review' }));
     expect(await screen.findByText('Disputed — excluded from writing prompts')).toBeInTheDocument();
+    expect((await api.listStudyEvidence('p-creator-lab', study.id))[0].reviewHistory).toHaveLength(1);
     await fireEvent.click(screen.getByRole('button', { name: 'Return to unverified' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Reason for evidence review' }), {
       target: { value: 'Reviewed the entire segment and corrected the context' }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm reopening' }));
     await waitFor(async () => {
-      expect((await api.listStudyEvidence('p-creator-lab', study.id))[0].certainty).toBe('unverified');
+      const latest = (await api.listStudyEvidence('p-creator-lab', study.id))[0];
+      expect(latest.certainty).toBe('unverified');
+      expect(latest.reviewHistory).toHaveLength(2);
+      expect(latest.reviewHistory?.[0].note).toBe('The recording contradicts this interpretation');
+      expect(latest.reviewHistory?.[1].note).toBe('Reviewed the entire segment and corrected the context');
     });
+    await fireEvent.click(screen.getByText(/Recent review history/));
+    expect(await screen.findByText('The recording contradicts this interpretation')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
     await waitFor(() => expect(built).toHaveBeenCalledTimes(2));
     expect(built.mock.calls[1][0].sourceText).toContain('UNTRUSTWORTHY source claim');

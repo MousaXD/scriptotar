@@ -45,6 +45,13 @@ export interface StudyEvidenceReviewInput {
   action: 'dispute' | 'reopen';
   note: string;
 }
+export interface StudyEvidenceReview {
+  id: string;
+  previousCertainty: 'unverified' | 'disputed';
+  nextCertainty: 'unverified' | 'disputed';
+  note: string;
+  reviewedAt: string;
+}
 export interface StudyEvidence {
   id: string;
   projectId: string;
@@ -58,6 +65,8 @@ export interface StudyEvidence {
   certainty: 'unverified' | 'estimated' | 'corroborated' | 'disputed';
   uncertaintyNote: string | null;
   createdAt: string;
+  /** Last 50 human reviews since SQLite v9; no independent fact checking. */
+  reviewHistory?: StudyEvidenceReview[];
 }
 export interface HistoricalAiArtifact {
   id: string;

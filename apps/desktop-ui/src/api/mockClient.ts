@@ -211,7 +211,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         claim: input.claim, locator: input.locator,
         timestampSeconds: input.timestampSeconds ?? null,
         certainty: 'unverified', uncertaintyNote: input.uncertaintyNote ?? null,
-        createdAt: '2026-11-15T12:00:00Z'
+        createdAt: '2026-11-15T12:00:00Z', reviewHistory: []
       };
       studyEvidence.set(studyId, [...(studyEvidence.get(studyId) ?? []), item]);
       return structuredClone(item);
@@ -229,7 +229,12 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
           ? 'unverified' : null;
       if (!next) throw new Error('Invalid evidence review transition');
       const reviewed: StudyEvidence = {
-        ...entry, certainty: next, uncertaintyNote: input.note.trim()
+        ...entry, certainty: next, uncertaintyNote: input.note.trim(),
+        reviewHistory: [...(entry.reviewHistory ?? []), {
+          id: 'mock-review-' + evidenceId + '-' + ((entry.reviewHistory?.length ?? 0) + 1),
+          previousCertainty: entry.certainty as 'unverified' | 'disputed',
+          nextCertainty: next, note: input.note.trim(), reviewedAt: new Date().toISOString()
+        }].slice(-50)
       };
       studyEvidence.set(studyId, previous.map((item) => item.id === evidenceId ? reviewed : item));
       return structuredClone(reviewed);

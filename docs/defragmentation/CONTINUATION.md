@@ -1,3 +1,12 @@
+# CHECKPOINT — 2026-11-15 evidence review history (candidate)
+
+- Human unverified↔disputed transitions now append an immutable SQLite v9 review event in the **same IMMEDIATE transaction** as the evidence status compare-and-swap. Failed/stale/foreign-project reviews cannot create events. The latest 50 are returned with each project-scoped evidence read and displayed in a collapsible EN/AR Studio review timeline; no new network or paid AI permissions.
+- Prior v6–v8 evidence reviews cannot be reconstructed: migrated databases begin recording review history at v9. Event rows are guarded against cross-study insertion and ordinary update/delete, with cascade cleanup on project deletion. The underlying database retains all events; the UI response includes the last 50 only.
+- Includes Rust service tests for persisted history, cross-project denial, stale CAS and direct SQL mutation refusal; mock/app UI tests assert history after reopening an observation. **This candidate is not verified until all nine exact-head Actions workflows pass.**
+- Still outstanding: independent verification, multiple drafts per Study, Agent 05/06 original-script orchestration with provider approval/effects, native installed graphical WebView EN/AR + 100/1k/10k perf, P3 polish. Keep PR #114 draft and main unchanged.
+
+---
+
 # CHECKPOINT — 2026-11-15 evidence review and prompt quarantine (candidate)
 
 - New project-/Study-scoped `review_study_evidence` Tauri command and SQLite IMMEDIATE transaction let a human mark an unverified claim **disputed**, or return a disputed item to **unverified**, with a mandatory explanatory note and optimistic status compare-and-swap. Neither transition creates a verified/corroborated assertion. The original claim, exact source and locator remain visible.

@@ -942,6 +942,20 @@
               {/if}
               {#if !item.sourceAvailable}<small>{t.evidenceUnavailable}</small>{/if}
               {#if item.uncertaintyNote}<small dir="auto">{item.uncertaintyNote}</small>{/if}
+              {#if item.reviewHistory?.length}
+                <details class="evidence-review-history">
+                  <summary>{t.reviewHistory} ({item.reviewHistory.length})</summary>
+                  <ol>
+                    {#each item.reviewHistory as review (review.id)}
+                      <li>
+                        <time datetime={review.reviewedAt}>{review.reviewedAt}</time>
+                        <span>{review.previousCertainty === 'disputed' ? t.evidenceDisputed : t.evidenceUnverified} → {review.nextCertainty === 'disputed' ? t.evidenceDisputed : t.evidenceUnverified}</span>
+                        <span dir="auto">{review.note}</span>
+                      </li>
+                    {/each}
+                  </ol>
+                </details>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -1002,6 +1016,9 @@
   .evidence-list { list-style: none; padding: 0; display: grid; gap: 12px; }
   .evidence-list li { display: grid; gap: 4px; padding-block: 10px; border-block-end: 1px solid var(--border, currentColor); overflow-wrap: anywhere; }
   .evidence-list span, .evidence-list small { font-size: var(--text-xs); }
+  .evidence-review-history summary { cursor: pointer; font-size: var(--text-xs); }
+  .evidence-review-history ol { padding-inline-start: 18px; margin: 6px 0; }
+  .evidence-review-history li { display: grid; gap: 3px; font-size: var(--text-xs); }
   .excerpts { max-height: 55vh; overflow: auto; font-size: var(--text-sm); line-height: 1.65; }
   .excerpts p { padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
   .excerpts time { color: var(--color-text-muted); font-family: var(--font-technical); font-size: var(--text-xs); }
