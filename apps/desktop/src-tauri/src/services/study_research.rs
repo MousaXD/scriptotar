@@ -445,7 +445,7 @@ fn checked_report(
         let source = services.store.get_study_source(project, study, finding.study_source_id)?;
         if source.reference_id != Some(finding.reference_id)
             || source.locator != finding.locator
-            || (source.available == false && matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial))
+            || (!source.available && matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial))
         {
             return Err(not_found());
         }
@@ -505,13 +505,13 @@ impl StudyResearchDriver {
         Self { gate }
     }
 
-    fn guarded_input(&self, ctx: &ExecutionContext, input: &StepInput) -> RepositoryResult<Vec<Uuid>> {
+    fn guarded_input(&self, ctx: &ExecutionContext, input: &StepInput, check_deadline: bool) -> RepositoryResult<Vec<Uuid>> {
         if ctx.project_id != self.gate.project.to_string()
             || ctx.study_id != self.gate.study.to_string()
             || ctx.estimate.tokens != 0
             || ctx.estimate.cost_microusd != 0
             || ctx.estimate.max_output_bytes > MAX_REPORT_BYTES as u64
-            || ctx.deadline_ms <= now_ms()
+            || (check_deadline && ctx.deadline_ms <= now_ms())
         {
             return Err(invalid("invalid or expired research authorization"));
         }
@@ -522,7 +522,7 @@ impl StudyResearchDriver {
 
     fn inspect(&self, ctx: &ExecutionContext, input: &StepInput) -> RepositoryResult<StepOutput> {
         let start = Instant::now();
-        let ids = self.guarded_input(ctx, input)?;
+        let ids = self.guarded_input(ctx, input, true)?;
         let current = scriptotar_core::now_rfc3339();
         let analyzed_at = ObservationTimestamp::parse_rfc3339(&current)
             .ok_or_else(|| invalid("unavailable observation clock"))?;
@@ -556,7 +556,7 @@ impl StudyResearchDriver {
     }
 
     fn stored(&self, ctx: &ExecutionContext, input: &StepInput) -> RepositoryResult<StepOutput> {
-        let ids = self.guarded_input(ctx, input)?;
+        let ids = self.guarded_input(ctx, input, false)?;
         let id = report_id(ctx);
         let saved = checked_report(&self.gate.services, self.gate.project, self.gate.study, id)?;
         if saved.run_id != ctx.run_id
@@ -586,7 +586,7 @@ fn uncertain() -> ToolFailure {
 
 impl ToolExecutor for StudyResearchDriver {
     fn execute(&self, ctx: &ExecutionContext, input: &StepInput) -> Result<ToolReceipt, ToolFailure> {
-        self.guarded_input(ctx, input).map_err(|_| failed())?;
+        self.guarded_input(ctx, input, true).map_err(|_| failed())?;
         match self.gate.services.store.reserve_agent_effect(
             self.gate.project, self.gate.study,
             &ctx.run_id, &ctx.step_id, &ctx.idempotency_key,
@@ -654,8 +654,7 @@ impl ToolExecutor for StudyResearchDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scriptotar_agent::{Estimate, Limits, StepPlan, ToolKind};
-    use scriptotar_core::{StudySourceInput, ProjectRepository};
+    use scriptotar_core::StudySourceInput;
     use tempfile::TempDir;
 
     #[test]
@@ -669,7 +668,6 @@ mod tests {
         assert!(selected_ids(&input).is_ok());
         assert!(scoped_study(&services, project, study, &[other]).is_err());
         assert!(scoped_study(&services, Uuid::new_v4(), study, &[other]).is_err());
-        let _ = (ToolKind::AnalyzeEvidence, std::mem::size_of::<Estimate>(), std::mem::size_of::<Limits>(), std::mem::size_of::<StepPlan>());
     }
 
     #[test]
