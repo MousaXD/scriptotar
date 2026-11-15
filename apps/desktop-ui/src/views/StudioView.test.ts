@@ -454,6 +454,32 @@ describe('Content Study Studio', () => {
       .toHaveValue('The untouched first direction');
   });
 
+  it('filters a large candidate selector without losing the active script or defaulting to system controls', async () => {
+    const api = createMockClient();
+    const brief = { ...emptyBrief(), title: 'Candidate index' };
+    let study = await api.createStudy('p-creator-lab', brief);
+    for (let i = 0; i < 10; i++) {
+      study = await api.duplicateStudyDraft('p-creator-lab', study.id, study.draftId!, study.draftRevision!);
+      study = await api.renameStudyDraft('p-creator-lab', study.id, study.draftId!, study.draftRevision!, `Angle ${i}`);
+    }
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Candidate index' }));
+    const search = await screen.findByRole('searchbox', { name: 'Search scripts' });
+    await fireEvent.input(search, { target: { value: 'Angle 3' } });
+    const picker = screen.getByRole('combobox', { name: 'Script candidates' });
+    await fireEvent.click(picker);
+    expect(screen.getByRole('option', { name: 'Angle 3' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Angle 9' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Angle 4' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('option', { name: 'Angle 3' }));
+    expect(picker).toHaveAttribute('aria-haspopup', 'listbox');
+    expect(await screen.findByRole('textbox', { name: 'Script draft' })).toBeInTheDocument();
+    view.unmount();
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');

@@ -33,6 +33,7 @@
   let previewVersion: DraftSnapshot | null = null;
   let renameDraftOpen = false;
   let renameDraftTitle = '';
+  let draftSearch = '';
   let confirmArchiveDraft = false;
   let selectedArchivedDraftId = '';
   let selectedSource: StudySourceRef | null = null;
@@ -1020,8 +1021,17 @@
       </div>
       {#if record?.drafts?.length && record.draftId}
         <div class="studio-candidates">
+          {#if record.drafts.length > 8}
+            <label class="draft-search">{t.searchDrafts}
+              <input type="search" aria-label={t.searchDrafts} bind:value={draftSearch}
+                placeholder={t.searchDrafts} autocomplete="off" />
+            </label>
+          {/if}
           <Select label={t.draftCandidates} value={record.draftId}
-            options={record.drafts.map((item) => ({ value: item.id, label: item.title }))}
+            options={record.drafts
+              .filter((item) => item.id === record?.draftId ||
+                item.title.toLocaleLowerCase().includes(draftSearch.trim().toLocaleLowerCase()))
+              .map((item) => ({ value: item.id, label: item.title }))}
             onChange={(id) => void openDraft(id)} />
           {#if gateway?.duplicateStudyDraft}
             <button class="button secondary" type="button"
@@ -1219,6 +1229,8 @@
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }
   .studio-candidates > :global(*) { min-width: 180px; }
+  .draft-search { display: grid; gap: 6px; color: var(--text); font-size: var(--text-sm); font-weight: 600; }
+  .draft-search input { min-height: var(--control-height); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); padding: 0 12px; font: inherit; }
   .studio-workspace { display: grid; grid-template-columns: minmax(210px, 0.85fr) minmax(350px, 2.2fr) minmax(220px, 1fr); gap: 14px; align-items: start; }
   .studio-side, .studio-main { display: grid; min-width: 0; gap: 14px; }
   .studio-workspace .panel { min-width: 0; padding: 18px; border-radius: var(--radius-lg); }
