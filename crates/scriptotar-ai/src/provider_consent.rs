@@ -355,18 +355,17 @@ impl ConsentBoundary {
             .records
             .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
-        if records.contains_key(&intent.run_id) {
-            return Err(ConsentError::AlreadyUsed);
+        match records.entry(intent.run_id.clone()) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(SavedConsent {
+                    intent,
+                    preview: preview.clone(),
+                    decision: Decision::Pending,
+                });
+                Ok(preview)
+            }
+            std::collections::hash_map::Entry::Occupied(_) => Err(ConsentError::AlreadyUsed),
         }
-        records.insert(
-            intent.run_id.clone(),
-            SavedConsent {
-                intent,
-                preview: preview.clone(),
-                decision: Decision::Pending,
-            },
-        );
-        Ok(preview)
     }
 
     pub fn decide(
