@@ -112,7 +112,7 @@ pub enum EvidenceRelation {
     Contradicts,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ResolvedEvidence {
     pub evidence_id: String,
     pub source_id: String,
@@ -138,7 +138,7 @@ pub enum ReviewDecision {
     Reject,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct VerifiedReview {
     /// Only append-only, authenticated, independent HUMAN review records.
     pub review_id: String,
@@ -150,11 +150,14 @@ pub struct VerifiedReview {
     pub claim_id: String,
     pub exact_statement: String,
     pub evidence_ids: Vec<String>,
+    /// Exact attested versions, locators AND quotes. An evidence ID alone can
+    /// remain stable while its content changes; an older review must not pass.
+    pub exact_citations: Vec<Citation>,
     pub decision: ReviewDecision,
     pub reviewed_at_epoch: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct VerificationContext {
     pub project_id: String,
     pub study_id: String,
@@ -237,6 +240,9 @@ pub struct VerificationReport {
     pub checked_at_epoch: u64,
     pub claims: Vec<ClaimResult>,
     pub publication_review_required: bool,
+    /// There is no independently attested complete claim inventory in the
+    /// current data model. Individual Verified claims do not clear a script.
+    pub inventory_complete: bool,
     /// Never discard past decision records when saving a new draft version.
     /// The host must durably persist each revision's report/attestation history.
     pub review_lineage: Vec<VerifiedReview>,
@@ -325,6 +331,8 @@ fn review_matches(review: &VerifiedReview, claim: &ClaimProposal, ctx: &Verifica
         && review.exact_statement == claim.statement
         && review.reviewed_at_epoch <= ctx.checked_at_epoch
         && exact_id_set(&review.evidence_ids, ids)
+        && review.exact_citations.len() == claim.citations.len()
+        && claim.citations.iter().all(|citation| review.exact_citations.contains(citation))
 }
 
 /// Deterministic, fail-closed evaluation. A review record is ONLY credible if
@@ -517,13 +525,16 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
             status, exact_citations: approved, findings: issues,
         });
     }
-    let publication_review_required = invalid_batch || proposals.len() != results.len()
-        || results.iter().any(|claim| claim.status != VerificationStatus::Verified && claim.status != VerificationStatus::Opinion);
+    // No source-backed, reviewer-certified exhaustiveness record exists for
+    // ALL factual assertions in narration. Even fully adjudicated annotations
+    // must not be presented as whole-script publication approval.
+    let publication_review_required = true;
     VerificationReport {
         project_id: ctx.project_id.clone(), study_id: ctx.study_id.clone(),
         draft_id: ctx.draft_id.clone(), draft_revision: ctx.draft_revision,
         checked_at_epoch: ctx.checked_at_epoch,
         claims: results, publication_review_required,
+        inventory_complete: false,
         review_lineage: ctx.human_reviews.clone(),
     }
 }
