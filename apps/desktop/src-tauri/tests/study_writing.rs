@@ -434,3 +434,64 @@ fn cross_project_loader_refuses_a_different_project_scope() {
     assert!(matches!(loader.load(Uuid::new_v4(),c.study_id),
         Err(WritingWorkflowError::InvalidContext(_))));
 }
+
+#[test]
+fn separately_approved_revision_proposal_does_not_change_saved_text() {
+    let (temp,plan,current,mut gate,mut provider,stop)=setup();
+    let mut sink=SqlFixtureSink::open(&temp.path().join("test.sqlite"),current.0.clone());
+    let ids=generate_three(&plan,&current,&mut gate,&mut provider,&stop,&mut sink).unwrap();
+    let candidate=sink.get(ids[0]).candidates[0].clone();
+    let original=candidate.draft.clone();
+    provider.responses.push_back(json!({
+        "beat_id":"hook","replacement_narration":"A revised, original introduction"
+    }).to_string());
+    let proposal=study_writing::propose_beat_revision(
+        &plan,&current,&mut gate,&mut provider,&stop,&candidate,"hook","Improve clarity"
+    ).unwrap();
+    assert!(proposal.contains("revised"));
+    assert_eq!(provider.calls,5);
+    assert_eq!(sink.get(ids[0]).candidates[0].draft,original);
+}
+
+#[test]
+fn optional_model_review_is_advisory_not_a_verification_verdict() {
+    let (temp,plan,current,mut gate,mut provider,stop)=setup();
+    let mut sink=SqlFixtureSink::open(&temp.path().join("test.sqlite"),current.0.clone());
+    let ids=generate_three(&plan,&current,&mut gate,&mut provider,&stop,&mut sink).unwrap();
+    let candidate=sink.get(ids[0]).candidates[0].clone();
+    provider.responses.push_back(json!({
+        "findings":[{"beat_id":"hook","concern":"Check its underlying source",
+            "recommendation":"Ask a human to verify the quoted detail",
+            "evidence_ids":["e1"],"needs_human_review":false}]
+    }).to_string());
+    let reviewed=study_writing::review_candidate(
+        &plan,&current,&mut gate,&mut provider,&stop,&candidate
+    ).unwrap();
+    assert!(reviewed.review_findings[0].needs_human_review);
+    assert_eq!(reviewed.draft,candidate.draft);
+    assert_eq!(sink.get(ids[0]).candidates[0].review_findings.len(),0);
+}
+
+#[test]
+fn arabic_output_and_locator_remain_intact() {
+    let (temp,_plan,current,mut gate,mut provider,stop)=setup();
+    let mut c=current.0.borrow_mut();
+    c.brief.language="ar".into();
+    c.brief.goal="شرح أصلي للمجتمع".into();
+    let plan=prepare_three("run-arabic",c.clone()).unwrap();
+    drop(c);
+    provider.responses=VecDeque::from([
+        angles_json(),
+        draft_json(1),draft_json(2),draft_json(3),
+    ]);
+    for (i,raw) in provider.responses.iter_mut().enumerate().skip(1) {
+        let mut draft:serde_json::Value=serde_json::from_str(raw).unwrap();
+        draft["language"]=json!("ar");
+        draft["beats"][0]["narration"]=json!(format!("هذه فكرة عربية أصلية مختلفة رقم {i} ونص جديد للمشاهدين"));
+        *raw=draft.to_string();
+    }
+    let mut sink=SqlFixtureSink::open(&temp.path().join("arabic.sqlite"),current.0.clone());
+    let ids=generate_three(&plan,&current,&mut gate,&mut provider,&stop,&mut sink).unwrap();
+    assert_eq!(sink.count(),3);
+    assert!(export_candidate(&sink.get(ids[0]).candidates[0]).contains("هذه فكرة"));
+}
