@@ -1,10 +1,10 @@
 //! Project-scoped adapters from canonical SQLite Content Studies to Studio UI.
 use super::AppServices;
 use crate::dto::{
-    UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy,
-    UiStudioStudyPatch, UiStudioStudySummary, UiStudyAnglePrompt, UiStudyAngleInterpretation,
-    UiStudioAngleOption, UiStudyEvidence,
-    UiStudyEvidenceInput, UiStudyEvidenceReview,
+    UiStudioAngleOption, UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion,
+    UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch, UiStudioStudySummary,
+    UiStudyAngleInterpretation, UiStudyAnglePrompt, UiStudyEvidence, UiStudyEvidenceInput,
+    UiStudyEvidenceReview,
 };
 use scriptotar_ai::writing::{
     self, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
@@ -569,8 +569,7 @@ impl AppServices {
         if prepared_prompt.len() > 100_000 || response_json.len() > 100_000 {
             return Err(invalid("angle payload size"));
         }
-        let (mut input, limitations, _, _, _) =
-            self.scoped_writing_input(project_id, study_id)?;
+        let (mut input, limitations, _, _, _) = self.scoped_writing_input(project_id, study_id)?;
         if self.store.get_study(project_id, study_id)?.revision != expected_study_revision {
             return Err(RepositoryError::Conflict(
                 "Study changed since angle preparation".into(),
@@ -1184,19 +1183,51 @@ mod tests {
                     Some("angle-a"),
                 )
                 .unwrap();
-            assert!(chosen.draft_prompt.as_deref().unwrap().contains("Write one original ScriptDraft"));
+            assert!(chosen
+                .draft_prompt
+                .as_deref()
+                .unwrap()
+                .contains("Write one original ScriptDraft"));
             assert!(chosen.draft_prompt.as_deref().unwrap().contains("angle-a"));
             assert!(services
-                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, &three_angles, Some("missing"))
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    Some("missing")
+                )
                 .is_err());
             assert!(services
-                .interpret_studio_angles(Uuid::new_v4(), study_id, saved.revision, &angles.prompt, &three_angles, None)
+                .interpret_studio_angles(
+                    Uuid::new_v4(),
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    None
+                )
                 .is_err());
             assert!(services
-                .interpret_studio_angles(project_id, study_id, saved.revision - 1, &angles.prompt, &three_angles, None)
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision - 1,
+                    &angles.prompt,
+                    &three_angles,
+                    None
+                )
                 .is_err());
             assert!(services
-                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, r#"{"angles":[]}"#, None)
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    r#"{"angles":[]}"#,
+                    None
+                )
                 .is_err());
             assert!(services
                 .prepare_studio_angle_prompt(Uuid::new_v4(), study_id)
@@ -1284,10 +1315,24 @@ mod tests {
                 .unwrap();
             assert_eq!(after_dispute.unverified_observation_count, 0);
             assert!(services
-                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, &three_angles, None)
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    None
+                )
                 .is_err());
             assert!(services
-                .interpret_studio_angles(project_id, study_id, saved.revision, &after_dispute.prompt, &three_angles, None)
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &after_dispute.prompt,
+                    &three_angles,
+                    None
+                )
                 .is_err());
             assert!(!after_dispute
                 .prompt
