@@ -564,16 +564,17 @@
   // an AI history item. Save pending edits first so all earlier versions remain.
   async function importSavedAiResult() {
     const artifact = historical;
+    const artifactId = artifact?.id;
     const importedText = artifact?.result;
     const ownerStudy = studyId;
-    if (!importedText?.trim() || !record || !gateway || busy || saving || importingSavedResult) return;
+    if (!artifactId || !importedText?.trim() || !record || !gateway || busy || saving || importingSavedResult) return;
     importingSavedResult = true;
     busy = true;
     error = '';
     try {
       if (changed()) await save();
       if (changed() || saving) throw new Error(error || t.errorSave);
-      if (studyId !== ownerStudy || historical?.id !== artifact.id || record.projectId !== projectId) return;
+      if (studyId !== ownerStudy || historical?.id !== artifactId || record.projectId !== projectId) return;
       if (draft !== importedText) {
         draft = importedText;
         queueSave();
