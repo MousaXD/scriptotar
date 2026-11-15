@@ -1361,18 +1361,17 @@ mod tests {
             })
             .to_string();
             let draft_prompt = chosen.draft_prompt.as_deref().unwrap();
+            let request = UiStudyScriptInput {
+                expected_study_revision: saved.revision,
+                angle_prompt: angles.prompt.clone(),
+                angles_response_json: three_angles.clone(),
+                selected_angle_id: "angle-a".into(),
+                prepared_draft_prompt: draft_prompt.into(),
+                script_response_json: structured_script.clone(),
+                accept_as_new_candidate: false,
+            };
             let preview = services
-                .review_studio_script(
-                    project_id,
-                    study_id,
-                    saved.revision,
-                    &angles.prompt,
-                    &three_angles,
-                    "angle-a",
-                    draft_prompt,
-                    &structured_script,
-                    false,
-                )
+                .review_studio_script(project_id, study_id, &request)
                 .unwrap();
             assert!(preview.saved_study.is_none());
             assert!(preview.body.contains("An original opening"));
@@ -1385,57 +1384,36 @@ mod tests {
                     .len(),
                 1
             );
+            let accepted = UiStudyScriptInput {
+                accept_as_new_candidate: true,
+                ..request.clone()
+            };
             assert!(services
                 .review_studio_script(
                     project_id,
                     study_id,
-                    saved.revision,
-                    &angles.prompt,
-                    &three_angles,
-                    "angle-a",
-                    "stale draft prompt",
-                    &structured_script,
-                    true,
+                    &UiStudyScriptInput {
+                        prepared_draft_prompt: "stale draft prompt".into(),
+                        ..accepted.clone()
+                    },
                 )
                 .is_err());
             assert!(services
-                .review_studio_script(
-                    Uuid::new_v4(),
-                    study_id,
-                    saved.revision,
-                    &angles.prompt,
-                    &three_angles,
-                    "angle-a",
-                    draft_prompt,
-                    &structured_script,
-                    true,
-                )
+                .review_studio_script(Uuid::new_v4(), study_id, &accepted)
                 .is_err());
             assert!(services
                 .review_studio_script(
                     project_id,
                     study_id,
-                    saved.revision,
-                    &angles.prompt,
-                    &three_angles,
-                    "angle-a",
-                    draft_prompt,
-                    &structured_script.replace("\"unverified\"", "\"supported\""),
-                    true,
+                    &UiStudyScriptInput {
+                        script_response_json: structured_script
+                            .replace("\"unverified\"", "\"supported\""),
+                        ..accepted.clone()
+                    },
                 )
                 .is_err());
             let saved_script = services
-                .review_studio_script(
-                    project_id,
-                    study_id,
-                    saved.revision,
-                    &angles.prompt,
-                    &three_angles,
-                    "angle-a",
-                    draft_prompt,
-                    &structured_script,
-                    true,
-                )
+                .review_studio_script(project_id, study_id, &accepted)
                 .unwrap();
             let candidate = saved_script.saved_study.unwrap();
             assert_eq!(candidate.drafts.len(), 2);
