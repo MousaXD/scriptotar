@@ -2,8 +2,8 @@ mod agent_inspection;
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
-mod study_gateway;
 mod provider_consent;
+mod study_gateway;
 
 use std::{
     collections::{HashMap, HashSet},
