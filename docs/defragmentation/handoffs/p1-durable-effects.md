@@ -1,0 +1,60 @@
+# Agent 02 — P1 durable external effects and idempotency handoff
+
+**Branch:** agent-02/p1-durable-effects-20261116  
+**Base:** integration/scriptotar-defragmentation-agent00-20261113 at 3009989a3aa73248b6432ba0cd84821c59110993  
+**Scope:** database-side paid/external effect boundary, service integration seam and regression tests. NO main merge, tag or release.
+
+## What already existed — preserved
+
+- v7 SQLite project/Study-scoped agent runs, checkpoint CAS and append-only audit.
+- v8 agent_effects immutable claim, revision protection and status transition guard.
+- Running-intent checkpoint and explicit approvals in scriptotar-agent.
+- ReadStudyTranscript local-only, repeatable adapter in services/agent_inspection.rs.
+
+None of those are replaced. No provider request is enabled just by compiling the new ledger.
+
+## New code
+
+- crates/scriptotar-db/src/agent_effects_external.rs: real SQLite IMMEDIATE reservation and dispatch CAS, bounded provider receipts, persistent cancellation and uncertain states, recovery and explicit proof-only retry. Linked to the v8 claim via foreign key. Includes native regression tests.
+- crates/scriptotar-db/src/agent_effects.rs: includes and re-exports the new DB module, without changing v8 behavior.
+- apps/desktop/src-tauri/src/services/agent_effect_driver.rs: Agent 01 policy and Agent 05 provider-transport interfaces, real database fence used before network I/O, trusted provider status probe, cancellation request and manual retry admission. This file is NOT registered as a service or IPC endpoint; Agent 00 owns registration.
+
+## State machine and receipts
+
+- Reserve: an approved Running checkpoint with exact project, Study, run, step and engine idempotency key; atomically insert existing v8 claim + new external-effect row. Unique fingerprint is **64 lowercase hex SHA-256** of the canonical request bytes (computed by Agent 01, not raw prompt text). Provider label, approved token and cost ceilings are immutable. A repeated key always returns Existing and must not cause another call.
+- Mark dispatched: separate IMMEDIATE transaction and revision CAS; commit before provider I/O. Once this marker exists, even a crash before socket write is treated as potentially billable.
+- Settle: verified receipts record bounded tokens, micro-USD, provider request ID and receipt ID without prompt/output/secrets. Completed and charged-failure states are distinct. The legacy v8 fence is settled within the **same transaction** as the external receipt.
+- Uncertain: timeout, 5xx, disconnect, missing acknowledgement, crash after dispatch or unavailable provider status. Recovery moves Dispatched -> Uncertain and legacy v8 Reserved -> Unknown; never repeats network I/O.
+- Reconcile: only a trusted provider adapter may supply authoritative receipt/cancellation or proven nonexecution. A missing provider ID or eventually consistent 404 is NOT proof of nonexecution.
+- Cancel: Reserved -> Cancelled (no call); Dispatched/Uncertain set cancel_requested without claiming remote cancellation succeeded. Late provider receipt may still win. Terminal receipts cannot be overwritten.
+- Retry: only explicitly after provider-verified nonexecution and fresh authorization, with revision CAS and append-only prior-attempt evidence. Maximum three attempts. A new attempt remains Reserved and must be separately dispatched. Old callback attempts are rejected. No automatic retries.
+- Source/path checks: foreign project/study/run/step IDs, changed fingerprints, wrong budgets, expired/archived projects, corrupt checkpoint and unapproved steps fail closed. Local ReadStudyTranscript is excluded from the external adapter.
+
+The SQLite durable claim prevents duplicate *local dispatch* across processes. It cannot claim exactly-once external execution without provider-side idempotency or reconciliation. A provider with neither capability is a NO-GO for automated paid retry.
+
+## Required Agent 00 changes before activation
+
+1. Register the additive agent_external_effects and agent_external_attempt_history schema through the central versioned migration ledger (next schema version) rather than relying indefinitely on the present atomic first-use CREATE TABLE compatibility bootstrap. Preserve all old migrations exactly; test upgrade from v9 and forced rollback.
+2. Publicly re-export ExternalEffect, ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation and ExternalResolution from crates/scriptotar-db/src/root.rs.
+3. Register the new private services/agent_effect_driver.rs module from services.rs; add only new shared command/DTO surfaces after a contract review. Keep existing local transcript inspection unchanged.
+4. Call recover_external_effects for each active run during startup/recovery, and surface Uncertain as blocked in Studio with explicit reconciliation affordance, not a Try Again button.
+5. Include native runner and full installer/GUI acceptance on one exact SHA. No release until independent QA signs off.
+
+## Agent 01 / Agent 05 contract
+
+**Agent 01:** provide ExternalEffectPolicy implementation that checks user consent, exact provider identity, prompt preview/egress, source access, expiry/revocation, per-run token and micro-USD caps on every dispatch. Compute canonical SHA-256 over the *actual* outbound payload, including model, temperature, system context, selected sources and parameters. Reject changing a pending request after approval. No API keys or prompts in DB receipts. Provider transport should have explicit timeout and local/remote idempotency support.
+
+**Agent 05:** after Engine Running-intent CAS, call dispatch_authorized_external_effect once. Handle Existing as blocked/probe, never as permission to send; use reconcile_external_with_provider with actual provider status. Do not treat local application cancellation as remote cancellation. After restart recover pending effects and seek user-driven reconciliation for ambiguous ones. No automatic replay of paid requests. Provider outcomes must come from trusted adapter responses, not user-pasted JSON.
+
+## Native tests added (not yet executed)
+
+Unit tests under agent_effects_external.rs cover: pre-reservation absent state; crash after reservation; crash after dispatch; crash after receipt; duplicate callbacks; late response after uncertainty; lost acknowledgement; concurrent two-thread claim; fingerprint mutation; foreign project; overbudget; corrupt checkpoint; reserved/dispatched cancellation; stale attempt; provider-proven nonexecution and bounded retry. Existing agent_effects.rs integration tests and unchanged local transcript acceptance must be rerun.
+
+**Validation limitation:** this execution environment has no cargo/rustc and no direct GitHub clone access. No local native test, Rustfmt or Clippy success is claimed. GitHub Actions exact-head checks are required and must be inspected. This is draft implementation for review, not release certification.
+
+## Operational limitations for review
+
+- In-flight cancellation is best-effort; a remote charge can still occur after the user requests stop.
+- If a provider lacks an authoritative receipt or idempotency lookup, Uncertain remains blocked until human/provider resolution.
+- Dispatched receipts are metadata-only; the actual external provider call must be implemented by Agent 01, not this DB boundary.
+- Direct raw SQL/database tampering is out of trust scope; project/Study identity is also enforced in the service and parent table.
