@@ -16,6 +16,7 @@ use scriptotar_core::{RepositoryError, RepositoryResult};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
+#[allow(dead_code)] // Agent 00 has not yet registered the IPC lifecycle.
 fn current_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -30,6 +31,7 @@ fn scope_error(_error: RepositoryError) -> ConsentError {
     ConsentError::WrongProjectOrStudy
 }
 
+#[allow(dead_code)] // Used only when the owner wires the host approval lifecycle.
 fn consent_error(error: ConsentError) -> RepositoryError {
     RepositoryError::Validation(format!("AI provider consent: {error:?}"))
 }
@@ -84,6 +86,7 @@ impl ScopeAuthority for AppServices {
     }
 }
 
+#[allow(dead_code)] // Rust-only integration surface reserved for Agent 00.
 impl AppServices {
     /// Prepare the exact server-derived three-angle request, never an arbitrary
     /// model prompt supplied by the client. Approval remains blocked if the
