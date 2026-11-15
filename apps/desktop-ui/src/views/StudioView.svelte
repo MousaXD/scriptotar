@@ -5,7 +5,7 @@
   import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef } from '../studio/contract';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
@@ -40,6 +40,14 @@
   let historyLoading = false;
   let historyError = '';
   let historyEpoch = 0;
+  let evidenceEpoch = 0;
+  let evidence: StudyEvidence[] = [];
+  let evidenceBusy = false;
+  let evidenceLoading = false;
+  let evidenceError = '';
+  let evidenceClaim = '';
+  let evidenceLocator = '';
+  let evidenceUncertainty = '';
   let inspectionEpoch = 0;
   let localInspections: LocalInspectionRun[] = [];
   let activeInspection: LocalInspectionRun | null = null;
@@ -99,6 +107,7 @@
     promptRequest++;
     historyEpoch++;
     inspectionEpoch++;
+    evidenceEpoch++;
     if (saveTimer) clearTimeout(saveTimer);
   });
 
@@ -179,6 +188,11 @@
       status = '';
       activeInspection = null;
       localInspections = [];
+      evidence = [];
+      evidenceClaim = '';
+      evidenceLocator = '';
+      evidenceUncertainty = '';
+      void loadEvidence(id);
       void loadInspections(id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorLoad);
@@ -206,6 +220,9 @@
       if (created.projectId !== projectId) throw new Error(t.invalidStudy);
       record = created;
       inspectionEpoch++;
+      evidenceEpoch++;
+      evidence = [];
+      evidenceError = '';
       localInspections = [];
       activeInspection = null;
       inspectionError = '';
@@ -215,6 +232,7 @@
       draft = currentDraft;
       studies = [...studies, { id: created.id, projectId, brief: created.brief, revision: created.revision }];
       if (changed()) queueSave();
+      void loadEvidence(created.id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorCreate);
     } finally {
@@ -279,7 +297,68 @@
     }
   }
 
+  async function loadEvidence(forStudy: string) {
+    if (!gateway?.listStudyEvidence) return;
+    const epoch = ++evidenceEpoch;
+    evidenceLoading = true;
+    evidenceError = '';
+    try {
+      const found = await gateway.listStudyEvidence(projectId, forStudy);
+      if (epoch !== evidenceEpoch || studyId !== forStudy) return;
+      if (found.some((item) => item.projectId !== projectId || item.studyId !== forStudy)) {
+        throw new Error(t.invalidStudy);
+      }
+      evidence = found;
+    } catch (cause) {
+      if (epoch === evidenceEpoch) evidenceError = message(cause, t.errorLoad);
+    } finally {
+      if (epoch === evidenceEpoch) evidenceLoading = false;
+    }
+  }
+
+  async function addEvidence() {
+    if (!gateway?.addStudyEvidence || !record || !selectedSource || evidenceBusy ||
+        !evidenceClaim.trim() || !evidenceLocator.trim()) return;
+    const forStudy = studyId;
+    const epoch = ++evidenceEpoch;
+    const source = { ...selectedSource };
+    evidenceBusy = true;
+    evidenceLoading = false;
+    evidenceError = '';
+    try {
+      // Record the source attachment before adding evidence. The database
+      // resolves the real StudySource ID, never a title-based UI guess.
+      await flushPendingSave();
+      if (studyId !== forStudy || !record || !refs.some(
+        (item) => item.kind === source.kind && item.id === source.id)) return;
+      const saved = await gateway.addStudyEvidence(projectId, forStudy, {
+        source,
+        claim: evidenceClaim.trim(),
+        locator: evidenceLocator.trim(),
+        uncertaintyNote: evidenceUncertainty.trim() || null
+      });
+      if (studyId !== forStudy || epoch !== evidenceEpoch) return;
+      if (saved.projectId !== projectId || saved.studyId !== forStudy ||
+          saved.source?.kind !== source.kind || saved.source.id !== source.id ||
+          saved.certainty !== 'unverified') throw new Error(t.invalidStudy);
+      evidence = [...evidence, saved];
+      evidenceClaim = '';
+      evidenceLocator = '';
+      evidenceUncertainty = '';
+      status = t.evidenceSaved;
+    } catch (cause) {
+      if (studyId === forStudy && epoch === evidenceEpoch) evidenceError = message(cause, t.evidenceError);
+    } finally {
+      evidenceBusy = false;
+    }
+  }
+
   function toggleSource(ref: StudySourceRef) {
+    if (refs.some((item) => item.kind === ref.kind && item.id === ref.id) &&
+        evidence.some((item) => item.source?.kind === ref.kind && item.source.id === ref.id)) {
+      error = t.evidenceReferenced;
+      return;
+    }
     const allowed = sanitizeSelection([ref], research, transcripts, projectId);
     if (!allowed.length) { error = t.previewUnavailable; return; }
     refs = refs.some((item) => item.kind === ref.kind && item.id === ref.id)
@@ -686,6 +765,41 @@
     {:else}
       <p class="muted">{selectedSource ? t.previewUnavailable : t.selectSource}</p>
     {/if}
+    {#if record && selectedSource && gateway?.addStudyEvidence}
+      <form class="evidence-form" on:submit|preventDefault={() => void addEvidence()}>
+        <label>{t.evidenceClaim}
+          <textarea bind:value={evidenceClaim} maxlength="20000" rows="3" dir="auto"></textarea>
+        </label>
+        <label>{t.evidenceLocator}
+          <input bind:value={evidenceLocator} maxlength="4000" dir="auto" placeholder="0:12-0:18" />
+        </label>
+        <label>{t.evidenceUncertainty}
+          <input bind:value={evidenceUncertainty} maxlength="4000" dir="auto" />
+        </label>
+        <p class="muted">{t.evidenceUnverified}</p>
+        <button type="submit" class="button secondary"
+          disabled={evidenceBusy || !evidenceClaim.trim() || !evidenceLocator.trim()}>{t.addEvidence}</button>
+      </form>
+    {/if}
+    {#if evidenceLoading}<p role="status">{t.sourceLoading}</p>{/if}
+    {#if evidenceError}<p role="alert">{evidenceError}</p>{/if}
+    {#if record && gateway?.listStudyEvidence}
+      {#if evidence.length}
+        <ul class="evidence-list">
+          {#each evidence as item (item.id)}
+            <li>
+              <strong dir="auto">{item.claim}</strong>
+              <span dir="auto">{item.source ? sourceLabel(item.source, research, transcripts) : item.sourceLabel} · {item.locator}</span>
+              <small>{item.certainty === 'unverified' ? t.evidenceUnverified : item.certainty}</small>
+              {#if !item.sourceAvailable}<small>{t.evidenceUnavailable}</small>{/if}
+              {#if item.uncertaintyNote}<small dir="auto">{item.uncertaintyNote}</small>{/if}
+            </li>
+          {/each}
+        </ul>
+      {:else if !evidenceLoading}
+        <p class="muted">{t.evidenceEmpty}</p>
+      {/if}
+    {/if}
     <p class="muted">{t.mixedWarning}</p>
   </aside>
 </div>
@@ -734,6 +848,11 @@
   .prompt-label textarea { resize: vertical; }
   .studio-evidence { position: sticky; top: 80px; }
   .studio-evidence a { font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .evidence-form { display: grid; gap: 8px; margin-block: 18px; }
+  .evidence-form label { display: grid; gap: 5px; }
+  .evidence-list { list-style: none; padding: 0; display: grid; gap: 12px; }
+  .evidence-list li { display: grid; gap: 4px; padding-block: 10px; border-block-end: 1px solid var(--border, currentColor); overflow-wrap: anywhere; }
+  .evidence-list span, .evidence-list small { font-size: var(--text-xs); }
   .excerpts { max-height: 55vh; overflow: auto; font-size: var(--text-sm); line-height: 1.65; }
   .excerpts p { padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
   .excerpts time { color: var(--color-text-muted); font-family: var(--font-technical); font-size: var(--text-xs); }

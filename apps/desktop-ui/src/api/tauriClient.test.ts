@@ -68,6 +68,11 @@ describe('Tauri client command contract', () => {
       platform: 'TikTok', language: 'Arabic', duration: '40', style: 'Direct' });
     await api.getStudy('project-id', 'study-id');
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
+    await api.listStudyEvidence('project-id', 'study-id');
+    await api.addStudyEvidence('project-id', 'study-id', {
+      source: { kind: 'transcript', id: 'transcript-id' },
+      claim: 'Claim', locator: '0:02-0:05', uncertaintyNote: null
+    });
     await api.startLocalInspection('project-id', 'study-id', 'transcript-id');
     await api.listLocalInspections('project-id', 'study-id');
     await api.decideLocalInspection('project-id', 'study-id', 'run-id', 'approve');
@@ -137,6 +142,10 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('get_study', { projectId: 'project-id', studyId: 'study-id' });
     expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
       studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_evidence', { projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('add_study_evidence', { projectId: 'project-id',
+      studyId: 'study-id', input: { source: { kind: 'transcript', id: 'transcript-id' },
+        claim: 'Claim', locator: '0:02-0:05', uncertaintyNote: null } });
     expect(invokeMock).toHaveBeenCalledWith('start_local_inspection', {
       projectId: 'project-id', studyId: 'study-id', transcriptId: 'transcript-id' });
     expect(invokeMock).toHaveBeenCalledWith('list_local_inspections', {

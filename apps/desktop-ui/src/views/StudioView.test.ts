@@ -148,6 +148,49 @@ describe('Content Study Studio', () => {
       .toHaveValue('First original script');
   });
 
+  it('saves an unverified exact source observation and reopens it from the same study', async () => {
+    const api = createMockClient();
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Referenced research' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Observation or claim' }), {
+      target: { value: 'The opening uses a question' }
+    });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Exact timestamp or locator' }), {
+      target: { value: '0:00-0:07' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save observation' }));
+    expect(await screen.findByText('The opening uses a question')).toBeInTheDocument();
+    expect(screen.getAllByText('Unverified — not fact-checked').length).toBeGreaterThan(0);
+    const study = (await api.listStudies('p-creator-lab'))[0];
+    const observed = await api.listStudyEvidence('p-creator-lab', study.id);
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      projectId: 'p-creator-lab', studyId: study.id,
+      source: { kind: 'transcript', id: 't-ar' }, locator: '0:00-0:07', certainty: 'unverified'
+    });
+    await expect(api.addStudyEvidence('p-client-a', study.id, {
+      source: { kind: 'transcript', id: 't-ar' }, claim: 'Wrong project', locator: '0:00'
+    })).rejects.toThrow();
+    await expect(api.addStudyEvidence('p-creator-lab', study.id, {
+      source: { kind: 'transcript', id: 'not-attached' }, claim: 'Wrong source', locator: '0:00'
+    })).rejects.toThrow();
+    view.unmount();
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Referenced research' }));
+    expect(await screen.findByText('The opening uses a question')).toBeInTheDocument();
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
