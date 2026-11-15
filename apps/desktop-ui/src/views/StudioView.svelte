@@ -33,6 +33,8 @@
   let previewVersion: DraftSnapshot | null = null;
   let renameDraftOpen = false;
   let renameDraftTitle = '';
+  let confirmArchiveDraft = false;
+  let selectedArchivedDraftId = '';
   let selectedSource: StudySourceRef | null = null;
   let transcriptDetail: Transcript | null = null;
   let sourceLoading = false;
@@ -396,6 +398,81 @@
       refs = [...renamed.sources];
       previewVersion = null;
       renameDraftOpen = false;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = t.saved;
+    } catch (cause) {
+      error = message(cause, t.errorDraft);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function archiveDraft() {
+    if (!gateway?.setStudyDraftArchived || !record?.draftId ||
+        record.draftRevision == null || (record.drafts?.length ?? 0) <= 1 ||
+        !confirmArchiveDraft || busy || saving || loading) return;
+    const ownerStudy = studyId;
+    busy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (!record?.draftId || record.draftRevision == null || studyId !== ownerStudy) return;
+      const previousId = record.draftId;
+      const result = await gateway.setStudyDraftArchived(
+        projectId, ownerStudy, previousId, record.draftRevision, true);
+      if (studyId !== ownerStudy || result.id !== ownerStudy ||
+          result.projectId !== projectId || result.draftId === previousId ||
+          !result.archivedDrafts?.some((item) => item.id === previousId) ||
+          !result.drafts?.length) throw new Error(t.invalidStudy);
+      currentRequest++;
+      record = result;
+      draft = result.draft;
+      brief = { ...result.brief };
+      refs = [...result.sources];
+      previewVersion = null;
+      renameDraftOpen = false;
+      confirmArchiveDraft = false;
+      selectedArchivedDraftId = previousId;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = t.saved;
+    } catch (cause) {
+      error = message(cause, t.errorDraft);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function restoreArchivedDraft() {
+    const ownerStudy = studyId;
+    const archivedId = selectedArchivedDraftId || record?.archivedDrafts?.[0]?.id;
+    if (!gateway?.setStudyDraftArchived || !record || !archivedId ||
+        busy || saving || loading) return;
+    busy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (!record || studyId !== ownerStudy) return;
+      const item = record.archivedDrafts?.find((candidate) => candidate.id === archivedId);
+      if (!item) throw new Error(t.invalidStudy);
+      const result = await gateway.setStudyDraftArchived(
+        projectId, ownerStudy, archivedId, item.revision, false);
+      if (studyId !== ownerStudy || result.id !== ownerStudy ||
+          result.projectId !== projectId || result.draftId !== archivedId ||
+          !result.drafts?.some((candidate) => candidate.id === archivedId)) {
+        throw new Error(t.invalidStudy);
+      }
+      currentRequest++;
+      record = result;
+      draft = result.draft;
+      brief = { ...result.brief };
+      refs = [...result.sources];
+      previewVersion = null;
+      confirmArchiveDraft = false;
+      selectedArchivedDraftId = result.archivedDrafts?.[0]?.id ?? '';
       promptRequest++;
       preparing = false;
       prompt = '';
@@ -956,7 +1033,21 @@
               on:click={() => { renameDraftOpen = !renameDraftOpen; renameDraftTitle =
                 record?.drafts?.find((item) => item.id === record?.draftId)?.title ?? ''; }}>{t.renameDraft}</button>
           {/if}
+          {#if gateway?.setStudyDraftArchived && (record.drafts?.length ?? 0) > 1}
+            <button class="button secondary" type="button"
+              disabled={busy || saving || loading || importingSavedResult}
+              on:click={() => confirmArchiveDraft = !confirmArchiveDraft}>{t.archiveDraft}</button>
+          {/if}
         </div>
+        {#if confirmArchiveDraft && gateway?.setStudyDraftArchived}
+          <div class="archive-confirmation">
+            <p>{t.archiveWarning}</p>
+            <button type="button" class="button primary"
+              disabled={busy || saving} on:click={() => void archiveDraft()}>{t.confirmArchive}</button>
+            <button type="button" class="button secondary" disabled={busy}
+              on:click={() => confirmArchiveDraft = false}>{t.cancelAiImport}</button>
+          </div>
+        {/if}
         {#if renameDraftOpen && gateway?.renameStudyDraft}
           <form class="evidence-form" on:submit|preventDefault={() => void renameDraft()}>
             <label>{t.newDraftName}
@@ -970,6 +1061,18 @@
             </div>
           </form>
         {/if}
+      {/if}
+      {#if record?.archivedDrafts?.length && gateway?.setStudyDraftArchived}
+        <div class="studio-candidates">
+          <Select label={t.archivedDrafts}
+            value={record.archivedDrafts.some((item) => item.id === selectedArchivedDraftId)
+              ? selectedArchivedDraftId : record.archivedDrafts[0].id}
+            options={record.archivedDrafts.map((item) => ({ value: item.id, label: item.title }))}
+            onChange={(id) => selectedArchivedDraftId = id} />
+          <button class="button secondary" type="button"
+            disabled={busy || saving || loading || importingSavedResult}
+            on:click={() => void restoreArchivedDraft()}>{t.restoreDraft}</button>
+        </div>
       {/if}
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
