@@ -135,6 +135,16 @@ CREATE TABLE IF NOT EXISTS agent_external_effects (
   CHECK(status NOT IN ('completed','failed') OR receipt_id IS NOT NULL),
   CHECK(status!='not_executed' OR reconciliation_id IS NOT NULL)
 );
+CREATE TABLE IF NOT EXISTS agent_external_attempt_history (
+  idempotency_key TEXT NOT NULL REFERENCES agent_external_effects(idempotency_key) ON DELETE CASCADE,
+  attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
+  evidence_id TEXT NOT NULL CHECK(length(evidence_id) BETWEEN 1 AND 128),
+  settled_at TEXT NOT NULL,
+  PRIMARY KEY(idempotency_key,attempt)
+);
+CREATE TRIGGER IF NOT EXISTS external_attempt_history_immutable
+ BEFORE UPDATE ON agent_external_attempt_history
+ BEGIN SELECT RAISE(ABORT,'external attempt history immutable'); END;
 CREATE INDEX IF NOT EXISTS idx_external_effects_scope
  ON agent_external_effects(project_id,study_id,run_id,status);
 CREATE TRIGGER IF NOT EXISTS external_effects_owner_insert
@@ -243,7 +253,7 @@ impl SqliteStore {
         let cost = to_i64(limits.cost_microusd)?;
         let mut db = database(self)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
-        migration_external(&tx)?; // safe bootstrap until Agent 00 registers the next migration
+        migration_external(&tx).map_err(db_error)?; // safe bootstrap until Agent 00 registers the next migration
         // An existing key from a local tool is not an external reservation.
         if let Some(existing) = scoped(&tx, key)? {
             if existing.fingerprint != fingerprint || existing.provider != provider
@@ -379,7 +389,9 @@ impl SqliteStore {
         // This update is in the SAME SQLite transaction as the external receipt.
         let (v8_status, artifact) = match status {
             ExternalEffectStatus::Completed => (Some("applied"),receipt_id),
-            ExternalEffectStatus::NotExecuted => (Some("not_applied"),None),
+            // Keep the v8 claim blocked, not terminal, while an explicit
+            // proof-only bounded retry may still be authorized.
+            ExternalEffectStatus::NotExecuted => (Some("unknown"),None),
             ExternalEffectStatus::Uncertain => (Some("unknown"),None),
             ExternalEffectStatus::Failed | ExternalEffectStatus::Cancelled => (Some("unknown"),None),
             _ => (None,None),
@@ -464,15 +476,39 @@ impl SqliteStore {
         Ok(changed)
     }
 
-    /// Explicit retry requires an independently confirmed NotExecuted receipt.
-    /// This method NEVER dispatches; Agent 01 must reauthorize before dispatch.
-    /// The original v8 key stays terminal; caller MUST create a new approved run
-    /// and request key/fingerprint for a subsequent attempt. This prevents
-    /// retries from bypassing immutable v8 terminal claims.
-    pub fn external_retry_allowed(&self,key:ExternalEffectKey<'_>) -> RepositoryResult<bool> {
-        let db=database(self)?;
-        let old=checked(&db,key)?;
-        Ok(old.status==ExternalEffectStatus::NotExecuted
-            && old.reconciliation_id.is_some() && old.attempt<MAX_ATTEMPTS)
+    /// Only a trusted adapter holding a provider-confirmed nonexecution receipt
+    /// may explicitly prepare one more attempt. Never invoked by recovery.
+    /// It does not execute or dispatch anything and is bounded to three total.
+    pub fn prepare_external_retry(
+        &self,key:ExternalEffectKey<'_>, expected_revision:i64,
+    ) -> RepositoryResult<ExternalEffect> {
+        let mut db=database(self)?;
+        let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
+        may_execute(&tx,key)?; // repeated policy approval is also required in the service driver
+        let old=checked(&tx,key)?;
+        if old.revision!=expected_revision || old.status!=ExternalEffectStatus::NotExecuted
+           || old.cancel_requested || old.attempt>=MAX_ATTEMPTS {
+            return Err(conflict("retry requires fresh proven-nonexecution evidence"));
+        }
+        let evidence=old.reconciliation_id.as_deref()
+            .ok_or_else(|| conflict("missing provider nonexecution proof"))?;
+        tx.execute(
+            "INSERT INTO agent_external_attempt_history(idempotency_key,attempt,evidence_id,settled_at)
+             VALUES(?1,?2,?3,?4)",
+            params![key.idempotency_key,old.attempt,evidence,now_rfc3339()],
+        ).map_err(db_error)?;
+        let changed=tx.execute(
+            "UPDATE agent_external_effects SET status='reserved',attempt=attempt+1,
+             actual_tokens=0,actual_cost_microusd=0,provider_request_id=NULL,
+             receipt_id=NULL,reconciliation_id=NULL,revision=revision+1,updated_at=?1
+             WHERE idempotency_key=?2 AND revision=?3 AND status='not_executed'
+               AND attempt<3 AND cancel_requested=0",
+            params![now_rfc3339(),key.idempotency_key,expected_revision],
+        ).map_err(db_error)?;
+        if changed!=1 { return Err(conflict("retry CAS lost")); }
+        let after=checked(&tx,key)?;
+        tx.commit().map_err(db_error)?;
+        Ok(after)
     }
+
 }
