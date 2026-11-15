@@ -503,6 +503,13 @@ fn lineage_for(
     Ok(ordered)
 }
 
+/// Only an editor-selected beat and explicit feedback may be revised.
+pub struct RevisionRequest<'a> {
+    pub candidate: &'a GeneratedCandidate,
+    pub beat_id: &'a str,
+    pub feedback: &'a str,
+}
+
 /// Explicit revision request (never auto-applied or persisted). A provider
 /// sees only the selected beat/feedback in a typed task; the existing accepted
 /// script remains unchanged until a separate human-approved CAS save.
@@ -512,9 +519,7 @@ pub fn propose_beat_revision<C, B, P, S>(
     gate: &mut B,
     provider: &mut P,
     stop: &S,
-    candidate: &GeneratedCandidate,
-    beat_id: &str,
-    feedback: &str,
+    revision: RevisionRequest<'_>,
 ) -> WriteResult<String>
 where
     C: CurrentStudy,
@@ -522,6 +527,11 @@ where
     P: WritingTextProvider,
     S: StopSignal,
 {
+    let RevisionRequest {
+        candidate,
+        beat_id,
+        feedback,
+    } = revision;
     if !candidate.draft.beats.iter().any(|beat| beat.id == beat_id) {
         return Err(WritingWorkflowError::InvalidContext("unknown beat"));
     }
