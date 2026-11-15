@@ -30,7 +30,10 @@ BEGIN SELECT RAISE(ABORT,'evidence review must match active Study and saved stat
 CREATE TRIGGER evidence_review_immutable_update BEFORE UPDATE ON evidence_reviews
 BEGIN SELECT RAISE(ABORT,'evidence review event is immutable'); END;
 CREATE TRIGGER evidence_review_immutable_delete BEFORE DELETE ON evidence_reviews
-WHEN EXISTS(SELECT 1 FROM study_evidence WHERE id=OLD.evidence_id)
+WHEN EXISTS(
+    SELECT 1 FROM content_studies st JOIN projects p ON p.id=st.project_id
+    WHERE st.id=OLD.study_id AND st.project_id=OLD.project_id
+)
 BEGIN SELECT RAISE(ABORT,'evidence review event is immutable'); END;
 "#,
     )

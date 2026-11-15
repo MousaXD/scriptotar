@@ -224,7 +224,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         throw new Error('Evidence changed or unavailable');
       }
       if (!input.note.trim() || input.note.length > 4000) throw new Error('Review reason required');
-      const next = input.expectedCertainty === 'unverified' && input.action === 'dispute'
+      const next: 'unverified' | 'disputed' | null = input.expectedCertainty === 'unverified' && input.action === 'dispute'
         ? 'disputed' : input.expectedCertainty === 'disputed' && input.action === 'reopen'
           ? 'unverified' : null;
       if (!next) throw new Error('Invalid evidence review transition');
