@@ -50,8 +50,7 @@ pub struct StudyScope {
 
 /// Implementations must use the currently active project and read canonical Study data.
 pub trait ScopeAuthority: Send + Sync {
-    fn current_scope(&self, project_id: &str, study_id: &str)
-        -> Result<StudyScope, ConsentError>;
+    fn current_scope(&self, project_id: &str, study_id: &str) -> Result<StudyScope, ConsentError>;
 }
 
 /// This is an explicit run intent; the server must prepare the prompt and confirm its scope.
@@ -222,9 +221,15 @@ fn canonical_scope(scope: &StudyScope) -> bool {
         && scoped_id(&scope.study_id)
         && scope.study_revision >= 0
         && scope.material_digest.len() == 64
-        && scope.material_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && scope
+            .material_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
         && scope.expected_prompt_digest.len() == 64
-        && scope.expected_prompt_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && scope
+            .expected_prompt_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
         && !scope.selected_source_ids.is_empty()
         && scope.selected_source_ids.len() <= MAX_SELECTED_SOURCES
         && scope.selected_source_ids.iter().all(|id| scoped_id(id))
@@ -246,22 +251,17 @@ fn bounded_microusd(tokens: u64, per_million: u64) -> Option<u64> {
     u64::try_from(result).ok()
 }
 
-fn reserved_cost(
-    input: u64,
-    output: u64,
-    ceiling: &PriceCeiling,
-) -> Option<u64> {
+fn reserved_cost(input: u64, output: u64, ceiling: &PriceCeiling) -> Option<u64> {
     if ceiling.input_microusd_per_million == 0
         || ceiling.output_microusd_per_million == 0
         || ceiling.catalog_revision.is_empty()
     {
         return None;
     }
-    bounded_microusd(input, ceiling.input_microusd_per_million)?
-        .checked_add(bounded_microusd(
-            output,
-            ceiling.output_microusd_per_million,
-        )?)
+    bounded_microusd(input, ceiling.input_microusd_per_million)?.checked_add(bounded_microusd(
+        output,
+        ceiling.output_microusd_per_million,
+    )?)
 }
 
 fn validate_context(
@@ -321,12 +321,10 @@ impl ConsentBoundary {
             return Err(ConsentError::InvalidBudget);
         }
         let ceiling = pricing.ceiling(&intent.provider);
-        let worst_case_cost_microusd = ceiling
-            .as_ref()
-            .and_then(|price| reserved_cost(reserved_input_tokens, intent.max_output_tokens, price));
-        if worst_case_cost_microusd
-            .is_some_and(|max| max > intent.limits.max_cost_microusd)
-        {
+        let worst_case_cost_microusd = ceiling.as_ref().and_then(|price| {
+            reserved_cost(reserved_input_tokens, intent.max_output_tokens, price)
+        });
+        if worst_case_cost_microusd.is_some_and(|max| max > intent.limits.max_cost_microusd) {
             return Err(ConsentError::InvalidBudget);
         }
         let fingerprint = hash_intent(&intent, &ceiling);
@@ -499,7 +497,9 @@ impl ConsentBoundary {
             }
         };
         let usage = generated.usage;
-        if usage.input_tokens > u64::try_from(intent.prompt.len()).unwrap_or(u64::MAX)
+        if usage.input_tokens
+            > u64::try_from(intent.prompt.len())
+                .unwrap_or(u64::MAX)
                 .saturating_add(PROMPT_OVERHEAD_TOKENS)
             || usage.output_tokens > intent.max_output_tokens
             || usage.input_tokens.saturating_add(usage.output_tokens) > intent.limits.max_tokens
@@ -549,12 +549,13 @@ mod tests {
     struct Prices;
     impl TrustedPricing for Prices {
         fn ceiling(&self, config: &ProviderConfig) -> Option<PriceCeiling> {
-            (config.provider == ProviderKind::OpenAi && config.model == "test-model")
-                .then(|| PriceCeiling {
+            (config.provider == ProviderKind::OpenAi && config.model == "test-model").then(|| {
+                PriceCeiling {
                     input_microusd_per_million: 100_000,
                     output_microusd_per_million: 200_000,
                     catalog_revision: "fixture".into(),
-                })
+                }
+            })
         }
     }
 
@@ -654,7 +655,9 @@ mod tests {
     fn approved() -> (ConsentBoundary, ProviderIntent, Authority) {
         let (intent, authority) = fixture();
         let boundary = ConsentBoundary::default();
-        let preview = boundary.prepare(intent.clone(), &authority, &Prices, 100).unwrap();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
         assert!(preview.egress_disclosure.contains("api.openai.com"));
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
@@ -668,12 +671,16 @@ mod tests {
         let boundary = ConsentBoundary::default();
         let runner = Runner::default();
         let fence = Fence::default();
-        let preview = boundary.prepare(intent.clone(), &authority, &Prices, 10).unwrap();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 10)
+            .unwrap();
         assert!(matches!(
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 11),
             Err(ConsentError::NoApproval)
         ));
-        boundary.decide(&intent.run_id, &preview.fingerprint, false, &authority, 12).unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, false, &authority, 12)
+            .unwrap();
         assert!(matches!(
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 13),
             Err(ConsentError::Denied)
@@ -688,11 +695,38 @@ mod tests {
         let runner = Runner::default();
         let fence = Fence::default();
         for changed in [
-            ProviderIntent { prompt: "changed".into(), ..intent.clone() },
-            ProviderIntent { provider: ProviderConfig { model: "other".into(), ..intent.provider.clone() }, ..intent.clone() },
-            ProviderIntent { scope: StudyScope { material_digest: "b".repeat(64), ..intent.scope.clone() }, ..intent.clone() },
-            ProviderIntent { scope: StudyScope { selected_source_ids: vec!["source-2".into()], ..intent.scope.clone() }, ..intent.clone() },
-            ProviderIntent { limits: RunBudget { max_cost_microusd: 2_000, ..intent.limits }, ..intent.clone() },
+            ProviderIntent {
+                prompt: "changed".into(),
+                ..intent.clone()
+            },
+            ProviderIntent {
+                provider: ProviderConfig {
+                    model: "other".into(),
+                    ..intent.provider.clone()
+                },
+                ..intent.clone()
+            },
+            ProviderIntent {
+                scope: StudyScope {
+                    material_digest: "b".repeat(64),
+                    ..intent.scope.clone()
+                },
+                ..intent.clone()
+            },
+            ProviderIntent {
+                scope: StudyScope {
+                    selected_source_ids: vec!["source-2".into()],
+                    ..intent.scope.clone()
+                },
+                ..intent.clone()
+            },
+            ProviderIntent {
+                limits: RunBudget {
+                    max_cost_microusd: 2_000,
+                    ..intent.limits
+                },
+                ..intent.clone()
+            },
         ] {
             assert!(matches!(
                 boundary.dispatch(&changed, &authority, &Prices, &fence, &runner, "key", 102),
@@ -707,7 +741,10 @@ mod tests {
         let (intent, authority) = fixture();
         let boundary = ConsentBoundary::default();
         let foreign = ProviderIntent {
-            scope: StudyScope { project_id: "foreign".into(), ..intent.scope.clone() },
+            scope: StudyScope {
+                project_id: "foreign".into(),
+                ..intent.scope.clone()
+            },
             ..intent.clone()
         };
         assert!(matches!(
@@ -721,7 +758,15 @@ mod tests {
         });
         let runner = Runner::default();
         assert!(matches!(
-            boundary.dispatch(&intent, &changed_authority, &Prices, &Fence::default(), &runner, "key", 103),
+            boundary.dispatch(
+                &intent,
+                &changed_authority,
+                &Prices,
+                &Fence::default(),
+                &runner,
+                "key",
+                103
+            ),
             Err(ConsentError::ChangedContext)
         ));
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
@@ -753,7 +798,9 @@ mod tests {
         let (boundary, intent, authority) = approved();
         let runner = Runner::default();
         let fence = Fence::default();
-        boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103).unwrap();
+        boundary
+            .dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103)
+            .unwrap();
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
         assert!(matches!(
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 104),
@@ -767,12 +814,28 @@ mod tests {
         let (boundary, intent, authority) = approved();
         let runner = Runner::default();
         assert!(matches!(
-            boundary.dispatch(&intent, &authority, &Prices, &DisabledPaidEffectFence, &runner, "key", 104),
+            boundary.dispatch(
+                &intent,
+                &authority,
+                &Prices,
+                &DisabledPaidEffectFence,
+                &runner,
+                "key",
+                104
+            ),
             Err(ConsentError::EffectFenceUnavailable)
         ));
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
         assert!(matches!(
-            boundary.dispatch(&intent, &authority, &Prices, &Fence::default(), &ExistingAiServiceAdapter, "key", 104),
+            boundary.dispatch(
+                &intent,
+                &authority,
+                &Prices,
+                &Fence::default(),
+                &ExistingAiServiceAdapter,
+                "key",
+                104
+            ),
             Err(ConsentError::EffectFenceUnavailable)
         ));
     }
@@ -830,7 +893,13 @@ mod tests {
         drop(boundary);
         assert!(matches!(
             ConsentBoundary::default().dispatch(
-                &intent, &authority, &Prices, &Fence::default(), &Runner::default(), "key", 104
+                &intent,
+                &authority,
+                &Prices,
+                &Fence::default(),
+                &Runner::default(),
+                "key",
+                104
             ),
             Err(ConsentError::NoApproval)
         ));
