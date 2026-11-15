@@ -512,3 +512,212 @@ impl SqliteStore {
     }
 
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use scriptotar_agent::{AuditKind,CheckpointStore,Estimate,Limits,Plan,RunSnapshot,
+        StepInput,StepPlan,StepRecord,Usage};
+    use scriptotar_core::{Project,ProjectRepository};
+    use std::sync::{Arc,Barrier};
+    use std::thread;
+    use tempfile::TempDir;
+
+    fn setup() -> (TempDir,SqliteStore,Uuid,Uuid,RunSnapshot) {
+        let dir=TempDir::new().unwrap();
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        let project=Project::new("External tests");
+        db.create_project(&project).unwrap();
+        let study=db.create_study(project.id,"Approved Study","").unwrap().id;
+        let id=Uuid::new_v4().to_string();
+        let plan=Plan {
+            id:id.clone(),project_id:project.id.to_string(),study_id:study.to_string(),
+            steps:vec![StepPlan {
+                id:"draft".into(),input:StepInput::DraftScript {
+                    brief_id:Uuid::new_v4().to_string()
+                },
+                estimate:Estimate {tokens:500,cost_microusd:2500,
+                    max_output_bytes:1000,cpu_ms:1,peak_memory_mib:1},
+                max_attempts:3,requires_approval:true,
+            }],
+            limits:Limits {max_tool_calls:1,max_tokens:500,max_cost_microusd:2500,
+                max_elapsed_ms:60000,max_output_bytes:1000,max_cpu_ms:100,
+                max_peak_memory_mib:4},
+        };
+        let mut snap=RunSnapshot {
+            schema_version:1,plan,revision:0,state:RunState::Planned,
+            current_step:0,
+            steps:vec![StepRecord {id:"draft".into(),state:StepState::Pending,
+                attempts:0,approved:false,idempotency_key:format!("{id}:0:draft"),
+                pending_effect_id:None,output:None,failure_code:None}],
+            usage:Usage::default(),started_ms:100,cancel_requested:false,
+            pause_requested:false,events:vec![],
+        };
+        snap.event(100,AuditKind::Created);
+        let checkpoints=db.scoped_agent_checkpoints(project.id,study).unwrap();
+        checkpoints.create(snap.clone()).unwrap();
+        snap.revision=1; snap.state=RunState::Running;
+        snap.steps[0].state=StepState::Running;
+        snap.steps[0].attempts=1;snap.steps[0].approved=true;
+        snap.usage.tool_calls=1;snap.event(101,AuditKind::Dispatched);
+        checkpoints.compare_and_swap(0,snap.clone()).unwrap();
+        (dir,db,project.id,study,snap)
+    }
+    fn identity(snap:&RunSnapshot,project:Uuid,study:Uuid)->ExternalEffectKey<'_> {
+        ExternalEffectKey {project,study,run_id:&snap.plan.id,step_id:"draft",
+            idempotency_key:&snap.steps[0].idempotency_key}
+    }
+    fn limits()->ExternalEffectLimits {
+        ExternalEffectLimits {tokens:500,cost_microusd:2500}
+    }
+    fn fp()->&'static str {
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+    fn reserve(db:&SqliteStore,snap:&RunSnapshot,project:Uuid,study:Uuid)
+        -> ExternalEffect {
+        match db.reserve_external_effect(identity(snap,project,study),fp(),"openai",limits()).unwrap() {
+            ExternalReservation::Fresh(v)=>v,ExternalReservation::Existing(_)=>panic!("duplicate")
+        }
+    }
+
+    #[test]
+    fn crash_intervals_restart_and_ambiguous_dispatch_never_replay() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        assert!(db.get_external_effect(key).unwrap().is_none()); // crash before reservation
+        let fresh=reserve(&db,&snap,project,study);
+        drop(db); // crash after reservation (before network)
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,ExternalEffectStatus::Reserved);
+        assert!(matches!(db.reserve_external_effect(key,fp(),"openai",limits()).unwrap(),
+            ExternalReservation::Existing(_)));
+        let dispatched=db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        assert_eq!(dispatched.status,ExternalEffectStatus::Dispatched);
+        drop(db); // crash after dispatch, before response
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let uncertain=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(uncertain.status,ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(key,uncertain.revision,1).is_err());
+        assert!(matches!(db.reserve_external_effect(key,fp(),"openai",limits()).unwrap(),
+            ExternalReservation::Existing(_)));
+        let success=db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("req_123"),receipt_id:"receipt_123",
+            tokens:123,cost_microusd:1400,
+        }).unwrap();
+        assert_eq!(success.actual_cost_microusd,1400);
+        drop(db); // crash after receipt, before response reaches UI
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,ExternalEffectStatus::Completed);
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
+        assert!(db.mark_external_dispatched(key,success.revision,1).is_err());
+    }
+
+    #[test]
+    fn concurrent_claimers_only_one_fresh_and_fingerprint_cannot_change() {
+        let (_dir,db,project,study,snap)=setup();
+        let barrier=Arc::new(Barrier::new(3));
+        let workers=(0..2).map(|_|{
+            let db=db.clone();let snap=snap.clone();let barrier=barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                db.reserve_external_effect(identity(&snap,project,study),
+                    fp(),"openai",limits()).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        barrier.wait();
+        let result=workers.into_iter().map(|w|w.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(result.iter().filter(|v|matches!(v,ExternalReservation::Fresh(_))).count(),1);
+        assert_eq!(result.iter().filter(|v|matches!(v,ExternalReservation::Existing(_))).count(),1);
+        let other="ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        assert!(db.reserve_external_effect(identity(&snap,project,study),other,"openai",limits()).is_err());
+    }
+
+    #[test]
+    fn duplicate_receipts_late_response_and_lost_ack() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let reservation=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,reservation.revision,1).unwrap();
+        db.reconcile_external_effect(key,1,ExternalResolution::Uncertain).unwrap();
+        let receive=||ExternalResolution::Completed {
+            provider_request_id:Some("req_late"),receipt_id:"receipt_late",
+            tokens:100,cost_microusd:900,
+        };
+        let first=db.reconcile_external_effect(key,1,receive()).unwrap();
+        assert_eq!(db.reconcile_external_effect(key,1,receive()).unwrap(),first);
+        assert!(db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("req_late"),receipt_id:"other",
+            tokens:100,cost_microusd:900,
+        }).is_err());
+        assert!(db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("req_late"),receipt_id:"receipt_late",
+            tokens:501,cost_microusd:900,
+        }).is_err());
+    }
+
+    #[test]
+    fn cancellation_pre_dispatch_vs_in_flight_and_manual_reconciliation() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        reserve(&db,&snap,project,study);
+        let cancelled=db.request_external_cancel(key).unwrap();
+        assert_eq!(cancelled.status,ExternalEffectStatus::Cancelled);
+        assert!(db.mark_external_dispatched(key,cancelled.revision,1).is_err());
+        // A separate run models cancellation after a dispatch marker.
+        let (_dir2,db2,p2,s2,run2)=setup();
+        let key2=identity(&run2,p2,s2);
+        let fresh=reserve(&db2,&run2,p2,s2);
+        db2.mark_external_dispatched(key2,fresh.revision,1).unwrap();
+        let pending=db2.request_external_cancel(key2).unwrap();
+        assert_eq!(pending.status,ExternalEffectStatus::Dispatched);
+        assert!(pending.cancel_requested);
+        assert!(db2.mark_external_dispatched(key2,pending.revision,1).is_err());
+        let settled=db2.reconcile_external_effect(key2,1,
+            ExternalResolution::ProviderCancelled {evidence_id:"provider_cancel_1"}).unwrap();
+        assert_eq!(settled.status,ExternalEffectStatus::Cancelled);
+    }
+
+    #[test]
+    fn provider_proven_nonexecution_only_bounded_manual_retry() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let mut current=reserve(&db,&snap,project,study);
+        for attempt in 1..=3 {
+            current=db.mark_external_dispatched(key,current.revision,attempt).unwrap();
+            assert_eq!(current.attempt,attempt);
+            current=db.reconcile_external_effect(key,attempt,
+                ExternalResolution::VerifiedNotExecuted {evidence_id:"provider_never_ran"}).unwrap();
+            assert_eq!(current.status,ExternalEffectStatus::NotExecuted);
+            if attempt < 3 {
+                current=db.prepare_external_retry(key,current.revision).unwrap();
+                assert_eq!(current.attempt,attempt+1);
+            }
+        }
+        assert!(db.prepare_external_retry(key,current.revision).is_err());
+        assert!(db.mark_external_dispatched(key,current.revision,3).is_err());
+        assert!(db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("late_old"),receipt_id:"old",
+            tokens:1,cost_microusd:1
+        }).is_err());
+    }
+
+    #[test]
+    fn different_project_overbudget_and_corrupt_checkpoint_fail_closed() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let foreign=Project::new("Foreign");
+        db.create_project(&foreign).unwrap();
+        let other=db.create_study(foreign.id,"Foreign Study","").unwrap();
+        let forged=ExternalEffectKey {project:foreign.id,study:other.id,..key};
+        assert!(db.reserve_external_effect(forged,fp(),"openai",limits()).is_err());
+        assert!(db.reserve_external_effect(key,fp(),"openai",
+            ExternalEffectLimits {tokens:501,cost_microusd:2500}).is_err());
+        let conn=rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute("UPDATE agent_runs SET snapshot_json='{}' WHERE id=?1",
+                     params![snap.plan.id]).unwrap();
+        assert!(db.reserve_external_effect(key,fp(),"openai",limits()).is_err());
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
+    }
+}
