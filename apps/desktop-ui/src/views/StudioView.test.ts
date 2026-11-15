@@ -512,8 +512,8 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('option', { name: 'Three-angle study' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
     expect(await screen.findByText(/Three-angle prompt prepared locally/)).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Prepared prompt' }))
-      .toHaveValue(expect.stringContaining('Propose exactly 3'));
+    expect((screen.getByRole('textbox', { name: 'Prepared prompt' }) as HTMLTextAreaElement).value)
+      .toContain('Propose exactly 3');
     expect(provider).not.toHaveBeenCalled();
 
     await api.reviewStudyEvidence('p-creator-lab', saved.id, observation.id, {
