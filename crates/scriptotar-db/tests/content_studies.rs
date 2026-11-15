@@ -662,4 +662,16 @@ fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
     assert_eq!(db.list_draft_summaries(owner.id, study.id, 1).unwrap().len(), 1);
     assert!(db.list_draft_summaries(foreign.id, study.id, 200).is_err());
     assert_eq!(db.get_draft(owner.id, second.id).unwrap().body, large_body);
+    let renamed = db
+        .rename_draft(owner.id, second.id, second.revision, "Original angle B")
+        .unwrap();
+    assert_eq!(renamed.body, large_body);
+    assert_eq!(renamed.revision, second.revision + 1);
+    assert_eq!(db.list_draft_versions(owner.id, second.id).unwrap().len(), 2);
+    assert!(matches!(
+        db.rename_draft(owner.id, second.id, second.revision, "Stale"),
+        Err(RepositoryError::Conflict(_))
+    ));
+    assert!(db.rename_draft(foreign.id, second.id, renamed.revision, "Foreign").is_err());
+    assert_eq!(db.get_draft(owner.id, first.id).unwrap().title, "Original");
 }

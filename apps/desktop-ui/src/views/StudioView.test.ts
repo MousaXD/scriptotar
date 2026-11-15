@@ -398,6 +398,16 @@ describe('Content Study Studio', () => {
     await waitFor(async () => {
       expect((await api.getStudy('p-creator-lab', study.id)).draft).toBe('Independent second direction');
     });
+    await fireEvent.click(screen.getByRole('button', { name: 'Rename script' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Script candidate name' }), {
+      target: { value: 'Arabic follow-up version' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(async () => {
+      const current = await api.getStudy('p-creator-lab', study.id);
+      expect(current.drafts?.some((item) => item.title === 'Arabic follow-up version')).toBe(true);
+      expect(current.draft).toBe('Independent second direction');
+    });
     await fireEvent.click(screen.getByRole('combobox', { name: 'Script candidates' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Two original directions' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' }))
@@ -405,7 +415,7 @@ describe('Content Study Studio', () => {
     const old = await api.getStudy('p-creator-lab', study.id, firstId);
     expect(old.draftVersions.some((snapshot) => snapshot.content === 'Independent second direction')).toBe(false);
     await fireEvent.click(screen.getByRole('combobox', { name: 'Script candidates' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Copy of Two original directions' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Arabic follow-up version' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('Independent second direction');
     view.unmount();

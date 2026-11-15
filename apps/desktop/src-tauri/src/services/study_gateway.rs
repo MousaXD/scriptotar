@@ -1156,5 +1156,31 @@ mod tests {
         assert_eq!(older.draft_versions.len(), 2);
         assert_eq!(newer.draft_versions.len(), 2);
         assert_eq!(newer.drafts.len(), 2);
+        let renamed = restarted
+            .rename_studio_draft(
+                project_id,
+                study_id,
+                copy_id,
+                newer.draft_revision.unwrap(),
+                "Arabic follow-up",
+            )
+            .unwrap();
+        assert_eq!(renamed.draft, newer.draft);
+        assert_eq!(renamed.draft_versions.len(), 3);
+        assert!(renamed
+            .drafts
+            .iter()
+            .any(|item| item.id == copy_id.to_string() && item.title == "Arabic follow-up"));
+        assert!(matches!(
+            restarted.rename_studio_draft(project_id, study_id, copy_id, 1, "Stale title"),
+            Err(RepositoryError::Conflict(_))
+        ));
+        assert!(restarted
+            .rename_studio_draft(Uuid::new_v4(), study_id, copy_id, 3, "Foreign")
+            .is_err());
+        let original = restarted
+            .get_studio_study_draft(project_id, study_id, original_id)
+            .unwrap();
+        assert_eq!(original.draft, "An independent original script");
     }
 }
