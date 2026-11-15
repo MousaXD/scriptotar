@@ -1,3 +1,11 @@
+# CHECKPOINT — 2026-11-15 pasted structured script → isolated candidate (candidate)
+
+- Added a **local-only, two-stage** ScriptDraft review/explicit acceptance flow following the already approved three-angle JSON. The service re-derives the active Study brief/attached sources/observations, requires exact earlier angle and draft prompts and Study revision, and uses Agent 06's strict `parse_angles` and `parse_draft` before any write. Unsupported factual claims are rejected; remaining model claims are prominently marked for independent review. There is NO provider egress, automatic paid call or claim that JSON validation constitutes fact checking.
+- The acceptance transaction creates an entirely new `creative_drafts` row, its immutable first `draft_versions` entry and links to the same active canonical Study sources, guarded by an IMMEDIATE SQLite transaction and expected Study revision. Original user drafts are not modified. The candidate is editable and can be archived/restored using existing Studio controls. Input/size and max-200 active-candidate bounds apply.
+- New typed Rust/Tauri/TS/mock EN/AR flows and tests are pending exact-head validation. **Not done until nine workflows pass.** Structured source links are **context provenance** only, not claim-level verification, a full immutable AI operation ledger, independently verified originality, or a finished three-script automatic agent. Native graphical installed-app and performance certification remain open; keep PR #114 draft and main unchanged.
+
+---
+
 # CHECKPOINT — 2026-11-15 local three-angle response review (candidate)
 
 - A new project-scoped `interpret_study_angles` Tauri endpoint consumes user-pasted response JSON, re-derives the authorized active Study's full bounded writing context, compares the **exact prepared prompt** and Study revision, and runs Agent 06's strict `parse_angles`. Unknown/duplicate source citations, malformed or non-three-angle outputs, other projects and stale/disputed observations are refused without network calls.

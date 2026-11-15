@@ -5,7 +5,7 @@
   import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption } from '../studio/contract';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption, StudyScriptReview } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { evidencePromptContext } from '../studio/evidencePrompt';
@@ -48,6 +48,12 @@
   let angleResponseJson = '';
   let reviewedAngles: StudyAngleOption[] = [];
   let draftAnglePrompt = '';
+  let selectedWritingAngleId = '';
+  let scriptResponseJson = '';
+  let reviewedScript: StudyScriptReview | null = null;
+  let confirmScriptSave = false;
+  let scriptBusy = false;
+  let scriptError = '';
   let angleError = '';
   let angleBusy = false;
   let angleScopeEpoch = 0;
@@ -96,6 +102,11 @@
     angleResponseJson = '';
     reviewedAngles = [];
     draftAnglePrompt = '';
+    selectedWritingAngleId = '';
+    scriptResponseJson = '';
+    reviewedScript = null;
+    confirmScriptSave = false;
+    scriptError = '';
     angleError = '';
   }
   $: if (incomingArtifactId && incomingArtifactId !== consumedArtifactId) {
@@ -840,6 +851,11 @@
       }
       reviewedAngles = result.angles;
       draftAnglePrompt = result.draftPrompt ?? '';
+      selectedWritingAngleId = selectedAngleId ?? '';
+      scriptResponseJson = '';
+      reviewedScript = null;
+      confirmScriptSave = false;
+      scriptError = '';
       status = selectedAngleId ? t.draftAngleReady : t.anglesReviewed;
     } catch (cause) {
       if (studyId === ownerStudy && epoch === promptRequest) {
@@ -848,6 +864,55 @@
       }
     } finally {
       angleBusy = false;
+    }
+  }
+
+  async function reviewPastedScript(saveCandidate = false) {
+    if (!gateway?.reviewStudyScript || !record || !anglePromptSource ||
+        !selectedWritingAngleId || !draftAnglePrompt || !scriptResponseJson.trim() ||
+        scriptBusy || angleBusy || busy || saving || preparing || dirty) return;
+    const ownerStudy = studyId;
+    const epoch = promptRequest;
+    scriptBusy = true;
+    scriptError = '';
+    try {
+      const reviewed = await gateway.reviewStudyScript(
+        projectId, ownerStudy, angleStudyRevision, anglePromptSource,
+        angleResponseJson, selectedWritingAngleId, draftAnglePrompt,
+        scriptResponseJson, saveCandidate
+      );
+      if (epoch !== promptRequest || studyId !== ownerStudy) return;
+      if (!reviewed.title || !reviewed.body ||
+          reviewed.angleId !== selectedWritingAngleId ||
+          (!saveCandidate && reviewed.savedStudy)) throw new Error(t.invalidScript);
+      if (saveCandidate) {
+        const saved = reviewed.savedStudy;
+        if (!saved || saved.projectId !== projectId || saved.id !== ownerStudy ||
+            !saved.draftId || saved.draftId === record?.draftId ||
+            saved.draft !== reviewed.body ||
+            !saved.drafts?.some((candidate) => candidate.id === saved.draftId)) {
+          throw new Error(t.invalidStudy);
+        }
+        record = saved;
+        draft = saved.draft;
+        brief = { ...saved.brief };
+        refs = [...saved.sources];
+        previewVersion = null;
+        promptRequest++;
+        status = t.scriptCandidateSaved;
+      } else {
+        reviewedScript = reviewed;
+        confirmScriptSave = false;
+        status = t.scriptReviewed;
+      }
+    } catch (cause) {
+      if (epoch === promptRequest && studyId === ownerStudy) {
+        scriptError = message(cause, t.invalidScript);
+        reviewedScript = null;
+        confirmScriptSave = false;
+      }
+    } finally {
+      scriptBusy = false;
     }
   }
 
@@ -1217,7 +1282,9 @@
           <label>{t.pasteAngles}
             <textarea rows="7" dir="auto" aria-label={t.pasteAngles}
               maxlength="100000" bind:value={angleResponseJson}
-              on:input={() => { reviewedAngles = []; draftAnglePrompt = ''; angleError = ''; }}
+              on:input={() => { reviewedAngles = []; draftAnglePrompt = '';
+                selectedWritingAngleId = ''; reviewedScript = null;
+                scriptResponseJson = ''; confirmScriptSave = false; angleError = ''; }}
               placeholder={t.pasteAnglesPlaceholder}></textarea>
           </label>
           <p class="muted">{t.pasteAnglesPrivacy}</p>
@@ -1244,6 +1311,39 @@
             </label>
             <button type="button" class="button secondary"
               on:click={() => void copyPrompt(draftAnglePrompt)}>{t.copySelectedPrompt}</button>
+            {#if gateway?.reviewStudyScript}
+              <label>{t.pasteScriptJson}
+                <textarea rows="7" maxlength="100000" dir="auto"
+                  aria-label={t.pasteScriptJson} bind:value={scriptResponseJson}
+                  on:input={() => { reviewedScript = null;
+                    confirmScriptSave = false; scriptError = ''; }}></textarea>
+              </label>
+              <p class="muted">{t.scriptReviewPrivacy}</p>
+              <button type="button" class="button secondary"
+                disabled={scriptBusy || dirty || !scriptResponseJson.trim() || saving}
+                on:click={() => void reviewPastedScript(false)}>{t.validateScript}</button>
+              {#if scriptError}<p role="alert" class="studio-error">{scriptError}</p>{/if}
+              {#if reviewedScript}
+                <div class="script-review">
+                  <strong dir="auto">{reviewedScript.title}</strong>
+                  <small>{reviewedScript.claimCount} {t.modelClaims} · {reviewedScript.needsFactReviewCount} {t.requiresVerification}</small>
+                  <pre dir="auto">{reviewedScript.body}</pre>
+                  {#each reviewedScript.limitations as limit, index (index)}
+                    <small dir="auto">{limit}</small>
+                  {/each}
+                  {#if confirmScriptSave}
+                    <p>{t.confirmScriptWarning}</p>
+                    <button type="button" class="button primary" disabled={scriptBusy || dirty}
+                      on:click={() => void reviewPastedScript(true)}>{t.confirmNewCandidate}</button>
+                    <button type="button" class="button secondary" disabled={scriptBusy}
+                      on:click={() => confirmScriptSave = false}>{t.cancelAiImport}</button>
+                  {:else}
+                    <button type="button" class="button secondary" disabled={scriptBusy || dirty}
+                      on:click={() => confirmScriptSave = true}>{t.saveNewCandidate}</button>
+                  {/if}
+                </div>
+              {/if}
+            {/if}
           {/if}
         </div>
       {/if}
