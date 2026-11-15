@@ -2,11 +2,11 @@
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch,
-    UiStudioStudySummary,
+    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput,
 };
 use scriptotar_core::{
-    CreativeBriefInput, RepositoryError, RepositoryResult, StudyEdit, StudySourceInput,
-    StudySourceKind,
+    CreativeBriefInput, EvidenceCertainty, EvidenceInput, EvidenceReference, RepositoryError,
+    RepositoryResult, StudyEdit, StudySource, StudySourceInput, StudySourceKind,
 };
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -68,6 +68,35 @@ fn ui_source(source: &scriptotar_core::StudySource) -> Option<UiStudioSourceRef>
         kind: kind.to_owned(),
         id: id.to_string(),
     })
+}
+
+/// Evidence retains stable source identity when the origin becomes unavailable.
+fn ui_evidence(value: EvidenceReference, source: &StudySource) -> UiStudyEvidence {
+    let origin = match (source.kind, source.reference_id) {
+        (StudySourceKind::ResearchItem, Some(id)) => Some(UiStudioSourceRef {
+            kind: "research".into(),
+            id: id.to_string(),
+        }),
+        (StudySourceKind::Transcript, Some(id)) => Some(UiStudioSourceRef {
+            kind: "transcript".into(),
+            id: id.to_string(),
+        }),
+        _ => None,
+    };
+    UiStudyEvidence {
+        id: value.id.to_string(),
+        project_id: value.project_id.to_string(),
+        study_id: value.study_id.to_string(),
+        source: origin,
+        source_label: source.locator.clone(),
+        source_available: source.available,
+        claim: value.input.claim,
+        locator: value.input.locator,
+        timestamp_seconds: value.input.timestamp_seconds,
+        certainty: value.input.certainty.as_str().into(),
+        uncertainty_note: value.input.uncertainty_note,
+        created_at: value.created_at,
+    }
 }
 
 /// A list row must never hydrate draft bodies, revisions or source transcripts.
@@ -202,6 +231,65 @@ impl AppServices {
             self.store
                 .create_studio_bundle(project_id, &brief.title, &brief.goal, &input)?;
         self.read_studio_bundle(project_id, study_id)
+    }
+
+    /// Read evidence scoped to the active project and canonical Study.
+    pub fn list_studio_evidence(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<Vec<UiStudyEvidence>> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let sources = self.store.list_study_sources(project_id, study_id)?;
+        let references = self.store.list_evidence_references(project_id, study_id)?;
+        references
+            .into_iter()
+            .map(|reference| {
+                let source = sources
+                    .iter()
+                    .find(|item| item.id == reference.input.study_source_id)
+                    .ok_or_else(|| RepositoryError::Storage("evidence source missing".into()))?;
+                Ok(ui_evidence(reference, source))
+            })
+            .collect()
+    }
+
+    /// User-created observations are never automatically promoted to verified.
+    /// Only an origin already attached to an active Study can receive evidence.
+    pub fn add_studio_evidence(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        value: UiStudyEvidenceInput,
+    ) -> RepositoryResult<UiStudyEvidence> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let requested = source_input(&value.source)?;
+        let reference_id = requested
+            .reference_id
+            .ok_or_else(|| invalid("evidence source"))?;
+        let source = self
+            .store
+            .list_study_sources(project_id, study_id)?
+            .into_iter()
+            .find(|source| {
+                source.kind == requested.kind
+                    && source.reference_id == Some(reference_id)
+                    && source.available
+            })
+            .ok_or_else(|| RepositoryError::NotFound("attached evidence source".into()))?;
+        let reference = self.store.add_evidence_reference(
+            project_id,
+            study_id,
+            &EvidenceInput {
+                study_source_id: source.id,
+                claim: value.claim,
+                locator: value.locator,
+                timestamp_seconds: value.timestamp_seconds,
+                certainty: EvidenceCertainty::Unverified,
+                uncertainty_note: value.uncertainty_note,
+            },
+        )?;
+        Ok(ui_evidence(reference, &source))
     }
 
     pub fn save_studio_study(

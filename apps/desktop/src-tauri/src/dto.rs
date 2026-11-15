@@ -268,6 +268,33 @@ pub struct UiStudioSourceRef {
     pub id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidenceInput {
+    pub source: UiStudioSourceRef,
+    pub claim: String,
+    pub locator: String,
+    pub timestamp_seconds: Option<f64>,
+    pub uncertainty_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidence {
+    pub id: String,
+    pub project_id: String,
+    pub study_id: String,
+    pub source: Option<UiStudioSourceRef>,
+    pub source_label: String,
+    pub source_available: bool,
+    pub claim: String,
+    pub locator: String,
+    pub timestamp_seconds: Option<f64>,
+    pub certainty: String,
+    pub uncertainty_note: Option<String>,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiStudioDraftVersion {

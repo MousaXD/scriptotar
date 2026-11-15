@@ -21,7 +21,8 @@ use scriptotar_agent::RunSnapshot;
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
     UiResearchItemDetail, UiSettings, UiStudioBrief, UiStudioStudy, UiStudioStudyPatch,
-    UiStudioStudySummary, UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
+    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiTranscript,
+    UiTranscriptSummary, UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
@@ -689,6 +690,41 @@ async fn save_study(
     .await
 }
 
+#[tauri::command]
+async fn list_study_evidence(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<UiStudyEvidence>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_evidence(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_study_evidence(
+    project_id: String,
+    study_id: String,
+    input: UiStudyEvidenceInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudyEvidence, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .add_studio_evidence(project_id, study_id, input)
+            .map_err(command_error)
+    })
+    .await
+}
+
 /// A read-only plan. Nothing executes before explicit approval.
 #[tauri::command]
 async fn start_local_inspection(
@@ -1174,6 +1210,8 @@ pub fn run() {
             create_study,
             get_study,
             save_study,
+            list_study_evidence,
+            add_study_evidence,
             start_local_inspection,
             list_local_inspections,
             decide_local_inspection,
