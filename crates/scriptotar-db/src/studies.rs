@@ -624,25 +624,39 @@ impl SqliteStore {
         next: EvidenceCertainty,
         reason: &str,
     ) -> RepositoryResult<EvidenceReference> {
-        if !matches!(expected, EvidenceCertainty::Unverified | EvidenceCertainty::Disputed)
-            || !matches!(next, EvidenceCertainty::Unverified | EvidenceCertainty::Disputed)
-            || expected == next
+        if !matches!(
+            expected,
+            EvidenceCertainty::Unverified | EvidenceCertainty::Disputed
+        ) || !matches!(
+            next,
+            EvidenceCertainty::Unverified | EvidenceCertainty::Disputed
+        ) || expected == next
         {
-            return Err(RepositoryError::Validation("invalid evidence review transition".into()));
+            return Err(RepositoryError::Validation(
+                "invalid evidence review transition".into(),
+            ));
         }
         required_text("review reason", reason, 4000)?;
         let mut db = database(self)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
         require_active_study(&tx, project_id, study_id)?;
-        let updated = tx.execute(
-            "UPDATE study_evidence
+        let updated = tx
+            .execute(
+                "UPDATE study_evidence
              SET certainty=?1, uncertainty_note=?2
              WHERE id=?3 AND project_id=?4 AND study_id=?5 AND certainty=?6",
-            params![
-                next.as_str(), reason.trim(), evidence_id.to_string(),
-                project_id.to_string(), study_id.to_string(), expected.as_str()
-            ],
-        ).map_err(db_error)?;
+                params![
+                    next.as_str(),
+                    reason.trim(),
+                    evidence_id.to_string(),
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    expected.as_str()
+                ],
+            )
+            .map_err(db_error)?;
         if updated != 1 {
             return Err(RepositoryError::Conflict(
                 "evidence changed or is not part of this Study".into(),

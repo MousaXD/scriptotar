@@ -305,12 +305,19 @@ impl AppServices {
     ) -> RepositoryResult<UiStudyEvidence> {
         let _project_guard = self.lock_studio_project(project_id)?;
         let (expected, next) = match (expected_certainty, action) {
-            ("unverified", "dispute") => (EvidenceCertainty::Unverified, EvidenceCertainty::Disputed),
+            ("unverified", "dispute") => {
+                (EvidenceCertainty::Unverified, EvidenceCertainty::Disputed)
+            }
             ("disputed", "reopen") => (EvidenceCertainty::Disputed, EvidenceCertainty::Unverified),
             _ => return Err(invalid("evidence review transition")),
         };
         let changed = self.store.review_evidence_reference(
-            project_id, study_id, evidence_id, expected, next, note,
+            project_id,
+            study_id,
+            evidence_id,
+            expected,
+            next,
+            note,
         )?;
         let source = self
             .store
@@ -699,35 +706,58 @@ mod tests {
             evidence_id = Uuid::parse_str(&evidence.id).unwrap();
             assert!(services
                 .review_studio_evidence(
-                    Uuid::new_v4(), study_id, evidence_id,
-                    "unverified", "dispute", "Wrong project"
+                    Uuid::new_v4(),
+                    study_id,
+                    evidence_id,
+                    "unverified",
+                    "dispute",
+                    "Wrong project",
                 )
                 .is_err());
             assert!(services
                 .review_studio_evidence(
-                    project_id, study_id, evidence_id,
-                    "unverified", "dispute", " "
+                    project_id,
+                    study_id,
+                    evidence_id,
+                    "unverified",
+                    "dispute",
+                    " ",
                 )
                 .is_err());
             assert!(services
                 .review_studio_evidence(
-                    project_id, study_id, evidence_id,
-                    "unverified", "corroborate", "Cannot certify source"
+                    project_id,
+                    study_id,
+                    evidence_id,
+                    "unverified",
+                    "corroborate",
+                    "Cannot certify source",
                 )
                 .is_err());
             let disputed = services
                 .review_studio_evidence(
-                    project_id, study_id, evidence_id,
-                    "unverified", "dispute", "Full transcript contradicts this claim"
+                    project_id,
+                    study_id,
+                    evidence_id,
+                    "unverified",
+                    "dispute",
+                    "Full transcript contradicts this claim",
                 )
                 .unwrap();
             assert_eq!(disputed.certainty, "disputed");
-            assert_eq!(disputed.uncertainty_note.as_deref(), Some("Full transcript contradicts this claim"));
+            assert_eq!(
+                disputed.uncertainty_note.as_deref(),
+                Some("Full transcript contradicts this claim")
+            );
             assert_eq!(disputed.locator, evidence.locator);
             assert!(matches!(
                 services.review_studio_evidence(
-                    project_id, study_id, evidence_id,
-                    "unverified", "dispute", "Stale review"
+                    project_id,
+                    study_id,
+                    evidence_id,
+                    "unverified",
+                    "dispute",
+                    "Stale review",
                 ),
                 Err(RepositoryError::Conflict(_))
             ));
@@ -771,14 +801,22 @@ mod tests {
         );
         let reopened_review = reopened
             .review_studio_evidence(
-                project_id, study_id, evidence_id,
-                "disputed", "reopen", "Reviewed full recording again"
+                project_id,
+                study_id,
+                evidence_id,
+                "disputed",
+                "reopen",
+                "Reviewed full recording again",
             )
             .unwrap();
         assert_eq!(reopened_review.certainty, "unverified");
         assert_eq!(
-            reopened.store.get_evidence_reference(project_id, study_id, evidence_id)
-                .unwrap().input.certainty,
+            reopened
+                .store
+                .get_evidence_reference(project_id, study_id, evidence_id)
+                .unwrap()
+                .input
+                .certainty,
             EvidenceCertainty::Unverified
         );
     }

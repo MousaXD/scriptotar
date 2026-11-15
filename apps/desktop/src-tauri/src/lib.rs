@@ -742,7 +742,12 @@ async fn review_study_evidence(
     on_blocking_worker(move || {
         services
             .review_studio_evidence(
-                project_id, study_id, evidence_id, &expected_certainty, &action, &note,
+                project_id,
+                study_id,
+                evidence_id,
+                &expected_certainty,
+                &action,
+                &note,
             )
             .map_err(command_error)
     })
