@@ -8,7 +8,7 @@ use scriptotar_core::{
     CreativeBriefInput, EvidenceCertainty, EvidenceInput, Job, JobInput, JobRepository, Project,
     ProjectRepository, RepositoryError, StudyEdit, StudySourceInput, StudySourceKind, StudyStatus,
 };
-use scriptotar_db::SqliteStore;
+use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -192,7 +192,7 @@ fn study_multi_source_brief_evidence_drafts_survive_reopen_and_origin_deletion()
     drop(db);
     let reopened = SqliteStore::open(temp.path().join("scriptotar.sqlite")).unwrap();
     reopened.run_integration_migrations().unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 8);
+    assert_eq!(reopened.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     assert_eq!(
         reopened.get_study(project.id, study.id).unwrap().title,
         "Arabic Reels"
@@ -613,7 +613,7 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
 
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 8);
+    assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     let study = upgraded

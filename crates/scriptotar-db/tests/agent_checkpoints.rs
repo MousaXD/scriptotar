@@ -10,7 +10,7 @@ use scriptotar_agent::{
     StoreError, ToolExecutor, ToolFailure, ToolKind, ToolReceipt, ToolRegistry, Usage,
 };
 use scriptotar_core::{Project, ProjectRepository};
-use scriptotar_db::SqliteStore;
+use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -172,7 +172,7 @@ fn scoped_checkpoint_survives_restart_with_exact_append_only_history() {
     drop(store);
     drop(scoped);
     let reopened = SqliteStore::open(temp.path().join("agent.sqlite3")).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 8);
+    assert_eq!(reopened.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     let same_scope = reopened
         .scoped_agent_checkpoints(project.id, study)
         .unwrap();

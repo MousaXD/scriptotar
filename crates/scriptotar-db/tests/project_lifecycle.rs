@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 use scriptotar_core::{
     now_rfc3339, Job, JobInput, JobRepository, Project, ProjectRepository, SettingsRepository,
 };
-use scriptotar_db::SqliteStore;
+use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -478,7 +478,7 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 8);
+    assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     assert_eq!(

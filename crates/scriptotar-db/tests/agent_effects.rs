@@ -9,7 +9,7 @@ use scriptotar_agent::{
     StepRecord, StepState, Usage,
 };
 use scriptotar_core::{Project, ProjectRepository, RepositoryError};
-use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate, SqliteStore};
+use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate, SqliteStore, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -111,7 +111,7 @@ fn claim_is_unique_restart_safe_and_requires_persisted_intent() {
     ));
     drop(db);
     let reopened = SqliteStore::open(dir.path().join("effects.sqlite3")).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 8);
+    assert_eq!(reopened.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     assert_eq!(
         reopened
             .get_agent_effect(project.id, study, &run.plan.id, key)
