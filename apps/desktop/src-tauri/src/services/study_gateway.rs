@@ -196,8 +196,10 @@ impl AppServices {
             };
         let (draft, draft_versions) = if let Some(value) = selected {
             let full = self.store.get_draft(project_id, value.id)?;
-            if full.study_id != study_id || full.archived_at.is_some() ||
-                full.revision != value.revision {
+            if full.study_id != study_id
+                || full.archived_at.is_some()
+                || full.revision != value.revision
+            {
                 return Err(RepositoryError::Conflict(
                     "selected draft changed during metadata retrieval".into(),
                 ));

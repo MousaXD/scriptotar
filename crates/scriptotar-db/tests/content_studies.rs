@@ -637,3 +637,29 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
         1
     );
 }
+
+#[test]
+fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
+    let (_dir, db, owner, foreign) = fixture();
+    let study = db
+        .create_study(owner.id, "Candidate index", "")
+        .unwrap();
+    let large_body = "An original studio script. ".repeat(30_000);
+    let first = db
+        .create_draft(owner.id, study.id, "Original", &large_body)
+        .unwrap();
+    let second = db
+        .duplicate_study_draft_checked(owner.id, study.id, first.id, first.revision)
+        .unwrap();
+    let summaries = db.list_draft_summaries(owner.id, study.id, 200).unwrap();
+    assert_eq!(summaries.len(), 2);
+    assert!(summaries
+        .iter()
+        .any(|value| value.id == first.id && value.title == "Original"));
+    assert!(summaries
+        .iter()
+        .any(|value| value.id == second.id && value.title == "Copy of Original"));
+    assert_eq!(db.list_draft_summaries(owner.id, study.id, 1).unwrap().len(), 1);
+    assert!(db.list_draft_summaries(foreign.id, study.id, 200).is_err());
+    assert_eq!(db.get_draft(owner.id, second.id).unwrap().body, large_body);
+}
