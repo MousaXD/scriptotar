@@ -308,7 +308,8 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     },
     async prepareStudyAngles(projectId: string, studyId: string) {
       const study = studyInProject(projectId, studyId);
-      const transcripts = study.sources.filter((source) => source.kind === 'transcript').slice(0, 8);
+      const selected = study.sources.slice(0, 8);
+      const transcripts = selected.filter((source) => source.kind === 'transcript');
       const available = transcripts.filter((source) => mockBootstrap.transcripts.some((item) =>
         item.projectId === projectId && item.id === source.id));
       const excerpts = available.map((ref) => {
@@ -317,13 +318,16 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       });
       const notes = (studyEvidence.get(studyId) ?? []).filter((item) =>
         item.certainty !== 'disputed' && item.sourceAvailable &&
-        study.sources.some((ref) => ref.kind === item.source?.kind && ref.id === item.source?.id))
+        selected.some((ref) => ref.kind === item.source?.kind && ref.id === item.source?.id))
         .slice(0, 16);
       const limitations = [
         'Transcript excerpts are not verified facts; no frames, retention or audience performance were inspected.'
       ];
       if (study.sources.length < 3) {
         limitations.unshift('Fewer than three available Study sources were selected.');
+      }
+      if (study.sources.length > 8) {
+        limitations.unshift('Only the first eight selected sources were inspected.');
       }
       return {
         prompt: 'Propose exactly 3 materially different original short-form angles. ' +

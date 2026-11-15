@@ -1024,6 +1024,14 @@ mod tests {
                 .unwrap();
             assert_eq!(evidence.certainty, "unverified");
             assert_eq!(evidence.source, Some(sources[1].clone()));
+            conn.execute(
+                "UPDATE transcripts SET segments_json=?1 WHERE id=?2",
+                rusqlite::params![
+                    r#"[{"index":0,"start":0.5,"end":3.25,"text":"Literal opening from timestamp"}]"#,
+                    transcript_id.to_string()
+                ],
+            )
+            .unwrap();
             let angles = services
                 .prepare_studio_angle_prompt(project_id, study_id)
                 .unwrap();
@@ -1031,7 +1039,8 @@ mod tests {
             assert_eq!(angles.transcript_excerpt_count, 1);
             assert_eq!(angles.unverified_observation_count, 1);
             assert!(angles.prompt.contains("Propose exactly 3"));
-            assert!(angles.prompt.contains("Source with a timecode"));
+            assert!(angles.prompt.contains("Literal opening from timestamp"));
+            assert!(angles.prompt.contains("Transcript segment 0 (0.500-3.250s)"));
             assert!(angles
                 .prompt
                 .contains("Transcript contains a literal spoken example"));
@@ -1125,7 +1134,7 @@ mod tests {
             assert!(!after_dispute
                 .prompt
                 .contains("Transcript contains a literal spoken example"));
-            assert!(after_dispute.prompt.contains("Source with a timecode"));
+            assert!(after_dispute.prompt.contains("Literal opening from timestamp"));
             assert_eq!(disputed.review_history.len(), 1);
             assert_eq!(disputed.review_history[0].previous_certainty, "unverified");
             assert_eq!(disputed.review_history[0].next_certainty, "disputed");
