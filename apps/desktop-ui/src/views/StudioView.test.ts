@@ -522,6 +522,18 @@ describe('Content Study Studio', () => {
     const disputed = await api.prepareStudyAngles('p-creator-lab', saved.id);
     expect(disputed.unverifiedObservationCount).toBe(0);
     expect(disputed.prompt).not.toContain('An unverified Arabic opening observation');
+    const nineSources = [...sources, ...Array.from({ length: 6 }, (_, i) => ({
+      kind: 'research' as const, id: 'extra-source-' + i
+    }))];
+    await api.saveStudy('p-creator-lab', saved.id, saved.revision, { sources: nineSources });
+    await api.addStudyEvidence('p-creator-lab', saved.id, {
+      source: nineSources[8], claim: 'Ninth-source observation must stay out of preview',
+      locator: 'manual note'
+    });
+    const bounded = await api.prepareStudyAngles('p-creator-lab', saved.id);
+    expect(bounded.attachedSourceCount).toBe(9);
+    expect(bounded.limitations).toContain('Only the first eight selected sources were inspected.');
+    expect(bounded.prompt).not.toContain('Ninth-source observation must stay out of preview');
     expect(provider).not.toHaveBeenCalled();
   });
 
