@@ -257,6 +257,28 @@
     }
   }
 
+
+  // Restoring a snapshot is a new immutable save, never a destructive edit
+  // of historical draft_versions. Commit any pending brief/source edits first.
+  async function restoreVersion() {
+    const version = previewVersion;
+    const ownerStudy = studyId;
+    if (!version || !record || !gateway || saving || busy || loading) return;
+    busy = true;
+    try {
+      await flushPendingSave();
+      if (!record || record.id !== ownerStudy || studyId !== ownerStudy) return;
+      draft = version.content;
+      previewVersion = null;
+      queueSave();
+      await save();
+    } catch (cause) {
+      error = message(cause, t.errorSave);
+    } finally {
+      busy = false;
+    }
+  }
+
   function toggleSource(ref: StudySourceRef) {
     const allowed = sanitizeSelection([ref], research, transcripts, projectId);
     if (!allowed.length) { error = t.previewUnavailable; return; }
@@ -610,7 +632,16 @@
         readonly={!!previewVersion} value={previewVersion ? previewVersion.content : draft}
         placeholder={t.scriptPlaceholder}
         on:input={(event) => { draft = event.currentTarget.value; queueSave(); }}></textarea>
-      {#if previewVersion}<button type="button" class="text-button" on:click={() => previewVersion = null}>{t.returnToDraft}</button>{/if}
+      {#if previewVersion}
+        <div class="draft-actions">
+          {#if gateway && record}
+            <button type="button" class="button secondary"
+              disabled={saving || busy || loading || previewVersion.content === draft}
+              on:click={() => void restoreVersion()}>{t.restoreVersion}</button>
+          {/if}
+          <button type="button" class="text-button" on:click={() => previewVersion = null}>{t.returnToDraft}</button>
+        </div>
+      {/if}
       <div class="studio-prompt-controls">
         <button type="button" class="button secondary" disabled={preparing} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
         <span>{t.promptPrivacy}</span>

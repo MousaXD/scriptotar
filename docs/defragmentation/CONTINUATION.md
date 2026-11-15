@@ -1,3 +1,15 @@
+# CHECKPOINT — 2026-11-15, exact-head CI audit and draft-history work
+
+- Reviewed integration PR #114 at `fc5caf2384a8def6c0a660ec5299224b00c86acb`: **all nine GitHub Actions workflows succeeded for that exact SHA** (Rust foundation, CI, MCP E2E, Desktop UI, security hygiene, GUI visual/perf QA, Tauri migration, Linux Tauri Package and Windows Tauri Installer). This certifies only the pre-restore source candidate, not live installed graphical/WebView operation or full P1.
+- Rechecked issue #115 against `studies_atomic.rs` and `study_gateway.rs`: the integration branch already uses a single IMMEDIATE transaction with Study CAS, brief/source/draft changes and immutable versions. The issue description remains historical until merge; do not reimplement this work.
+- New follow-up: Studio has a safe **Restore as new version** action for previous script snapshots, in EN/AR. It writes through the existing project-scoped atomic save path, preserves prior versions and tests reopen after restore. **This new commit requires fresh exact-HEAD CI; no pass is claimed yet.**
+- Still outstanding P0: user-facing evidence references/verification, multiple drafts per study and duplication, safe staged delete/undo, independent real installed Windows/Linux graphical WebView E2E, real EN/AR/RTL visual QA and native 100/1k/10k startup/RSS/IPC measures.
+- Still outstanding P1: approved real research/tool chain, factual evidence reconciliation, Agent 05 intelligence and Agent 06 original multiple-script generation wired to canonical sources/drafts, bounded provider budgets/consent, cancellation, idempotent effects for **each** new tool and crash-safe recovery. Only the local transcript read is connected and ledger-fenced.
+- P2/P3 remain substantive: credible time-series metric intelligence, hardware-measured performance optimization, coherent navigation, redundant-text removal, custom control and locale accessibility pass.
+- **Integration branch only. Keep PR #114 draft, main unchanged and no public release until independent evidence and explicit merge/release decision.**
+
+---
+
 # LATEST CHECKPOINT — P1 local agent effect fencing (2026-11-13)
 
 - **Owner branch:** integration/scriptotar-defragmentation-agent00-20261113; **draft PR:** https://github.com/MousaXD/scriptotar/pull/114. Main remains unchanged.

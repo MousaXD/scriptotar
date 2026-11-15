@@ -111,6 +111,43 @@ describe('Content Study Studio', () => {
     expect(screen.getByRole('textbox', { name: 'Script draft' })).not.toHaveAttribute('readonly');
   });
 
+
+  it('restores a historical script as a new immutable draft version and reopens it', async () => {
+    const { gateway, get } = studyFixture();
+    const view = mount(gateway);
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Revision history' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await waitFor(() => expect(get()).toHaveLength(1));
+
+    const editor = screen.getByRole('textbox', { name: 'Script draft' });
+    await fireEvent.input(editor, { target: { value: 'First original script' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(get()[0].draft).toBe('First original script'));
+
+    await fireEvent.input(editor, { target: { value: 'Revised script' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(get()[0].draft).toBe('Revised script'));
+    expect(get()[0].draftVersions).toHaveLength(2);
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Version 2' }));
+    expect(editor).toHaveAttribute('readonly');
+    await fireEvent.click(screen.getByRole('button', { name: 'Restore as new version' }));
+    await waitFor(() => expect(get()[0].draft).toBe('First original script'));
+    expect(get()[0].draftVersions.map((item) => item.content)).toEqual([
+      'First original script', 'Revised script', 'First original script'
+    ]);
+    expect(editor).not.toHaveAttribute('readonly');
+
+    view.unmount();
+    mount(gateway);
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Revision history' }));
+    expect(await screen.findByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('First original script');
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
