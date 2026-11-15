@@ -425,7 +425,8 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     let mut triggers = connection
         .prepare(
             "SELECT name FROM sqlite_master WHERE type='trigger'
-         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')",
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%'
+           OR name LIKE 'draft_%' OR name LIKE 'evidence_review_%')",
         )
         .unwrap();
     let names = triggers
@@ -441,7 +442,9 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     }
     connection
         .execute_batch(
-            "DROP TABLE agent_effects;
+            "DROP TABLE evidence_reviews;
+         DELETE FROM schema_migrations WHERE version=9;
+         DROP TABLE agent_effects;
          DELETE FROM schema_migrations WHERE version=8;
          DROP TABLE agent_audit_events;
          DROP TABLE agent_runs;
