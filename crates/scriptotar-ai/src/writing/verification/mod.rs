@@ -320,7 +320,12 @@ fn exact_id_set(left: &[String], right: &[String]) -> bool {
         && left.iter().collect::<HashSet<_>>() == right.iter().collect::<HashSet<_>>()
 }
 
-fn review_matches(review: &VerifiedReview, claim: &ClaimProposal, ctx: &VerificationContext, ids: &[String]) -> bool {
+fn review_matches(
+    review: &VerifiedReview,
+    claim: &ClaimProposal,
+    ctx: &VerificationContext,
+    ids: &[String],
+) -> bool {
     !review.review_id.trim().is_empty()
         && !review.reviewer_id.trim().is_empty()
         && review.project_id == ctx.project_id
@@ -332,7 +337,10 @@ fn review_matches(review: &VerifiedReview, claim: &ClaimProposal, ctx: &Verifica
         && review.reviewed_at_epoch <= ctx.checked_at_epoch
         && exact_id_set(&review.evidence_ids, ids)
         && review.exact_citations.len() == claim.citations.len()
-        && claim.citations.iter().all(|citation| review.exact_citations.contains(citation))
+        && claim
+            .citations
+            .iter()
+            .all(|citation| review.exact_citations.contains(citation))
 }
 
 /// Deterministic, fail-closed evaluation. A review record is ONLY credible if
@@ -342,12 +350,18 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
     let mut by_id = HashMap::new();
     for evidence in ctx.evidence.iter().take(MAX_EVIDENCE + 1) {
         // Duplicate IDs are deliberately ambiguous, so lookup will fail.
-        if by_id.insert(evidence.evidence_id.as_str(), Some(evidence)).is_some() {
+        if by_id
+            .insert(evidence.evidence_id.as_str(), Some(evidence))
+            .is_some()
+        {
             by_id.insert(evidence.evidence_id.as_str(), None);
         }
     }
-    let invalid_batch = proposals.len() > MAX_CLAIMS || ctx.evidence.len() > MAX_EVIDENCE
-        || ctx.draft_revision == 0 || ctx.project_id.is_empty() || ctx.study_id.is_empty()
+    let invalid_batch = proposals.len() > MAX_CLAIMS
+        || ctx.evidence.len() > MAX_EVIDENCE
+        || ctx.draft_revision == 0
+        || ctx.project_id.is_empty()
+        || ctx.study_id.is_empty()
         || ctx.draft_id.is_empty();
     let mut seen = HashSet::new();
     let mut results = Vec::new();
@@ -358,171 +372,357 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         let mut supporting_origins = HashSet::new();
         let mut approved = Vec::new();
         if invalid_batch {
-            issues.push(finding(FindingCode::InputLimit, &claim.id, None, "Scope, revision or batch limit invalid"));
+            issues.push(finding(
+                FindingCode::InputLimit,
+                &claim.id,
+                None,
+                "Scope, revision or batch limit invalid",
+            ));
         }
-        if claim.id.trim().is_empty() || !seen.insert(claim.id.as_str())
-            || claim.statement.trim().is_empty() || claim.statement.chars().count() > MAX_TEXT
+        if claim.id.trim().is_empty()
+            || !seen.insert(claim.id.as_str())
+            || claim.statement.trim().is_empty()
+            || claim.statement.chars().count() > MAX_TEXT
             || claim.beat_id.trim().is_empty()
         {
             blocked = true;
-            issues.push(finding(FindingCode::InvalidClaim, &claim.id, None, "Invalid or repeated claim identity/text"));
+            issues.push(finding(
+                FindingCode::InvalidClaim,
+                &claim.id,
+                None,
+                "Invalid or repeated claim identity/text",
+            ));
         }
         if claim.model_claims_verified {
-            issues.push(finding(FindingCode::ModelPromotionAttempt, &claim.id, None, "Model status is not proof"));
+            issues.push(finding(
+                FindingCode::ModelPromotionAttempt,
+                &claim.id,
+                None,
+                "Model status is not proof",
+            ));
         }
         if claim.citations.is_empty() {
-            issues.push(finding(FindingCode::MissingCitation, &claim.id, None, "No exact evidence reference"));
+            issues.push(finding(
+                FindingCode::MissingCitation,
+                &claim.id,
+                None,
+                "No exact evidence reference",
+            ));
         }
         if claim.citations.len() > MAX_CITATIONS {
             blocked = true;
-            issues.push(finding(FindingCode::InputLimit, &claim.id, None, "Too many citations"));
+            issues.push(finding(
+                FindingCode::InputLimit,
+                &claim.id,
+                None,
+                "Too many citations",
+            ));
         }
         let mut used = HashSet::new();
         for citation in claim.citations.iter().take(MAX_CITATIONS) {
             let id = citation.evidence_id.as_str();
             if !used.insert(id) {
                 blocked = true;
-                issues.push(finding(FindingCode::UnknownCitation, &claim.id, Some(id), "Duplicate citation"));
+                issues.push(finding(
+                    FindingCode::UnknownCitation,
+                    &claim.id,
+                    Some(id),
+                    "Duplicate citation",
+                ));
                 continue;
             }
             let Some(Some(evidence)) = by_id.get(id) else {
                 blocked = true;
-                issues.push(finding(FindingCode::UnknownCitation, &claim.id, Some(id), "Unknown or ambiguous evidence ID"));
+                issues.push(finding(
+                    FindingCode::UnknownCitation,
+                    &claim.id,
+                    Some(id),
+                    "Unknown or ambiguous evidence ID",
+                ));
                 continue;
             };
             if evidence.project_id != ctx.project_id || evidence.study_id != ctx.study_id {
                 blocked = true;
-                issues.push(finding(FindingCode::CrossProjectReference, &claim.id, Some(id), "Evidence outside current project/Study"));
+                issues.push(finding(
+                    FindingCode::CrossProjectReference,
+                    &claim.id,
+                    Some(id),
+                    "Evidence outside current project/Study",
+                ));
                 continue;
             }
             if citation.source_id != evidence.source_id {
                 blocked = true;
-                issues.push(finding(FindingCode::SourceMismatch, &claim.id, Some(id), "Citation source ID does not match authoritative record"));
+                issues.push(finding(
+                    FindingCode::SourceMismatch,
+                    &claim.id,
+                    Some(id),
+                    "Citation source ID does not match authoritative record",
+                ));
                 continue;
             }
             if evidence.source_version.as_deref().is_none_or(str::is_empty) {
                 blocked = true;
-                issues.push(finding(FindingCode::UnversionedSource, &claim.id, Some(id), "No independently checked source content version"));
+                issues.push(finding(
+                    FindingCode::UnversionedSource,
+                    &claim.id,
+                    Some(id),
+                    "No independently checked source content version",
+                ));
                 continue;
             }
             if evidence.source_version.as_deref() != Some(citation.source_version.as_str()) {
                 blocked = true;
-                issues.push(finding(FindingCode::StaleSourceVersion, &claim.id, Some(id), "Source version changed"));
+                issues.push(finding(
+                    FindingCode::StaleSourceVersion,
+                    &claim.id,
+                    Some(id),
+                    "Source version changed",
+                ));
                 continue;
             }
-            if citation.locator != evidence.locator || citation.quote != evidence.excerpt
+            if citation.locator != evidence.locator
+                || citation.quote != evidence.excerpt
                 || citation.quote.trim().is_empty()
             {
                 blocked = true;
-                issues.push(finding(FindingCode::ForgedLocatorOrQuote, &claim.id, Some(id), "Locator or exact source excerpt mismatch"));
+                issues.push(finding(
+                    FindingCode::ForgedLocatorOrQuote,
+                    &claim.id,
+                    Some(id),
+                    "Locator or exact source excerpt mismatch",
+                ));
                 continue;
             }
             if evidence.locator.modality == Modality::SpokenTranscript
-                && (evidence.locator.segment_id.as_deref().is_none_or(str::is_empty)
+                && (evidence
+                    .locator
+                    .segment_id
+                    .as_deref()
+                    .is_none_or(str::is_empty)
                     || evidence.locator.timestamp_millis.is_none())
             {
-                issues.push(finding(FindingCode::MissingSegmentOrTimestamp, &claim.id, Some(id), "Transcript citation has no verified segment/timecode"));
+                issues.push(finding(
+                    FindingCode::MissingSegmentOrTimestamp,
+                    &claim.id,
+                    Some(id),
+                    "Transcript citation has no verified segment/timecode",
+                ));
                 continue;
             }
             if !matches_modality(evidence.kind, claim.required_modality)
                 || evidence.locator.modality != claim.required_modality
             {
-                issues.push(finding(FindingCode::WrongEvidenceModality, &claim.id, Some(id), "Spoken words, metrics and visual frames are not interchangeable"));
+                issues.push(finding(
+                    FindingCode::WrongEvidenceModality,
+                    &claim.id,
+                    Some(id),
+                    "Spoken words, metrics and visual frames are not interchangeable",
+                ));
                 continue;
             }
             match evidence.state {
                 EvidenceState::Unavailable => {
                     blocked = true;
-                    issues.push(finding(FindingCode::UnavailableSource, &claim.id, Some(id), "Source unavailable"));
+                    issues.push(finding(
+                        FindingCode::UnavailableSource,
+                        &claim.id,
+                        Some(id),
+                        "Source unavailable",
+                    ));
                     continue;
                 }
                 EvidenceState::Revoked => {
                     blocked = true;
-                    issues.push(finding(FindingCode::RevokedSource, &claim.id, Some(id), "Source access revoked"));
+                    issues.push(finding(
+                        FindingCode::RevokedSource,
+                        &claim.id,
+                        Some(id),
+                        "Source access revoked",
+                    ));
                     continue;
                 }
                 EvidenceState::Disputed => {
                     blocked = true;
-                    issues.push(finding(FindingCode::DisputedEvidence, &claim.id, Some(id), "Evidence has an unresolved dispute"));
+                    issues.push(finding(
+                        FindingCode::DisputedEvidence,
+                        &claim.id,
+                        Some(id),
+                        "Evidence has an unresolved dispute",
+                    ));
                     continue;
                 }
                 EvidenceState::Untrusted => {
                     blocked = true;
-                    issues.push(finding(FindingCode::UntrustedSource, &claim.id, Some(id), "Evidence is untrusted"));
+                    issues.push(finding(
+                        FindingCode::UntrustedSource,
+                        &claim.id,
+                        Some(id),
+                        "Evidence is untrusted",
+                    ));
                     continue;
                 }
                 EvidenceState::Unreviewed | EvidenceState::Reviewed => {}
             }
             if evidence.collected_at_epoch.is_none() {
-                issues.push(finding(FindingCode::UnknownFreshness, &claim.id, Some(id), "Collection date cannot be verified"));
+                issues.push(finding(
+                    FindingCode::UnknownFreshness,
+                    &claim.id,
+                    Some(id),
+                    "Collection date cannot be verified",
+                ));
                 continue;
             }
-            if evidence.collected_at_epoch.is_some_and(|date| date > ctx.checked_at_epoch)
-                || evidence.expires_at_epoch.is_some_and(|expiry| expiry < ctx.checked_at_epoch)
+            if evidence
+                .collected_at_epoch
+                .is_some_and(|date| date > ctx.checked_at_epoch)
+                || evidence
+                    .expires_at_epoch
+                    .is_some_and(|expiry| expiry < ctx.checked_at_epoch)
             {
-                issues.push(finding(FindingCode::OutdatedSource, &claim.id, Some(id), "Evidence is stale, expired or future dated"));
+                issues.push(finding(
+                    FindingCode::OutdatedSource,
+                    &claim.id,
+                    Some(id),
+                    "Evidence is stale, expired or future dated",
+                ));
                 continue;
             }
             if evidence.relation == EvidenceRelation::Contradicts {
                 contradicted = true;
-                issues.push(finding(FindingCode::ContradictoryEvidence, &claim.id, Some(id), "Authenticated source contradicts the claim"));
+                issues.push(finding(
+                    FindingCode::ContradictoryEvidence,
+                    &claim.id,
+                    Some(id),
+                    "Authenticated source contradicts the claim",
+                ));
             }
             if evidence.state == EvidenceState::Reviewed
                 && evidence.relation == EvidenceRelation::Supports
                 && evidence.kind == SourceKind::IndependentDocument
             {
-                if let Some(origin) = evidence.independent_origin.as_deref().filter(|id| !id.trim().is_empty()) {
+                if let Some(origin) = evidence
+                    .independent_origin
+                    .as_deref()
+                    .filter(|id| !id.trim().is_empty())
+                {
                     supporting_origins.insert(origin.to_owned());
                 }
             }
             approved.push(citation.clone());
         }
-        let ids: Vec<String> = approved.iter().map(|citation| citation.evidence_id.clone()).collect();
-        let relevant: Vec<_> = ctx.human_reviews.iter()
+        let ids: Vec<String> = approved
+            .iter()
+            .map(|citation| citation.evidence_id.clone())
+            .collect();
+        let relevant: Vec<_> = ctx
+            .human_reviews
+            .iter()
             .filter(|review| review.claim_id == claim.id)
             .collect();
-        let matched_reviews: Vec<_> = relevant.iter()
+        let matched_reviews: Vec<_> = relevant
+            .iter()
             .filter(|review| review_matches(review, claim, ctx, &ids))
             .collect();
         if relevant.len() != matched_reviews.len() {
-            issues.push(finding(FindingCode::InvalidReviewLineage, &claim.id, None, "A review was for a different claim, version, scope, evidence set, or future time"));
+            issues.push(finding(
+                FindingCode::InvalidReviewLineage,
+                &claim.id,
+                None,
+                "A review was for a different claim, version, scope, evidence set, or future time",
+            ));
         }
-        let human_accepted = matched_reviews.iter().any(|review| review.decision == ReviewDecision::Accept);
-        if matched_reviews.iter().any(|review| review.decision == ReviewDecision::Reject) {
+        let human_accepted = matched_reviews
+            .iter()
+            .any(|review| review.decision == ReviewDecision::Accept);
+        if matched_reviews
+            .iter()
+            .any(|review| review.decision == ReviewDecision::Reject)
+        {
             contradicted = true;
-            issues.push(finding(FindingCode::ReviewRejected, &claim.id, None, "An independent human review rejected this claim"));
+            issues.push(finding(
+                FindingCode::ReviewRejected,
+                &claim.id,
+                None,
+                "An independent human review rejected this claim",
+            ));
         }
         if !human_accepted && claim.consequence != Consequence::Ordinary {
-            issues.push(finding(FindingCode::ConsequentialHumanReviewRequired, &claim.id, None, "Consequential claims require independent human review"));
+            issues.push(finding(
+                FindingCode::ConsequentialHumanReviewRequired,
+                &claim.id,
+                None,
+                "Consequential claims require independent human review",
+            ));
         }
         if !human_accepted {
-            issues.push(finding(FindingCode::NotIndependentlyReviewed, &claim.id, None, "No current, authenticated, independent human review"));
+            issues.push(finding(
+                FindingCode::NotIndependentlyReviewed,
+                &claim.id,
+                None,
+                "No current, authenticated, independent human review",
+            ));
         }
         if supporting_origins.len() < 2 {
-            issues.push(finding(FindingCode::InsufficientIndependentSources, &claim.id, None, "Fewer than two independently owned, reviewed document sources support the claim"));
+            issues.push(finding(
+                FindingCode::InsufficientIndependentSources,
+                &claim.id,
+                None,
+                "Fewer than two independently owned, reviewed document sources support the claim",
+            ));
         }
         if claim.kind == ClaimKind::UnsupportedStatement {
-            issues.push(finding(FindingCode::UnsupportedStatement, &claim.id, None, "Unclassified statement cannot be automatically promoted"));
+            issues.push(finding(
+                FindingCode::UnsupportedStatement,
+                &claim.id,
+                None,
+                "Unclassified statement cannot be automatically promoted",
+            ));
         }
-        let verified = !blocked && !contradicted && claim.kind == ClaimKind::Fact
-            && human_accepted && supporting_origins.len() >= 2
+        let verified = !blocked
+            && !contradicted
+            && claim.kind == ClaimKind::Fact
+            && human_accepted
+            && supporting_origins.len() >= 2
             && ids.len() == claim.citations.len()
-            && !issues.iter().any(|issue| matches!(issue.code,
-                FindingCode::OutdatedSource | FindingCode::UnknownFreshness
-                | FindingCode::MissingSegmentOrTimestamp | FindingCode::WrongEvidenceModality));
-        let status = if blocked { VerificationStatus::Blocked }
-        else if contradicted { VerificationStatus::Contradicted }
-        else if verified { VerificationStatus::Verified }
-        else if claim.kind == ClaimKind::Opinion { VerificationStatus::Opinion }
-        else if claim.kind == ClaimKind::Prediction { VerificationStatus::Prediction }
-        else { VerificationStatus::Unverified };
+            && !issues.iter().any(|issue| {
+                matches!(
+                    issue.code,
+                    FindingCode::OutdatedSource
+                        | FindingCode::UnknownFreshness
+                        | FindingCode::MissingSegmentOrTimestamp
+                        | FindingCode::WrongEvidenceModality
+                )
+            });
+        let status = if blocked {
+            VerificationStatus::Blocked
+        } else if contradicted {
+            VerificationStatus::Contradicted
+        } else if verified {
+            VerificationStatus::Verified
+        } else if claim.kind == ClaimKind::Opinion {
+            VerificationStatus::Opinion
+        } else if claim.kind == ClaimKind::Prediction {
+            VerificationStatus::Prediction
+        } else {
+            VerificationStatus::Unverified
+        };
         if claim.kind == ClaimKind::UnsupportedStatement {
-            issues.push(finding(FindingCode::UnannotatedText, &claim.id, None, "No authoritative claim classification available"));
+            issues.push(finding(
+                FindingCode::UnannotatedText,
+                &claim.id,
+                None,
+                "No authoritative claim classification available",
+            ));
         }
         results.push(ClaimResult {
-            id: claim.id.clone(), beat_id: claim.beat_id.clone(),
-            statement: claim.statement.clone(), classification: claim.kind,
-            status, exact_citations: approved, findings: issues,
+            id: claim.id.clone(),
+            beat_id: claim.beat_id.clone(),
+            statement: claim.statement.clone(),
+            classification: claim.kind,
+            status,
+            exact_citations: approved,
+            findings: issues,
         });
     }
     // No source-backed, reviewer-certified exhaustiveness record exists for
@@ -530,10 +730,13 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
     // must not be presented as whole-script publication approval.
     let publication_review_required = true;
     VerificationReport {
-        project_id: ctx.project_id.clone(), study_id: ctx.study_id.clone(),
-        draft_id: ctx.draft_id.clone(), draft_revision: ctx.draft_revision,
+        project_id: ctx.project_id.clone(),
+        study_id: ctx.study_id.clone(),
+        draft_id: ctx.draft_id.clone(),
+        draft_revision: ctx.draft_revision,
         checked_at_epoch: ctx.checked_at_epoch,
-        claims: results, publication_review_required,
+        claims: results,
+        publication_review_required,
         inventory_complete: false,
         review_lineage: ctx.human_reviews.clone(),
     }
