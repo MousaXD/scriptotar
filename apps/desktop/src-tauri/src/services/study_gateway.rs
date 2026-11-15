@@ -381,12 +381,17 @@ impl AppServices {
         if saved_sources.len() != active.len() {
             limitations.push("Unavailable sources were omitted.".into());
         }
+        if active
+            .iter()
+            .take(8)
+            .any(|source| source.kind != StudySourceKind::Transcript)
+        {
+            limitations.push("Research metadata is not proof of spoken or visual claims.".into());
+        }
         let mut evidence = Vec::new();
         let mut excerpt_count = 0;
         for source in active.iter().take(8) {
             if source.kind != StudySourceKind::Transcript {
-                limitations
-                    .push("Research metadata is not proof of spoken or visual claims.".into());
                 continue;
             }
             let Some(transcript_id) = source.reference_id else {
@@ -437,13 +442,20 @@ impl AppServices {
                 let timestamp_seconds =
                     (seconds.is_finite() && seconds >= 0.0 && seconds <= f64::from(u32::MAX))
                         .then_some(seconds as u32);
+                let locator: String = format!(
+                    "Transcript segment {} ({:.3}-{:.3}s)",
+                    segment.id, segment.start_seconds, segment.end_seconds
+                )
+                .chars()
+                .take(250)
+                .collect();
                 evidence.push(WritingEvidence {
                     id: format!("transcript:{transcript_id}:{index}"),
                     locator: WritingLocator {
                         source_id: transcript_id.to_string(),
                         canonical_url: None,
                         timestamp_seconds,
-                        document_section: Some(format!("Transcript segment {index}")),
+                        document_section: Some(locator),
                         collected_at: Some(transcript.transcript.created_at.clone()),
                     },
                     excerpt,
@@ -453,7 +465,7 @@ impl AppServices {
                 excerpt_count += 1;
             }
         }
-        let attached: HashSet<Uuid> = active.iter().map(|source| source.id).collect();
+        let attached: HashSet<Uuid> = active.iter().take(8).map(|source| source.id).collect();
         let observations = self.store.list_evidence_references(project_id, study_id)?;
         let mut note_count = 0;
         for item in observations {
