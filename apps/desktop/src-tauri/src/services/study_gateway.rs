@@ -306,7 +306,9 @@ impl AppServices {
                 uncertainty_note: value.uncertainty_note,
             },
         )?;
-        let reviews = self.store.list_evidence_reviews(project_id, study_id, reference.id)?;
+        let reviews = self
+            .store
+            .list_evidence_reviews(project_id, study_id, reference.id)?;
         Ok(ui_evidence(reference, &source, reviews))
     }
 
@@ -343,7 +345,9 @@ impl AppServices {
             .into_iter()
             .find(|item| item.id == changed.input.study_source_id)
             .ok_or_else(|| RepositoryError::Storage("evidence source missing".into()))?;
-        let reviews = self.store.list_evidence_reviews(project_id, study_id, changed.id)?;
+        let reviews = self
+            .store
+            .list_evidence_reviews(project_id, study_id, changed.id)?;
         Ok(ui_evidence(changed, &source, reviews))
     }
 
@@ -767,7 +771,10 @@ mod tests {
             assert_eq!(disputed.review_history.len(), 1);
             assert_eq!(disputed.review_history[0].previous_certainty, "unverified");
             assert_eq!(disputed.review_history[0].next_certainty, "disputed");
-            assert_eq!(disputed.review_history[0].note, "Full transcript contradicts this claim");
+            assert_eq!(
+                disputed.review_history[0].note,
+                "Full transcript contradicts this claim"
+            );
             assert_eq!(
                 disputed.uncertainty_note.as_deref(),
                 Some("Full transcript contradicts this claim")
@@ -835,17 +842,47 @@ mod tests {
             .unwrap();
         assert_eq!(reopened_review.certainty, "unverified");
         assert_eq!(reopened_review.review_history.len(), 2);
-        assert_eq!(reopened_review.review_history[0].note, "Full transcript contradicts this claim");
-        assert_eq!(reopened_review.review_history[1].note, "Reviewed full recording again");
-        assert_eq!(reopened_review.review_history[1].previous_certainty, "disputed");
-        assert_eq!(reopened_review.review_history[1].next_certainty, "unverified");
-        assert!(reopened.store.list_evidence_reviews(Uuid::new_v4(), study_id, evidence_id).is_err());
-        assert_eq!(reopened.store.list_evidence_reviews(project_id, study_id, evidence_id).unwrap().len(), 2);
+        assert_eq!(
+            reopened_review.review_history[0].note,
+            "Full transcript contradicts this claim"
+        );
+        assert_eq!(
+            reopened_review.review_history[1].note,
+            "Reviewed full recording again"
+        );
+        assert_eq!(
+            reopened_review.review_history[1].previous_certainty,
+            "disputed"
+        );
+        assert_eq!(
+            reopened_review.review_history[1].next_certainty,
+            "unverified"
+        );
+        assert!(reopened
+            .store
+            .list_evidence_reviews(Uuid::new_v4(), study_id, evidence_id)
+            .is_err());
+        assert_eq!(
+            reopened
+                .store
+                .list_evidence_reviews(project_id, study_id, evidence_id)
+                .unwrap()
+                .len(),
+            2
+        );
         let conn = rusqlite::Connection::open(reopened.store.path()).unwrap();
-        assert!(conn.execute("UPDATE evidence_reviews SET reason='tampered' WHERE evidence_id=?1",
-            rusqlite::params![evidence_id.to_string()]).is_err());
-        assert!(conn.execute("DELETE FROM evidence_reviews WHERE evidence_id=?1",
-            rusqlite::params![evidence_id.to_string()]).is_err());
+        assert!(conn
+            .execute(
+                "UPDATE evidence_reviews SET reason='tampered' WHERE evidence_id=?1",
+                rusqlite::params![evidence_id.to_string()]
+            )
+            .is_err());
+        assert!(conn
+            .execute(
+                "DELETE FROM evidence_reviews WHERE evidence_id=?1",
+                rusqlite::params![evidence_id.to_string()]
+            )
+            .is_err());
         assert_eq!(
             reopened
                 .store

@@ -10,9 +10,9 @@ mod operational_status;
 mod watchlists;
 pub use operational_status::*;
 
+mod evidence_review_schema;
 mod studies;
 mod studies_schema;
-mod evidence_review_schema;
 pub use studies::EvidenceReview;
 
 mod studies_atomic;
