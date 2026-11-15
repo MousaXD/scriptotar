@@ -649,7 +649,8 @@ impl AppServices {
         if prepared_prompt.len() > 100_000 || response_json.len() > 100_000 {
             return Err(invalid("angle payload size"));
         }
-        let (mut input, limitations, _, _, _) = self.scoped_writing_input_locked(project_id, study_id)?;
+        let (mut input, limitations, _, _, _) =
+            self.scoped_writing_input_locked(project_id, study_id)?;
         if self.store.get_study(project_id, study_id)?.revision != expected_study_revision {
             return Err(RepositoryError::Conflict(
                 "Study changed since angle preparation".into(),
