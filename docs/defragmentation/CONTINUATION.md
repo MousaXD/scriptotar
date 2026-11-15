@@ -1,3 +1,12 @@
+# CHECKPOINT — 2026-11-15 evidence review and prompt quarantine (candidate)
+
+- New project-/Study-scoped `review_study_evidence` Tauri command and SQLite IMMEDIATE transaction let a human mark an unverified claim **disputed**, or return a disputed item to **unverified**, with a mandatory explanatory note and optimistic status compare-and-swap. Neither transition creates a verified/corroborated assertion. The original claim, exact source and locator remain visible.
+- Studio EN/AR inline controls display the state and reason, preserve evidence across restart and invalidate local prompts during review. The evidence-to-Copy-Prompt compiler skips disputed claims even when their source is still attached.
+- Typed IPC/mock parity, source isolation, stale review, persisted status/reopen and no-provider regression tests are added. Update test_api_surface_contract inventory for the new IPC surface. This **candidate must pass all nine checks at its exact commit** before it is counted finished.
+- Limitations: this is a creator review marker, **not independent fact checking or an immutable review audit log**. Further evidence editing, first-party source verification, Agent 05/06 writing orchestration, paid-call consent/ledger, installed graphical QA and native perf certification remain on #116/#100. Do not merge or release; main unchanged.
+
+---
+
 # CONTINUATION — 2026-11-15 human-controlled historical AI output → versioned Studio draft (candidate)
 
 - Reopened **exact saved AI-run** results (not Copy Prompt-only runs, which have `result: null`) can now be copied into the active Content Study's draft only after an explicit confirmation. The old working script is saved first, and the new content goes through the existing revision-checked atomic Study-save path, creating a fresh immutable draft version rather than overwriting historical versions.

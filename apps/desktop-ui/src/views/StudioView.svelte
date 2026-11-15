@@ -51,6 +51,9 @@
   let evidenceClaim = '';
   let evidenceLocator = '';
   let evidenceUncertainty = '';
+  let reviewingEvidenceId = '';
+  let reviewReason = '';
+  let reviewBusy = false;
   let inspectionEpoch = 0;
   let localInspections: LocalInspectionRun[] = [];
   let activeInspection: LocalInspectionRun | null = null;
@@ -200,6 +203,8 @@
       evidenceClaim = '';
       evidenceLocator = '';
       evidenceUncertainty = '';
+      reviewingEvidenceId = '';
+      reviewReason = '';
       void loadEvidence(id);
       void loadInspections(id);
     } catch (cause) {
@@ -235,6 +240,8 @@
       evidenceEpoch++;
       evidence = [];
       evidenceError = '';
+      reviewingEvidenceId = '';
+      reviewReason = '';
       localInspections = [];
       activeInspection = null;
       inspectionError = '';
@@ -365,6 +372,52 @@
     } catch (cause) {
       if (studyId === forStudy && epoch === evidenceEpoch) evidenceError = message(cause, t.evidenceError);
     } finally {
+      evidenceBusy = false;
+    }
+  }
+
+  function beginEvidenceReview(item: StudyEvidence) {
+    if (reviewBusy || evidenceBusy || importingSavedResult) return;
+    if (item.certainty !== 'unverified' && item.certainty !== 'disputed') return;
+    reviewingEvidenceId = item.id;
+    reviewReason = '';
+    evidenceError = '';
+  }
+
+  async function reviewEvidence(item: StudyEvidence) {
+    if (!gateway?.reviewStudyEvidence || !record || reviewBusy || evidenceBusy ||
+        reviewingEvidenceId !== item.id || !reviewReason.trim() ||
+        !['unverified', 'disputed'].includes(item.certainty)) return;
+    const expected = item.certainty === 'disputed' ? 'disputed' : 'unverified';
+    const action = expected === 'unverified' ? 'dispute' : 'reopen';
+    const forStudy = studyId;
+    const epoch = ++evidenceEpoch;
+    const reason = reviewReason.trim();
+    reviewBusy = true;
+    evidenceBusy = true;
+    // Do not allow an older local writing prompt to quote newly disputed data.
+    promptRequest++;
+    preparing = false;
+    prompt = '';
+    evidenceError = '';
+    try {
+      const reviewed = await gateway.reviewStudyEvidence(projectId, forStudy, item.id, {
+        expectedCertainty: expected, action, note: reason
+      });
+      if (studyId !== forStudy || epoch !== evidenceEpoch) return;
+      if (reviewed.projectId !== projectId || reviewed.studyId !== forStudy ||
+          reviewed.id !== item.id || reviewed.certainty !==
+          (action === 'dispute' ? 'disputed' : 'unverified')) throw new Error(t.invalidStudy);
+      evidence = evidence.map((candidate) => candidate.id === item.id ? reviewed : candidate);
+      reviewingEvidenceId = '';
+      reviewReason = '';
+      status = t.evidenceReviewed;
+    } catch (cause) {
+      if (studyId === forStudy && epoch === evidenceEpoch) {
+        evidenceError = message(cause, t.evidenceError);
+      }
+    } finally {
+      reviewBusy = false;
       evidenceBusy = false;
     }
   }
@@ -799,7 +852,7 @@
         </div>
       {/if}
       <div class="studio-prompt-controls">
-        <button type="button" class="button secondary" disabled={preparing || evidenceBusy || loading || importingSavedResult} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
+        <button type="button" class="button secondary" disabled={preparing || evidenceBusy || reviewBusy || loading || importingSavedResult} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
         <span>{t.promptPrivacy}</span>
       </div>
       {#if prompt}
@@ -867,7 +920,26 @@
             <li>
               <strong dir="auto">{item.claim}</strong>
               <span dir="auto">{item.source ? sourceLabel(item.source, research, transcripts) : item.sourceLabel} · {item.locator}</span>
-              <small>{item.certainty === 'unverified' ? t.evidenceUnverified : item.certainty}</small>
+              <small>{item.certainty === 'unverified' ? t.evidenceUnverified :
+                item.certainty === 'disputed' ? t.evidenceDisputed : item.certainty}</small>
+              {#if gateway?.reviewStudyEvidence && (item.certainty === 'unverified' || item.certainty === 'disputed')}
+                {#if reviewingEvidenceId === item.id}
+                  <form class="evidence-form" on:submit|preventDefault={() => void reviewEvidence(item)}>
+                    <label>{t.reviewReason}
+                      <textarea bind:value={reviewReason} rows="2" maxlength="4000" dir="auto"></textarea>
+                    </label>
+                    <div class="draft-actions">
+                      <button class="button secondary" type="submit"
+                        disabled={reviewBusy || !reviewReason.trim()}>{item.certainty === 'disputed' ? t.confirmReopen : t.confirmDispute}</button>
+                      <button class="text-button" type="button" disabled={reviewBusy}
+                        on:click={() => { reviewingEvidenceId = ''; reviewReason = ''; }}>{t.cancelAiImport}</button>
+                    </div>
+                  </form>
+                {:else}
+                  <button class="text-button" type="button" disabled={reviewBusy || evidenceBusy}
+                    on:click={() => beginEvidenceReview(item)}>{item.certainty === 'disputed' ? t.reopenEvidence : t.disputeEvidence}</button>
+                {/if}
+              {/if}
               {#if !item.sourceAvailable}<small>{t.evidenceUnavailable}</small>{/if}
               {#if item.uncertaintyNote}<small dir="auto">{item.uncertaintyNote}</small>{/if}
             </li>

@@ -292,6 +292,68 @@ describe('Content Study Studio', () => {
       .toHaveValue('Saved output for Hook ideas');
   });
 
+  it('reviews disputed claims without letting them enter local writing prompts, then reopens them', async () => {
+    const built = vi.fn(async (_input: AiPromptInput) => 'Prepared locally');
+    const paid = vi.fn(async (_input: AiPromptInput) => 'Should not run');
+    const api = createMockClient({ buildAiPrompt: built, runAi: paid });
+    const view = render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Evidence claim review' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Observation or claim' }), {
+      target: { value: 'UNTRUSTWORTHY source claim' }
+    });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Exact timestamp or locator' }), {
+      target: { value: '0:01-0:04' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save observation' }));
+    expect(await screen.findByText('UNTRUSTWORTHY source claim')).toBeInTheDocument();
+    const study = (await api.listStudies('p-creator-lab'))[0];
+    const original = (await api.listStudyEvidence('p-creator-lab', study.id))[0];
+    await fireEvent.click(screen.getByRole('button', { name: 'Flag as disputed' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Reason for evidence review' }), {
+      target: { value: 'The recording contradicts this interpretation' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm dispute' }));
+    expect(await screen.findByText('Disputed — excluded from writing prompts')).toBeInTheDocument();
+    await expect(api.reviewStudyEvidence('p-creator-lab', study.id, original.id, {
+      expectedCertainty: 'unverified', action: 'dispute', note: 'Stale review'
+    })).rejects.toThrow();
+    await expect(api.reviewStudyEvidence('p-client-a', study.id, original.id, {
+      expectedCertainty: 'disputed', action: 'reopen', note: 'Wrong project'
+    })).rejects.toThrow();
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
+    await waitFor(() => expect(built).toHaveBeenCalledTimes(1));
+    expect(built.mock.calls[0][0].sourceText).not.toContain('UNTRUSTWORTHY source claim');
+    expect(paid).not.toHaveBeenCalled();
+    view.unmount();
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Evidence claim review' }));
+    expect(await screen.findByText('Disputed — excluded from writing prompts')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Return to unverified' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Reason for evidence review' }), {
+      target: { value: 'Reviewed the entire segment and corrected the context' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm reopening' }));
+    await waitFor(async () => {
+      expect((await api.listStudyEvidence('p-creator-lab', study.id))[0].certainty).toBe('unverified');
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
+    await waitFor(() => expect(built).toHaveBeenCalledTimes(2));
+    expect(built.mock.calls[1][0].sourceText).toContain('UNTRUSTWORTHY source claim');
+    expect(paid).not.toHaveBeenCalled();
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
