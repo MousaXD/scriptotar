@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use chrono::DateTime;
 use scriptotar_ai::writing::{self, verification::{
-    self, EvidenceRelation, EvidenceState, ExactLocator, Modality, ResolvedEvidence, SourceKind,
-    VerificationContext, VerificationReport,
+    self, Citation, EvidenceRelation, EvidenceState, ExactLocator, Modality, ResolvedEvidence,
+    SourceKind, VerificationContext, VerificationReport,
 }};
 use scriptotar_core::{EvidenceCertainty, RepositoryError, RepositoryResult, StudySourceKind};
 use uuid::Uuid;
@@ -82,6 +82,7 @@ impl AppServices {
     /// reads, Study revisions are not draft versions, and current storage has
     /// no independently authenticated human fact-review records. Agent 00
     /// must add an atomic snapshot/attestation ledger before any Verified UI.
+    #[allow(dead_code)] // Agent 00 owns production command wiring after review-ledger contract.
     pub fn verify_studio_claims_read_only(
         &self,
         project_id: Uuid,
@@ -127,7 +128,37 @@ impl AppServices {
             // No authenticated independent review table exists in v9.
             human_reviews: Vec::new(),
         };
-        let claims = verification::extract_draft_claims(draft);
+        // Resolve only declared FactualClaim IDs against real Study evidence.
+        // Unknown IDs are deliberately retained as invalid citations so the
+        // report records attempted forgery rather than silently dropping them.
+        let known: HashMap<&str, &ResolvedEvidence> = ctx.evidence.iter()
+            .map(|entry| (entry.evidence_id.as_str(), entry))
+            .collect();
+        let mut claims = verification::extract_draft_claims(draft);
+        for (proposal, supplied) in claims.iter_mut().zip(draft.claims.iter()) {
+            proposal.citations = supplied.evidence_ids.iter().take(17).map(|id| {
+                if let Some(entry) = known.get(id.as_str()) {
+                    Citation {
+                        evidence_id: id.clone(),
+                        source_id: entry.source_id.clone(),
+                        source_version: entry.source_version.clone().unwrap_or_default(),
+                        locator: entry.locator.clone(),
+                        quote: entry.excerpt.clone(),
+                    }
+                } else {
+                    Citation {
+                        evidence_id: id.clone(),
+                        source_id: String::new(),
+                        source_version: String::new(),
+                        locator: ExactLocator {
+                            locator: String::new(), segment_id: None,
+                            timestamp_millis: None, modality: Modality::DocumentText,
+                        },
+                        quote: String::new(),
+                    }
+                }
+            }).collect();
+        }
         Ok(verification::verify_claims(&ctx, &claims))
     }
 }
