@@ -3,6 +3,7 @@ mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
 mod study_gateway;
+mod provider_consent;
 
 use std::{
     collections::{HashMap, HashSet},
