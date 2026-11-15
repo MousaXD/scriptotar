@@ -3,17 +3,21 @@
 use std::collections::HashMap;
 
 use chrono::DateTime;
-use scriptotar_ai::writing::{self, verification::{
-    self, Citation, EvidenceRelation, EvidenceState, ExactLocator, Modality, ResolvedEvidence,
-    SourceKind, VerificationContext, VerificationReport,
-}};
+use scriptotar_ai::writing::{
+    self,
+    verification::{
+        self, Citation, EvidenceRelation, EvidenceState, ExactLocator, Modality, ResolvedEvidence,
+        SourceKind, VerificationContext, VerificationReport,
+    },
+};
 use scriptotar_core::{EvidenceCertainty, RepositoryError, RepositoryResult, StudySourceKind};
 use uuid::Uuid;
 
 use super::AppServices;
 
 fn collected_epoch(value: &str) -> Option<u64> {
-    DateTime::parse_from_rfc3339(value).ok()
+    DateTime::parse_from_rfc3339(value)
+        .ok()
         .and_then(|parsed| u64::try_from(parsed.timestamp()).ok())
 }
 
@@ -45,9 +49,9 @@ fn from_study_evidence(
     } else {
         EvidenceState::Unreviewed
     };
-    let timestamp_millis = evidence.input.timestamp_seconds
-        .and_then(|seconds| (seconds.is_finite() && seconds >= 0.0)
-            .then(|| (seconds * 1000.0) as u64));
+    let timestamp_millis = evidence.input.timestamp_seconds.and_then(|seconds| {
+        (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0) as u64)
+    });
     ResolvedEvidence {
         evidence_id: evidence.id.to_string(),
         source_id: source.id.to_string(),
@@ -126,7 +130,8 @@ impl AppServices {
         let source_map: HashMap<Uuid, _> = sources.iter().map(|src| (src.id, src)).collect();
         let mut resolved = Vec::new();
         for evidence in &references {
-            let source = source_map.get(&evidence.input.study_source_id)
+            let source = source_map
+                .get(&evidence.input.study_source_id)
                 .ok_or_else(|| RepositoryError::Storage("orphan Study evidence source".into()))?;
             resolved.push(from_study_evidence(evidence, source));
         }
@@ -156,33 +161,42 @@ impl AppServices {
         // Resolve only declared FactualClaim IDs against real Study evidence.
         // Unknown IDs are deliberately retained as invalid citations so the
         // report records attempted forgery rather than silently dropping them.
-        let known: HashMap<&str, &ResolvedEvidence> = ctx.evidence.iter()
+        let known: HashMap<&str, &ResolvedEvidence> = ctx
+            .evidence
+            .iter()
             .map(|entry| (entry.evidence_id.as_str(), entry))
             .collect();
         let mut claims = verification::extract_draft_claims(draft);
         for (proposal, supplied) in claims.iter_mut().zip(draft.claims.iter()) {
-            proposal.citations = supplied.evidence_ids.iter().take(17).map(|id| {
-                if let Some(entry) = known.get(id.as_str()) {
-                    Citation {
-                        evidence_id: id.clone(),
-                        source_id: entry.source_id.clone(),
-                        source_version: entry.source_version.clone().unwrap_or_default(),
-                        locator: entry.locator.clone(),
-                        quote: entry.excerpt.clone(),
+            proposal.citations = supplied
+                .evidence_ids
+                .iter()
+                .take(17)
+                .map(|id| {
+                    if let Some(entry) = known.get(id.as_str()) {
+                        Citation {
+                            evidence_id: id.clone(),
+                            source_id: entry.source_id.clone(),
+                            source_version: entry.source_version.clone().unwrap_or_default(),
+                            locator: entry.locator.clone(),
+                            quote: entry.excerpt.clone(),
+                        }
+                    } else {
+                        Citation {
+                            evidence_id: id.clone(),
+                            source_id: String::new(),
+                            source_version: String::new(),
+                            locator: ExactLocator {
+                                locator: String::new(),
+                                segment_id: None,
+                                timestamp_millis: None,
+                                modality: Modality::DocumentText,
+                            },
+                            quote: String::new(),
+                        }
                     }
-                } else {
-                    Citation {
-                        evidence_id: id.clone(),
-                        source_id: String::new(),
-                        source_version: String::new(),
-                        locator: ExactLocator {
-                            locator: String::new(), segment_id: None,
-                            timestamp_millis: None, modality: Modality::DocumentText,
-                        },
-                        quote: String::new(),
-                    }
-                }
-            }).collect();
+                })
+                .collect();
         }
         Ok(verification::verify_claims(&ctx, &claims))
     }
@@ -191,8 +205,8 @@ impl AppServices {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scriptotar_core::{EvidenceInput, EvidenceReference, StudySource};
     use scriptotar_core::StudySourceKind;
+    use scriptotar_core::{EvidenceInput, EvidenceReference, StudySource};
 
     #[test]
     fn creator_observation_never_becomes_independently_reviewed() {
@@ -200,18 +214,29 @@ mod tests {
         let study = Uuid::new_v4();
         let attached = Uuid::new_v4();
         let source = StudySource {
-            id: attached, project_id: project, study_id: study,
-            kind: StudySourceKind::Transcript, reference_id: Some(Uuid::new_v4()),
-            locator: "test".into(), manual_text: None,
-            fingerprint: "identity-only".into(), source_revision: None,
-            collected_at: "2026-11-16T00:00:00Z".into(), uncertainty: None,
-            available: true, created_at: "2026-11-16T00:00:00Z".into(),
+            id: attached,
+            project_id: project,
+            study_id: study,
+            kind: StudySourceKind::Transcript,
+            reference_id: Some(Uuid::new_v4()),
+            locator: "test".into(),
+            manual_text: None,
+            fingerprint: "identity-only".into(),
+            source_revision: None,
+            collected_at: "2026-11-16T00:00:00Z".into(),
+            uncertainty: None,
+            available: true,
+            created_at: "2026-11-16T00:00:00Z".into(),
         };
         let evidence = EvidenceReference {
-            id: Uuid::new_v4(), project_id: project, study_id: study,
+            id: Uuid::new_v4(),
+            project_id: project,
+            study_id: study,
             input: EvidenceInput {
-                study_source_id: attached, claim: "looks verified".into(),
-                locator: "user-entered segment 1".into(), timestamp_seconds: Some(2.5),
+                study_source_id: attached,
+                claim: "looks verified".into(),
+                locator: "user-entered segment 1".into(),
+                timestamp_seconds: Some(2.5),
                 certainty: EvidenceCertainty::Corroborated,
                 uncertainty_note: None,
             },
