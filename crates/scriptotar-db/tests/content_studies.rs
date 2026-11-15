@@ -573,7 +573,8 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
     let mut stmt = conn
         .prepare(
             "SELECT name FROM sqlite_master WHERE type='trigger'
-         AND (name LIKE 'study_%' OR name LIKE 'creative_%' OR name LIKE 'draft_%')",
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%'
+           OR name LIKE 'draft_%' OR name LIKE 'evidence_review_%')",
         )
         .unwrap();
     let names = stmt
@@ -587,7 +588,9 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
             .unwrap();
     }
     conn.execute_batch(
-        "DROP TABLE agent_effects;
+        "DROP TABLE evidence_reviews;
+         DELETE FROM schema_migrations WHERE version=9;
+         DROP TABLE agent_effects;
          DELETE FROM schema_migrations WHERE version=8;
          DROP TABLE agent_audit_events;
          DROP TABLE agent_runs;
