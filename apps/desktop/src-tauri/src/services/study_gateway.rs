@@ -1132,6 +1132,72 @@ mod tests {
                 .contains("Transcript contains a literal spoken example"));
             assert!(angles.prompt.contains("unverified"));
             assert!(angles.prompt.contains("untrusted context"));
+            let three_angles = serde_json::json!({
+                "angles": [
+                    {
+                        "id": "angle-a",
+                        "approach": "Show the everyday problem",
+                        "hook": "Open on the problem",
+                        "promise": "Show a specific useful alternative",
+                        "outline": [{ "role": "hook", "intent": "Present a clear problem", "estimated_seconds": 7 }],
+                        "evidence_ids": [format!("observation:{}", evidence.id)]
+                    },
+                    {
+                        "id": "angle-b",
+                        "approach": "A before-and-after account",
+                        "hook": "Contrast two scenarios",
+                        "promise": "Present an original practical payoff",
+                        "outline": [{ "role": "hook", "intent": "Present a contrast", "estimated_seconds": 6 }],
+                        "evidence_ids": []
+                    },
+                    {
+                        "id": "angle-c",
+                        "approach": "A practical checklist",
+                        "hook": "Lead with a concrete action",
+                        "promise": "Deliver a concise checklist",
+                        "outline": [{ "role": "hook", "intent": "Introduce the checklist", "estimated_seconds": 5 }],
+                        "evidence_ids": []
+                    }
+                ]
+            })
+            .to_string();
+            let reviewed = services
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    None,
+                )
+                .unwrap();
+            assert_eq!(reviewed.angles.len(), 3);
+            assert_eq!(reviewed.angles[0].evidence_ids.len(), 1);
+            assert!(reviewed.draft_prompt.is_none());
+            let chosen = services
+                .interpret_studio_angles(
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    Some("angle-a"),
+                )
+                .unwrap();
+            assert!(chosen.draft_prompt.as_deref().unwrap().contains("Write one original ScriptDraft"));
+            assert!(chosen.draft_prompt.as_deref().unwrap().contains("angle-a"));
+            assert!(services
+                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, &three_angles, Some("missing"))
+                .is_err());
+            assert!(services
+                .interpret_studio_angles(Uuid::new_v4(), study_id, saved.revision, &angles.prompt, &three_angles, None)
+                .is_err());
+            assert!(services
+                .interpret_studio_angles(project_id, study_id, saved.revision - 1, &angles.prompt, &three_angles, None)
+                .is_err());
+            assert!(services
+                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, r#"{"angles":[]}"#, None)
+                .is_err());
             assert!(services
                 .prepare_studio_angle_prompt(Uuid::new_v4(), study_id)
                 .is_err());
@@ -1217,6 +1283,12 @@ mod tests {
                 .prepare_studio_angle_prompt(project_id, study_id)
                 .unwrap();
             assert_eq!(after_dispute.unverified_observation_count, 0);
+            assert!(services
+                .interpret_studio_angles(project_id, study_id, saved.revision, &angles.prompt, &three_angles, None)
+                .is_err());
+            assert!(services
+                .interpret_studio_angles(project_id, study_id, saved.revision, &after_dispute.prompt, &three_angles, None)
+                .is_err());
             assert!(!after_dispute
                 .prompt
                 .contains("Transcript contains a literal spoken example"));

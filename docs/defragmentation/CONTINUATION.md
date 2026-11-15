@@ -1,3 +1,11 @@
+# CHECKPOINT — 2026-11-15 local three-angle response review (candidate)
+
+- A new project-scoped `interpret_study_angles` Tauri endpoint consumes user-pasted response JSON, re-derives the authorized active Study's full bounded writing context, compares the **exact prepared prompt** and Study revision, and runs Agent 06's strict `parse_angles`. Unknown/duplicate source citations, malformed or non-three-angle outputs, other projects and stale/disputed observations are refused without network calls.
+- Studio EN/AR displays the three validated creative proposals and lets users select one; the same typed writing core then prepares a local one-script JSON prompt for Copy Prompt. No automatic AI/provider egress, stored model output, draft mutation or claims of independent fact checking. This provides a safe explicit bridge from three-angle prompt to choosing a single script direction, not automatic script generation.
+- Added native Rust stale-context/evidence-dispute and wrong-project tests, TS/mock IPC parity, UI end-to-end response validation and no-provider-call assertions. All nine exact-head workflows are REQUIRED before counting this slice certified. PR #114 remains DRAFT/NO-GO, main unchanged; provider approval/effect fencing, three generated persisted scripts, installed graphical WebView certification and 100/1k/10k performance remain blockers.
+
+---
+
 # CHECKPOINT — 2026-11-15 bounded 3-angle request bridge (candidate)
 
 - P1-05: Canonical Studio now exposes **Prepare 3 creative angles** in EN/AR, using Agent 06's typed `prepare_writing_request` with the actual active Study brief, up to eight project-scoped attached sources, literal bounded available transcript excerpts (sampled opening/middle/closing with real segment indices/timestamps where present) and user-created observations marked unverified. Disputed observations are excluded. Research metadata alone is NOT treated as transcript/video fact evidence; limitations are explicit. This only creates a copyable local prompt and makes **zero provider calls**—it does not produce the three angles or scripts, verify claims or enter an autonomous run.

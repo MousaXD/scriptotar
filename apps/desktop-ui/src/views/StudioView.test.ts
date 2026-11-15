@@ -537,6 +537,55 @@ describe('Content Study Studio', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
+  it('reviews model-proposed angles locally and prepares a chosen script prompt without provider egress', async () => {
+    const api = createMockClient();
+    const provider = vi.spyOn(api, 'runAi');
+    const brief = { ...emptyBrief(), title: 'Original angle choices',
+      goal: 'Make a clear short reel', audience: 'Local viewers' };
+    const study = await api.createStudy('p-creator-lab', brief);
+    const prepared = await api.prepareStudyAngles('p-creator-lab', study.id);
+    const response = JSON.stringify({ angles: ['Problem', 'Contrast', 'Checklist'].map((name, i) => ({
+      id: 'angle-' + i, approach: name + ' approach', hook: name + ' opening hook',
+      promise: 'An original useful promise for the viewer',
+      outline: [{ role: 'hook', intent: name + ' introduction', estimated_seconds: 8 }],
+      evidence_ids: []
+    })) });
+    const interpreted = await api.interpretStudyAngles('p-creator-lab', study.id,
+      study.revision, prepared.prompt, response);
+    expect(interpreted.angles).toHaveLength(3);
+    expect(interpreted.draftPrompt).toBeNull();
+    await expect(api.interpretStudyAngles('p-client-a', study.id, study.revision,
+      prepared.prompt, response)).rejects.toThrow();
+    await expect(api.interpretStudyAngles('p-creator-lab', study.id, study.revision,
+      'old context', response)).rejects.toThrow();
+    await expect(api.interpretStudyAngles('p-creator-lab', study.id, study.revision,
+      prepared.prompt, response.replace('"evidence_ids":[]', '"evidence_ids":["missing"]')))
+      .rejects.toThrow();
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Original angle choices' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
+    expect(await screen.findByText(/Three-angle prompt prepared locally/)).toBeInTheDocument();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste three-angle JSON response' }), {
+      target: { value: response }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    expect(await screen.findByText('Problem approach')).toBeInTheDocument();
+    expect(screen.getByText('Contrast approach')).toBeInTheDocument();
+    expect(screen.getByText('Checklist approach')).toBeInTheDocument();
+    const choose = screen.getAllByRole('button', { name: 'Prepare script for this angle' });
+    await fireEvent.click(choose[1]);
+    const single = await screen.findByRole('textbox', { name: 'Selected script prompt' });
+    expect((single as HTMLTextAreaElement).value).toContain('Write one ORIGINAL ScriptDraft');
+    expect((single as HTMLTextAreaElement).value).toContain('angle-1');
+    expect(provider).not.toHaveBeenCalled();
+    const unchanged = await api.getStudy('p-creator-lab', study.id);
+    expect(unchanged.draft).toBe('');
+    expect(unchanged.drafts).toHaveLength(1);
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
