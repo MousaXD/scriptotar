@@ -5,7 +5,7 @@
   import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence } from '../studio/contract';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { evidencePromptContext } from '../studio/evidencePrompt';
@@ -43,6 +43,14 @@
   let sourceQuery = '';
   let prompt = '';
   let promptLimitations: string[] = [];
+  let anglePromptSource = '';
+  let angleStudyRevision = 0;
+  let angleResponseJson = '';
+  let reviewedAngles: StudyAngleOption[] = [];
+  let draftAnglePrompt = '';
+  let angleError = '';
+  let angleBusy = false;
+  let angleScopeEpoch = 0;
   let historical: HistoricalAiArtifact | null = null;
   let historyLoading = false;
   let historyError = '';
@@ -80,6 +88,16 @@
   let consumedIncoming = '';
 
   $: t = studioStrings[$locale];
+  // An edited brief, changed Study, or revised evidence must invalidate
+  // old pasted model proposals even when no Study revision was written.
+  $: if (angleScopeEpoch !== promptRequest) {
+    angleScopeEpoch = promptRequest;
+    anglePromptSource = '';
+    angleResponseJson = '';
+    reviewedAngles = [];
+    draftAnglePrompt = '';
+    angleError = '';
+  }
   $: if (incomingArtifactId && incomingArtifactId !== consumedArtifactId) {
     consumedArtifactId = incomingArtifactId;
     void openArtifact(incomingArtifactId);
@@ -788,6 +806,12 @@
           prepared.unverifiedObservationCount < 0) throw new Error(t.invalidStudy);
       prompt = prepared.prompt;
       promptLimitations = prepared.limitations.slice(0, 5);
+      anglePromptSource = prepared.prompt;
+      angleStudyRevision = record?.revision ?? 0;
+      angleResponseJson = '';
+      reviewedAngles = [];
+      draftAnglePrompt = '';
+      angleError = '';
       status = t.angleReady;
     } catch (cause) {
       if (epoch === promptRequest) error = message(cause, t.anglePromptError);
@@ -796,10 +820,41 @@
     }
   }
 
-  async function copyPrompt() {
+  async function reviewPastedAngles(selectedAngleId?: string) {
+    if (!gateway?.interpretStudyAngles || !record || !anglePromptSource ||
+        !angleResponseJson.trim() || angleBusy || preparing || busy || saving) return;
+    const ownerStudy = studyId;
+    const epoch = promptRequest;
+    angleBusy = true;
+    angleError = '';
+    draftAnglePrompt = '';
+    try {
+      const result = await gateway.interpretStudyAngles(
+        projectId, ownerStudy, angleStudyRevision,
+        anglePromptSource, angleResponseJson, selectedAngleId);
+      if (studyId !== ownerStudy || epoch !== promptRequest) return;
+      if (result.angles.length !== 3 ||
+          result.angles.some((angle) => !angle.id || !angle.approach || !angle.hook) ||
+          (selectedAngleId && (!result.draftPrompt || result.draftPrompt.length > 100_000))) {
+        throw new Error(t.invalidAngles);
+      }
+      reviewedAngles = result.angles;
+      draftAnglePrompt = result.draftPrompt ?? '';
+      status = selectedAngleId ? t.draftAngleReady : t.anglesReviewed;
+    } catch (cause) {
+      if (studyId === ownerStudy && epoch === promptRequest) {
+        angleError = message(cause, t.invalidAngles);
+        reviewedAngles = [];
+      }
+    } finally {
+      angleBusy = false;
+    }
+  }
+
+  async function copyPrompt(text = prompt) {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('Clipboard is unavailable.');
-      await navigator.clipboard.writeText(prompt);
+      await navigator.clipboard.writeText(text);
       status = t.copyPrompt;
     } catch (cause) {
       error = message(cause, t.copyPrompt);
@@ -1157,6 +1212,41 @@
           </div>
         {/if}
       {/if}
+      {#if anglePromptSource && gateway?.interpretStudyAngles}
+        <div class="angle-review">
+          <label>{t.pasteAngles}
+            <textarea rows="7" dir="auto" aria-label={t.pasteAngles}
+              maxlength="100000" bind:value={angleResponseJson}
+              on:input={() => { reviewedAngles = []; draftAnglePrompt = ''; angleError = ''; }}
+              placeholder={t.pasteAnglesPlaceholder}></textarea>
+          </label>
+          <p class="muted">{t.pasteAnglesPrivacy}</p>
+          <button type="button" class="button secondary"
+            disabled={angleBusy || preparing || !angleResponseJson.trim()}
+            on:click={() => void reviewPastedAngles()}>{t.reviewAngles}</button>
+          {#if angleError}<p role="alert" class="studio-error">{angleError}</p>{/if}
+          {#if reviewedAngles.length}
+            <div class="angle-options">
+              {#each reviewedAngles as angle (angle.id)}
+                <div class="angle-option">
+                  <strong dir="auto">{angle.approach}</strong>
+                  <p dir="auto">{angle.hook}</p>
+                  <small dir="auto">{angle.promise} · {angle.estimatedSeconds}s · {angle.evidenceIds.length} {t.angleReferences}</small>
+                  <button type="button" class="button secondary" disabled={angleBusy}
+                    on:click={() => void reviewPastedAngles(angle.id)}>{t.prepareSelectedAngle}</button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if draftAnglePrompt}
+            <label>{t.selectedDraftPrompt}
+              <textarea readonly rows="7" dir="auto" value={draftAnglePrompt}></textarea>
+            </label>
+            <button type="button" class="button secondary"
+              on:click={() => void copyPrompt(draftAnglePrompt)}>{t.copySelectedPrompt}</button>
+          {/if}
+        </div>
+      {/if}
       {#if status}<p class="muted" role="status">{status}</p>{/if}
     </section>
   </div>
@@ -1268,6 +1358,12 @@
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }
   .studio-candidates > :global(*) { min-width: 180px; }
+  .angle-review { display: grid; gap: 10px; margin-block: 14px; }
+  .angle-review > label { display: grid; gap: 6px; }
+  .angle-review textarea { width: 100%; min-height: 110px; }
+  .angle-options { display: grid; gap: 10px; }
+  .angle-option { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+  .angle-option .button { justify-self: start; }
   .angle-limits { display: grid; gap: 4px; margin-block: 8px; }
   .angle-limits small { font-size: var(--text-xs); color: var(--muted); }
   .draft-search { display: grid; gap: 6px; color: var(--text); font-size: var(--text-sm); font-weight: 600; }
