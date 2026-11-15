@@ -405,6 +405,103 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         limitations: ['Transcript text and creator observations are not independently fact-checked.']
       };
     },
+    async reviewStudyScript(projectId, studyId, expectedStudyRevision, anglePrompt,
+      anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) {
+      const study = studyInProject(projectId, studyId);
+      const checked = await this.interpretStudyAngles(projectId, studyId, expectedStudyRevision,
+        anglePrompt, anglesResponseJson, selectedAngleId);
+      if (!checked.draftPrompt || checked.draftPrompt !== preparedDraftPrompt ||
+          scriptResponseJson.length > 100_000) {
+        throw new Error('Selected script context is no longer current');
+      }
+      let candidate: {
+        id: string; angle_id: string; title: string; language: string;
+        beats: Array<{ id: string; role: string; narration: string; evidence_ids: string[];
+          on_screen_text?: string | null; shots: Array<{visual: string; purpose: string;
+            evidence_ids: string[]}> }>;
+        claims: Array<{ id: string; beat_id: string; assertion: string;
+          status: string; evidence_ids: string[] }>;
+        cta?: string | null; caption?: string | null;
+      };
+      try { candidate = JSON.parse(scriptResponseJson); } catch {
+        throw new Error('Script response must be structured JSON');
+      }
+      const beats = candidate?.beats;
+      const claims = candidate?.claims;
+      if (!candidate || typeof candidate.id !== 'string' || !candidate.id.trim() ||
+          candidate.angle_id !== selectedAngleId || typeof candidate.title !== 'string' ||
+          !candidate.title.trim() || typeof candidate.language !== 'string' ||
+          !candidate.language.trim() || !study.brief.language.toLowerCase().includes(
+            candidate.language.toLowerCase()) &&
+            !candidate.language.toLowerCase().includes(study.brief.language.toLowerCase()) ||
+          !Array.isArray(beats) || beats.length < 1 || beats.length > 32 ||
+          !Array.isArray(claims) || claims.length > 80 ||
+          new Set(beats.map((beat) => beat.id)).size !== beats.length ||
+          beats.some((beat) => !beat || typeof beat.id !== 'string' ||
+            typeof beat.narration !== 'string' || !beat.narration.trim() ||
+            !['hook', 'context', 'explanation', 'demonstration', 'payoff', 'cta']
+              .includes(beat.role) ||
+            !Array.isArray(beat.evidence_ids) ||
+            beat.evidence_ids.some((id) => typeof id !== 'string' ||
+              !preparedDraftPrompt.includes(id)) ||
+            !Array.isArray(beat.shots)) ||
+          claims.some((claim) => !claim || typeof claim.id !== 'string' ||
+            typeof claim.assertion !== 'string' || !claim.assertion.trim() ||
+            !beats.some((beat) => beat.id === claim.beat_id) ||
+            !['unverified', 'disputed', 'opinion'].includes(claim.status) ||
+            !Array.isArray(claim.evidence_ids) ||
+            claim.evidence_ids.some((id) => !preparedDraftPrompt.includes(id)))) {
+        throw new Error('Invalid script angle, language, beats, or citations');
+      }
+      const title = candidate.title.trim().slice(0, 200);
+      const body = [
+        '# ' + title, 'Creative angle ID: ' + selectedAngleId,
+        ...beats.flatMap((beat) => [
+          '[' + beat.role + ']\n' + beat.narration.trim(),
+          ...(beat.on_screen_text ? ['On screen: ' + beat.on_screen_text] : []),
+          ...(beat.shots ?? []).map((shot) => 'Shot suggestion: ' +
+            shot.visual + ' — ' + shot.purpose),
+          ...(beat.evidence_ids.length ? ['Referenced source IDs (not fact-checked): ' +
+            beat.evidence_ids.join(', ')] : [])
+        ]),
+        ...(candidate.cta ? ['CTA: ' + candidate.cta] : []),
+        ...(candidate.caption ? ['Caption: ' + candidate.caption] : []),
+        ...(claims.length ? [
+          'Model-proposed claims — independently verify before publication:',
+          ...claims.map((claim) => '[' + claim.status + '] ' + claim.assertion +
+            ' — source IDs: ' + (claim.evidence_ids.length ? claim.evidence_ids.join(', ') : 'none'))
+        ] : [])
+      ].join('\n\n');
+      const needsFactReviewCount = claims.filter((claim) => claim.status !== 'opinion').length;
+      const limitations = [...checked.limitations,
+        'Valid JSON and matching source IDs do not establish factual accuracy or originality.'];
+      let savedStudy: ContentStudy | null = null;
+      if (acceptAsNewCandidate) {
+        const current = studyInProject(projectId, studyId);
+        if (current.revision !== expectedStudyRevision ||
+            (await this.prepareStudyAngles(projectId, studyId)).prompt !== anglePrompt ||
+            (current.drafts?.length ?? 0) >= 200) {
+          throw new Error('Study changed before script acceptance');
+        }
+        const draftId = `mock-draft-${++draftCounter}`;
+        const snapshot: DraftSnapshot = {
+          id: draftId + ':v1', revision: 1, content: body,
+          createdAt: '2026-11-15T12:00:00Z'
+        };
+        draftCopies.get(studyId)?.set(draftId, {
+          title, body, revision: 1, versions: [snapshot], archived: false
+        });
+        savedStudy = { ...current, draftId, draftRevision: 1, draft: body,
+          draftVersions: [snapshot], drafts: [
+            { id: draftId, title, revision: 1 }, ...(current.drafts ?? [])
+          ] };
+        studies.set(studyId, structuredClone(savedStudy));
+      }
+      return { title, body, angleId: selectedAngleId,
+        referencedSourceCount: study.sources.slice(0, 8).length,
+        claimCount: claims.length, needsFactReviewCount, limitations,
+        savedStudy: savedStudy ? structuredClone(savedStudy) : null };
+    },
     async listStudyEvidence(projectId: string, studyId: string) {
       studyInProject(projectId, studyId);
       return structuredClone(studyEvidence.get(studyId) ?? []);
