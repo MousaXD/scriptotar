@@ -666,3 +666,55 @@ fn arabic_output_and_locator_remain_intact() {
     assert_eq!(sink.count(), 3);
     assert!(export_candidate(&sink.get(ids[0]).candidates[0]).contains("هذه فكرة"));
 }
+
+#[test]
+fn canonical_gateway_adapter_reuses_real_source_rows_and_rejects_cross_project() {
+    use scriptotar_ai::writing::{WritingInput, WritingTask};
+    use scriptotar_core::{StudySource, StudySourceKind};
+
+    let scoped = context();
+    let sources: Vec<_> = scoped
+        .sources
+        .iter()
+        .map(|source| StudySource {
+            id: source.study_source_id,
+            project_id: scoped.project_id,
+            study_id: scoped.study_id,
+            kind: StudySourceKind::Transcript,
+            reference_id: Some(source.origin_id),
+            locator: "fixture local transcript".into(),
+            manual_text: None,
+            fingerprint: source.origin_id.to_string(),
+            source_revision: None,
+            collected_at: "2026-11-01T10:00:00Z".into(),
+            uncertainty: None,
+            available: true,
+            created_at: "2026-11-01T10:00:00Z".into(),
+        })
+        .collect();
+    let input = WritingInput {
+        brief: scoped.brief.clone(),
+        evidence: scoped.evidence.clone(),
+        findings: scoped.findings.clone(),
+        task: WritingTask::ProposeAngles { count: 3 },
+    };
+    let reconstructed = StudyWritingContext::from_scoped_study(
+        scoped.project_id,
+        scoped.study_id,
+        scoped.study_revision,
+        &sources,
+        input.clone(),
+    )
+    .unwrap();
+    assert_eq!(reconstructed, scoped);
+    assert!(matches!(
+        StudyWritingContext::from_scoped_study(
+            Uuid::new_v4(),
+            scoped.study_id,
+            scoped.study_revision,
+            &sources,
+            input,
+        ),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+}
