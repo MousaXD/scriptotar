@@ -697,6 +697,40 @@ mod tests {
                 )
                 .is_err());
             evidence_id = Uuid::parse_str(&evidence.id).unwrap();
+            assert!(services
+                .review_studio_evidence(
+                    Uuid::new_v4(), study_id, evidence_id,
+                    "unverified", "dispute", "Wrong project"
+                )
+                .is_err());
+            assert!(services
+                .review_studio_evidence(
+                    project_id, study_id, evidence_id,
+                    "unverified", "dispute", " "
+                )
+                .is_err());
+            assert!(services
+                .review_studio_evidence(
+                    project_id, study_id, evidence_id,
+                    "unverified", "corroborate", "Cannot certify source"
+                )
+                .is_err());
+            let disputed = services
+                .review_studio_evidence(
+                    project_id, study_id, evidence_id,
+                    "unverified", "dispute", "Full transcript contradicts this claim"
+                )
+                .unwrap();
+            assert_eq!(disputed.certainty, "disputed");
+            assert_eq!(disputed.uncertainty_note.as_deref(), Some("Full transcript contradicts this claim"));
+            assert_eq!(disputed.locator, evidence.locator);
+            assert!(matches!(
+                services.review_studio_evidence(
+                    project_id, study_id, evidence_id,
+                    "unverified", "dispute", "Stale review"
+                ),
+                Err(RepositoryError::Conflict(_))
+            ));
             assert!(matches!(
                 services.save_studio_study(
                     project_id,
@@ -730,7 +764,23 @@ mod tests {
         let restored_refs = reopened.list_studio_evidence(project_id, study_id).unwrap();
         assert_eq!(restored_refs.len(), 1);
         assert_eq!(restored_refs[0].locator, "0:00-0:05");
-        assert_eq!(restored_refs[0].certainty, "unverified");
+        assert_eq!(restored_refs[0].certainty, "disputed");
+        assert_eq!(
+            restored_refs[0].uncertainty_note.as_deref(),
+            Some("Full transcript contradicts this claim")
+        );
+        let reopened_review = reopened
+            .review_studio_evidence(
+                project_id, study_id, evidence_id,
+                "disputed", "reopen", "Reviewed full recording again"
+            )
+            .unwrap();
+        assert_eq!(reopened_review.certainty, "unverified");
+        assert_eq!(
+            reopened.store.get_evidence_reference(project_id, study_id, evidence_id)
+                .unwrap().input.certainty,
+            EvidenceCertainty::Unverified
+        );
     }
 
     #[test]
