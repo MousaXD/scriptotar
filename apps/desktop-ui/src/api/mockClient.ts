@@ -216,6 +216,24 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       studyEvidence.set(studyId, [...(studyEvidence.get(studyId) ?? []), item]);
       return structuredClone(item);
     },
+    async reviewStudyEvidence(projectId, studyId, evidenceId, input) {
+      studyInProject(projectId, studyId);
+      const previous = studyEvidence.get(studyId) ?? [];
+      const entry = previous.find((item) => item.id === evidenceId);
+      if (!entry || entry.certainty !== input.expectedCertainty) {
+        throw new Error('Evidence changed or unavailable');
+      }
+      if (!input.note.trim() || input.note.length > 4000) throw new Error('Review reason required');
+      const next = input.expectedCertainty === 'unverified' && input.action === 'dispute'
+        ? 'disputed' : input.expectedCertainty === 'disputed' && input.action === 'reopen'
+          ? 'unverified' : null;
+      if (!next) throw new Error('Invalid evidence review transition');
+      const reviewed: StudyEvidence = {
+        ...entry, certainty: next, uncertaintyNote: input.note.trim()
+      };
+      studyEvidence.set(studyId, previous.map((item) => item.id === evidenceId ? reviewed : item));
+      return structuredClone(reviewed);
+    },
     async startLocalInspection(projectId: string, studyId: string, transcriptId: string) {
       const study = studyInProject(projectId, studyId);
       if (!study.sources.some((item) => item.kind === 'transcript' && item.id === transcriptId)) {

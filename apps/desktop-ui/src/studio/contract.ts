@@ -40,6 +40,11 @@ export interface StudyEvidenceInput {
   timestampSeconds?: number | null;
   uncertaintyNote?: string | null;
 }
+export interface StudyEvidenceReviewInput {
+  expectedCertainty: 'unverified' | 'disputed';
+  action: 'dispute' | 'reopen';
+  note: string;
+}
 export interface StudyEvidence {
   id: string;
   projectId: string;
@@ -73,6 +78,7 @@ export interface StudioGateway {
   decideLocalInspection?(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;
   listStudyEvidence?(projectId: string, studyId: string): Promise<StudyEvidence[]>;
   addStudyEvidence?(projectId: string, studyId: string, input: StudyEvidenceInput): Promise<StudyEvidence>;
+  reviewStudyEvidence?(projectId: string, studyId: string, evidenceId: string, input: StudyEvidenceReviewInput): Promise<StudyEvidence>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string): Promise<ContentStudy>;

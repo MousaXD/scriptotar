@@ -31,6 +31,18 @@ describe('Study evidence → local writing prompt', () => {
       [{ kind: 'transcript', id: 'another-transcript' }])).toBe('');
   });
 
+  it('never puts disputed claims into a writing prompt', () => {
+    expect(evidencePromptContext([{ ...observed, certainty: 'disputed',
+      uncertaintyNote: 'Contradicted by the original recording' }],
+      'project-1', 'study-1', [observed.source!])).toBe('');
+    const mixed = evidencePromptContext([
+      { ...observed, id: 'e-bad', claim: 'DISPUTED FALSEHOOD', certainty: 'disputed' },
+      observed
+    ], 'project-1', 'study-1', [observed.source!]);
+    expect(mixed).not.toContain('DISPUTED FALSEHOOD');
+    expect(mixed).toContain('The speaker uses a question');
+  });
+
   it('caps creator-supplied material and never upgrades a certainty label', () => {
     const many = Array.from({ length: 40 }, (_, i) => ({
       ...observed, id: 'evidence-' + i, claim: 'x'.repeat(2000),

@@ -35,6 +35,9 @@
     listStudyEvidence: (projectId: string, studyId: string) => api.listStudyEvidence(projectId, studyId),
     addStudyEvidence: (projectId: string, studyId: string, input: Parameters<ScriptotarApi['addStudyEvidence']>[2]) =>
       api.addStudyEvidence(projectId, studyId, input),
+    reviewStudyEvidence: (projectId: string, studyId: string, evidenceId: string,
+      input: Parameters<ScriptotarApi['reviewStudyEvidence']>[3]) =>
+      api.reviewStudyEvidence(projectId, studyId, evidenceId, input),
     listLocalInspections: (projectId: string, studyId: string) => api.listLocalInspections(projectId, studyId),
     startLocalInspection: (projectId: string, studyId: string, transcriptId: string) =>
       api.startLocalInspection(projectId, studyId, transcriptId),

@@ -16,7 +16,7 @@ export function evidencePromptContext(
   }
   const selected = new Set(sources.slice(0, 8).map((item) => item.kind + ':' + item.id));
   const included = observations.filter((item) =>
-    item.sourceAvailable && item.source !== null &&
+    item.sourceAvailable && item.source !== null && item.certainty !== 'disputed' &&
     selected.has(item.source.kind + ':' + item.source.id)
   ).slice(0, MAX_OBSERVATIONS).map((item) => ({
     evidence_id: item.id,

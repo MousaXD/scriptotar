@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy, CreativeBrief, StudyEvidence, StudyEvidenceInput } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 import type {
   AiRunDetail,
@@ -61,6 +61,11 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<StudyEvidence[]>('list_study_evidence', { projectId, studyId }),
     addStudyEvidence: (projectId, studyId, input: StudyEvidenceInput) =>
       invoke<StudyEvidence>('add_study_evidence', { projectId, studyId, input }),
+    reviewStudyEvidence: (projectId, studyId, evidenceId, input: StudyEvidenceReviewInput) =>
+      invoke<StudyEvidence>('review_study_evidence', {
+        projectId, studyId, evidenceId, expectedCertainty: input.expectedCertainty,
+        action: input.action, note: input.note
+      }),
     startLocalInspection: (projectId, studyId, transcriptId) =>
       invoke<LocalInspectionRun>('start_local_inspection', { projectId, studyId, transcriptId }),
     listLocalInspections: (projectId, studyId) =>
