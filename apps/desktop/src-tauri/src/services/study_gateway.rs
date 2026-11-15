@@ -631,7 +631,13 @@ mod tests {
                 .unwrap();
             assert_eq!(evidence.certainty, "unverified");
             assert_eq!(evidence.source, Some(sources[1].clone()));
-            assert_eq!(services.list_studio_evidence(project_id, study_id).unwrap().len(), 1);
+            assert_eq!(
+                services
+                    .list_studio_evidence(project_id, study_id)
+                    .unwrap()
+                    .len(),
+                1
+            );
             assert!(services
                 .add_studio_evidence(
                     Uuid::new_v4(),

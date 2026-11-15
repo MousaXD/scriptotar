@@ -21,8 +21,8 @@ use scriptotar_agent::RunSnapshot;
 use dto::{
     AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
     UiResearchItemDetail, UiSettings, UiStudioBrief, UiStudioStudy, UiStudioStudyPatch,
-    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiTranscript,
-    UiTranscriptSummary, UiWatchlistStatus,
+    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiTranscript, UiTranscriptSummary,
+    UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
 use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
