@@ -999,6 +999,8 @@ mod tests {
                     id: Uuid::new_v4().to_string(),
                 }]),
                 draft: Some("must not be saved".into()),
+                draft_id: None,
+                draft_revision: None,
             },
         );
         assert!(attempt.is_err());
