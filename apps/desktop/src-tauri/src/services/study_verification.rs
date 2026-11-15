@@ -100,7 +100,9 @@ impl AppServices {
         }
         // Pin the active project through the complete read. A caller cannot
         // verify claims under a different (otherwise existing) project.
-        let project_guard = self.active_project.lock()
+        let project_guard = self
+            .active_project
+            .lock()
             .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
         if *project_guard != project_id {
             return Err(RepositoryError::NotFound("project is not active".into()));
@@ -123,7 +125,9 @@ impl AppServices {
             return Err(RepositoryError::NotFound("Study is archived".into()));
         }
         if study.revision != expected_study_revision {
-            return Err(RepositoryError::Conflict("Study changed before verification".into()));
+            return Err(RepositoryError::Conflict(
+                "Study changed before verification".into(),
+            ));
         }
         let sources = self.store.list_study_sources(project_id, study_id)?;
         let references = self.store.list_evidence_references(project_id, study_id)?;
@@ -141,7 +145,8 @@ impl AppServices {
         let final_draft = self.store.get_draft(project_id, draft_id)?;
         if fresh_study.revision != expected_study_revision
             || final_draft != saved_draft
-            || fresh_sources != sources || fresh_references != references
+            || fresh_sources != sources
+            || fresh_references != references
         {
             return Err(RepositoryError::Conflict(
                 "Study/evidence changed during verification; retry with a fresh snapshot".into(),
