@@ -797,6 +797,40 @@ async fn interpret_study_angles(
 }
 
 #[tauri::command]
+async fn review_study_script(
+    project_id: String,
+    study_id: String,
+    expected_study_revision: i64,
+    angle_prompt: String,
+    angles_response_json: String,
+    selected_angle_id: String,
+    prepared_draft_prompt: String,
+    script_response_json: String,
+    accept_as_new_candidate: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<crate::dto::UiStudyScriptReview, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .review_studio_script(
+                project_id,
+                study_id,
+                expected_study_revision,
+                &angle_prompt,
+                &angles_response_json,
+                &selected_angle_id,
+                &prepared_draft_prompt,
+                &script_response_json,
+                accept_as_new_candidate,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_study(
     project_id: String,
     study_id: String,
@@ -1368,6 +1402,7 @@ pub fn run() {
             set_study_draft_archived,
             prepare_study_angles,
             interpret_study_angles,
+            review_study_script,
             save_study,
             list_study_evidence,
             add_study_evidence,

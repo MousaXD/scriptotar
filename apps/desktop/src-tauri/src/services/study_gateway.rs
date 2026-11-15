@@ -4,10 +4,10 @@ use crate::dto::{
     UiStudioAngleOption, UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion,
     UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch, UiStudioStudySummary,
     UiStudyAngleInterpretation, UiStudyAnglePrompt, UiStudyEvidence, UiStudyEvidenceInput,
-    UiStudyEvidenceReview,
+    UiStudyEvidenceReview, UiStudyScriptReview,
 };
 use scriptotar_ai::writing::{
-    self, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
+    self, ClaimStatus, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
     EvidenceLocator as WritingLocator, EvidenceRef as WritingEvidence,
     EvidenceStatus as WritingEvidenceStatus, WritingInput, WritingTask,
 };
@@ -118,6 +118,55 @@ fn ui_evidence(
             })
             .collect(),
     }
+}
+
+/// Presentation preserves every model-proposed claim's uncertainty and locator.
+fn render_reviewed_script(script: &writing::ScriptDraft) -> String {
+    let mut parts = vec![
+        format!("# {}", script.title.trim()),
+        format!("Creative angle ID: {}", script.angle_id),
+    ];
+    for beat in &script.beats {
+        parts.push(format!("[{:?}]\n{}", beat.role, beat.narration.trim()));
+        if let Some(text) = &beat.on_screen_text {
+            parts.push(format!("On screen: {}", text.trim()));
+        }
+        for shot in &beat.shots {
+            parts.push(format!(
+                "Shot suggestion: {} — {}",
+                shot.visual.trim(),
+                shot.purpose.trim()
+            ));
+        }
+        if !beat.evidence_ids.is_empty() {
+            parts.push(format!(
+                "Referenced source IDs (not fact-checked): {}",
+                beat.evidence_ids.join(", ")
+            ));
+        }
+    }
+    if let Some(cta) = &script.cta {
+        parts.push(format!("CTA: {}", cta.trim()));
+    }
+    if let Some(caption) = &script.caption {
+        parts.push(format!("Caption: {}", caption.trim()));
+    }
+    if !script.claims.is_empty() {
+        parts.push("Model-proposed claims — independently verify before publication:".into());
+        for claim in &script.claims {
+            parts.push(format!(
+                "[{:?}] {} — source IDs: {}",
+                claim.status,
+                claim.assertion.trim(),
+                if claim.evidence_ids.is_empty() {
+                    "none".into()
+                } else {
+                    claim.evidence_ids.join(", ")
+                }
+            ));
+        }
+    }
+    parts.join("\n\n")
 }
 
 /// A list row must never hydrate draft bodies, revisions or source transcripts.
@@ -620,6 +669,102 @@ impl AppServices {
             angles,
             draft_prompt,
             limitations,
+        })
+    }
+
+    /// Parse a pasted ScriptDraft against exact Study context and the selected angle.
+    /// Preview is read-only; acceptance creates a separate draft, never overwriting
+    /// the human editor. This method makes no AI provider request.
+    pub fn review_studio_script(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_study_revision: i64,
+        angle_prompt: &str,
+        angles_response_json: &str,
+        selected_angle_id: &str,
+        prepared_draft_prompt: &str,
+        script_response_json: &str,
+        accept_as_new_candidate: bool,
+    ) -> RepositoryResult<UiStudyScriptReview> {
+        if angle_prompt.len() > 100_000
+            || angles_response_json.len() > 100_000
+            || prepared_draft_prompt.len() > 100_000
+            || script_response_json.len() > 100_000
+        {
+            return Err(invalid("script payload size"));
+        }
+        let reviewed = self.interpret_studio_angles(
+            project_id,
+            study_id,
+            expected_study_revision,
+            angle_prompt,
+            angles_response_json,
+            Some(selected_angle_id),
+        )?;
+        if reviewed.draft_prompt.as_deref() != Some(prepared_draft_prompt) {
+            return Err(RepositoryError::Conflict(
+                "selected script prompt changed since preparation".into(),
+            ));
+        }
+        let (mut input, mut limitations, _, _, _) =
+            self.scoped_writing_input(project_id, study_id)?;
+        let angles = writing::parse_angles(angles_response_json, &input)
+            .map_err(|err| RepositoryError::Validation(format!("invalid angles: {err}")))?;
+        let selected = angles
+            .into_iter()
+            .find(|angle| angle.id == selected_angle_id)
+            .ok_or_else(|| invalid("selected angle"))?;
+        input.task = WritingTask::Draft { angle: selected };
+        let script = writing::parse_draft(script_response_json, &input)
+            .map_err(|err| RepositoryError::Validation(format!("invalid script: {err}")))?;
+        let body = render_reviewed_script(&script);
+        let title: String = script.title.trim().chars().take(200).collect();
+        let needs_fact_review_count = script
+            .claims
+            .iter()
+            .filter(|claim| claim.status != ClaimStatus::Opinion)
+            .count();
+        if needs_fact_review_count > 0 {
+            limitations.push(
+                "Model-proposed factual claims require independent review before publication."
+                    .into(),
+            );
+        }
+        limitations.push(
+            "Valid JSON and matching source IDs do not establish factual accuracy or originality."
+                .into(),
+        );
+        let attached = self.store.list_study_sources(project_id, study_id)?;
+        let source_ids: Vec<Uuid> = attached
+            .iter()
+            .filter(|source| source.available)
+            .take(8)
+            .map(|source| source.id)
+            .collect();
+        let saved_study = if accept_as_new_candidate {
+            let _project_guard = self.lock_studio_project(project_id)?;
+            let saved = self.store.create_reviewed_study_draft(
+                project_id,
+                study_id,
+                expected_study_revision,
+                &title,
+                &body,
+                &source_ids,
+            )?;
+            Some(self.read_studio_bundle_for(project_id, study_id, Some(saved.id))?)
+        } else {
+            None
+        };
+        Ok(UiStudyScriptReview {
+            title,
+            body,
+            angle_id: script.angle_id,
+            referenced_source_count: source_ids.len(),
+            claim_count: script.claims.len(),
+            needs_fact_review_count,
+            limitations,
+            saved_study,
         })
     }
 

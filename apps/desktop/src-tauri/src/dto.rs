@@ -348,6 +348,20 @@ pub struct UiStudyAngleInterpretation {
     pub limitations: Vec<String>,
 }
 
+/// Locally validated model-proposed content, not independent fact verification.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyScriptReview {
+    pub title: String,
+    pub body: String,
+    pub angle_id: String,
+    pub referenced_source_count: usize,
+    pub claim_count: usize,
+    pub needs_fact_review_count: usize,
+    pub limitations: Vec<String>,
+    pub saved_study: Option<UiStudioStudy>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiStudioDraftSummary {
