@@ -231,7 +231,7 @@ pub struct ClaimResult {
     pub findings: Vec<Finding>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct VerificationReport {
     pub project_id: String,
     pub study_id: String,
