@@ -606,7 +606,6 @@ impl SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 
-
     /// Metadata-only list of archived candidates, available for recovery after restart.
     pub fn list_archived_draft_summaries(
         &self,
@@ -716,7 +715,9 @@ impl SqliteStore {
             )
             .map_err(db_error)?;
         if changed != 1 {
-            return Err(RepositoryError::Conflict("draft changed during archival".into()));
+            return Err(RepositoryError::Conflict(
+                "draft changed during archival".into(),
+            ));
         }
         tx.execute(
             "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)

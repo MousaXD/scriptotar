@@ -1230,9 +1230,7 @@ mod tests {
         assert_eq!(archived.archived_drafts.len(), 1);
         drop(restarted);
         let reopened = AppServices::new(dir.path()).unwrap();
-        let archived_after_restart = reopened
-            .get_studio_study(project_id, study_id)
-            .unwrap();
+        let archived_after_restart = reopened.get_studio_study(project_id, study_id).unwrap();
         assert_eq!(archived_after_restart.archived_drafts.len(), 1);
         assert_eq!(archived_after_restart.drafts.len(), 1);
         assert!(reopened
