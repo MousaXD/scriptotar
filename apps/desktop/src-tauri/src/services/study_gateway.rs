@@ -183,9 +183,7 @@ impl AppServices {
             .iter()
             .filter_map(ui_source)
             .collect();
-        let drafts = self
-            .store
-            .list_draft_summaries(project_id, study_id, 200)?;
+        let drafts = self.store.list_draft_summaries(project_id, study_id, 200)?;
         let selected =
             if let Some(id) = requested_draft_id {
                 Some(drafts.iter().find(|item| item.id == id).ok_or_else(|| {
@@ -309,11 +307,13 @@ impl AppServices {
         let _project_guard = self.lock_studio_project(project_id)?;
         let draft = self.store.get_draft(project_id, draft_id)?;
         if draft.study_id != study_id || draft.archived_at.is_some() {
-            return Err(RepositoryError::NotFound("draft in this active Study".into()));
+            return Err(RepositoryError::NotFound(
+                "draft in this active Study".into(),
+            ));
         }
-        let renamed = self
-            .store
-            .rename_draft(project_id, draft_id, expected_draft_revision, title)?;
+        let renamed =
+            self.store
+                .rename_draft(project_id, draft_id, expected_draft_revision, title)?;
         self.read_studio_bundle_for(project_id, study_id, Some(renamed.id))
     }
 

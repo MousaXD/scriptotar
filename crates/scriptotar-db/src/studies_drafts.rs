@@ -385,7 +385,11 @@ impl SqliteStore {
                  WHERE d.id=?1 AND d.project_id=?2 AND d.revision=?3
                    AND d.archived_at IS NULL AND st.archived_at IS NULL
                    AND p.archived_at IS NULL",
-                params![draft_id.to_string(), project_id.to_string(), expected_revision],
+                params![
+                    draft_id.to_string(),
+                    project_id.to_string(),
+                    expected_revision
+                ],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()

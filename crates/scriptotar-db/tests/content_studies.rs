@@ -641,9 +641,7 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
 #[test]
 fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
     let (_dir, db, owner, foreign) = fixture();
-    let study = db
-        .create_study(owner.id, "Candidate index", "")
-        .unwrap();
+    let study = db.create_study(owner.id, "Candidate index", "").unwrap();
     let large_body = "An original studio script. ".repeat(30_000);
     let first = db
         .create_draft(owner.id, study.id, "Original", &large_body)
@@ -659,7 +657,12 @@ fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
     assert!(summaries
         .iter()
         .any(|value| value.id == second.id && value.title == "Copy of Original"));
-    assert_eq!(db.list_draft_summaries(owner.id, study.id, 1).unwrap().len(), 1);
+    assert_eq!(
+        db.list_draft_summaries(owner.id, study.id, 1)
+            .unwrap()
+            .len(),
+        1
+    );
     assert!(db.list_draft_summaries(foreign.id, study.id, 200).is_err());
     assert_eq!(db.get_draft(owner.id, second.id).unwrap().body, large_body);
     let renamed = db
@@ -667,11 +670,16 @@ fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
         .unwrap();
     assert_eq!(renamed.body, large_body);
     assert_eq!(renamed.revision, second.revision + 1);
-    assert_eq!(db.list_draft_versions(owner.id, second.id).unwrap().len(), 2);
+    assert_eq!(
+        db.list_draft_versions(owner.id, second.id).unwrap().len(),
+        2
+    );
     assert!(matches!(
         db.rename_draft(owner.id, second.id, second.revision, "Stale"),
         Err(RepositoryError::Conflict(_))
     ));
-    assert!(db.rename_draft(foreign.id, second.id, renamed.revision, "Foreign").is_err());
+    assert!(db
+        .rename_draft(foreign.id, second.id, renamed.revision, "Foreign")
+        .is_err());
     assert_eq!(db.get_draft(owner.id, first.id).unwrap().title, "Original");
 }

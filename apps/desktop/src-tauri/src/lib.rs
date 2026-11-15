@@ -712,7 +712,13 @@ async fn rename_study_draft(
     let services = state.inner().clone();
     on_blocking_worker(move || {
         services
-            .rename_studio_draft(project_id, study_id, draft_id, expected_draft_revision, &title)
+            .rename_studio_draft(
+                project_id,
+                study_id,
+                draft_id,
+                expected_draft_revision,
+                &title,
+            )
             .map_err(command_error)
     })
     .await
