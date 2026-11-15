@@ -1660,7 +1660,9 @@ mod tests {
             assert!(sources
                 .iter()
                 .all(|source| unchanged.sources.contains(source)));
-            assert!(unchanged.draft.starts_with("# An original opening proposal"));
+            assert!(unchanged
+                .draft
+                .starts_with("# An original opening proposal"));
         }
         let reopened = AppServices::new(dir.path()).unwrap();
         let restored = reopened.get_studio_study(project_id, study_id).unwrap();
