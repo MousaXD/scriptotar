@@ -409,8 +409,6 @@ impl SqliteStore {
             ).map_err(db_error)?;
             let next = if current=="unknown" && v8_status=="unknown" {
                 None
-            } else if current=="not_applied" && v8_status=="not_applied" {
-                None
             } else if current=="reserved" || (current=="unknown" && v8_status!="unknown") {
                 Some(v8_status)
             } else { return Err(conflict("v8 effect transition conflicts with receipt")); };
