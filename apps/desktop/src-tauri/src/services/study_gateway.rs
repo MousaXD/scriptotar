@@ -415,6 +415,15 @@ impl AppServices {
         study_id: Uuid,
     ) -> RepositoryResult<(WritingInput, Vec<String>, usize, usize, usize)> {
         let _project_guard = self.lock_studio_project(project_id)?;
+        self.scoped_writing_input_locked(project_id, study_id)
+    }
+
+    /// Caller must hold the project lock throughout validation and any write.
+    fn scoped_writing_input_locked(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<(WritingInput, Vec<String>, usize, usize, usize)> {
         // Only the persisted brief is needed here; do not hydrate historical
         // draft bodies/versions just to prepare a local writing request.
         let study = self.store.get_study(project_id, study_id)?;
@@ -615,10 +624,32 @@ impl AppServices {
         response_json: &str,
         selected_angle_id: Option<&str>,
     ) -> RepositoryResult<UiStudyAngleInterpretation> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        self.interpret_studio_angles_locked(
+            project_id,
+            study_id,
+            expected_study_revision,
+            prepared_prompt,
+            response_json,
+            selected_angle_id,
+        )
+    }
+
+    /// This locked helper is also used by script acceptance so the evidence
+    /// checked for an angle cannot change before a candidate is committed.
+    fn interpret_studio_angles_locked(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_study_revision: i64,
+        prepared_prompt: &str,
+        response_json: &str,
+        selected_angle_id: Option<&str>,
+    ) -> RepositoryResult<UiStudyAngleInterpretation> {
         if prepared_prompt.len() > 100_000 || response_json.len() > 100_000 {
             return Err(invalid("angle payload size"));
         }
-        let (mut input, limitations, _, _, _) = self.scoped_writing_input(project_id, study_id)?;
+        let (mut input, limitations, _, _, _) = self.scoped_writing_input_locked(project_id, study_id)?;
         if self.store.get_study(project_id, study_id)?.revision != expected_study_revision {
             return Err(RepositoryError::Conflict(
                 "Study changed since angle preparation".into(),
@@ -681,6 +712,10 @@ impl AppServices {
         study_id: Uuid,
         request: &UiStudyScriptInput,
     ) -> RepositoryResult<UiStudyScriptReview> {
+        // Hold the same project lock for re-deriving source/evidence context,
+        // parsing the model response and the final atomic SQLite write. A
+        // concurrent review or edit must not invalidate the checked prompt.
+        let _project_guard = self.lock_studio_project(project_id)?;
         let expected_study_revision = request.expected_study_revision;
         let angle_prompt = request.angle_prompt.as_str();
         let angles_response_json = request.angles_response_json.as_str();
@@ -695,7 +730,7 @@ impl AppServices {
         {
             return Err(invalid("script payload size"));
         }
-        let reviewed = self.interpret_studio_angles(
+        let reviewed = self.interpret_studio_angles_locked(
             project_id,
             study_id,
             expected_study_revision,
@@ -709,7 +744,7 @@ impl AppServices {
             ));
         }
         let (mut input, mut limitations, _, _, _) =
-            self.scoped_writing_input(project_id, study_id)?;
+            self.scoped_writing_input_locked(project_id, study_id)?;
         let angles = writing::parse_angles(angles_response_json, &input)
             .map_err(|err| RepositoryError::Validation(format!("invalid angles: {err}")))?;
         let selected = angles
@@ -744,7 +779,6 @@ impl AppServices {
             .map(|source| source.id)
             .collect();
         let saved_study = if accept_as_new_candidate {
-            let _project_guard = self.lock_studio_project(project_id)?;
             let saved = self.store.create_reviewed_study_draft(
                 project_id,
                 study_id,
