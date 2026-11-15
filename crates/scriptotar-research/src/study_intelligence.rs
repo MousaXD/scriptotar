@@ -229,6 +229,34 @@ fn has_narrative_turn(text: &str) -> bool {
         .any(|word| matches!(word, "but" | "however" | "instead" | "لكن" | "ولكن" | "ثم"))
 }
 
+
+fn opening_hook_category(text: &str) -> Option<&'static str> {
+    let lowered = text.trim_start().to_lowercase();
+    if lowered.contains('?')
+        || lowered.contains('؟')
+        || ["why ", "how ", "what if ", "هل ", "كيف ", "لماذا "]
+            .iter()
+            .any(|start| lowered.starts_with(start))
+    {
+        Some("question-led")
+    } else if [
+        "i'll show", "i will show", "learn how", "here's how", "you can",
+        "سأريك", "تعلم", "سنتعلم",
+    ]
+    .iter()
+    .any(|phrase| lowered.contains(phrase))
+    {
+        Some("promise/tutorial")
+    } else if lowered.starts_with("but ")
+        || lowered.starts_with("however ")
+        || lowered.starts_with("لكن ")
+    {
+        Some("contrast-led")
+    } else {
+        None
+    }
+}
+
 fn transcript_observations(
     source: &StudySourceMaterial,
     transcript: &StudyTranscriptMaterial,
@@ -306,13 +334,15 @@ fn transcript_observations(
             true,
         ));
         if index == 0 {
-            findings.push(observe(
-                None,
-                Some(TranscriptFeature::Hook),
-                "The opening words are a possible spoken hook; hook intent or effectiveness is unverified.",
-                evidence.clone(),
-                false,
-            ));
+            if let Some(category) = opening_hook_category(&segment.text) {
+                findings.push(observe(
+                    None,
+                    Some(TranscriptFeature::Hook),
+                    format!("A {category} opening is present in the spoken excerpt; hook intent or effectiveness is unverified."),
+                    evidence.clone(),
+                    false,
+                ));
+            }
         }
         if has_cta_wording(&segment.text) {
             findings.push(observe(
@@ -689,5 +719,6 @@ mod tests {
             .iter()
             .all(|o| !o.statement.contains("IGNORE ALL")));
         assert!(first.source_text_is_untrusted_data);
+        assert!(observations.iter().all(|o| o.feature != Some(TranscriptFeature::Hook)));
     }
 }
