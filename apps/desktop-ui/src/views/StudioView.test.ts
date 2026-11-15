@@ -244,7 +244,7 @@ describe('Content Study Studio', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('another project or study');
+    expect(await screen.findByText('Evidence belongs to another project or study.')).toBeInTheDocument();
     expect(built).not.toHaveBeenCalled();
   });
 
