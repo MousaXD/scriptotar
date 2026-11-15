@@ -61,6 +61,52 @@ pub struct StudyWritingContext {
 }
 
 impl StudyWritingContext {
+    /// Translate the existing scoped Study gateway's already validated writing
+    /// input and canonical source rows. This does not load arbitrary IDs, repeat
+    /// transcript parsing or call a provider. Agent 00 invokes it while holding
+    /// the active-project lock, never from an untrusted Tauri DTO.
+    pub fn from_scoped_study(
+        project_id: Uuid,
+        study_id: Uuid,
+        study_revision: i64,
+        canonical_sources: &[scriptotar_core::StudySource],
+        input: WritingInput,
+    ) -> WriteResult<Self> {
+        if !matches!(&input.task, WritingTask::ProposeAngles { count: 3 }) {
+            return Err(WritingWorkflowError::InvalidContext("expected three-angle input"));
+        }
+        if canonical_sources
+            .iter()
+            .any(|source| source.project_id != project_id || source.study_id != study_id)
+        {
+            return Err(WritingWorkflowError::InvalidContext("foreign source row"));
+        }
+        let sources = canonical_sources
+            .iter()
+            .filter(|source| source.available)
+            .take(8)
+            .map(|source| {
+                Ok(SelectedWritingSource {
+                    study_source_id: source.id,
+                    origin_id: source.reference_id.ok_or(
+                        WritingWorkflowError::InvalidContext("unresolved source origin"),
+                    )?,
+                })
+            })
+            .collect::<WriteResult<Vec<_>>>()?;
+        let context = Self {
+            project_id,
+            study_id,
+            study_revision,
+            sources,
+            brief: input.brief,
+            evidence: input.evidence,
+            findings: input.findings,
+        };
+        context.validate()?;
+        Ok(context)
+    }
+
     /// Requires three distinct, available *actual* sources with attributable
     /// evidence. The host must retrieve/validate these IDs in the canonical
     /// database; user-supplied IDs must never be used to construct this value.
