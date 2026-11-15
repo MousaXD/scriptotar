@@ -1225,10 +1225,17 @@ mod tests {
                 true,
             )
             .unwrap();
-        assert_eq!(archived.draft_id.as_deref(), Some(&original_id.to_string()).map(String::as_str));
+        assert_eq!(archived.draft_id, Some(original_id.to_string()));
         assert_eq!(archived.drafts.len(), 1);
         assert_eq!(archived.archived_drafts.len(), 1);
-        assert!(restarted
+        drop(restarted);
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let archived_after_restart = reopened
+            .get_studio_study(project_id, study_id)
+            .unwrap();
+        assert_eq!(archived_after_restart.archived_drafts.len(), 1);
+        assert_eq!(archived_after_restart.drafts.len(), 1);
+        assert!(reopened
             .set_studio_draft_archived(
                 project_id,
                 study_id,
@@ -1237,10 +1244,10 @@ mod tests {
                 true,
             )
             .is_err());
-        assert!(restarted
+        assert!(reopened
             .set_studio_draft_archived(Uuid::new_v4(), study_id, copy_id, 4, false)
             .is_err());
-        let restored = restarted
+        let restored = reopened
             .set_studio_draft_archived(
                 project_id,
                 study_id,
@@ -1249,7 +1256,7 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert_eq!(restored.draft_id.as_deref(), Some(&copy_id.to_string()).map(String::as_str));
+        assert_eq!(restored.draft_id, Some(copy_id.to_string()));
         assert_eq!(restored.draft, "A DIFFERENT second script");
         assert!(restored.archived_drafts.is_empty());
         assert_eq!(restored.drafts.len(), 2);
