@@ -24,6 +24,14 @@ export interface DraftSnapshot {
   content: string;
   createdAt: string;
 }
+/** Local request preview, not an AI result or provider authorization. */
+export interface StudyAnglePrompt {
+  prompt: string;
+  attachedSourceCount: number;
+  transcriptExcerptCount: number;
+  unverifiedObservationCount: number;
+  limitations: string[];
+}
 export interface DraftCandidate {
   id: string;
   title: string;
@@ -104,6 +112,7 @@ export interface StudioGateway {
   duplicateStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   renameStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   setStudyDraftArchived?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
+  prepareStudyAngles?(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];

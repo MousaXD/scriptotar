@@ -34,6 +34,7 @@
       api.renameStudyDraft(projectId, studyId, draftId, revision, title),
     setStudyDraftArchived: (projectId: string, studyId: string, draftId: string, revision: number, archived: boolean) =>
       api.setStudyDraftArchived(projectId, studyId, draftId, revision, archived),
+    prepareStudyAngles: (projectId: string, studyId: string) => api.prepareStudyAngles(projectId, studyId),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
