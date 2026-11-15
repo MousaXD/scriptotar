@@ -183,6 +183,7 @@
       if (epoch !== currentRequest) return;
       if (result.projectId !== projectId || result.id !== id) throw new Error(t.invalidStudy);
       record = result;
+      confirmSavedImport = false;
       studyId = id;
       promptRequest++;
       preparing = false;
@@ -226,6 +227,7 @@
       if (epoch !== currentRequest) return;
       if (created.projectId !== projectId) throw new Error(t.invalidStudy);
       record = created;
+      confirmSavedImport = false;
       promptRequest++;
       preparing = false;
       prompt = '';
@@ -747,7 +749,7 @@
           {#if confirmSavedImport}
             <p class="muted">{t.importAiWarning}</p>
             <div class="draft-actions">
-              <button type="button" class="button primary" disabled={importingSavedResult || busy && !importingSavedResult}
+              <button type="button" class="button primary" disabled={busy || importingSavedResult}
                 on:click={() => void importSavedAiResult()}>{t.confirmAiImport}</button>
               <button type="button" class="button secondary" disabled={importingSavedResult}
                 on:click={() => confirmSavedImport = false}>{t.cancelAiImport}</button>
@@ -781,7 +783,7 @@
         </div>
       {/if}
       <textarea id="studio-script" aria-label={t.script} dir="auto" class="script-text"
-        readonly={!!previewVersion} value={previewVersion ? previewVersion.content : draft}
+        readonly={!!previewVersion || importingSavedResult} value={previewVersion ? previewVersion.content : draft}
         placeholder={t.scriptPlaceholder}
         on:input={(event) => { draft = event.currentTarget.value; queueSave(); }}></textarea>
       {#if previewVersion}
@@ -795,7 +797,7 @@
         </div>
       {/if}
       <div class="studio-prompt-controls">
-        <button type="button" class="button secondary" disabled={preparing || evidenceBusy || loading} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
+        <button type="button" class="button secondary" disabled={preparing || evidenceBusy || loading || importingSavedResult} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
         <span>{t.promptPrivacy}</span>
       </div>
       {#if prompt}
