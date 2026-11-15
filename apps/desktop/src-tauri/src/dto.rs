@@ -327,6 +327,27 @@ pub struct UiStudyAnglePrompt {
     pub limitations: Vec<String>,
 }
 
+/// Model-proposed creative options validated locally against current Study evidence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioAngleOption {
+    pub id: String,
+    pub approach: String,
+    pub hook: String,
+    pub promise: String,
+    pub outline: Vec<String>,
+    pub estimated_seconds: u32,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyAngleInterpretation {
+    pub angles: Vec<UiStudioAngleOption>,
+    pub draft_prompt: Option<String>,
+    pub limitations: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiStudioDraftSummary {

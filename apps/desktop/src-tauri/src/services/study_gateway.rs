@@ -2,7 +2,8 @@
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy,
-    UiStudioStudyPatch, UiStudioStudySummary, UiStudyAnglePrompt, UiStudyEvidence,
+    UiStudioStudyPatch, UiStudioStudySummary, UiStudyAnglePrompt, UiStudyAngleInterpretation,
+    UiStudioAngleOption, UiStudyEvidence,
     UiStudyEvidenceInput, UiStudyEvidenceReview,
 };
 use scriptotar_ai::writing::{
@@ -359,11 +360,11 @@ impl AppServices {
     /// P1 writing bridge: scoped, bounded, no provider call and no side effects.
     /// Real transcript excerpts are attributed, not fact-checked. User notes
     /// are unverified, and disputed observations never enter the prompt.
-    pub fn prepare_studio_angle_prompt(
+    fn scoped_writing_input(
         &self,
         project_id: Uuid,
         study_id: Uuid,
-    ) -> RepositoryResult<UiStudyAnglePrompt> {
+    ) -> RepositoryResult<(WritingInput, Vec<String>, usize, usize, usize)> {
         let _project_guard = self.lock_studio_project(project_id)?;
         // Only the persisted brief is needed here; do not hydrate historical
         // draft bodies/versions just to prepare a local writing request.
@@ -531,14 +532,94 @@ impl AppServices {
             findings: Vec::new(),
             task: WritingTask::ProposeAngles { count: 3 },
         };
+        Ok((input, limitations, active.len(), excerpt_count, note_count))
+    }
+
+    pub fn prepare_studio_angle_prompt(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<UiStudyAnglePrompt> {
+        let (input, limitations, source_count, excerpt_count, note_count) =
+            self.scoped_writing_input(project_id, study_id)?;
         let prompt = writing::prepare_writing_request(&input)
             .map_err(|err| RepositoryError::Validation(format!("writing request: {err}")))?
             .prompt;
         Ok(UiStudyAnglePrompt {
             prompt,
-            attached_source_count: active.len(),
+            attached_source_count: source_count,
             transcript_excerpt_count: excerpt_count,
             unverified_observation_count: note_count,
+            limitations,
+        })
+    }
+
+    /// Validate a pasted model response against *current* attached evidence.
+    /// The exact prepared prompt is required so changing a review without
+    /// bumping the Study version invalidates old proposals, too. No egress.
+    pub fn interpret_studio_angles(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_study_revision: i64,
+        prepared_prompt: &str,
+        response_json: &str,
+        selected_angle_id: Option<&str>,
+    ) -> RepositoryResult<UiStudyAngleInterpretation> {
+        if prepared_prompt.len() > 100_000 || response_json.len() > 100_000 {
+            return Err(invalid("angle payload size"));
+        }
+        let (mut input, limitations, _, _, _) =
+            self.scoped_writing_input(project_id, study_id)?;
+        if self.store.get_study(project_id, study_id)?.revision != expected_study_revision {
+            return Err(RepositoryError::Conflict(
+                "Study changed since angle preparation".into(),
+            ));
+        }
+        let current_prompt = writing::prepare_writing_request(&input)
+            .map_err(|err| RepositoryError::Validation(format!("writing request: {err}")))?
+            .prompt;
+        if current_prompt != prepared_prompt {
+            return Err(RepositoryError::Conflict(
+                "Study evidence or brief changed since angle preparation".into(),
+            ));
+        }
+        let angles = writing::parse_angles(response_json, &input)
+            .map_err(|err| RepositoryError::Validation(format!("invalid angle response: {err}")))?;
+        let draft_prompt = if let Some(id) = selected_angle_id {
+            let angle = angles
+                .iter()
+                .find(|angle| angle.id == id)
+                .ok_or_else(|| invalid("selected angle ID"))?
+                .clone();
+            input.task = WritingTask::Draft { angle };
+            Some(
+                writing::prepare_writing_request(&input)
+                    .map_err(|err| RepositoryError::Validation(format!("draft request: {err}")))?
+                    .prompt,
+            )
+        } else {
+            None
+        };
+        let angles = angles
+            .into_iter()
+            .map(|angle| UiStudioAngleOption {
+                id: angle.id,
+                approach: angle.approach,
+                hook: angle.hook,
+                promise: angle.promise,
+                estimated_seconds: angle
+                    .outline
+                    .iter()
+                    .map(|beat| u32::from(beat.estimated_seconds))
+                    .sum(),
+                outline: angle.outline.into_iter().map(|beat| beat.intent).collect(),
+                evidence_ids: angle.evidence_ids,
+            })
+            .collect();
+        Ok(UiStudyAngleInterpretation {
+            angles,
+            draft_prompt,
             limitations,
         })
     }
