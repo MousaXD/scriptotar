@@ -94,7 +94,30 @@ impl AppServices {
         if draft_revision == 0 {
             return Err(RepositoryError::Validation("invalid draft revision".into()));
         }
+        // Pin the active project through the complete read. A caller cannot
+        // verify claims under a different (otherwise existing) project.
+        let project_guard = self.active_project.lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
+        if *project_guard != project_id {
+            return Err(RepositoryError::NotFound("project is not active".into()));
+        }
+        // Model-authored IDs are not sufficient provenance. The draft must be
+        // a current canonical saved draft belonging to the exact Study.
+        let draft_id = Uuid::parse_str(&draft.id)
+            .map_err(|_| RepositoryError::Validation("draft ID is not canonical".into()))?;
+        let saved_draft = self.store.get_draft(project_id, draft_id)?;
+        if saved_draft.study_id != study_id
+            || saved_draft.archived_at.is_some()
+            || i64::try_from(draft_revision).ok() != Some(saved_draft.revision)
+        {
+            return Err(RepositoryError::Conflict(
+                "draft Study membership or revision changed".into(),
+            ));
+        }
         let study = self.store.get_study(project_id, study_id)?;
+        if study.archived_at.is_some() {
+            return Err(RepositoryError::NotFound("Study is archived".into()));
+        }
         if study.revision != expected_study_revision {
             return Err(RepositoryError::Conflict("Study changed before verification".into()));
         }
@@ -110,7 +133,9 @@ impl AppServices {
         let fresh_study = self.store.get_study(project_id, study_id)?;
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
         let fresh_references = self.store.list_evidence_references(project_id, study_id)?;
+        let final_draft = self.store.get_draft(project_id, draft_id)?;
         if fresh_study.revision != expected_study_revision
+            || final_draft != saved_draft
             || fresh_sources != sources || fresh_references != references
         {
             return Err(RepositoryError::Conflict(
