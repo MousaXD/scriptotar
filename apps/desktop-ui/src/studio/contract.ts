@@ -32,6 +32,21 @@ export interface StudyAnglePrompt {
   unverifiedObservationCount: number;
   limitations: string[];
 }
+/** Returned text is model-proposed, not independently verified. */
+export interface StudyAngleOption {
+  id: string;
+  approach: string;
+  hook: string;
+  promise: string;
+  outline: string[];
+  estimatedSeconds: number;
+  evidenceIds: string[];
+}
+export interface StudyAngleInterpretation {
+  angles: StudyAngleOption[];
+  draftPrompt: string | null;
+  limitations: string[];
+}
 export interface DraftCandidate {
   id: string;
   title: string;
@@ -113,6 +128,8 @@ export interface StudioGateway {
   renameStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   setStudyDraftArchived?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
   prepareStudyAngles?(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
+  interpretStudyAngles?(projectId: string, studyId: string, expectedStudyRevision: number,
+    preparedPrompt: string, responseJson: string, selectedAngleId?: string): Promise<StudyAngleInterpretation>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];

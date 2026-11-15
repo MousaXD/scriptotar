@@ -15,7 +15,7 @@ import type {
   Transcript,
   WatchlistStatus
 } from '../types';
-import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudySourceRef, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudySourceRef, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 
 export interface ResearchQuery {
@@ -55,6 +55,8 @@ export interface ScriptotarApi {
   renameStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   setStudyDraftArchived(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
   prepareStudyAngles(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
+  interpretStudyAngles(projectId: string, studyId: string, expectedStudyRevision: number,
+    preparedPrompt: string, responseJson: string, selectedAngleId?: string): Promise<StudyAngleInterpretation>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
     draftId?: string; draftRevision?: number;

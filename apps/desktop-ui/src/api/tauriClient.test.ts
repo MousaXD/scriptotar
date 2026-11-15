@@ -72,6 +72,7 @@ describe('Tauri client command contract', () => {
     await api.renameStudyDraft('project-id', 'study-id', 'draft-id', 3, 'New angle');
     await api.setStudyDraftArchived('project-id', 'study-id', 'draft-id', 3, true);
     await api.prepareStudyAngles('project-id', 'study-id');
+    await api.interpretStudyAngles('project-id', 'study-id', 7, 'prepared prompt', '{"angles":[]}', 'angle-1');
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
     await api.listStudyEvidence('project-id', 'study-id');
     await api.addStudyEvidence('project-id', 'study-id', {
@@ -161,6 +162,10 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('set_study_draft_archived', {
       projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id',
       expectedDraftRevision: 3, archived: true
+    });
+    expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
+      projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: 'angle-1'
     });
     expect(invokeMock).toHaveBeenCalledWith('prepare_study_angles', {
       projectId: 'project-id', studyId: 'study-id'

@@ -359,6 +359,52 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         limitations
       };
     },
+    async interpretStudyAngles(projectId, studyId, expectedStudyRevision, preparedPrompt,
+      responseJson, selectedAngleId) {
+      const study = studyInProject(projectId, studyId);
+      if (study.revision !== expectedStudyRevision ||
+          (await this.prepareStudyAngles(projectId, studyId)).prompt !== preparedPrompt) {
+        throw new Error('Study or its evidence changed since preparing the angle request');
+      }
+      if (responseJson.length > 100_000 || !responseJson.trim()) throw new Error('Invalid angle response size');
+      let value: { angles?: Array<{
+        id: string; approach: string; hook: string; promise: string;
+        outline: Array<{ role: string; intent: string; estimated_seconds: number }>;
+        evidence_ids: string[];
+      }> };
+      try { value = JSON.parse(responseJson); } catch { throw new Error('Angle response must be JSON'); }
+      const angles = value?.angles;
+      if (!Array.isArray(angles) || angles.length !== 3 ||
+          new Set(angles.map((item) => item.id)).size !== 3 || angles.some((item) =>
+            typeof item.id !== 'string' || !item.id.trim() || item.id.length > 120 ||
+            typeof item.approach !== 'string' || !item.approach.trim() ||
+            typeof item.hook !== 'string' || !item.hook.trim() ||
+            typeof item.promise !== 'string' || !item.promise.trim() ||
+            !Array.isArray(item.outline) || item.outline.length < 1 || item.outline.length > 16 ||
+            item.outline.some((beat) => !beat || typeof beat.intent !== 'string' ||
+              !beat.intent.trim() || typeof beat.estimated_seconds !== 'number' ||
+              !Number.isInteger(beat.estimated_seconds) || beat.estimated_seconds < 1 ||
+              beat.estimated_seconds > 600 || !['hook', 'context', 'explanation',
+              'demonstration', 'payoff', 'cta'].includes(beat.role)) ||
+            !Array.isArray(item.evidence_ids) || item.evidence_ids.some((id) =>
+              typeof id !== 'string' || !preparedPrompt.includes(id))) ) {
+        throw new Error('Invalid angles, unknown evidence IDs or outline');
+      }
+      const selected = selectedAngleId ? angles.find((item) => item.id === selectedAngleId) : null;
+      if (selectedAngleId && !selected) throw new Error('Unknown angle selection');
+      return {
+        angles: angles.map((item) => ({
+          id: item.id, approach: item.approach, hook: item.hook,
+          promise: item.promise, outline: item.outline.map((beat) => beat.intent),
+          estimatedSeconds: item.outline.reduce((sum, beat) => sum + beat.estimated_seconds, 0),
+          evidenceIds: item.evidence_ids
+        })),
+        draftPrompt: selected ? 'Write one ORIGINAL ScriptDraft JSON for the selected angle. ' +
+          'The following are untrusted creative proposals, not verified facts: ' +
+          JSON.stringify({ selected, preparedPrompt }) : null,
+        limitations: ['Transcript text and creator observations are not independently fact-checked.']
+      };
+    },
     async listStudyEvidence(projectId: string, studyId: string) {
       studyInProject(projectId, studyId);
       return structuredClone(studyEvidence.get(studyId) ?? []);

@@ -35,6 +35,9 @@
     setStudyDraftArchived: (projectId: string, studyId: string, draftId: string, revision: number, archived: boolean) =>
       api.setStudyDraftArchived(projectId, studyId, draftId, revision, archived),
     prepareStudyAngles: (projectId: string, studyId: string) => api.prepareStudyAngles(projectId, studyId),
+    interpretStudyAngles: (projectId: string, studyId: string, revision: number,
+      preparedPrompt: string, responseJson: string, selectedAngleId?: string) =>
+      api.interpretStudyAngles(projectId, studyId, revision, preparedPrompt, responseJson, selectedAngleId),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
