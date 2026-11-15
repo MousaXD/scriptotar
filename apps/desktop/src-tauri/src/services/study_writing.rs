@@ -274,7 +274,12 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
                         gate.mark_uncertain(&effect_key)?;
                         return Err(WritingWorkflowError::InvalidResponse("provider output exceeds bound".into()));
                     }
-                    gate.record_response(&effect_key, &response.text)?;
+                    if gate.record_response(&effect_key, &response.text).is_err() {
+                        // The provider may have charged even when the local
+                        // response receipt failed to commit. Never replay it.
+                        let _ = gate.mark_uncertain(&effect_key);
+                        return Err(WritingWorkflowError::UncertainEffect);
+                    }
                     Ok(response.text)
                 }
                 Err(()) => {
@@ -368,6 +373,68 @@ fn lineage_for(context: &StudyWritingContext, angle: &AngleOption,
         }
     }
     Ok(ordered)
+}
+
+/// Explicit revision request (never auto-applied or persisted). A provider
+/// sees only the selected beat/feedback in a typed task; the existing accepted
+/// script remains unchanged until a separate human-approved CAS save.
+pub fn propose_beat_revision<C, B, P, S>(
+    plan: &GenerationPlan, current: &C, gate: &mut B, provider: &mut P,
+    stop: &S, candidate: &GeneratedCandidate, beat_id: &str,
+    feedback: &str,
+) -> WriteResult<String>
+where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSignal
+{
+    if !candidate.draft.beats.iter().any(|beat| beat.id == beat_id) {
+        return Err(WritingWorkflowError::InvalidContext("unknown beat"));
+    }
+    check_current(current, plan)?;
+    let mut input = plan.context.angle_input()?;
+    input.task = WritingTask::ReviseBeat {
+        draft: candidate.draft.clone(),
+        beat_id: beat_id.into(),
+        feedback: feedback.into(),
+    };
+    let request = writing::prepare_writing_request(&input)
+        .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    let step = format!("revise-{}-{}", candidate.draft.id, beat_id);
+    let proposed = execute_step(gate, provider, stop, plan, &step, &request)?;
+    check_current(current, plan)?;
+    writing::parse_revision_proposal(&proposed, &input)
+        .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    Ok(proposed)
+}
+
+/// Optional billable model review; findings never count as independent fact
+/// verification and every returned finding is forced to human-review-needed.
+pub fn review_candidate<C, B, P, S>(
+    plan: &GenerationPlan, current: &C, gate: &mut B, provider: &mut P,
+    stop: &S, candidate: &GeneratedCandidate,
+) -> WriteResult<GeneratedCandidate>
+where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSignal
+{
+    check_current(current, plan)?;
+    let mut input = plan.context.angle_input()?;
+    input.task = WritingTask::Review { draft: candidate.draft.clone() };
+    let request = writing::prepare_writing_request(&input)
+        .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    let step = format!("review-{}", candidate.draft.id);
+    let proposed = execute_step(gate, provider, stop, plan, &step, &request)?;
+    check_current(current, plan)?;
+    let review = writing::parse_review(&proposed, &input)
+        .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    let mut updated = candidate.clone();
+    updated.review_findings = review.findings;
+    Ok(updated)
+}
+
+/// Human-edited revision saves must compare-and-swap the current canonical
+/// draft version under an IMMEDIATE transaction, append an immutable version,
+/// and reject any source/Study or beat-content change since approval.
+pub trait VersionedCandidateStore {
+    fn save_revision(&mut self, context: &StudyWritingContext, canonical_draft_id: Uuid,
+        expected_draft_revision: i64, previous_beat_text: &str, beat_id: &str,
+        reviewed: &GeneratedCandidate) -> WriteResult<i64>;
 }
 
 /// Model suggestions are never auto-applied. Exact expected narration and
