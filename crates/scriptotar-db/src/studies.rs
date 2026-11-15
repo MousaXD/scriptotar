@@ -549,6 +549,15 @@ impl SqliteStore {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceReview {
+    pub id: Uuid,
+    pub previous_certainty: String,
+    pub next_certainty: String,
+    pub reason: String,
+    pub reviewed_at: String,
+}
+
 fn evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceReference> {
     let certainty: String = row.get(7)?;
     Ok(EvidenceReference {
@@ -662,8 +671,64 @@ impl SqliteStore {
                 "evidence changed or is not part of this Study".into(),
             ));
         }
+        tx.execute(
+            "INSERT INTO evidence_reviews
+             (id,project_id,study_id,evidence_id,previous_certainty,next_certainty,reason,reviewed_at)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            params![
+                Uuid::new_v4().to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                evidence_id.to_string(),
+                expected.as_str(),
+                next.as_str(),
+                reason.trim(),
+                now_rfc3339()
+            ],
+        )
+        .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         self.get_evidence_reference(project_id, study_id, evidence_id)
+    }
+
+    /// Last 50 human reviews in chronological order; older events stay on disk.
+    pub fn list_evidence_reviews(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        evidence_id: Uuid,
+    ) -> RepositoryResult<Vec<EvidenceReview>> {
+        self.get_evidence_reference(project_id, study_id, evidence_id)?;
+        let db = database(self)?;
+        let mut stmt = db
+            .prepare(
+                "SELECT id,previous_certainty,next_certainty,reason,reviewed_at
+                 FROM evidence_reviews
+                 WHERE project_id=?1 AND study_id=?2 AND evidence_id=?3
+                 ORDER BY rowid DESC LIMIT 50",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    evidence_id.to_string()
+                ],
+                |row| {
+                    Ok(EvidenceReview {
+                        id: uuid_at(row, 0)?,
+                        previous_certainty: row.get(1)?,
+                        next_certainty: row.get(2)?,
+                        reason: row.get(3)?,
+                        reviewed_at: row.get(4)?,
+                    })
+                },
+            )
+            .map_err(db_error)?;
+        let mut reviews = rows.collect::<Result<Vec<_>, _>>().map_err(db_error)?;
+        reviews.reverse();
+        Ok(reviews)
     }
 
     pub fn get_evidence_reference(

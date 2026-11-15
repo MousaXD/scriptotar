@@ -2,7 +2,7 @@
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch,
-    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput,
+    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiStudyEvidenceReview,
 };
 use scriptotar_core::{
     CreativeBriefInput, EvidenceCertainty, EvidenceInput, EvidenceReference, RepositoryError,
@@ -71,7 +71,11 @@ fn ui_source(source: &scriptotar_core::StudySource) -> Option<UiStudioSourceRef>
 }
 
 /// Evidence retains stable source identity when the origin becomes unavailable.
-fn ui_evidence(value: EvidenceReference, source: &StudySource) -> UiStudyEvidence {
+fn ui_evidence(
+    value: EvidenceReference,
+    source: &StudySource,
+    reviews: Vec<scriptotar_db::EvidenceReview>,
+) -> UiStudyEvidence {
     let origin = match (source.kind, source.reference_id) {
         (StudySourceKind::ResearchItem, Some(id)) => Some(UiStudioSourceRef {
             kind: "research".into(),
@@ -96,6 +100,16 @@ fn ui_evidence(value: EvidenceReference, source: &StudySource) -> UiStudyEvidenc
         certainty: value.input.certainty.as_str().into(),
         uncertainty_note: value.input.uncertainty_note,
         created_at: value.created_at,
+        review_history: reviews
+            .into_iter()
+            .map(|review| UiStudyEvidenceReview {
+                id: review.id.to_string(),
+                previous_certainty: review.previous_certainty,
+                next_certainty: review.next_certainty,
+                note: review.reason,
+                reviewed_at: review.reviewed_at,
+            })
+            .collect(),
     }
 }
 
@@ -249,7 +263,10 @@ impl AppServices {
                     .iter()
                     .find(|item| item.id == reference.input.study_source_id)
                     .ok_or_else(|| RepositoryError::Storage("evidence source missing".into()))?;
-                Ok(ui_evidence(reference, source))
+                let reviews =
+                    self.store
+                        .list_evidence_reviews(project_id, study_id, reference.id)?;
+                Ok(ui_evidence(reference, source, reviews))
             })
             .collect()
     }
@@ -289,7 +306,8 @@ impl AppServices {
                 uncertainty_note: value.uncertainty_note,
             },
         )?;
-        Ok(ui_evidence(reference, &source))
+        let reviews = self.store.list_evidence_reviews(project_id, study_id, reference.id)?;
+        Ok(ui_evidence(reference, &source, reviews))
     }
 
     /// Human review never certifies a claim as corroborated. Both transitions
@@ -325,7 +343,8 @@ impl AppServices {
             .into_iter()
             .find(|item| item.id == changed.input.study_source_id)
             .ok_or_else(|| RepositoryError::Storage("evidence source missing".into()))?;
-        Ok(ui_evidence(changed, &source))
+        let reviews = self.store.list_evidence_reviews(project_id, study_id, changed.id)?;
+        Ok(ui_evidence(changed, &source, reviews))
     }
 
     pub fn save_studio_study(
@@ -745,6 +764,10 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(disputed.certainty, "disputed");
+            assert_eq!(disputed.review_history.len(), 1);
+            assert_eq!(disputed.review_history[0].previous_certainty, "unverified");
+            assert_eq!(disputed.review_history[0].next_certainty, "disputed");
+            assert_eq!(disputed.review_history[0].note, "Full transcript contradicts this claim");
             assert_eq!(
                 disputed.uncertainty_note.as_deref(),
                 Some("Full transcript contradicts this claim")
@@ -795,6 +818,7 @@ mod tests {
         assert_eq!(restored_refs.len(), 1);
         assert_eq!(restored_refs[0].locator, "0:00-0:05");
         assert_eq!(restored_refs[0].certainty, "disputed");
+        assert_eq!(restored_refs[0].review_history.len(), 1);
         assert_eq!(
             restored_refs[0].uncertainty_note.as_deref(),
             Some("Full transcript contradicts this claim")
@@ -810,6 +834,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(reopened_review.certainty, "unverified");
+        assert_eq!(reopened_review.review_history.len(), 2);
+        assert_eq!(reopened_review.review_history[0].note, "Full transcript contradicts this claim");
+        assert_eq!(reopened_review.review_history[1].note, "Reviewed full recording again");
+        assert_eq!(reopened_review.review_history[1].previous_certainty, "disputed");
+        assert_eq!(reopened_review.review_history[1].next_certainty, "unverified");
+        assert!(reopened.store.list_evidence_reviews(Uuid::new_v4(), study_id, evidence_id).is_err());
+        assert_eq!(reopened.store.list_evidence_reviews(project_id, study_id, evidence_id).unwrap().len(), 2);
+        let conn = rusqlite::Connection::open(reopened.store.path()).unwrap();
+        assert!(conn.execute("UPDATE evidence_reviews SET reason='tampered' WHERE evidence_id=?1",
+            rusqlite::params![evidence_id.to_string()]).is_err());
+        assert!(conn.execute("DELETE FROM evidence_reviews WHERE evidence_id=?1",
+            rusqlite::params![evidence_id.to_string()]).is_err());
         assert_eq!(
             reopened
                 .store

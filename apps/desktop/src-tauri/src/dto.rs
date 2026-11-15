@@ -280,6 +280,16 @@ pub struct UiStudyEvidenceInput {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidenceReview {
+    pub id: String,
+    pub previous_certainty: String,
+    pub next_certainty: String,
+    pub note: String,
+    pub reviewed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiStudyEvidence {
     pub id: String,
     pub project_id: String,
@@ -293,6 +303,7 @@ pub struct UiStudyEvidence {
     pub certainty: String,
     pub uncertainty_note: Option<String>,
     pub created_at: String,
+    pub review_history: Vec<UiStudyEvidenceReview>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -12,6 +12,8 @@ pub use operational_status::*;
 
 mod studies;
 mod studies_schema;
+mod evidence_review_schema;
+pub use studies::EvidenceReview;
 
 mod studies_atomic;
 pub use studies_atomic::StudioBundleUpdate;

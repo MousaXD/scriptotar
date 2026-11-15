@@ -13,7 +13,7 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 8;
+pub const LATEST_SCHEMA_VERSION: u32 = 9;
 
 /// Per-project job counts and lexicographically latest persisted update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,6 +293,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 8,
         name: "agent_effect_reservation_ledger",
         apply: crate::agent_effects_schema::migration_8,
+    },
+    Migration {
+        version: 9,
+        name: "append_only_evidence_reviews",
+        apply: crate::evidence_review_schema::migration_9,
     },
 ];
 
