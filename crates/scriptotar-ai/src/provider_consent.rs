@@ -43,6 +43,8 @@ pub struct StudyScope {
     /// SHA-256 over the server-read brief, evidence, evidence reviews, and source content
     /// references. Never accept a client-supplied digest as an authoritative snapshot.
     pub material_digest: String,
+    /// Digest of the exact canonical prompt rebuilt by the trusted Studio service.
+    pub expected_prompt_digest: String,
     pub selected_source_ids: Vec<String>,
 }
 
@@ -210,12 +212,19 @@ fn scoped_id(value: &str) -> bool {
             .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
 }
 
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn canonical_scope(scope: &StudyScope) -> bool {
     scoped_id(&scope.project_id)
         && scoped_id(&scope.study_id)
         && scope.study_revision >= 0
         && scope.material_digest.len() == 64
         && scope.material_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && scope.expected_prompt_digest.len() == 64
+        && scope.expected_prompt_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
         && !scope.selected_source_ids.is_empty()
         && scope.selected_source_ids.len() <= MAX_SELECTED_SOURCES
         && scope.selected_source_ids.iter().all(|id| scoped_id(id))
@@ -228,8 +237,7 @@ fn canonical_scope(scope: &StudyScope) -> bool {
 fn hash_intent(intent: &ProviderIntent, pricing: &Option<PriceCeiling>) -> String {
     // Serialization cannot fail for these concrete, finite, non-floating-point fields.
     let data = serde_json::to_vec(&(intent, pricing)).expect("intent is serializable");
-    let digest = Sha256::digest(data);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    sha256_hex(&data)
 }
 
 fn bounded_microusd(tokens: u64, per_million: u64) -> Option<u64> {
@@ -296,6 +304,9 @@ impl ConsentBoundary {
             return Err(ConsentError::InvalidRequest);
         }
         validate_context(&intent.scope, authority)?;
+        if sha256_hex(intent.prompt.as_bytes()) != intent.scope.expected_prompt_digest {
+            return Err(ConsentError::ChangedContext);
+        }
         let endpoint = EndpointPolicy
             .endpoint_for(&intent.provider)
             .map_err(|_| ConsentError::InvalidRequest)?;
@@ -610,6 +621,7 @@ mod tests {
             study_id: "study-1".into(),
             study_revision: 3,
             material_digest: "a".repeat(64),
+            expected_prompt_digest: sha256_hex("Original brief and evidence".as_bytes()),
             selected_source_ids: vec!["source-1".into()],
         };
         (
