@@ -584,6 +584,42 @@ describe('Content Study Studio', () => {
     const unchanged = await api.getStudy('p-creator-lab', study.id);
     expect(unchanged.draft).toBe('');
     expect(unchanged.drafts).toHaveLength(1);
+    const scriptJson = JSON.stringify({
+      id: 'model-script-1', angle_id: 'angle-1',
+      title: 'Fresh second angle script', language: 'Arabic',
+      beats: [{
+        id: 'hook-1', role: 'hook',
+        narration: 'An original concrete opening for this audience',
+        on_screen_text: null, shots: [], evidence_ids: [], manually_edited: true
+      }],
+      cta: null, caption: null,
+      claims: [{ id: 'claim-1', beat_id: 'hook-1',
+        assertion: 'A proposed claim requiring independent checking',
+        status: 'unverified', evidence_ids: [] }]
+    });
+    const scriptPreview = await api.reviewStudyScript('p-creator-lab', study.id,
+      study.revision, prepared.prompt, response, 'angle-1',
+      (single as HTMLTextAreaElement).value, scriptJson, false);
+    expect(scriptPreview.savedStudy).toBeNull();
+    expect(scriptPreview.needsFactReviewCount).toBe(1);
+    await expect(api.reviewStudyScript('p-client-a', study.id,
+      study.revision, prepared.prompt, response, 'angle-1',
+      (single as HTMLTextAreaElement).value, scriptJson, true)).rejects.toThrow();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste structured script JSON' }), {
+      target: { value: scriptJson }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate script locally' }));
+    expect(await screen.findByText('Fresh second angle script')).toBeInTheDocument();
+    expect((await api.getStudy('p-creator-lab', study.id)).drafts).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Save as new script candidate' }));
+    expect((await api.getStudy('p-creator-lab', study.id)).drafts).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm new candidate' }));
+    await waitFor(async () => {
+      const current = await api.getStudy('p-creator-lab', study.id);
+      expect(current.drafts).toHaveLength(2);
+      expect(current.draft).toContain('An original concrete opening');
+    });
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it('requires approval for a durable local source check and never calls a provider', async () => {

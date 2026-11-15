@@ -1334,6 +1334,94 @@ mod tests {
                 .unwrap()
                 .contains("Write one original ScriptDraft"));
             assert!(chosen.draft_prompt.as_deref().unwrap().contains("angle-a"));
+            let structured_script = serde_json::json!({
+                "id": "generated-1",
+                "angle_id": "angle-a",
+                "title": "An original opening proposal",
+                "language": "Arabic",
+                "beats": [{
+                    "id": "hook-1",
+                    "role": "hook",
+                    "narration": "An original opening with one concrete example",
+                    "on_screen_text": null,
+                    "shots": [],
+                    "evidence_ids": [format!("observation:{}", evidence.id)],
+                    "manually_edited": true
+                }],
+                "cta": null,
+                "caption": null,
+                "claims": [{
+                    "id": "claim-1",
+                    "beat_id": "hook-1",
+                    "assertion": "One model-proposed observation needs checking",
+                    "status": "unverified",
+                    "evidence_ids": [format!("observation:{}", evidence.id)]
+                }]
+            })
+            .to_string();
+            let draft_prompt = chosen.draft_prompt.as_deref().unwrap();
+            let preview = services
+                .review_studio_script(
+                    project_id, study_id, saved.revision, &angles.prompt,
+                    &three_angles, "angle-a", draft_prompt, &structured_script, false,
+                )
+                .unwrap();
+            assert!(preview.saved_study.is_none());
+            assert!(preview.body.contains("An original opening"));
+            assert_eq!(preview.needs_fact_review_count, 1);
+            assert_eq!(services.get_studio_study(project_id, study_id).unwrap().drafts.len(), 1);
+            assert!(services
+                .review_studio_script(
+                    project_id, study_id, saved.revision, &angles.prompt,
+                    &three_angles, "angle-a", "stale draft prompt",
+                    &structured_script, true,
+                )
+                .is_err());
+            assert!(services
+                .review_studio_script(
+                    Uuid::new_v4(), study_id, saved.revision, &angles.prompt,
+                    &three_angles, "angle-a", draft_prompt, &structured_script, true,
+                )
+                .is_err());
+            assert!(services
+                .review_studio_script(
+                    project_id, study_id, saved.revision, &angles.prompt,
+                    &three_angles, "angle-a", draft_prompt,
+                    &structured_script.replace("\"unverified\"", "\"supported\""),
+                    true,
+                )
+                .is_err());
+            let saved_script = services
+                .review_studio_script(
+                    project_id, study_id, saved.revision, &angles.prompt,
+                    &three_angles, "angle-a", draft_prompt, &structured_script, true,
+                )
+                .unwrap();
+            let candidate = saved_script.saved_study.unwrap();
+            assert_eq!(candidate.drafts.len(), 2);
+            assert_eq!(candidate.draft_versions.len(), 1);
+            assert!(candidate.draft.contains("source IDs"));
+            assert!(candidate.draft.contains("Unverified"));
+            let generated_id = Uuid::parse_str(candidate.draft_id.as_deref().unwrap()).unwrap();
+            let links = services.store.list_draft_source_ids(project_id, generated_id).unwrap();
+            assert_eq!(links.len(), 2);
+            assert_eq!(
+                services
+                    .get_studio_study_draft(project_id, study_id, generated_id)
+                    .unwrap()
+                    .draft,
+                candidate.draft
+            );
+            assert_eq!(
+                services
+                    .get_studio_study_draft(
+                        project_id, study_id,
+                        Uuid::parse_str(saved.draft_id.as_deref().unwrap()).unwrap()
+                    )
+                    .unwrap()
+                    .draft,
+                "Original referenced draft"
+            );
             assert!(services
                 .interpret_studio_angles(
                     project_id,
