@@ -18,6 +18,7 @@ pub use studies::EvidenceReview;
 mod studies_atomic;
 pub use studies_atomic::StudioBundleUpdate;
 mod studies_drafts;
+pub use studies_drafts::DraftSummary;
 
 mod agent_checkpoints;
 mod agent_checkpoints_schema;

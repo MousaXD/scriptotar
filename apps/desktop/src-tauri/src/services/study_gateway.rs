@@ -185,7 +185,7 @@ impl AppServices {
             .collect();
         let drafts = self
             .store
-            .search_drafts(project_id, study_id, "", false, 200)?;
+            .list_draft_summaries(project_id, study_id, 200)?;
         let selected =
             if let Some(id) = requested_draft_id {
                 Some(drafts.iter().find(|item| item.id == id).ok_or_else(|| {
@@ -195,6 +195,13 @@ impl AppServices {
                 drafts.first()
             };
         let (draft, draft_versions) = if let Some(value) = selected {
+            let full = self.store.get_draft(project_id, value.id)?;
+            if full.study_id != study_id || full.archived_at.is_some() ||
+                full.revision != value.revision {
+                return Err(RepositoryError::Conflict(
+                    "selected draft changed during metadata retrieval".into(),
+                ));
+            }
             let versions = self
                 .store
                 .list_draft_versions(project_id, value.id)?
@@ -206,7 +213,7 @@ impl AppServices {
                     created_at: v.saved_at,
                 })
                 .collect();
-            (value.body.clone(), versions)
+            (full.body, versions)
         } else {
             (String::new(), Vec::new())
         };

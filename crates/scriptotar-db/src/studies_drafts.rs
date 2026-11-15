@@ -218,6 +218,13 @@ fn version_row(row: &Row<'_>) -> rusqlite::Result<DraftVersion> {
 const DRAFT_COLUMNS: &str =
     "id,project_id,study_id,title,body,revision,created_at,updated_at,archived_at";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftSummary {
+    pub id: Uuid,
+    pub title: String,
+    pub revision: i64,
+}
+
 impl SqliteStore {
     pub fn create_draft(
         &self,
@@ -501,6 +508,42 @@ impl SqliteStore {
         .map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         self.get_draft(project_id, copy_id)
+    }
+
+    /// Metadata-only candidate index. Do not hydrate up to 200 potentially
+    /// multi-megabyte draft bodies merely to render the Studio selector.
+    pub fn list_draft_summaries(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        limit: usize,
+    ) -> RepositoryResult<Vec<DraftSummary>> {
+        let db = database(self)?;
+        require_active_study(&db, project_id, study_id)?;
+        let mut stmt = db
+            .prepare(
+                "SELECT id,title,revision FROM creative_drafts
+                 WHERE project_id=?1 AND study_id=?2 AND archived_at IS NULL
+                 ORDER BY updated_at DESC,id DESC LIMIT ?3",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    limit.clamp(1, 200) as i64
+                ],
+                |row| {
+                    Ok(DraftSummary {
+                        id: uuid_at(row, 0)?,
+                        title: row.get(1)?,
+                        revision: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 
     pub fn search_drafts(
