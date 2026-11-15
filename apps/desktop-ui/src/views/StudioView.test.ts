@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, mockBootstrap } from '../api/mockClient';
+import type { AiPromptInput } from '../api/client';
 import { setLocale } from '../i18n';
 import type { ContentStudy, CreativeBrief, StudioGateway } from '../studio/contract';
 import { emptyBrief } from '../studio/contract';
@@ -189,6 +190,62 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Referenced research' }));
     expect(await screen.findByText('The opening uses a question')).toBeInTheDocument();
+  });
+
+  it('prepares a local writing prompt with exact saved evidence and makes zero paid calls', async () => {
+    const built = vi.fn(async (_input: AiPromptInput) => 'Prepared locally');
+    const paid = vi.fn(async (_input: AiPromptInput) => 'Should never run');
+    const api = createMockClient({ buildAiPrompt: built, runAi: paid });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Evidence writing context' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.click(screen.getByText('Choose source material', { selector: 'summary' }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Observation or claim' }), {
+      target: { value: 'The opening mentions a decision point' }
+    });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Exact timestamp or locator' }), {
+      target: { value: '0:00–0:07' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save observation' }));
+    expect(await screen.findByText('The opening mentions a decision point')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
+    await waitFor(() => expect(built).toHaveBeenCalledTimes(1));
+    const context = built.mock.calls[0][0].sourceText;
+    expect(context).toContain('The opening mentions a decision point');
+    expect(context).toContain('0:00–0:07');
+    expect(context).toContain('UNTRUSTED, NOT INDEPENDENTLY FACT-CHECKED');
+    expect(context).toContain('"source_id":"t-ar"');
+    expect(context).toContain('Untrusted transcript text');
+    expect(paid).not.toHaveBeenCalled();
+  });
+
+  it('refuses foreign evidence returned by an injected gateway before constructing a prompt', async () => {
+    const { gateway } = studyFixture();
+    const built = vi.fn(async (_input: AiPromptInput) => 'Should not prepare');
+    const api = createMockClient({ buildAiPrompt: built });
+    mount({
+      ...gateway,
+      listStudyEvidence: async (projectId, studyId) => [{
+        id: 'foreign-evidence', projectId: 'foreign-project', studyId,
+        source: null, sourceLabel: 'unknown', sourceAvailable: false,
+        claim: 'Untrusted foreign observation', locator: '0:01',
+        timestampSeconds: null, certainty: 'unverified', uncertaintyNote: null,
+        createdAt: '2026-11-15T00:00:00Z'
+      }]
+    }, { api });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Study name' }), {
+      target: { value: 'Scope rejection' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create study' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare writing prompt' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('another project or study');
+    expect(built).not.toHaveBeenCalled();
   });
 
   it('requires approval for a durable local source check and never calls a provider', async () => {

@@ -1,3 +1,13 @@
+# CONTINUATION — 2026-11-15 canonical evidence → local Copy Prompt candidate
+
+- Added a bounded, project-/Study-validated formatter for the existing persisted evidence references. The Studio local **Prepare writing prompt** path now fetches canonical evidence *after* pending Study saves, includes exact origin IDs/locators, explicitly labels creator observations as **not independently fact-checked**, and omits unavailable/deselected origin material. It never automatically makes an AI provider call or persists API credentials.
+- Evidence changes, Study changes and source/brief edits invalidate pending prompt preparations so an old async response cannot silently overwrite newer context. Evidence is prioritized in the local 30k-character context budget; max 16 saved observations, each bounded.
+- Unit and UI regressions cover source scoping, foreign-project rejection, truncation, exact-source references and zero paid calls.
+- **This is not automated writing or factual verification.** Full Agent 05/06 multi-source insights, paid-provider consent + idempotent effect fencing, revision orchestration, native graphical QA, scale benchmarks and P3 polish still block release. Confirm exact-head nine-workflow CI before marking this candidate green.
+- Integration PR #114 remains draft and main stays unchanged.
+
+---
+
 # CURRENT CHECKPOINT — 2026-11-15 Evidence slice (candidate, exact CI required)
 
 - Integration PR #114 includes end-to-end **human-entered evidence observation** APIs and Studio controls. Rust now maps an attached Research/Transcript origin to its canonical StudySource UUID, appends the observation under the active project/Study, and always assigns **unverified** certainty. User cannot arbitrarily promote a saved claim to "corroborated".

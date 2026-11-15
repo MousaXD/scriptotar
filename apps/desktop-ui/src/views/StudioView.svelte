@@ -8,6 +8,7 @@
   import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
+  import { evidencePromptContext } from '../studio/evidencePrompt';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
 
@@ -180,6 +181,9 @@
       if (result.projectId !== projectId || result.id !== id) throw new Error(t.invalidStudy);
       record = result;
       studyId = id;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
       brief = { ...result.brief };
       refs = [...result.sources];
       draft = result.draft;
@@ -219,6 +223,9 @@
       if (epoch !== currentRequest) return;
       if (created.projectId !== projectId) throw new Error(t.invalidStudy);
       record = created;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
       inspectionEpoch++;
       evidenceEpoch++;
       evidence = [];
@@ -325,6 +332,10 @@
     evidenceBusy = true;
     evidenceLoading = false;
     evidenceError = '';
+    // An observation added mid-preparation invalidates its old prompt.
+    promptRequest++;
+    preparing = false;
+    prompt = '';
     try {
       // Record the source attachment before adding evidence. The database
       // resolves the real StudySource ID, never a title-based UI guess.
@@ -455,15 +466,29 @@
   }
 
   async function preparePrompt() {
-    if (preparing) return;
+    if (preparing || evidenceBusy) return;
     const epoch = ++promptRequest;
+    const forStudy = studyId;
     preparing = true;
     error = '';
     prompt = '';
     try {
+      // Read canonical evidence only after any pending Study edits are durable.
+      // No provider is contacted; the user must still explicitly copy a prompt.
+      if (gateway && record) {
+        await flushPendingSave();
+        if (epoch !== promptRequest || studyId !== forStudy) return;
+      }
+      const currentSources = refs.slice(0, 8);
       const parts: string[] = [];
+      if (record && gateway?.listStudyEvidence) {
+        const saved = await gateway.listStudyEvidence(projectId, forStudy);
+        if (epoch !== promptRequest || studyId !== forStudy) return;
+        const context = evidencePromptContext(saved, projectId, forStudy, currentSources);
+        if (context) parts.push(context);
+      }
       // Backend prompt construction is local. Do not send keys or call a provider.
-      for (const ref of refs.slice(0, 8)) {
+      for (const ref of currentSources) {
         if (ref.kind === 'research') {
           const item = research.find((candidate) => candidate.id === ref.id);
           if (!item) throw new Error(t.previewUnavailable);
@@ -722,7 +747,7 @@
         </div>
       {/if}
       <div class="studio-prompt-controls">
-        <button type="button" class="button secondary" disabled={preparing} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
+        <button type="button" class="button secondary" disabled={preparing || evidenceBusy || loading} on:click={() => void preparePrompt()}>{t.buildPrompt}</button>
         <span>{t.promptPrivacy}</span>
       </div>
       {#if prompt}
