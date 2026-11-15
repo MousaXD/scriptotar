@@ -606,6 +606,135 @@ impl SqliteStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
     }
 
+
+    /// Metadata-only list of archived candidates, available for recovery after restart.
+    pub fn list_archived_draft_summaries(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        limit: usize,
+    ) -> RepositoryResult<Vec<DraftSummary>> {
+        let db = database(self)?;
+        require_active_study(&db, project_id, study_id)?;
+        let mut stmt = db
+            .prepare(
+                "SELECT id,title,revision FROM creative_drafts
+                 WHERE project_id=?1 AND study_id=?2 AND archived_at IS NOT NULL
+                 ORDER BY updated_at DESC,id DESC LIMIT ?3",
+            )
+            .map_err(db_error)?;
+        let rows = stmt
+            .query_map(
+                params![
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    limit.clamp(1, 200) as i64
+                ],
+                |row| {
+                    Ok(DraftSummary {
+                        id: uuid_at(row, 0)?,
+                        title: row.get(1)?,
+                        revision: row.get(2)?,
+                    })
+                },
+            )
+            .map_err(db_error)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+    }
+
+    /// Archive or restore exactly one draft revision, never the last active draft.
+    /// Every status transition is an immutable version and is atomic with the
+    /// eligibility checks. A stale editor cannot change another revision.
+    pub fn set_study_draft_archived_checked(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+        expected_revision: i64,
+        archived: bool,
+    ) -> RepositoryResult<CreativeDraft> {
+        if expected_revision < 1 {
+            return Err(RepositoryError::Validation("invalid draft revision".into()));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        let previous: Option<(String, String, bool)> = tx
+            .query_row(
+                "SELECT title,body,archived_at IS NOT NULL FROM creative_drafts
+                 WHERE id=?1 AND project_id=?2 AND study_id=?3 AND revision=?4",
+                params![
+                    draft_id.to_string(),
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    expected_revision
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let (title, body, was_archived) = previous.ok_or_else(|| {
+            RepositoryError::Conflict("draft revision or Study membership changed".into())
+        })?;
+        if archived == was_archived {
+            return Err(RepositoryError::Conflict(
+                "draft already has the requested archive state".into(),
+            ));
+        }
+        if archived {
+            let active: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM creative_drafts
+                     WHERE project_id=?1 AND study_id=?2 AND archived_at IS NULL",
+                    params![project_id.to_string(), study_id.to_string()],
+                    |row| row.get(0),
+                )
+                .map_err(db_error)?;
+            if active <= 1 {
+                return Err(RepositoryError::Conflict(
+                    "cannot archive the final active Study script".into(),
+                ));
+            }
+        }
+        let now = now_rfc3339();
+        let new_archived_at = if archived { Some(now.as_str()) } else { None };
+        let changed = tx
+            .execute(
+                "UPDATE creative_drafts
+                 SET archived_at=?1,revision=revision+1,updated_at=?2
+                 WHERE id=?3 AND project_id=?4 AND study_id=?5 AND revision=?6",
+                params![
+                    new_archived_at,
+                    now,
+                    draft_id.to_string(),
+                    project_id.to_string(),
+                    study_id.to_string(),
+                    expected_revision
+                ],
+            )
+            .map_err(db_error)?;
+        if changed != 1 {
+            return Err(RepositoryError::Conflict("draft changed during archival".into()));
+        }
+        tx.execute(
+            "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![
+                Uuid::new_v4().to_string(),
+                draft_id.to_string(),
+                expected_revision + 1,
+                title,
+                body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
+        self.get_draft(project_id, draft_id)
+    }
+
     pub fn search_drafts(
         &self,
         project_id: Uuid,

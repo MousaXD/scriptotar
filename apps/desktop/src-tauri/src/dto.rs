@@ -336,6 +336,7 @@ pub struct UiStudioStudy {
     pub draft_id: Option<String>,
     pub draft_revision: Option<i64>,
     pub drafts: Vec<UiStudioDraftSummary>,
+    pub archived_drafts: Vec<UiStudioDraftSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]

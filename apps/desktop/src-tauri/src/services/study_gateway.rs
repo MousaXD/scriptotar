@@ -184,6 +184,9 @@ impl AppServices {
             .filter_map(ui_source)
             .collect();
         let drafts = self.store.list_draft_summaries(project_id, study_id, 200)?;
+        let archived_drafts = self
+            .store
+            .list_archived_draft_summaries(project_id, study_id, 200)?;
         let selected =
             if let Some(id) = requested_draft_id {
                 Some(drafts.iter().find(|item| item.id == id).ok_or_else(|| {
@@ -228,6 +231,14 @@ impl AppServices {
             draft_id: selected.map(|item| item.id.to_string()),
             draft_revision: selected.map(|item| item.revision),
             drafts: drafts
+                .iter()
+                .map(|item| UiStudioDraftSummary {
+                    id: item.id.to_string(),
+                    title: item.title.clone(),
+                    revision: item.revision,
+                })
+                .collect(),
+            archived_drafts: archived_drafts
                 .iter()
                 .map(|item| UiStudioDraftSummary {
                     id: item.id.to_string(),
@@ -315,6 +326,29 @@ impl AppServices {
             self.store
                 .rename_draft(project_id, draft_id, expected_draft_revision, title)?;
         self.read_studio_bundle_for(project_id, study_id, Some(renamed.id))
+    }
+
+    pub fn set_studio_draft_archived(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+        expected_draft_revision: i64,
+        archived: bool,
+    ) -> RepositoryResult<UiStudioStudy> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        self.store.set_study_draft_archived_checked(
+            project_id,
+            study_id,
+            draft_id,
+            expected_draft_revision,
+            archived,
+        )?;
+        if archived {
+            self.read_studio_bundle(project_id, study_id)
+        } else {
+            self.read_studio_bundle_for(project_id, study_id, Some(draft_id))
+        }
     }
 
     pub fn create_studio_study(

@@ -725,6 +725,33 @@ async fn rename_study_draft(
 }
 
 #[tauri::command]
+async fn set_study_draft_archived(
+    project_id: String,
+    study_id: String,
+    draft_id: String,
+    expected_draft_revision: i64,
+    archived: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = artifact_uuid(&draft_id, "draft id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .set_studio_draft_archived(
+                project_id,
+                study_id,
+                draft_id,
+                expected_draft_revision,
+                archived,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_study(
     project_id: String,
     study_id: String,
@@ -1293,6 +1320,7 @@ pub fn run() {
             get_study,
             duplicate_study_draft,
             rename_study_draft,
+            set_study_draft_archived,
             save_study,
             list_study_evidence,
             add_study_evidence,
