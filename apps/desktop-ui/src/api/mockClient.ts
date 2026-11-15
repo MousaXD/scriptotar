@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy, StudyEvidence } from '../studio/contract';
+import type { ContentStudy, DraftSnapshot, StudyEvidence } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
@@ -109,7 +109,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let projects = structuredClone(mockBootstrap.projects);
   let projectCounter = 0;
   let studyCounter = 0;
+  let draftCounter = 0;
   const studies = new Map<string, ContentStudy>();
+  const draftCopies = new Map<string, Map<string, {
+    title: string; body: string; revision: number; versions: DraftSnapshot[]
+  }>>();
   const inspectionRuns = new Map<string, LocalInspectionRun>();
   const studyEvidence = new Map<string, StudyEvidence[]>();
   let evidenceCounter = 0;
@@ -158,19 +162,60 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async createStudy(projectId, brief) {
       if (active !== projectId) throw new Error('Active project changed');
       if (!brief.title.trim()) throw new Error('Study title is required');
+      const draftId = `mock-draft-${++draftCounter}`;
       const study: ContentStudy = {
         id: `mock-study-${++studyCounter}`, projectId, revision: 1,
-        brief: structuredClone(brief), sources: [], draft: '', draftVersions: []
+        brief: structuredClone(brief), sources: [], draft: '', draftVersions: [],
+        draftId, draftRevision: 1, drafts: [{ id: draftId, title: brief.title, revision: 1 }]
       };
+      draftCopies.set(study.id, new Map([[draftId, {
+        title: brief.title, body: '', revision: 1, versions: []
+      }]]));
       studies.set(study.id, structuredClone(study));
       return structuredClone(study);
     },
-    async getStudy(projectId: string, studyId: string) {
-      return structuredClone(studyInProject(projectId, studyId));
+    async getStudy(projectId: string, studyId: string, draftId?: string) {
+      const study = studyInProject(projectId, studyId);
+      if (!draftId) return structuredClone(study);
+      const candidate = draftCopies.get(studyId)?.get(draftId);
+      if (!candidate) throw new Error('Draft is not attached to this Study');
+      const selected: ContentStudy = {
+        ...study, draftId, draftRevision: candidate.revision,
+        draft: candidate.body, draftVersions: structuredClone(candidate.versions)
+      };
+      studies.set(studyId, structuredClone(selected));
+      return structuredClone(selected);
+    },
+    async duplicateStudyDraft(projectId, studyId, draftId, expectedDraftRevision) {
+      const study = studyInProject(projectId, studyId);
+      const candidate = draftCopies.get(studyId)?.get(draftId);
+      if (!candidate || candidate.revision !== expectedDraftRevision) {
+        throw new Error('Draft changed or is not part of this Study');
+      }
+      const copyId = `mock-draft-${++draftCounter}`;
+      const title = ('Copy of ' + candidate.title).slice(0, 200);
+      const version: DraftSnapshot = {
+        id: `${copyId}:v1`, revision: 1, content: candidate.body,
+        createdAt: '2026-11-15T12:00:00Z'
+      };
+      draftCopies.get(studyId)?.set(copyId, {
+        title, body: candidate.body, revision: 1, versions: [version]
+      });
+      const copied: ContentStudy = {
+        ...study, draftId: copyId, draftRevision: 1,
+        draft: candidate.body, draftVersions: [version],
+        drafts: [{ id: copyId, title, revision: 1 }, ...(study.drafts ?? [])]
+      };
+      studies.set(studyId, structuredClone(copied));
+      return structuredClone(copied);
     },
     async saveStudy(projectId, studyId, expectedRevision, patch) {
       const old = studyInProject(projectId, studyId);
       if (old.revision !== expectedRevision) throw new Error('Study changed by another editor');
+      if (patch.draftId && patch.draftId !== old.draftId) throw new Error('Selected draft changed');
+      if (patch.draftRevision != null && patch.draftRevision !== old.draftRevision) {
+        throw new Error('Selected draft has a newer revision');
+      }
       const next = structuredClone(old);
       if (patch.brief) {
         if (!patch.brief.title.trim()) throw new Error('Study title is required');
@@ -183,12 +228,22 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       }
       if (patch.draft !== undefined && patch.draft !== old.draft) {
         next.draft = patch.draft;
+        next.draftRevision = (old.draftRevision ?? 1) + 1;
         next.draftVersions.push({
-          id: `${studyId}:v${next.draftVersions.length + 1}`,
-          revision: next.draftVersions.length + 1,
+          id: `${studyId}:${old.draftId ?? 'primary'}:v${next.draftRevision}`,
+          revision: next.draftRevision,
           content: patch.draft,
           createdAt: '2026-08-09T09:00:00+04:00'
         });
+        next.drafts = next.drafts?.map((candidate) => candidate.id === old.draftId
+          ? { ...candidate, revision: next.draftRevision! } : candidate);
+        if (old.draftId) {
+          const stored = draftCopies.get(studyId)?.get(old.draftId);
+          if (stored) draftCopies.get(studyId)?.set(old.draftId, {
+            ...stored, body: next.draft, revision: next.draftRevision,
+            versions: structuredClone(next.draftVersions)
+          });
+        }
       }
       next.revision += 1;
       studies.set(studyId, next);
