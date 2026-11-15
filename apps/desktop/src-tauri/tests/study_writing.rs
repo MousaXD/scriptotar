@@ -605,9 +605,11 @@ fn separately_approved_revision_proposal_does_not_change_saved_text() {
         &mut gate,
         &mut provider,
         &stop,
-        &candidate,
-        "hook",
-        "Improve clarity",
+        study_writing::RevisionRequest {
+            candidate: &candidate,
+            beat_id: "hook",
+            feedback: "Improve clarity",
+        },
     )
     .unwrap();
     assert!(proposal.contains("revised"));
