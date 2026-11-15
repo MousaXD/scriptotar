@@ -272,6 +272,126 @@ impl SqliteStore {
         self.get_draft(project_id, id)
     }
 
+    /// Save an explicitly accepted, locally validated script as a NEW candidate.
+    /// The entire candidate, version and scoped source links commit together.
+    /// A stale Study revision cannot admit a generated candidate.
+    pub fn create_reviewed_study_draft(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_study_revision: i64,
+        title: &str,
+        body: &str,
+        study_source_ids: &[Uuid],
+    ) -> RepositoryResult<CreativeDraft> {
+        required_text("draft title", title, 200)?;
+        required_text("draft body", body, 2_000_000)?;
+        if expected_study_revision < 1 || study_source_ids.len() > 8 {
+            return Err(RepositoryError::Validation(
+                "invalid Study revision or source count".into(),
+            ));
+        }
+        let mut unique = std::collections::HashSet::new();
+        if !study_source_ids.iter().all(|id| unique.insert(id)) {
+            return Err(RepositoryError::Validation(
+                "duplicate draft source ID".into(),
+            ));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        let revision: i64 = tx
+            .query_row(
+                "SELECT revision FROM content_studies WHERE id=?1 AND project_id=?2",
+                params![study_id.to_string(), project_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if revision != expected_study_revision {
+            return Err(RepositoryError::Conflict(
+                "Study changed before generated script could be saved".into(),
+            ));
+        }
+        let count: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM creative_drafts
+                 WHERE project_id=?1 AND study_id=?2 AND archived_at IS NULL",
+                params![project_id.to_string(), study_id.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if count >= 200 {
+            return Err(RepositoryError::Conflict(
+                "Study has reached 200 active script candidates".into(),
+            ));
+        }
+        for source_id in study_source_ids {
+            let exists: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM study_sources
+                     WHERE id=?1 AND project_id=?2 AND study_id=?3",
+                    params![
+                        source_id.to_string(),
+                        project_id.to_string(),
+                        study_id.to_string()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(db_error)?;
+            if exists != 1 {
+                return Err(RepositoryError::Conflict(
+                    "selected source no longer belongs to this Study".into(),
+                ));
+            }
+        }
+        let id = Uuid::new_v4();
+        let now = now_rfc3339();
+        tx.execute(
+            "INSERT INTO creative_drafts(
+                 id,project_id,study_id,title,body,revision,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,?5,1,?6,?6)",
+            params![
+                id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                title.trim(),
+                body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
+        tx.execute(
+            "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
+             VALUES(?1,?2,1,?3,?4,?5)",
+            params![
+                Uuid::new_v4().to_string(),
+                id.to_string(),
+                title.trim(),
+                body,
+                now
+            ],
+        )
+        .map_err(db_error)?;
+        for source_id in study_source_ids {
+            tx.execute(
+                "INSERT INTO draft_source_links(
+                    project_id,draft_id,study_source_id,attached_at
+                 ) VALUES(?1,?2,?3,?4)",
+                params![
+                    project_id.to_string(),
+                    id.to_string(),
+                    source_id.to_string(),
+                    now
+                ],
+            )
+            .map_err(db_error)?;
+        }
+        tx.commit().map_err(db_error)?;
+        self.get_draft(project_id, id)
+    }
+
     pub fn get_draft(&self, project_id: Uuid, draft_id: Uuid) -> RepositoryResult<CreativeDraft> {
         let db = database(self)?;
         let sql =
