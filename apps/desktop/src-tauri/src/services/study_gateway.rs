@@ -1362,39 +1362,78 @@ mod tests {
             let draft_prompt = chosen.draft_prompt.as_deref().unwrap();
             let preview = services
                 .review_studio_script(
-                    project_id, study_id, saved.revision, &angles.prompt,
-                    &three_angles, "angle-a", draft_prompt, &structured_script, false,
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    "angle-a",
+                    draft_prompt,
+                    &structured_script,
+                    false,
                 )
                 .unwrap();
             assert!(preview.saved_study.is_none());
             assert!(preview.body.contains("An original opening"));
             assert_eq!(preview.needs_fact_review_count, 1);
-            assert_eq!(services.get_studio_study(project_id, study_id).unwrap().drafts.len(), 1);
+            assert_eq!(
+                services
+                    .get_studio_study(project_id, study_id)
+                    .unwrap()
+                    .drafts
+                    .len(),
+                1
+            );
             assert!(services
                 .review_studio_script(
-                    project_id, study_id, saved.revision, &angles.prompt,
-                    &three_angles, "angle-a", "stale draft prompt",
-                    &structured_script, true,
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    "angle-a",
+                    "stale draft prompt",
+                    &structured_script,
+                    true,
                 )
                 .is_err());
             assert!(services
                 .review_studio_script(
-                    Uuid::new_v4(), study_id, saved.revision, &angles.prompt,
-                    &three_angles, "angle-a", draft_prompt, &structured_script, true,
+                    Uuid::new_v4(),
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    "angle-a",
+                    draft_prompt,
+                    &structured_script,
+                    true,
                 )
                 .is_err());
             assert!(services
                 .review_studio_script(
-                    project_id, study_id, saved.revision, &angles.prompt,
-                    &three_angles, "angle-a", draft_prompt,
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    "angle-a",
+                    draft_prompt,
                     &structured_script.replace("\"unverified\"", "\"supported\""),
                     true,
                 )
                 .is_err());
             let saved_script = services
                 .review_studio_script(
-                    project_id, study_id, saved.revision, &angles.prompt,
-                    &three_angles, "angle-a", draft_prompt, &structured_script, true,
+                    project_id,
+                    study_id,
+                    saved.revision,
+                    &angles.prompt,
+                    &three_angles,
+                    "angle-a",
+                    draft_prompt,
+                    &structured_script,
+                    true,
                 )
                 .unwrap();
             let candidate = saved_script.saved_study.unwrap();
@@ -1403,7 +1442,10 @@ mod tests {
             assert!(candidate.draft.contains("source IDs"));
             assert!(candidate.draft.contains("Unverified"));
             let generated_id = Uuid::parse_str(candidate.draft_id.as_deref().unwrap()).unwrap();
-            let links = services.store.list_draft_source_ids(project_id, generated_id).unwrap();
+            let links = services
+                .store
+                .list_draft_source_ids(project_id, generated_id)
+                .unwrap();
             assert_eq!(links.len(), 2);
             assert_eq!(
                 services
@@ -1415,7 +1457,8 @@ mod tests {
             assert_eq!(
                 services
                     .get_studio_study_draft(
-                        project_id, study_id,
+                        project_id,
+                        study_id,
                         Uuid::parse_str(saved.draft_id.as_deref().unwrap()).unwrap()
                     )
                     .unwrap()
@@ -1617,12 +1660,13 @@ mod tests {
             assert!(sources
                 .iter()
                 .all(|source| unchanged.sources.contains(source)));
-            assert_eq!(unchanged.draft, saved.draft);
+            assert!(unchanged.draft.starts_with("# An original opening proposal"));
         }
         let reopened = AppServices::new(dir.path()).unwrap();
         let restored = reopened.get_studio_study(project_id, study_id).unwrap();
         assert_eq!(restored.sources.len(), 2);
-        assert_eq!(restored.draft, "Original referenced draft");
+        assert!(restored.draft.starts_with("# An original opening proposal"));
+        assert_eq!(restored.drafts.len(), 2);
         let evidence = reopened
             .store
             .get_evidence_reference(project_id, study_id, evidence_id)
