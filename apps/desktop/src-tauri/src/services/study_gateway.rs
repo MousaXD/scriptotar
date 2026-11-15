@@ -2,9 +2,8 @@
 use super::AppServices;
 use crate::dto::{
     UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy,
-    UiStudyAnglePrompt,
-    UiStudioStudyPatch, UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput,
-    UiStudyEvidenceReview,
+    UiStudioStudyPatch, UiStudioStudySummary, UiStudyAnglePrompt, UiStudyEvidence,
+    UiStudyEvidenceInput, UiStudyEvidenceReview,
 };
 use scriptotar_ai::writing::{
     self, CreativeBrief as WritingBrief, EvidenceKind as WritingEvidenceKind,
@@ -369,7 +368,10 @@ impl AppServices {
         let bundle = self.read_studio_bundle(project_id, study_id)?;
         let saved_sources = self.store.list_study_sources(project_id, study_id)?;
         let mut limitations = Vec::new();
-        let active: Vec<_> = saved_sources.iter().filter(|source| source.available).collect();
+        let active: Vec<_> = saved_sources
+            .iter()
+            .filter(|source| source.available)
+            .collect();
         if active.len() < 3 {
             limitations.push("Fewer than three available Study sources were selected.".into());
         }
@@ -383,7 +385,8 @@ impl AppServices {
         let mut excerpt_count = 0;
         for source in active.iter().take(8) {
             if source.kind != StudySourceKind::Transcript {
-                limitations.push("Research metadata is not proof of spoken or visual claims.".into());
+                limitations
+                    .push("Research metadata is not proof of spoken or visual claims.".into());
                 continue;
             }
             let Some(transcript_id) = source.reference_id else {
@@ -392,7 +395,9 @@ impl AppServices {
             };
             let transcript = self.store.get_transcript_bundle(transcript_id)?;
             if transcript.project_id != project_id {
-                return Err(RepositoryError::NotFound("Study transcript in this project".into()));
+                return Err(RepositoryError::NotFound(
+                    "Study transcript in this project".into(),
+                ));
             }
             let segments = super::parse_segments(transcript.transcript.segments_json.as_deref());
             let mut selected = Vec::new();
@@ -429,10 +434,9 @@ impl AppServices {
                     continue;
                 }
                 let seconds = segment.start_seconds;
-                let timestamp_seconds = (seconds.is_finite()
-                    && seconds >= 0.0
-                    && seconds <= f64::from(u32::MAX))
-                .then_some(seconds as u32);
+                let timestamp_seconds =
+                    (seconds.is_finite() && seconds >= 0.0 && seconds <= f64::from(u32::MAX))
+                        .then_some(seconds as u32);
                 evidence.push(WritingEvidence {
                     id: format!("transcript:{transcript_id}:{index}"),
                     locator: WritingLocator {
@@ -479,7 +483,9 @@ impl AppServices {
             note_count += 1;
         }
         if evidence.is_empty() {
-            limitations.push("No attributable transcript excerpts or active observations were available.".into());
+            limitations.push(
+                "No attributable transcript excerpts or active observations were available.".into(),
+            );
         }
         limitations.push(
             "Transcript excerpts are not independently checked facts; no frames, audience retention or viral performance were analyzed.".into(),
@@ -1014,7 +1020,9 @@ mod tests {
             assert_eq!(angles.unverified_observation_count, 1);
             assert!(angles.prompt.contains("Propose exactly 3"));
             assert!(angles.prompt.contains("Source with a timecode"));
-            assert!(angles.prompt.contains("Transcript contains a literal spoken example"));
+            assert!(angles
+                .prompt
+                .contains("Transcript contains a literal spoken example"));
             assert!(angles.prompt.contains("unverified"));
             assert!(angles.prompt.contains("untrusted context"));
             assert!(services
@@ -1102,7 +1110,9 @@ mod tests {
                 .prepare_studio_angle_prompt(project_id, study_id)
                 .unwrap();
             assert_eq!(after_dispute.unverified_observation_count, 0);
-            assert!(!after_dispute.prompt.contains("Transcript contains a literal spoken example"));
+            assert!(!after_dispute
+                .prompt
+                .contains("Transcript contains a literal spoken example"));
             assert!(after_dispute.prompt.contains("Source with a timecode"));
             assert_eq!(disputed.review_history.len(), 1);
             assert_eq!(disputed.review_history[0].previous_certainty, "unverified");

@@ -502,7 +502,7 @@ describe('Content Study Studio', () => {
     expect(result.transcriptExcerptCount).toBe(2);
     expect(result.unverifiedObservationCount).toBe(1);
     expect(result.prompt).toContain('Propose exactly 3');
-    expect(result.prompt).toContain('Unverified Arabic opening observation');
+    expect(result.prompt).toContain('An unverified Arabic opening observation');
     expect(provider).not.toHaveBeenCalled();
 
     render(App, { props: { api } });
