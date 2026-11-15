@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
 import type { LocalInspectionRun } from '../studio/agent';
 import type {
   AiRunDetail,
@@ -68,6 +68,12 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<StudyAngleInterpretation>('interpret_study_angles', {
         projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson,
         selectedAngleId: selectedAngleId ?? null
+      }),
+    reviewStudyScript: (projectId, studyId, expectedStudyRevision, anglePrompt,
+      anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) =>
+      invoke<StudyScriptReview>('review_study_script', {
+        projectId, studyId, expectedStudyRevision, anglePrompt, anglesResponseJson,
+        selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate
       }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),

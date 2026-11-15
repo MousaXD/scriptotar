@@ -47,6 +47,17 @@ export interface StudyAngleInterpretation {
   draftPrompt: string | null;
   limitations: string[];
 }
+/** User-pasted model output remains unverified until reviewed by a person. */
+export interface StudyScriptReview {
+  title: string;
+  body: string;
+  angleId: string;
+  referencedSourceCount: number;
+  claimCount: number;
+  needsFactReviewCount: number;
+  limitations: string[];
+  savedStudy: ContentStudy | null;
+}
 export interface DraftCandidate {
   id: string;
   title: string;
@@ -130,6 +141,10 @@ export interface StudioGateway {
   prepareStudyAngles?(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
   interpretStudyAngles?(projectId: string, studyId: string, expectedStudyRevision: number,
     preparedPrompt: string, responseJson: string, selectedAngleId?: string): Promise<StudyAngleInterpretation>;
+  reviewStudyScript?(projectId: string, studyId: string, expectedStudyRevision: number,
+    anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
+    preparedDraftPrompt: string, scriptResponseJson: string,
+    acceptAsNewCandidate: boolean): Promise<StudyScriptReview>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];

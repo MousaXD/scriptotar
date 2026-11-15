@@ -38,6 +38,11 @@
     interpretStudyAngles: (projectId: string, studyId: string, revision: number,
       preparedPrompt: string, responseJson: string, selectedAngleId?: string) =>
       api.interpretStudyAngles(projectId, studyId, revision, preparedPrompt, responseJson, selectedAngleId),
+    reviewStudyScript: (projectId: string, studyId: string, revision: number,
+      anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
+      preparedDraftPrompt: string, scriptResponseJson: string, acceptAsNewCandidate: boolean) =>
+      api.reviewStudyScript(projectId, studyId, revision, anglePrompt, anglesResponseJson,
+        selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
