@@ -24,6 +24,11 @@ export interface DraftSnapshot {
   content: string;
   createdAt: string;
 }
+export interface DraftCandidate {
+  id: string;
+  title: string;
+  revision: number;
+}
 export interface ContentStudy {
   id: string;
   projectId: string;
@@ -32,6 +37,10 @@ export interface ContentStudy {
   sources: StudySourceRef[];
   draft: string;
   draftVersions: DraftSnapshot[];
+  /** Exact saved candidate; older injected Studio fixtures may omit metadata. */
+  draftId?: string | null;
+  draftRevision?: number | null;
+  drafts?: DraftCandidate[];
 }
 export interface StudyEvidenceInput {
   source: StudySourceRef;
@@ -90,11 +99,14 @@ export interface StudioGateway {
   reviewStudyEvidence?(projectId: string, studyId: string, evidenceId: string, input: StudyEvidenceReviewInput): Promise<StudyEvidence>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
-  getStudy(projectId: string, studyId: string): Promise<ContentStudy>;
+  getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  duplicateStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];
     draft?: string;
+    draftId?: string;
+    draftRevision?: number;
   }): Promise<ContentStudy>;
 }
 export const emptyBrief = (): CreativeBrief => ({

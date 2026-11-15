@@ -54,7 +54,10 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     saveCopyPrompt: (projectId, input) => invoke<AiRunDetail>('save_copy_prompt', { projectId, input }),
     listStudies: (projectId) => invoke<UiStudioStudySummary[]>('list_studies', { projectId }),
     createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
-    getStudy: (projectId, studyId) => invoke<ContentStudy>('get_study', { projectId, studyId }),
+    getStudy: (projectId, studyId, draftId) => invoke<ContentStudy>('get_study',
+      draftId ? { projectId, studyId, draftId } : { projectId, studyId }),
+    duplicateStudyDraft: (projectId, studyId, draftId, expectedDraftRevision) =>
+      invoke<ContentStudy>('duplicate_study_draft', { projectId, studyId, draftId, expectedDraftRevision }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
     listStudyEvidence: (projectId, studyId) =>

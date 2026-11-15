@@ -50,9 +50,11 @@ export interface ScriptotarApi {
   saveCopyPrompt(projectId: string, input: AiPromptInput): Promise<AiRunDetail>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
-  getStudy(projectId: string, studyId: string): Promise<ContentStudy>;
+  getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  duplicateStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
+    draftId?: string; draftRevision?: number;
   }): Promise<ContentStudy>;
   listStudyEvidence(projectId: string, studyId: string): Promise<StudyEvidence[]>;
   addStudyEvidence(projectId: string, studyId: string, input: StudyEvidenceInput): Promise<StudyEvidence>;

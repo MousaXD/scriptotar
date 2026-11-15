@@ -67,6 +67,8 @@ describe('Tauri client command contract', () => {
     await api.createStudy('project-id', { title: 'Example', goal: 'Goal', audience: 'Audience',
       platform: 'TikTok', language: 'Arabic', duration: '40', style: 'Direct' });
     await api.getStudy('project-id', 'study-id');
+    await api.getStudy('project-id', 'study-id', 'draft-id');
+    await api.duplicateStudyDraft('project-id', 'study-id', 'draft-id', 3);
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
     await api.listStudyEvidence('project-id', 'study-id');
     await api.addStudyEvidence('project-id', 'study-id', {
@@ -143,6 +145,12 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('create_study', { projectId: 'project-id',
       brief: expect.objectContaining({ title: 'Example', goal: 'Goal' }) });
     expect(invokeMock).toHaveBeenCalledWith('get_study', { projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_study', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('duplicate_study_draft', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id', expectedDraftRevision: 3
+    });
     expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
       studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });
     expect(invokeMock).toHaveBeenCalledWith('list_study_evidence', { projectId: 'project-id', studyId: 'study-id' });

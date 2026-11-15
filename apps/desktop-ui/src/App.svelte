@@ -27,7 +27,9 @@
     listStudies: (projectId: string) => api.listStudies(projectId),
     createStudy: (projectId: string, brief: Parameters<StudioGateway['createStudy']>[1]) =>
       api.createStudy(projectId, brief),
-    getStudy: (projectId: string, studyId: string) => api.getStudy(projectId, studyId),
+    getStudy: (projectId: string, studyId: string, draftId?: string) => api.getStudy(projectId, studyId, draftId),
+    duplicateStudyDraft: (projectId: string, studyId: string, draftId: string, revision: number) =>
+      api.duplicateStudyDraft(projectId, studyId, draftId, revision),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),

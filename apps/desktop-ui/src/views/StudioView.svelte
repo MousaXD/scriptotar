@@ -270,13 +270,16 @@
     const base = record;
     const expectedId = base.id;
     const epoch = currentRequest;
-    const patch = { brief: { ...brief }, sources: [...refs], draft };
+    const patch = { brief: { ...brief }, sources: [...refs], draft,
+      ...(base.draftId && base.draftRevision != null
+        ? { draftId: base.draftId, draftRevision: base.draftRevision } : {}) };
     saving = true;
     error = '';
     try {
       const saved = await gateway.saveStudy(projectId, expectedId, base.revision, patch);
       if (epoch !== currentRequest || studyId !== expectedId) return;
-      if (saved.id !== expectedId || saved.projectId !== projectId || saved.revision <= base.revision) {
+      if (saved.id !== expectedId || saved.projectId !== projectId || saved.revision <= base.revision ||
+          (base.draftId && saved.draftId !== base.draftId)) {
         throw new Error(t.invalidStudy);
       }
       record = saved;
@@ -294,6 +297,71 @@
     }
   }
 
+
+  async function openDraft(draftId: string) {
+    if (!gateway || !record || !record.draftId || !draftId ||
+        draftId === record.draftId || busy || saving || loading) return;
+    const ownerStudy = studyId;
+    busy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (!record || studyId !== ownerStudy) return;
+      const epoch = ++currentRequest;
+      const selected = await gateway.getStudy(projectId, ownerStudy, draftId);
+      if (epoch !== currentRequest || studyId !== ownerStudy) return;
+      if (selected.id !== ownerStudy || selected.projectId !== projectId ||
+          selected.draftId !== draftId) throw new Error(t.invalidStudy);
+      record = selected;
+      brief = { ...selected.brief };
+      refs = [...selected.sources];
+      draft = selected.draft;
+      previewVersion = null;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = '';
+    } catch (cause) {
+      error = message(cause, t.errorDraft);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function duplicateDraft() {
+    if (!gateway?.duplicateStudyDraft || !record?.draftId ||
+        record.draftRevision == null || busy || saving || loading) return;
+    const ownerStudy = studyId;
+    busy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (!record?.draftId || record.draftRevision == null || studyId !== ownerStudy) return;
+      const oldDraftId = record.draftId;
+      const created = await gateway.duplicateStudyDraft(
+        projectId, ownerStudy, oldDraftId, record.draftRevision);
+      if (studyId !== ownerStudy || created.id !== ownerStudy ||
+          created.projectId !== projectId || !created.draftId ||
+          created.draftId === oldDraftId ||
+          !created.drafts?.some((item) => item.id === created.draftId)) {
+        throw new Error(t.invalidStudy);
+      }
+      currentRequest++;
+      record = created;
+      brief = { ...created.brief };
+      refs = [...created.sources];
+      draft = created.draft;
+      previewVersion = null;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = t.saved;
+    } catch (cause) {
+      error = message(cause, t.errorDraft);
+    } finally {
+      busy = false;
+    }
+  }
 
   // Restoring a snapshot is a new immutable save, never a destructive edit
   // of historical draft_versions. Commit any pending brief/source edits first.
@@ -828,6 +896,18 @@
           {/if}
         </div>
       </div>
+      {#if record?.drafts?.length && record.draftId}
+        <div class="studio-candidates">
+          <Select label={t.draftCandidates} value={record.draftId}
+            options={record.drafts.map((item) => ({ value: item.id, label: item.title }))}
+            onChange={(id) => void openDraft(id)} />
+          {#if gateway?.duplicateStudyDraft}
+            <button class="button secondary" type="button"
+              disabled={busy || saving || loading || importingSavedResult}
+              on:click={() => void duplicateDraft()}>{t.duplicateDraft}</button>
+          {/if}
+        </div>
+      {/if}
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
           <button type="button" class:chosen={!previewVersion} on:click={() => previewVersion = null}>{t.currentDraft}</button>
@@ -970,6 +1050,8 @@
 <style>
   .studio-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }
+  .studio-candidates > :global(*) { min-width: 180px; }
   .studio-workspace { display: grid; grid-template-columns: minmax(210px, 0.85fr) minmax(350px, 2.2fr) minmax(220px, 1fr); gap: 14px; align-items: start; }
   .studio-side, .studio-main { display: grid; min-width: 0; gap: 14px; }
   .studio-workspace .panel { min-width: 0; padding: 18px; border-radius: var(--radius-lg); }
