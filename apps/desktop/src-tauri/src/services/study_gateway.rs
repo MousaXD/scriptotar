@@ -292,6 +292,35 @@ impl AppServices {
         Ok(ui_evidence(reference, &source))
     }
 
+    /// Human review never certifies a claim as corroborated. Both transitions
+    /// require an explicit reason and a stale-state compare-and-swap.
+    pub fn review_studio_evidence(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        evidence_id: Uuid,
+        expected_certainty: &str,
+        action: &str,
+        note: &str,
+    ) -> RepositoryResult<UiStudyEvidence> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let (expected, next) = match (expected_certainty, action) {
+            ("unverified", "dispute") => (EvidenceCertainty::Unverified, EvidenceCertainty::Disputed),
+            ("disputed", "reopen") => (EvidenceCertainty::Disputed, EvidenceCertainty::Unverified),
+            _ => return Err(invalid("evidence review transition")),
+        };
+        let changed = self.store.review_evidence_reference(
+            project_id, study_id, evidence_id, expected, next, note,
+        )?;
+        let source = self
+            .store
+            .list_study_sources(project_id, study_id)?
+            .into_iter()
+            .find(|item| item.id == changed.input.study_source_id)
+            .ok_or_else(|| RepositoryError::Storage("evidence source missing".into()))?;
+        Ok(ui_evidence(changed, &source))
+    }
+
     pub fn save_studio_study(
         &self,
         project_id: Uuid,

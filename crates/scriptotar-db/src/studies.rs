@@ -611,6 +611,47 @@ impl SqliteStore {
         self.get_evidence_reference(project_id, study_id, id)
     }
 
+    /// A narrowly scoped human review. Only unverified↔disputed is supported:
+    /// saved creator observations cannot be marked independently corroborated.
+    /// The status is compare-and-swapped under an IMMEDIATE SQLite lock so
+    /// simultaneous reviewers cannot silently overwrite one another.
+    pub fn review_evidence_reference(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        evidence_id: Uuid,
+        expected: EvidenceCertainty,
+        next: EvidenceCertainty,
+        reason: &str,
+    ) -> RepositoryResult<EvidenceReference> {
+        if !matches!(expected, EvidenceCertainty::Unverified | EvidenceCertainty::Disputed)
+            || !matches!(next, EvidenceCertainty::Unverified | EvidenceCertainty::Disputed)
+            || expected == next
+        {
+            return Err(RepositoryError::Validation("invalid evidence review transition".into()));
+        }
+        required_text("review reason", reason, 4000)?;
+        let mut db = database(self)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        let updated = tx.execute(
+            "UPDATE study_evidence
+             SET certainty=?1, uncertainty_note=?2
+             WHERE id=?3 AND project_id=?4 AND study_id=?5 AND certainty=?6",
+            params![
+                next.as_str(), reason.trim(), evidence_id.to_string(),
+                project_id.to_string(), study_id.to_string(), expected.as_str()
+            ],
+        ).map_err(db_error)?;
+        if updated != 1 {
+            return Err(RepositoryError::Conflict(
+                "evidence changed or is not part of this Study".into(),
+            ));
+        }
+        tx.commit().map_err(db_error)?;
+        self.get_evidence_reference(project_id, study_id, evidence_id)
+    }
+
     pub fn get_evidence_reference(
         &self,
         project_id: Uuid,

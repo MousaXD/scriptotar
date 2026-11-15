@@ -725,6 +725,30 @@ async fn add_study_evidence(
     .await
 }
 
+#[tauri::command]
+async fn review_study_evidence(
+    project_id: String,
+    study_id: String,
+    evidence_id: String,
+    expected_certainty: String,
+    action: String,
+    note: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudyEvidence, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let evidence_id = artifact_uuid(&evidence_id, "evidence id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .review_studio_evidence(
+                project_id, study_id, evidence_id, &expected_certainty, &action, &note,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
 /// A read-only plan. Nothing executes before explicit approval.
 #[tauri::command]
 async fn start_local_inspection(
@@ -1212,6 +1236,7 @@ pub fn run() {
             save_study,
             list_study_evidence,
             add_study_evidence,
+            review_study_evidence,
             start_local_inspection,
             list_local_inspections,
             decide_local_inspection,
