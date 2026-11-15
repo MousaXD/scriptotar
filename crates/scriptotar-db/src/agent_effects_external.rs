@@ -723,4 +723,60 @@ mod tests {
         assert!(db.reserve_external_effect(key,fp(),"openai",limits()).is_err());
         assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
     }
+    #[test]
+    fn revoked_running_intent_blocks_external_dispatch() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let reserved=reserve(&db,&snap,project,study);
+        let conn=rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute(
+            "UPDATE agent_runs SET snapshot_json=json_set(snapshot_json,
+             '$.cancel_requested',json('true')) WHERE id=?1",
+            params![snap.plan.id],
+        ).unwrap();
+        assert!(db.mark_external_dispatched(key,reserved.revision,1).is_err());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,
+                   ExternalEffectStatus::Reserved);
+    }
+
+    #[test]
+    fn two_processes_cannot_both_claim_dispatch_marker() {
+        let (_dir,db,project,study,snap)=setup();
+        let reserved=reserve(&db,&snap,project,study);
+        let barrier=Arc::new(Barrier::new(3));
+        let workers=(0..2).map(|_|{
+            let db=db.clone();
+            let snap=snap.clone();
+            let barrier=barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                db.mark_external_dispatched(identity(&snap,project,study),reserved.revision,1)
+            })
+        }).collect::<Vec<_>>();
+        barrier.wait();
+        let result=workers.into_iter().map(|w|w.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(result.iter().filter(|r|r.is_ok()).count(),1);
+        assert_eq!(result.iter().filter(|r|r.is_err()).count(),1);
+        assert_eq!(db.get_external_effect(identity(&snap,project,study))
+            .unwrap().unwrap().status,ExternalEffectStatus::Dispatched);
+    }
+
+    #[test]
+    fn injected_receipt_write_failure_rolls_back_dispatch_transition() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let reserved=reserve(&db,&snap,project,study);
+        let conn=rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER external_test_rollback BEFORE UPDATE ON agent_external_effects
+             BEGIN SELECT RAISE(ABORT,'injected database write fault'); END;"
+        ).unwrap();
+        assert!(db.mark_external_dispatched(key,reserved.revision,1).is_err());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,
+                   ExternalEffectStatus::Reserved);
+        conn.execute_batch("DROP TRIGGER external_test_rollback;").unwrap();
+        assert_eq!(db.mark_external_dispatched(key,reserved.revision,1).unwrap().status,
+                   ExternalEffectStatus::Dispatched);
+    }
+
 }
