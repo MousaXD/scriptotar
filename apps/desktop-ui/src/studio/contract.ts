@@ -41,6 +41,7 @@ export interface ContentStudy {
   draftId?: string | null;
   draftRevision?: number | null;
   drafts?: DraftCandidate[];
+  archivedDrafts?: DraftCandidate[];
 }
 export interface StudyEvidenceInput {
   source: StudySourceRef;
@@ -102,6 +103,7 @@ export interface StudioGateway {
   getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
   duplicateStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   renameStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
+  setStudyDraftArchived?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];

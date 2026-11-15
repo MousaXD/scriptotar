@@ -112,7 +112,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   let draftCounter = 0;
   const studies = new Map<string, ContentStudy>();
   const draftCopies = new Map<string, Map<string, {
-    title: string; body: string; revision: number; versions: DraftSnapshot[]
+    title: string; body: string; revision: number; versions: DraftSnapshot[]; archived: boolean
   }>>();
   const inspectionRuns = new Map<string, LocalInspectionRun>();
   const studyEvidence = new Map<string, StudyEvidence[]>();
@@ -166,10 +166,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       const study: ContentStudy = {
         id: `mock-study-${++studyCounter}`, projectId, revision: 1,
         brief: structuredClone(brief), sources: [], draft: '', draftVersions: [],
-        draftId, draftRevision: 1, drafts: [{ id: draftId, title: brief.title, revision: 1 }]
+        draftId, draftRevision: 1, drafts: [{ id: draftId, title: brief.title, revision: 1 }],
+        archivedDrafts: []
       };
       draftCopies.set(study.id, new Map([[draftId, {
-        title: brief.title, body: '', revision: 1, versions: []
+        title: brief.title, body: '', revision: 1, versions: [], archived: false
       }]]));
       studies.set(study.id, structuredClone(study));
       return structuredClone(study);
@@ -178,7 +179,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       const study = studyInProject(projectId, studyId);
       if (!draftId) return structuredClone(study);
       const candidate = draftCopies.get(studyId)?.get(draftId);
-      if (!candidate) throw new Error('Draft is not attached to this Study');
+      if (!candidate || candidate.archived) throw new Error('Draft is not an active Study candidate');
       const selected: ContentStudy = {
         ...study, draftId, draftRevision: candidate.revision,
         draft: candidate.body, draftVersions: structuredClone(candidate.versions)
@@ -199,7 +200,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         createdAt: '2026-11-15T12:00:00Z'
       };
       draftCopies.get(studyId)?.set(copyId, {
-        title, body: candidate.body, revision: 1, versions: [version]
+        title, body: candidate.body, revision: 1, versions: [version], archived: false
       });
       const copied: ContentStudy = {
         ...study, draftId: copyId, draftRevision: 1,
@@ -212,7 +213,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     async renameStudyDraft(projectId, studyId, draftId, expectedDraftRevision, title) {
       const study = studyInProject(projectId, studyId);
       const saved = draftCopies.get(studyId)?.get(draftId);
-      if (!saved || saved.revision !== expectedDraftRevision) throw new Error('Draft changed or unavailable');
+      if (!saved || saved.archived || saved.revision !== expectedDraftRevision) throw new Error('Draft changed or unavailable');
       if (!title.trim() || title.length > 200) throw new Error('Invalid draft title');
       const revision = saved.revision + (saved.title === title.trim() ? 0 : 1);
       const versions = revision > saved.revision ? [...saved.versions, {
@@ -226,6 +227,41 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         draft: saved.body, draftVersions: structuredClone(versions),
         drafts: study.drafts?.map((item) => item.id === draftId
           ? { ...item, title: title.trim(), revision } : item)
+      };
+      studies.set(studyId, structuredClone(next));
+      return structuredClone(next);
+    },
+    async setStudyDraftArchived(projectId, studyId, draftId, expectedDraftRevision, archived) {
+      const study = studyInProject(projectId, studyId);
+      const saved = draftCopies.get(studyId)?.get(draftId);
+      if (!saved || saved.revision !== expectedDraftRevision || saved.archived === archived) {
+        throw new Error('Draft changed or archive status is stale');
+      }
+      if (archived && (study.drafts?.length ?? 0) <= 1) {
+        throw new Error('The last active Study script cannot be archived');
+      }
+      const revision = saved.revision + 1;
+      const version: DraftSnapshot = {
+        id: `${draftId}:v${revision}`, revision,
+        content: saved.body, createdAt: '2026-11-15T12:00:00Z'
+      };
+      draftCopies.get(studyId)?.set(draftId, {
+        ...saved, revision, archived, versions: [...saved.versions, version]
+      });
+      const moved = { id: draftId, title: saved.title, revision };
+      const active = archived
+        ? (study.drafts ?? []).filter((item) => item.id !== draftId)
+        : [moved, ...(study.drafts ?? [])];
+      const inactive = archived
+        ? [moved, ...(study.archivedDrafts ?? [])]
+        : (study.archivedDrafts ?? []).filter((item) => item.id !== draftId);
+      const nextId = archived ? active[0]?.id : draftId;
+      const nextSaved = nextId ? draftCopies.get(studyId)?.get(nextId) : undefined;
+      if (!nextId || !nextSaved) throw new Error('No active Study script');
+      const next: ContentStudy = {
+        ...study, draftId: nextId, draftRevision: nextSaved.revision,
+        draft: nextSaved.body, draftVersions: structuredClone(nextSaved.versions),
+        drafts: active, archivedDrafts: inactive
       };
       studies.set(studyId, structuredClone(next));
       return structuredClone(next);

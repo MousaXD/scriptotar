@@ -32,6 +32,8 @@
       api.duplicateStudyDraft(projectId, studyId, draftId, revision),
     renameStudyDraft: (projectId: string, studyId: string, draftId: string, revision: number, title: string) =>
       api.renameStudyDraft(projectId, studyId, draftId, revision, title),
+    setStudyDraftArchived: (projectId: string, studyId: string, draftId: string, revision: number, archived: boolean) =>
+      api.setStudyDraftArchived(projectId, studyId, draftId, revision, archived),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),

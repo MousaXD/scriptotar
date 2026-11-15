@@ -60,6 +60,8 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<ContentStudy>('duplicate_study_draft', { projectId, studyId, draftId, expectedDraftRevision }),
     renameStudyDraft: (projectId, studyId, draftId, expectedDraftRevision, title) =>
       invoke<ContentStudy>('rename_study_draft', { projectId, studyId, draftId, expectedDraftRevision, title }),
+    setStudyDraftArchived: (projectId, studyId, draftId, expectedDraftRevision, archived) =>
+      invoke<ContentStudy>('set_study_draft_archived', { projectId, studyId, draftId, expectedDraftRevision, archived }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
     listStudyEvidence: (projectId, studyId) =>
