@@ -69,7 +69,9 @@ impl StudyWritingContext {
             return Err(WritingWorkflowError::InvalidContext("scope or revision"));
         }
         if !(3..=8).contains(&self.sources.len()) {
-            return Err(WritingWorkflowError::InvalidContext("three to eight selected sources required"));
+            return Err(WritingWorkflowError::InvalidContext(
+                "three to eight selected sources required",
+            ));
         }
         let mut attached = HashSet::new();
         let mut origins = HashSet::new();
@@ -79,32 +81,47 @@ impl StudyWritingContext {
                 || !attached.insert(source.study_source_id)
                 || !origins.insert(source.origin_id)
             {
-                return Err(WritingWorkflowError::InvalidContext("duplicate or missing source"));
+                return Err(WritingWorkflowError::InvalidContext(
+                    "duplicate or missing source",
+                ));
             }
         }
         let mut covered = HashSet::new();
         for item in &self.evidence {
-            let origin = Uuid::parse_str(&item.locator.source_id)
-                .map_err(|_| WritingWorkflowError::InvalidContext("noncanonical evidence locator"))?;
-            let binding = self.sources.iter().find(|source| {
-                source.origin_id == origin || source.study_source_id == origin
-            }).ok_or(WritingWorkflowError::InvalidContext("foreign evidence source"))?;
+            let origin = Uuid::parse_str(&item.locator.source_id).map_err(|_| {
+                WritingWorkflowError::InvalidContext("noncanonical evidence locator")
+            })?;
+            let binding = self
+                .sources
+                .iter()
+                .find(|source| source.origin_id == origin || source.study_source_id == origin)
+                .ok_or(WritingWorkflowError::InvalidContext(
+                    "foreign evidence source",
+                ))?;
             covered.insert(binding.study_source_id);
             // The existing Study bridge emits only attributed transcripts and
             // unverified human observations. A creator observation cannot become
             // independent corroboration by supplying a different enum variant.
-            if matches!(item.kind, EvidenceKind::CreativeObservation | EvidenceKind::SocialTranscript)
-                && item.status == EvidenceStatus::Corroborated
+            if matches!(
+                item.kind,
+                EvidenceKind::CreativeObservation | EvidenceKind::SocialTranscript
+            ) && item.status == EvidenceStatus::Corroborated
             {
-                return Err(WritingWorkflowError::InvalidContext("untrusted corroboration"));
+                return Err(WritingWorkflowError::InvalidContext(
+                    "untrusted corroboration",
+                ));
             }
         }
         if covered.len() < 3 {
-            return Err(WritingWorkflowError::InvalidContext("insufficient attributable source excerpts"));
+            return Err(WritingWorkflowError::InvalidContext(
+                "insufficient attributable source excerpts",
+            ));
         }
         self.angle_input()
-            .and_then(|input| writing::prepare_writing_request(&input)
-                .map_err(|error| WritingWorkflowError::InvalidResponse(error.to_string())))
+            .and_then(|input| {
+                writing::prepare_writing_request(&input)
+                    .map_err(|error| WritingWorkflowError::InvalidResponse(error.to_string()))
+            })
             .map(|_| ())
     }
 
@@ -119,7 +136,9 @@ impl StudyWritingContext {
 
     fn input_for_angle(&self, angle: &AngleOption) -> WriteResult<WritingInput> {
         let mut input = self.angle_input()?;
-        input.task = WritingTask::Draft { angle: angle.clone() };
+        input.task = WritingTask::Draft {
+            angle: angle.clone(),
+        };
         Ok(input)
     }
 }
@@ -136,7 +155,9 @@ pub struct FixedStudy<'a>(pub &'a StudyWritingContext);
 impl CurrentStudy for FixedStudy<'_> {
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext> {
         if self.0.project_id != project_id || self.0.study_id != study_id {
-            return Err(WritingWorkflowError::InvalidContext("foreign project or study"));
+            return Err(WritingWorkflowError::InvalidContext(
+                "foreign project or study",
+            ));
         }
         Ok(self.0.clone())
     }
@@ -150,8 +171,11 @@ pub struct GenerationPlan {
 }
 
 pub fn prepare_three(run_id: &str, context: StudyWritingContext) -> WriteResult<GenerationPlan> {
-    if run_id.is_empty() || run_id.len() > 128
-        || !run_id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    if run_id.is_empty()
+        || run_id.len() > 128
+        || !run_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
     {
         return Err(WritingWorkflowError::InvalidContext("run ID"));
     }
@@ -159,7 +183,9 @@ pub fn prepare_three(run_id: &str, context: StudyWritingContext) -> WriteResult<
     let angles_prompt = writing::prepare_writing_request(&context.angle_input()?)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
     Ok(GenerationPlan {
-        run_id: run_id.into(), context, angles_prompt,
+        run_id: run_id.into(),
+        context,
+        angles_prompt,
     })
 }
 
@@ -173,8 +199,13 @@ pub enum StepAdmission {
     Recorded { response_json: String },
 }
 pub trait DurablePermissionBoundary {
-    fn begin(&mut self, run_id: &str, context: &StudyWritingContext,
-        step: &str, request: &AiRequest) -> WriteResult<StepAdmission>;
+    fn begin(
+        &mut self,
+        run_id: &str,
+        context: &StudyWritingContext,
+        step: &str,
+        request: &AiRequest,
+    ) -> WriteResult<StepAdmission>;
     /// Persist the bounded response artifact AND its receipt before returning.
     fn record_response(&mut self, effect_key: &str, response_json: &str) -> WriteResult<()>;
     /// Outcome after invocation is unknown, including timeouts. No automatic replay.
@@ -197,7 +228,9 @@ pub struct ApprovedAiAdapter<'a, P: AiProvider> {
 }
 impl<P: AiProvider> WritingTextProvider for ApprovedAiAdapter<'_, P> {
     fn generate(&mut self, request: &AiRequest) -> Result<AiResponse, ()> {
-        self.service.generate(self.config, self.ephemeral_key, request).map_err(|_| ())
+        self.service
+            .generate(self.config, self.ephemeral_key, request)
+            .map_err(|_| ())
     }
 }
 
@@ -206,7 +239,9 @@ pub trait StopSignal {
 }
 pub struct NeverStop;
 impl StopSignal for NeverStop {
-    fn cancelled(&self) -> bool { false }
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -255,10 +290,16 @@ fn check_current<C: CurrentStudy>(loader: &C, plan: &GenerationPlan) -> WriteRes
 }
 
 fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSignal>(
-    gate: &mut B, provider: &mut P, stop: &S, plan: &GenerationPlan,
-    step: &str, request: &AiRequest,
+    gate: &mut B,
+    provider: &mut P,
+    stop: &S,
+    plan: &GenerationPlan,
+    step: &str,
+    request: &AiRequest,
 ) -> WriteResult<String> {
-    if stop.cancelled() { return Err(WritingWorkflowError::Cancelled); }
+    if stop.cancelled() {
+        return Err(WritingWorkflowError::Cancelled);
+    }
     match gate.begin(&plan.run_id, &plan.context, step, request)? {
         StepAdmission::Recorded { response_json } => Ok(response_json),
         StepAdmission::Dispatch { effect_key } => {
@@ -272,7 +313,9 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
                     // a possibly billable call after an uncertain outcome.
                     if response.text.chars().count() > 100_000 {
                         gate.mark_uncertain(&effect_key)?;
-                        return Err(WritingWorkflowError::InvalidResponse("provider output exceeds bound".into()));
+                        return Err(WritingWorkflowError::InvalidResponse(
+                            "provider output exceeds bound".into(),
+                        ));
                     }
                     if gate.record_response(&effect_key, &response.text).is_err() {
                         // The provider may have charged even when the local
@@ -295,11 +338,19 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
 /// Steps have stable IDs; the boundary cannot dispatch an existing paid effect.
 /// The sink owns the final atomic 3-draft commit and receipt.
 pub fn generate_three<C, B, P, S, D>(
-    plan: &GenerationPlan, current: &C, gate: &mut B, provider: &mut P,
-    stop: &S, sink: &mut D,
+    plan: &GenerationPlan,
+    current: &C,
+    gate: &mut B,
+    provider: &mut P,
+    stop: &S,
+    sink: &mut D,
 ) -> WriteResult<[Uuid; 3]>
-where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider,
-      S: StopSignal, D: AtomicCandidateStore
+where
+    C: CurrentStudy,
+    B: DurablePermissionBoundary,
+    P: WritingTextProvider,
+    S: StopSignal,
+    D: AtomicCandidateStore,
 {
     check_current(current, plan)?;
     let angles_json = execute_step(gate, provider, stop, plan, "angles", &plan.angles_prompt)?;
@@ -316,12 +367,23 @@ where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider,
         let input = plan.context.input_for_angle(angle)?;
         let request = writing::prepare_writing_request(&input)
             .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
-        let raw = execute_step(gate, provider, stop, plan, &format!("draft-{}", index + 1), &request)?;
+        let raw = execute_step(
+            gate,
+            provider,
+            stop,
+            plan,
+            &format!("draft-{}", index + 1),
+            &request,
+        )?;
         check_current(current, plan)?;
         let draft = writing::parse_draft(&raw, &input)
             .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
-        let prose: String = draft.beats.iter().map(|beat| beat.narration.to_lowercase())
-            .collect::<Vec<_>>().join(" ");
+        let prose: String = draft
+            .beats
+            .iter()
+            .map(|beat| beat.narration.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ");
         let prose: String = prose.split_whitespace().collect::<Vec<_>>().join(" ");
         if !normalized_scripts.insert(prose) {
             return Err(WritingWorkflowError::DuplicateOrSimilar);
@@ -329,10 +391,16 @@ where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider,
         let lineage = lineage_for(&plan.context, angle, &draft)?;
         let audit = writing::audit_draft(&draft, &plan.context.brief, &plan.context.evidence);
         candidates.push(GeneratedCandidate {
-            angle: angle.clone(), draft, lineage, audit, review_findings: Vec::new(),
+            angle: angle.clone(),
+            draft,
+            lineage,
+            audit,
+            review_findings: Vec::new(),
         });
     }
-    if stop.cancelled() { return Err(WritingWorkflowError::Cancelled); }
+    if stop.cancelled() {
+        return Err(WritingWorkflowError::Cancelled);
+    }
     check_current(current, plan)?;
     // The sink is responsible for a second scoped context check INSIDE its
     // transaction, exact-once receipt and immutable initial versions.
@@ -343,9 +411,11 @@ where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider,
     })
 }
 
-fn lineage_for(context: &StudyWritingContext, angle: &AngleOption,
-    draft: &ScriptDraft) -> WriteResult<Vec<CandidateLineage>>
-{
+fn lineage_for(
+    context: &StudyWritingContext,
+    angle: &AngleOption,
+    draft: &ScriptDraft,
+) -> WriteResult<Vec<CandidateLineage>> {
     let mut evidence_ids: HashSet<&str> = angle.evidence_ids.iter().map(String::as_str).collect();
     for beat in &draft.beats {
         evidence_ids.extend(beat.evidence_ids.iter().map(String::as_str));
@@ -358,18 +428,30 @@ fn lineage_for(context: &StudyWritingContext, angle: &AngleOption,
     }
     let mut lineage: HashMap<Uuid, Vec<EvidenceRef>> = HashMap::new();
     for item in &context.evidence {
-        if !evidence_ids.contains(item.id.as_str()) { continue; }
+        if !evidence_ids.contains(item.id.as_str()) {
+            continue;
+        }
         let claimed = Uuid::parse_str(&item.locator.source_id)
             .map_err(|_| WritingWorkflowError::InvalidContext("lineage locator"))?;
-        let source = context.sources.iter().find(|source| {
-            source.origin_id == claimed || source.study_source_id == claimed
-        }).ok_or(WritingWorkflowError::InvalidContext("foreign lineage source"))?;
-        lineage.entry(source.study_source_id).or_default().push(item.clone());
+        let source = context
+            .sources
+            .iter()
+            .find(|source| source.origin_id == claimed || source.study_source_id == claimed)
+            .ok_or(WritingWorkflowError::InvalidContext(
+                "foreign lineage source",
+            ))?;
+        lineage
+            .entry(source.study_source_id)
+            .or_default()
+            .push(item.clone());
     }
     let mut ordered = Vec::new();
     for source in &context.sources {
         if let Some(evidence) = lineage.remove(&source.study_source_id) {
-            ordered.push(CandidateLineage { source_id: source.study_source_id, evidence });
+            ordered.push(CandidateLineage {
+                source_id: source.study_source_id,
+                evidence,
+            });
         }
     }
     Ok(ordered)
@@ -379,11 +461,20 @@ fn lineage_for(context: &StudyWritingContext, angle: &AngleOption,
 /// sees only the selected beat/feedback in a typed task; the existing accepted
 /// script remains unchanged until a separate human-approved CAS save.
 pub fn propose_beat_revision<C, B, P, S>(
-    plan: &GenerationPlan, current: &C, gate: &mut B, provider: &mut P,
-    stop: &S, candidate: &GeneratedCandidate, beat_id: &str,
+    plan: &GenerationPlan,
+    current: &C,
+    gate: &mut B,
+    provider: &mut P,
+    stop: &S,
+    candidate: &GeneratedCandidate,
+    beat_id: &str,
     feedback: &str,
 ) -> WriteResult<String>
-where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSignal
+where
+    C: CurrentStudy,
+    B: DurablePermissionBoundary,
+    P: WritingTextProvider,
+    S: StopSignal,
 {
     if !candidate.draft.beats.iter().any(|beat| beat.id == beat_id) {
         return Err(WritingWorkflowError::InvalidContext("unknown beat"));
@@ -408,14 +499,24 @@ where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: 
 /// Optional billable model review; findings never count as independent fact
 /// verification and every returned finding is forced to human-review-needed.
 pub fn review_candidate<C, B, P, S>(
-    plan: &GenerationPlan, current: &C, gate: &mut B, provider: &mut P,
-    stop: &S, candidate: &GeneratedCandidate,
+    plan: &GenerationPlan,
+    current: &C,
+    gate: &mut B,
+    provider: &mut P,
+    stop: &S,
+    candidate: &GeneratedCandidate,
 ) -> WriteResult<GeneratedCandidate>
-where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSignal
+where
+    C: CurrentStudy,
+    B: DurablePermissionBoundary,
+    P: WritingTextProvider,
+    S: StopSignal,
 {
     check_current(current, plan)?;
     let mut input = plan.context.angle_input()?;
-    input.task = WritingTask::Review { draft: candidate.draft.clone() };
+    input.task = WritingTask::Review {
+        draft: candidate.draft.clone(),
+    };
     let request = writing::prepare_writing_request(&input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
     let step = format!("review-{}", candidate.draft.id);
@@ -432,17 +533,27 @@ where C: CurrentStudy, B: DurablePermissionBoundary, P: WritingTextProvider, S: 
 /// draft version under an IMMEDIATE transaction, append an immutable version,
 /// and reject any source/Study or beat-content change since approval.
 pub trait VersionedCandidateStore {
-    fn save_revision(&mut self, context: &StudyWritingContext, canonical_draft_id: Uuid,
-        expected_draft_revision: i64, previous_beat_text: &str, beat_id: &str,
-        reviewed: &GeneratedCandidate) -> WriteResult<i64>;
+    fn save_revision(
+        &mut self,
+        context: &StudyWritingContext,
+        canonical_draft_id: Uuid,
+        expected_draft_revision: i64,
+        previous_beat_text: &str,
+        beat_id: &str,
+        reviewed: &GeneratedCandidate,
+    ) -> WriteResult<i64>;
 }
 
 /// Model suggestions are never auto-applied. Exact expected narration and
 /// editor's manual override choice are supplied by the caller only.
 pub fn apply_reviewed_beat_revision(
-    candidate: &GeneratedCandidate, context: &StudyWritingContext,
-    response_json: &str, beat_id: &str, feedback: &str,
-    expected_narration: &str, overwrite_manual_edit: bool,
+    candidate: &GeneratedCandidate,
+    context: &StudyWritingContext,
+    response_json: &str,
+    beat_id: &str,
+    feedback: &str,
+    expected_narration: &str,
+    overwrite_manual_edit: bool,
 ) -> WriteResult<GeneratedCandidate> {
     let mut input = context.angle_input()?;
     input.task = WritingTask::ReviseBeat {
@@ -452,15 +563,21 @@ pub fn apply_reviewed_beat_revision(
     };
     let proposal = writing::parse_revision_proposal(response_json, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
-    let updated = writing::apply_beat_revision(&candidate.draft, &BeatRevision {
-        beat_id: beat_id.into(), expected_narration: expected_narration.into(),
-        replacement_narration: proposal.replacement_narration,
-        overwrite_manual_edit,
-    }).map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    let updated = writing::apply_beat_revision(
+        &candidate.draft,
+        &BeatRevision {
+            beat_id: beat_id.into(),
+            expected_narration: expected_narration.into(),
+            replacement_narration: proposal.replacement_narration,
+            overwrite_manual_edit,
+        },
+    )
+    .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
     let mut next = candidate.clone();
     next.draft = updated;
     next.audit = writing::audit_draft(&next.draft, &context.brief, &context.evidence);
-    next.review_findings.retain(|finding| finding.beat_id.as_deref() != Some(beat_id));
+    next.review_findings
+        .retain(|finding| finding.beat_id.as_deref() != Some(beat_id));
     next.lineage = lineage_for(context, &next.angle, &next.draft)?;
     Ok(next)
 }
@@ -483,8 +600,13 @@ pub fn export_candidate(candidate: &GeneratedCandidate) -> String {
     }
     text.push_str("## Claims (not independently fact-checked)\n");
     for claim in &candidate.draft.claims {
-        text.push_str(&format!("- [{:?}] {} (beat {}, evidence: {})\n",
-            claim.status, claim.assertion, claim.beat_id, claim.evidence_ids.join(", ")));
+        text.push_str(&format!(
+            "- [{:?}] {} (beat {}, evidence: {})\n",
+            claim.status,
+            claim.assertion,
+            claim.beat_id,
+            claim.evidence_ids.join(", ")
+        ));
     }
     text.push_str("\n## Exact cited source locators\n");
     for source in &candidate.lineage {
@@ -499,5 +621,9 @@ pub fn export_candidate(candidate: &GeneratedCandidate) -> String {
 }
 
 pub fn needs_human_fact_review(candidate: &GeneratedCandidate) -> bool {
-    candidate.draft.claims.iter().any(|claim| claim.status != ClaimStatus::Opinion)
+    candidate
+        .draft
+        .claims
+        .iter()
+        .any(|claim| claim.status != ClaimStatus::Opinion)
 }
