@@ -73,6 +73,7 @@ fn review(ctx: &VerificationContext, claim: &ClaimProposal) -> VerifiedReview {
         claim_id: claim.id.clone(),
         exact_statement: claim.statement.clone(),
         evidence_ids: claim.citations.iter().map(|c| c.evidence_id.clone()).collect(),
+        exact_citations: claim.citations.clone(),
         decision: ReviewDecision::Accept,
         reviewed_at_epoch: 199,
     }
@@ -98,7 +99,10 @@ fn two_independent_reviewed_sources_and_exact_current_human_decision_are_require
     let verified = evaluated(&ctx, &claim);
     assert_eq!(verified.status, VerificationStatus::Verified);
     assert_eq!(verified.exact_citations, claim.citations);
-    assert!(!verify_claims(&ctx, &[claim]).publication_review_required);
+    // Individual claim verification is not an attested exhaustive prose audit.
+    let report = verify_claims(&ctx, &[claim]);
+    assert!(report.publication_review_required);
+    assert!(!report.inventory_complete);
 }
 
 #[test]
@@ -285,4 +289,42 @@ fn generated_fact_claim_extraction_never_invents_verified_citations() {
 fn duplicate_evidence_ids_are_ambiguous_not_arbitrarily_selected() {
     let ctx = scope(vec![source("a", "one"), source("a", "two")]);
     assert!(has(&evaluated(&ctx, &fact(&ctx.evidence[..1])), FindingCode::UnknownCitation));
+}
+
+
+#[test]
+fn old_review_cannot_verify_a_new_source_version_even_with_updated_citations() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let original = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &original));
+    assert_eq!(evaluated(&ctx, &original).status, VerificationStatus::Verified);
+    // Underlying evidence identities remain unchanged, but the second content
+    // version and quotation have changed since the reviewer saw them.
+    ctx.evidence[1].source_version = Some("sha256:version2".into());
+    ctx.evidence[1].excerpt = "Updated source excerpt".into();
+    let updated = fact(&ctx.evidence);
+    let result = evaluated(&ctx, &updated);
+    assert_eq!(result.status, VerificationStatus::Unverified);
+    assert!(has(&result, FindingCode::InvalidReviewLineage));
+    assert_eq!(ctx.human_reviews[0].exact_citations, original.citations);
+}
+
+#[test]
+fn missing_claim_inventory_and_model_opinion_cannot_clear_publication_review() {
+    let ctx = scope(vec![]);
+    let empty = verify_claims(&ctx, &[]);
+    assert!(empty.publication_review_required);
+    assert!(!empty.inventory_complete);
+
+    let opinion = ClaimProposal {
+        id: "opinion-1".into(), beat_id: "beat-1".into(),
+        statement: "This new product is always the safest choice".into(),
+        kind: ClaimKind::Opinion, consequence: Consequence::Health,
+        required_modality: Modality::DocumentText, citations: vec![],
+        model_claims_verified: false,
+    };
+    let report = verify_claims(&ctx, &[opinion]);
+    assert_eq!(report.claims[0].status, VerificationStatus::Opinion);
+    assert!(report.publication_review_required);
+    assert!(!report.inventory_complete);
 }
