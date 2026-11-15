@@ -298,6 +298,25 @@ impl AppServices {
         self.read_studio_bundle_for(project_id, study_id, Some(copied.id))
     }
 
+    pub fn rename_studio_draft(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+        expected_draft_revision: i64,
+        title: &str,
+    ) -> RepositoryResult<UiStudioStudy> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let draft = self.store.get_draft(project_id, draft_id)?;
+        if draft.study_id != study_id || draft.archived_at.is_some() {
+            return Err(RepositoryError::NotFound("draft in this active Study".into()));
+        }
+        let renamed = self
+            .store
+            .rename_draft(project_id, draft_id, expected_draft_revision, title)?;
+        self.read_studio_bundle_for(project_id, study_id, Some(renamed.id))
+    }
+
     pub fn create_studio_study(
         &self,
         project_id: Uuid,

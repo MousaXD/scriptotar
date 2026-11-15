@@ -359,6 +359,9 @@ impl SqliteStore {
         self.get_draft(project_id, draft_id)
     }
 
+    /// Rename only the title while preserving the currently committed body.
+    /// Previously this fetched the body before obtaining the write lock, which
+    /// could overwrite a concurrent edit with an old snapshot.
     pub fn rename_draft(
         &self,
         project_id: Uuid,
@@ -366,8 +369,61 @@ impl SqliteStore {
         expected_revision: i64,
         title: &str,
     ) -> RepositoryResult<CreativeDraft> {
-        let draft = self.get_draft(project_id, draft_id)?;
-        self.update_draft(project_id, draft_id, expected_revision, title, &draft.body)
+        required_text("draft title", title, 200)?;
+        if expected_revision < 1 {
+            return Err(RepositoryError::Validation("invalid draft revision".into()));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        let previous: Option<(String, String)> = tx
+            .query_row(
+                "SELECT d.title,d.body FROM creative_drafts d
+                 JOIN content_studies st ON st.id=d.study_id AND st.project_id=d.project_id
+                 JOIN projects p ON p.id=d.project_id
+                 WHERE d.id=?1 AND d.project_id=?2 AND d.revision=?3
+                   AND d.archived_at IS NULL AND st.archived_at IS NULL
+                   AND p.archived_at IS NULL",
+                params![draft_id.to_string(), project_id.to_string(), expected_revision],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let (old_title, body) = previous.ok_or_else(|| {
+            RepositoryError::Conflict("draft changed or is not in an active Study".into())
+        })?;
+        if old_title != title.trim() {
+            let now = now_rfc3339();
+            tx.execute(
+                "UPDATE creative_drafts
+                 SET title=?1,revision=revision+1,updated_at=?2
+                 WHERE id=?3 AND project_id=?4 AND revision=?5 AND archived_at IS NULL",
+                params![
+                    title.trim(),
+                    now,
+                    draft_id.to_string(),
+                    project_id.to_string(),
+                    expected_revision
+                ],
+            )
+            .map_err(db_error)?;
+            tx.execute(
+                "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
+                 VALUES(?1,?2,?3,?4,?5,?6)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    draft_id.to_string(),
+                    expected_revision + 1,
+                    title.trim(),
+                    body,
+                    now
+                ],
+            )
+            .map_err(db_error)?;
+        }
+        tx.commit().map_err(db_error)?;
+        self.get_draft(project_id, draft_id)
     }
 
     pub fn duplicate_draft(
