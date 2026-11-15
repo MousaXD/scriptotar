@@ -1,8 +1,8 @@
-//! External, potentially billable effects. Existing v8 local-read ledger is not changed.
-//! Reserve and persist DISPATCHED before I/O; a DISPATCHED/UNCERTAIN request
-//! is NEVER an invitation to resend it. Provider reconciliation is mandatory.
+// External, potentially billable effects. Existing v8 local-read ledger is not changed.
+// Reserve and persist DISPATCHED before I/O; a DISPATCHED/UNCERTAIN request
+// is NEVER an invitation to resend it. Provider reconciliation is mandatory.
 use rusqlite::{params, OptionalExtension, Row, Transaction, TransactionBehavior};
-use scriptotar_agent::{valid_id, RunState, StepState};
+use scriptotar_agent::{valid_id, RunState, StepInput, StepState};
 use scriptotar_core::{now_rfc3339, RepositoryError, RepositoryResult};
 use uuid::Uuid;
 use crate::{studies::{database, db_error}, SqliteStore};
@@ -270,6 +270,9 @@ impl SqliteStore {
         may_execute(&tx, key)?;
         let run = verified_scope(&tx, key.project, key.study, key.run_id)?;
         let step = &run.plan.steps[run.current_step];
+        if matches!(step.input, StepInput::ReadStudyTranscript { .. }) {
+            return Err(conflict("local transcript read must use its unchanged local adapter"));
+        }
         if limits.tokens > step.estimate.tokens || limits.cost_microusd > step.estimate.cost_microusd
             || limits.tokens > run.plan.limits.max_tokens
             || limits.cost_microusd > run.plan.limits.max_cost_microusd
