@@ -69,6 +69,7 @@ describe('Tauri client command contract', () => {
     await api.getStudy('project-id', 'study-id');
     await api.getStudy('project-id', 'study-id', 'draft-id');
     await api.duplicateStudyDraft('project-id', 'study-id', 'draft-id', 3);
+    await api.renameStudyDraft('project-id', 'study-id', 'draft-id', 3, 'New angle');
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
     await api.listStudyEvidence('project-id', 'study-id');
     await api.addStudyEvidence('project-id', 'study-id', {
@@ -150,6 +151,10 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('duplicate_study_draft', {
       projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id', expectedDraftRevision: 3
+    });
+    expect(invokeMock).toHaveBeenCalledWith('rename_study_draft', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id',
+      expectedDraftRevision: 3, title: 'New angle'
     });
     expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
       studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });

@@ -30,6 +30,8 @@
     getStudy: (projectId: string, studyId: string, draftId?: string) => api.getStudy(projectId, studyId, draftId),
     duplicateStudyDraft: (projectId: string, studyId: string, draftId: string, revision: number) =>
       api.duplicateStudyDraft(projectId, studyId, draftId, revision),
+    renameStudyDraft: (projectId: string, studyId: string, draftId: string, revision: number, title: string) =>
+      api.renameStudyDraft(projectId, studyId, draftId, revision, title),
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),

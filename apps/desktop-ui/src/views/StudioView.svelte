@@ -31,6 +31,8 @@
   let refs: StudySourceRef[] = [];
   let draft = '';
   let previewVersion: DraftSnapshot | null = null;
+  let renameDraftOpen = false;
+  let renameDraftTitle = '';
   let selectedSource: StudySourceRef | null = null;
   let transcriptDetail: Transcript | null = null;
   let sourceLoading = false;
@@ -186,6 +188,7 @@
       if (epoch !== currentRequest) return;
       if (result.projectId !== projectId || result.id !== id) throw new Error(t.invalidStudy);
       record = result;
+      renameDraftOpen = false;
       confirmSavedImport = false;
       studyId = id;
       promptRequest++;
@@ -232,6 +235,7 @@
       if (epoch !== currentRequest) return;
       if (created.projectId !== projectId) throw new Error(t.invalidStudy);
       record = created;
+      renameDraftOpen = false;
       confirmSavedImport = false;
       promptRequest++;
       preparing = false;
@@ -313,6 +317,7 @@
       if (selected.id !== ownerStudy || selected.projectId !== projectId ||
           selected.draftId !== draftId) throw new Error(t.invalidStudy);
       record = selected;
+      renameDraftOpen = false;
       brief = { ...selected.brief };
       refs = [...selected.sources];
       draft = selected.draft;
@@ -348,10 +353,49 @@
       }
       currentRequest++;
       record = created;
+      renameDraftOpen = false;
       brief = { ...created.brief };
       refs = [...created.sources];
       draft = created.draft;
       previewVersion = null;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = t.saved;
+    } catch (cause) {
+      error = message(cause, t.errorDraft);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function renameDraft() {
+    if (!gateway?.renameStudyDraft || !record?.draftId ||
+        record.draftRevision == null || busy || saving || loading ||
+        !renameDraftOpen || !renameDraftTitle.trim()) return;
+    const ownerStudy = studyId;
+    busy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (!record?.draftId || record.draftRevision == null || studyId !== ownerStudy) return;
+      const draftId = record.draftId;
+      const oldBody = record.draft;
+      const renamed = await gateway.renameStudyDraft(
+        projectId, ownerStudy, draftId, record.draftRevision, renameDraftTitle.trim());
+      if (studyId !== ownerStudy || renamed.id !== ownerStudy ||
+          renamed.projectId !== projectId || renamed.draftId !== draftId ||
+          renamed.draft !== oldBody ||
+          !renamed.drafts?.some((item) => item.id === draftId && item.title === renameDraftTitle.trim())) {
+        throw new Error(t.invalidStudy);
+      }
+      currentRequest++;
+      record = renamed;
+      draft = renamed.draft;
+      brief = { ...renamed.brief };
+      refs = [...renamed.sources];
+      previewVersion = null;
+      renameDraftOpen = false;
       promptRequest++;
       preparing = false;
       prompt = '';
@@ -906,7 +950,26 @@
               disabled={busy || saving || loading || importingSavedResult}
               on:click={() => void duplicateDraft()}>{t.duplicateDraft}</button>
           {/if}
+          {#if gateway?.renameStudyDraft}
+            <button class="button secondary" type="button"
+              disabled={busy || saving || loading || importingSavedResult}
+              on:click={() => { renameDraftOpen = !renameDraftOpen; renameDraftTitle =
+                record?.drafts?.find((item) => item.id === record?.draftId)?.title ?? ''; }}>{t.renameDraft}</button>
+          {/if}
         </div>
+        {#if renameDraftOpen && gateway?.renameStudyDraft}
+          <form class="evidence-form" on:submit|preventDefault={() => void renameDraft()}>
+            <label>{t.newDraftName}
+              <input bind:value={renameDraftTitle} maxlength="200" dir="auto" />
+            </label>
+            <div class="draft-actions">
+              <button class="button primary" type="submit"
+                disabled={busy || saving || !renameDraftTitle.trim()}>{t.confirmRename}</button>
+              <button class="button secondary" type="button" disabled={busy}
+                on:click={() => renameDraftOpen = false}>{t.cancelAiImport}</button>
+            </div>
+          </form>
+        {/if}
       {/if}
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>

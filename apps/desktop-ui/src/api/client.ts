@@ -52,6 +52,7 @@ export interface ScriptotarApi {
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
   duplicateStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
+  renameStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
     draftId?: string; draftRevision?: number;

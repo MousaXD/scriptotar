@@ -209,6 +209,27 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       studies.set(studyId, structuredClone(copied));
       return structuredClone(copied);
     },
+    async renameStudyDraft(projectId, studyId, draftId, expectedDraftRevision, title) {
+      const study = studyInProject(projectId, studyId);
+      const saved = draftCopies.get(studyId)?.get(draftId);
+      if (!saved || saved.revision !== expectedDraftRevision) throw new Error('Draft changed or unavailable');
+      if (!title.trim() || title.length > 200) throw new Error('Invalid draft title');
+      const revision = saved.revision + (saved.title === title.trim() ? 0 : 1);
+      const versions = revision > saved.revision ? [...saved.versions, {
+        id: `${draftId}:v${revision}`, revision, content: saved.body,
+        createdAt: '2026-11-15T12:00:00Z'
+      }] : saved.versions;
+      const renamed = { ...saved, title: title.trim(), revision, versions };
+      draftCopies.get(studyId)?.set(draftId, renamed);
+      const next: ContentStudy = {
+        ...study, draftId, draftRevision: revision,
+        draft: saved.body, draftVersions: structuredClone(versions),
+        drafts: study.drafts?.map((item) => item.id === draftId
+          ? { ...item, title: title.trim(), revision } : item)
+      };
+      studies.set(studyId, structuredClone(next));
+      return structuredClone(next);
+    },
     async saveStudy(projectId, studyId, expectedRevision, patch) {
       const old = studyInProject(projectId, studyId);
       if (old.revision !== expectedRevision) throw new Error('Study changed by another editor');
