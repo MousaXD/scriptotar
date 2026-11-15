@@ -1,3 +1,13 @@
+# CURRENT CHECKPOINT — 2026-11-15 Evidence slice (candidate, exact CI required)
+
+- Integration PR #114 includes end-to-end **human-entered evidence observation** APIs and Studio controls. Rust now maps an attached Research/Transcript origin to its canonical StudySource UUID, appends the observation under the active project/Study, and always assigns **unverified** certainty. User cannot arbitrarily promote a saved claim to "corroborated".
+- New commands `list_study_evidence` and `add_study_evidence`, typed TS/Tauri/mock parity and English/Arabic Studio panel. Linked source references can be reopened after navigation/restart; an evidence-linked source is not silently detached by the UI. Other canonical source kinds retain locator-only display.
+- Independent Rust app-service regression now covers project mismatch, unattached origin rejection, protected source detachment and evidence rehydration from disk. Frontend regression covers exact source, explicit locator, default uncertainty, project denial and reopen. **Do not claim success until all nine exact-HEAD CI workflows have passed.**
+- This is **not** independent factual verification, a real graphical WebView acceptance or a working provider research/script-writing agent. Next work remains issue #116 (Agent 05/06 integration), real provider consent/effect-fencing, complete P0 editor features and issue #100 native certification.
+- Keep the PR **draft**, main untouched, no public release.
+
+---
+
 # CHECKPOINT — 2026-11-15, exact-head CI audit and draft-history work
 
 - Reviewed integration PR #114 at `fc5caf2384a8def6c0a660ec5299224b00c86acb`: **all nine GitHub Actions workflows succeeded for that exact SHA** (Rust foundation, CI, MCP E2E, Desktop UI, security hygiene, GUI visual/perf QA, Tauri migration, Linux Tauri Package and Windows Tauri Installer). This certifies only the pre-restore source candidate, not live installed graphical/WebView operation or full P1.

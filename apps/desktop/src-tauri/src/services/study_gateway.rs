@@ -616,26 +616,52 @@ mod tests {
                 .list_study_sources(project_id, study_id)
                 .unwrap();
             assert_eq!(stored_sources.len(), 2);
-            let transcript_source = stored_sources
-                .iter()
-                .find(|item| item.reference_id == Some(transcript_id))
-                .unwrap();
             let evidence = services
-                .store
-                .add_evidence_reference(
+                .add_studio_evidence(
                     project_id,
                     study_id,
-                    &scriptotar_core::EvidenceInput {
-                        study_source_id: transcript_source.id,
+                    UiStudyEvidenceInput {
+                        source: sources[1].clone(),
                         claim: "Transcript contains a literal spoken example".into(),
                         locator: "0:00-0:05".into(),
                         timestamp_seconds: Some(0.0),
-                        certainty: scriptotar_core::EvidenceCertainty::Unverified,
                         uncertainty_note: None,
                     },
                 )
                 .unwrap();
-            evidence_id = evidence.id;
+            assert_eq!(evidence.certainty, "unverified");
+            assert_eq!(evidence.source, Some(sources[1].clone()));
+            assert_eq!(services.list_studio_evidence(project_id, study_id).unwrap().len(), 1);
+            assert!(services
+                .add_studio_evidence(
+                    Uuid::new_v4(),
+                    study_id,
+                    UiStudyEvidenceInput {
+                        source: sources[1].clone(),
+                        claim: "Wrong project".into(),
+                        locator: "0:00".into(),
+                        timestamp_seconds: None,
+                        uncertainty_note: None,
+                    },
+                )
+                .is_err());
+            assert!(services
+                .add_studio_evidence(
+                    project_id,
+                    study_id,
+                    UiStudyEvidenceInput {
+                        source: UiStudioSourceRef {
+                            kind: "transcript".into(),
+                            id: Uuid::new_v4().to_string(),
+                        },
+                        claim: "Unattached source".into(),
+                        locator: "0:00".into(),
+                        timestamp_seconds: None,
+                        uncertainty_note: None,
+                    },
+                )
+                .is_err());
+            evidence_id = Uuid::parse_str(&evidence.id).unwrap();
             assert!(matches!(
                 services.save_studio_study(
                     project_id,
@@ -666,6 +692,10 @@ mod tests {
             .get_evidence_reference(project_id, study_id, evidence_id)
             .unwrap();
         assert_eq!(evidence.input.locator, "0:00-0:05");
+        let restored_refs = reopened.list_studio_evidence(project_id, study_id).unwrap();
+        assert_eq!(restored_refs.len(), 1);
+        assert_eq!(restored_refs[0].locator, "0:00-0:05");
+        assert_eq!(restored_refs[0].certainty, "unverified");
     }
 
     #[test]
