@@ -937,15 +937,8 @@ mod tests {
         std::thread::scope(|scope| {
             for _ in 0..8 {
                 scope.spawn(|| {
-                    let _ = boundary.dispatch(
-                        &intent,
-                        &authority,
-                        &Prices,
-                        &fence,
-                        &runner,
-                        "key",
-                        103,
-                    );
+                    let _ = boundary
+                        .dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103);
                 });
             }
         });
