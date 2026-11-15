@@ -888,6 +888,73 @@ mod tests {
     }
 
     #[test]
+    fn ambiguous_reservation_never_attempts_a_second_paid_claim() {
+        struct AmbiguousFence;
+        impl PaidEffectFence for AmbiguousFence {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                Err(ConsentError::UncertainEffect)
+            }
+            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                Err(ConsentError::UncertainEffect)
+            }
+            fn mark_uncertain(&self, _: &str) {}
+        }
+
+        let (boundary, intent, authority) = approved();
+        let runner = Runner::default();
+        for _ in 0..2 {
+            assert!(matches!(
+                boundary.dispatch(
+                    &intent,
+                    &authority,
+                    &Prices,
+                    &AmbiguousFence,
+                    &runner,
+                    "key",
+                    104
+                ),
+                Err(ConsentError::UncertainEffect)
+            ));
+        }
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn quoted_dollar_cap_is_enforced_before_approval() {
+        let (mut intent, authority) = fixture();
+        intent.limits.max_cost_microusd = 1;
+        let boundary = ConsentBoundary::default();
+        assert!(matches!(
+            boundary.prepare(intent, &authority, &Prices, 100),
+            Err(ConsentError::InvalidBudget)
+        ));
+    }
+
+    #[test]
+    fn concurrent_dispatches_have_only_one_winner() {
+        let (boundary, intent, authority) = approved();
+        let runner = Runner::default();
+        let fence = Fence::default();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    let _ = boundary.dispatch(
+                        &intent,
+                        &authority,
+                        &Prices,
+                        &fence,
+                        &runner,
+                        "key",
+                        103,
+                    );
+                });
+            }
+        });
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn no_approval_reconstruction_after_process_restart() {
         let (boundary, intent, authority) = approved();
         drop(boundary);
