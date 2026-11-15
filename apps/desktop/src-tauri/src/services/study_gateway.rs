@@ -1043,7 +1043,9 @@ mod tests {
             assert_eq!(angles.unverified_observation_count, 1);
             assert!(angles.prompt.contains("Propose exactly 3"));
             assert!(angles.prompt.contains("Literal opening from timestamp"));
-            assert!(angles.prompt.contains("Transcript segment 0 (0.500-3.250s)"));
+            assert!(angles
+                .prompt
+                .contains("Transcript segment 0 (0.500-3.250s)"));
             assert!(angles
                 .prompt
                 .contains("Transcript contains a literal spoken example"));
@@ -1137,7 +1139,9 @@ mod tests {
             assert!(!after_dispute
                 .prompt
                 .contains("Transcript contains a literal spoken example"));
-            assert!(after_dispute.prompt.contains("Literal opening from timestamp"));
+            assert!(after_dispute
+                .prompt
+                .contains("Literal opening from timestamp"));
             assert_eq!(disputed.review_history.len(), 1);
             assert_eq!(disputed.review_history[0].previous_certainty, "unverified");
             assert_eq!(disputed.review_history[0].next_certainty, "disputed");
