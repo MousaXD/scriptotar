@@ -676,12 +676,13 @@ mod tests {
         let project;
         let study;
         let source;
+        let research_id;
         let artifact = Uuid::new_v4();
         {
             let services = AppServices::new(dir.path()).unwrap();
             project = services.active_project_id().unwrap();
             study = services.store.create_study(project, "Study", "").unwrap().id;
-            let research_id = Uuid::new_v4();
+            research_id = Uuid::new_v4();
             // The real source is inserted through the existing research repository.
             let item = ResearchItem {
                 id: research_id, project_id: project, creator_id: None,
@@ -707,6 +708,15 @@ mod tests {
         }
         let reopened = AppServices::new(dir.path()).unwrap();
         assert!(read_study_research_artifact(&reopened, project, study, artifact).is_ok());
+        assert!(read_study_research_artifact(&reopened, Uuid::new_v4(), study, artifact).is_err());
+        let db = Connection::open(reopened.store.path()).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        db.execute(
+            "DELETE FROM research_items WHERE id=?1 AND project_id=?2",
+            params![research_id.to_string(), project.to_string()],
+        ).unwrap();
+        assert!(!reopened.store.get_study_source(project, study, source).unwrap().available);
+        assert!(read_study_research_artifact(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
         assert!(read_study_research_artifact(&reopened, project, study, artifact).is_err());
     }
