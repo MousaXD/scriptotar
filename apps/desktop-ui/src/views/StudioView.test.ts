@@ -480,6 +480,51 @@ describe('Content Study Studio', () => {
     view.unmount();
   });
 
+  it('prepares an evidence-aware three-angle prompt without calling any provider or including disputed claims', async () => {
+    const api = createMockClient();
+    const provider = vi.spyOn(api, 'runAi');
+    const brief = { ...emptyBrief(), title: 'Three-angle study',
+      goal: 'Make a fresh restaurant introduction', audience: 'Local food lovers' };
+    const initial = await api.createStudy('p-creator-lab', brief);
+    const sources = [
+      { kind: 'transcript' as const, id: 't-ar' },
+      { kind: 'transcript' as const, id: 't-en' },
+      { kind: 'research' as const, id: 'r-1' }
+    ];
+    const saved = await api.saveStudy('p-creator-lab', initial.id, initial.revision, { sources });
+    const observation = await api.addStudyEvidence('p-creator-lab', saved.id, {
+      source: sources[0], claim: 'An unverified Arabic opening observation',
+      locator: '0:00-0:07'
+    });
+    await expect(api.prepareStudyAngles('p-other', saved.id)).rejects.toThrow();
+    const result = await api.prepareStudyAngles('p-creator-lab', saved.id);
+    expect(result.attachedSourceCount).toBe(3);
+    expect(result.transcriptExcerptCount).toBe(2);
+    expect(result.unverifiedObservationCount).toBe(1);
+    expect(result.prompt).toContain('Propose exactly 3');
+    expect(result.prompt).toContain('Unverified Arabic opening observation');
+    expect(provider).not.toHaveBeenCalled();
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Three-angle study' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
+    expect(await screen.findByText(/Three-angle prompt prepared locally/)).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Prepared prompt' }))
+      .toHaveValue(expect.stringContaining('Propose exactly 3'));
+    expect(provider).not.toHaveBeenCalled();
+
+    await api.reviewStudyEvidence('p-creator-lab', saved.id, observation.id, {
+      expectedCertainty: 'unverified', action: 'dispute', note: 'Contradicted by full recording'
+    });
+    const disputed = await api.prepareStudyAngles('p-creator-lab', saved.id);
+    expect(disputed.unverifiedObservationCount).toBe(0);
+    expect(disputed.prompt).not.toContain('An unverified Arabic opening observation');
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');

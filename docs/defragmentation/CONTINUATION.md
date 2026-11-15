@@ -1,3 +1,11 @@
+# CHECKPOINT — 2026-11-15 bounded 3-angle request bridge (candidate)
+
+- P1-05: Canonical Studio now exposes **Prepare 3 creative angles** in EN/AR, using Agent 06's typed `prepare_writing_request` with the actual active Study brief, up to eight project-scoped attached sources, literal bounded available transcript excerpts (sampled opening/middle/closing with real segment indices/timestamps where present) and user-created observations marked unverified. Disputed observations are excluded. Research metadata alone is NOT treated as transcript/video fact evidence; limitations are explicit. This only creates a copyable local prompt and makes **zero provider calls**—it does not produce the three angles or scripts, verify claims or enter an autonomous run.
+- Existing writing-core prompts isolate untrusted source text. Scope checks deny other projects; native Rust and mocked UI tests cover real transcript inclusion, disputed exclusion, source warnings, explicit Copy Prompt and no `runAi` call. Tauri/client/mock contract and command inventories updated together.
+- Exact-head nine-workflow CI and independent native graphical/performance certification remain mandatory. **Do not merge #114 or publish from this branch yet.** Next P1 implementation must parse/validate angles and draft outputs, require explicit provider egress/token/US$ limits with durable effect fencing, then save three separate canonical draft candidates with lineage, not just print a prompt.
+
+---
+
 # CHECKPOINT — 2026-11-15 independent Script candidates (candidate)
 
 - Users can now **archive/restore** draft candidates in EN/AR with explicit confirmation, persistent archived-candidate metadata, exact revision CAS and immutable status version history. The final active script cannot be archived, and archived bodies are never hard-deleted by this workflow. Restart, stale revision, cross-project and last-active denial are covered.
