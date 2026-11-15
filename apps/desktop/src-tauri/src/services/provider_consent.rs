@@ -35,15 +35,9 @@ fn consent_error(error: ConsentError) -> RepositoryError {
 }
 
 impl ScopeAuthority for AppServices {
-    fn current_scope(
-        &self,
-        project_id: &str,
-        study_id: &str,
-    ) -> Result<StudyScope, ConsentError> {
-        let project = Uuid::parse_str(project_id)
-            .map_err(|_| ConsentError::WrongProjectOrStudy)?;
-        let study = Uuid::parse_str(study_id)
-            .map_err(|_| ConsentError::WrongProjectOrStudy)?;
+    fn current_scope(&self, project_id: &str, study_id: &str) -> Result<StudyScope, ConsentError> {
+        let project = Uuid::parse_str(project_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
+        let study = Uuid::parse_str(study_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
         self.require_active_project(project).map_err(scope_error)?;
 
         let current = self.store.get_study(project, study).map_err(scope_error)?;
