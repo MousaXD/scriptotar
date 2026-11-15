@@ -1,7 +1,7 @@
 //! Project-scoped adapters from canonical SQLite Content Studies to Studio UI.
 use super::AppServices;
 use crate::dto::{
-    UiStudioBrief, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch,
+    UiStudioBrief, UiStudioDraftSummary, UiStudioDraftVersion, UiStudioSourceRef, UiStudioStudy, UiStudioStudyPatch,
     UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiStudyEvidenceReview,
 };
 use scriptotar_core::{
@@ -164,6 +164,15 @@ impl AppServices {
         project_id: Uuid,
         study_id: Uuid,
     ) -> RepositoryResult<UiStudioStudy> {
+        self.read_studio_bundle_for(project_id, study_id, None)
+    }
+
+    fn read_studio_bundle_for(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        requested_draft_id: Option<Uuid>,
+    ) -> RepositoryResult<UiStudioStudy> {
         let study = self.store.get_study(project_id, study_id)?;
         let saved_brief = self.store.get_creative_brief(project_id, study_id)?;
         let brief = summarize_studio_brief(&study, saved_brief.as_ref());
@@ -176,7 +185,14 @@ impl AppServices {
         let drafts = self
             .store
             .search_drafts(project_id, study_id, "", false, 200)?;
-        let (draft, draft_versions) = if let Some(value) = drafts.first() {
+        let selected = if let Some(id) = requested_draft_id {
+            Some(drafts.iter().find(|item| item.id == id).ok_or_else(|| {
+                RepositoryError::NotFound("selected draft in this Study".into())
+            })?)
+        } else {
+            drafts.first()
+        };
+        let (draft, draft_versions) = if let Some(value) = selected {
             let versions = self
                 .store
                 .list_draft_versions(project_id, value.id)?
@@ -200,6 +216,16 @@ impl AppServices {
             sources,
             draft,
             draft_versions,
+            draft_id: selected.map(|item| item.id.to_string()),
+            draft_revision: selected.map(|item| item.revision),
+            drafts: drafts
+                .iter()
+                .map(|item| UiStudioDraftSummary {
+                    id: item.id.to_string(),
+                    title: item.title.clone(),
+                    revision: item.revision,
+                })
+                .collect(),
         })
     }
 
@@ -232,6 +258,30 @@ impl AppServices {
     ) -> RepositoryResult<UiStudioStudy> {
         let _project_guard = self.lock_studio_project(project_id)?;
         self.read_studio_bundle(project_id, study_id)
+    }
+
+    pub fn get_studio_study_draft(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+    ) -> RepositoryResult<UiStudioStudy> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        self.read_studio_bundle_for(project_id, study_id, Some(draft_id))
+    }
+
+    pub fn duplicate_studio_draft(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        draft_id: Uuid,
+        expected_draft_revision: i64,
+    ) -> RepositoryResult<UiStudioStudy> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let copied = self.store.duplicate_study_draft_checked(
+            project_id, study_id, draft_id, expected_draft_revision,
+        )?;
+        self.read_studio_bundle_for(project_id, study_id, Some(copied.id))
     }
 
     pub fn create_studio_study(
@@ -365,7 +415,15 @@ impl AppServices {
                 "study changed by another editor".into(),
             ));
         }
-        let old = self.read_studio_bundle(project_id, study_id)?;
+        let selected_id = patch
+            .draft_id
+            .as_deref()
+            .map(|value| Uuid::parse_str(value).map_err(|_| invalid("draft id")))
+            .transpose()?;
+        let old = self.read_studio_bundle_for(project_id, study_id, selected_id)?;
+        if patch.draft_revision.is_some_and(|value| Some(value) != old.draft_revision) {
+            return Err(RepositoryError::Conflict("selected draft revision changed".into()));
+        }
         let brief = patch.brief.unwrap_or_else(|| old.brief.clone());
         let sources = patch.sources.unwrap_or_else(|| old.sources.clone());
         let draft = patch.draft.unwrap_or_else(|| old.draft.clone());
@@ -421,9 +479,11 @@ impl AppServices {
                 brief_changed: brief != old.brief,
                 sources: &selected_sources,
                 draft: &draft,
+                draft_id: old.draft_id.as_deref().and_then(|value| Uuid::parse_str(value).ok()),
+                expected_draft_revision: old.draft_revision,
             },
         )?;
-        self.read_studio_bundle(project_id, study_id)
+        self.read_studio_bundle_for(project_id, study_id, selected_id)
     }
 }
 
@@ -500,6 +560,8 @@ mod tests {
                     brief: Some(revised.clone()),
                     sources: Some(Vec::new()),
                     draft: Some("new script that must roll back".into()),
+                draft_id: None,
+                draft_revision: None,
                 },
             )
             .is_err());
@@ -519,6 +581,8 @@ mod tests {
                     brief: Some(revised.clone()),
                     sources: Some(Vec::new()),
                     draft: Some("persisted after recovery".into()),
+                draft_id: None,
+                draft_revision: None,
                 },
             )
             .unwrap();
@@ -572,6 +636,8 @@ mod tests {
                         brief: None,
                         sources: Some(Vec::new()),
                         draft: Some("An original saved script".into()),
+                    draft_id: None,
+                    draft_revision: None,
                     },
                 )
                 .unwrap();
@@ -590,6 +656,8 @@ mod tests {
                         brief: None,
                         sources: None,
                         draft: Some("stale writer".into()),
+                    draft_id: None,
+                    draft_revision: None,
                     },
                 ),
                 Err(RepositoryError::Conflict(_))
@@ -664,6 +732,8 @@ mod tests {
                         brief: None,
                         sources: Some(sources.clone()),
                         draft: Some("Original referenced draft".into()),
+                    draft_id: None,
+                    draft_revision: None,
                     },
                 )
                 .unwrap();
@@ -800,6 +870,8 @@ mod tests {
                         brief: None,
                         sources: Some(vec![sources[0].clone()]),
                         draft: Some("Must not commit this edit".into()),
+                    draft_id: None,
+                    draft_revision: None,
                     },
                 ),
                 Err(RepositoryError::Conflict(_))

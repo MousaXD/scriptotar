@@ -317,6 +317,14 @@ pub struct UiStudioDraftVersion {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UiStudioDraftSummary {
+    pub id: String,
+    pub title: String,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiStudioStudy {
     pub id: String,
     pub project_id: String,
@@ -325,6 +333,9 @@ pub struct UiStudioStudy {
     pub sources: Vec<UiStudioSourceRef>,
     pub draft: String,
     pub draft_versions: Vec<UiStudioDraftVersion>,
+    pub draft_id: Option<String>,
+    pub draft_revision: Option<i64>,
+    pub drafts: Vec<UiStudioDraftSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -342,6 +353,9 @@ pub struct UiStudioStudyPatch {
     pub brief: Option<UiStudioBrief>,
     pub sources: Option<Vec<UiStudioSourceRef>>,
     pub draft: Option<String>,
+    /// Optional only for old clients; current Studio always submits exact identity.
+    pub draft_id: Option<String>,
+    pub draft_revision: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

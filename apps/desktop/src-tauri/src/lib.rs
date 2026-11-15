@@ -658,14 +658,40 @@ async fn create_study(
 async fn get_study(
     project_id: String,
     study_id: String,
+    draft_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<UiStudioStudy, String> {
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = draft_id
+        .map(|value| artifact_uuid(&value, "draft id"))
+        .transpose()?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        match draft_id {
+            Some(id) => services.get_studio_study_draft(project_id, study_id, id),
+            None => services.get_studio_study(project_id, study_id),
+        }
+        .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn duplicate_study_draft(
+    project_id: String,
+    study_id: String,
+    draft_id: String,
+    expected_draft_revision: i64,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = artifact_uuid(&draft_id, "draft id")?;
     let services = state.inner().clone();
     on_blocking_worker(move || {
         services
-            .get_studio_study(project_id, study_id)
+            .duplicate_studio_draft(project_id, study_id, draft_id, expected_draft_revision)
             .map_err(command_error)
     })
     .await
@@ -1238,6 +1264,7 @@ pub fn run() {
             list_studies,
             create_study,
             get_study,
+            duplicate_study_draft,
             save_study,
             list_study_evidence,
             add_study_evidence,

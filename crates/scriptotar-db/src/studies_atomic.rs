@@ -88,6 +88,9 @@ pub struct StudioBundleUpdate<'a> {
     pub brief_changed: bool,
     pub sources: &'a [(StudySourceKind, Uuid)],
     pub draft: &'a str,
+    /// Exact selected draft. No implicit "latest" writes after candidate selection.
+    pub draft_id: Option<Uuid>,
+    pub expected_draft_revision: Option<i64>,
 }
 
 impl SqliteStore {
@@ -151,6 +154,8 @@ impl SqliteStore {
             brief_changed,
             sources,
             draft,
+            draft_id,
+            expected_draft_revision,
         } = patch;
         required_text("study title", &edit.title, 200)?;
         optional_text("study goal", Some(&edit.goal), 20_000)?;
@@ -321,8 +326,17 @@ impl SqliteStore {
             .map_err(db_error)?;
         }
 
-        let previous: Option<(String, i64, String, String)> = tx
-            .query_row(
+        let previous: Option<(String, i64, String, String)> = if let Some(selected) = draft_id {
+            tx.query_row(
+                "SELECT id,revision,title,body FROM creative_drafts
+                 WHERE project_id=?1 AND study_id=?2 AND id=?3 AND archived_at IS NULL",
+                params![project.to_string(), study.to_string(), selected.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .map_err(db_error)?
+        } else {
+            tx.query_row(
                 "SELECT id,revision,title,body FROM creative_drafts
                  WHERE project_id=?1 AND study_id=?2 AND archived_at IS NULL
                  ORDER BY updated_at DESC,id DESC LIMIT 1",
@@ -330,27 +344,37 @@ impl SqliteStore {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()
-            .map_err(db_error)?;
+            .map_err(db_error)?
+        };
+        if draft_id.is_some() && previous.is_none() {
+            return Err(RepositoryError::NotFound("selected Study draft".into()));
+        }
         if let Some((id, revision, title, body)) = previous {
-            if title != edit.title.trim() || body != draft {
+            if expected_draft_revision.is_some_and(|expected| expected != revision) {
+                return Err(RepositoryError::Conflict(
+                    "selected Study draft has a newer revision".into(),
+                ));
+            }
+            if body != draft {
                 let count = tx
                     .execute(
                         "UPDATE creative_drafts
-                     SET title=?1,body=?2,revision=revision+1,updated_at=?3
-                     WHERE id=?4 AND project_id=?5 AND revision=?6 AND archived_at IS NULL",
+                     SET body=?1,revision=revision+1,updated_at=?2
+                     WHERE id=?3 AND project_id=?4 AND study_id=?5
+                       AND revision=?6 AND archived_at IS NULL",
                         params![
-                            edit.title.trim(),
                             draft,
                             now,
                             id,
                             project.to_string(),
+                            study.to_string(),
                             revision
                         ],
                     )
                     .map_err(db_error)?;
                 if count != 1 {
                     return Err(RepositoryError::Conflict(
-                        "draft changed during save".into(),
+                        "selected Study draft changed during save".into(),
                     ));
                 }
                 tx.execute(
@@ -360,7 +384,7 @@ impl SqliteStore {
                         Uuid::new_v4().to_string(),
                         id,
                         revision + 1,
-                        edit.title.trim(),
+                        title,
                         draft,
                         now
                     ],
