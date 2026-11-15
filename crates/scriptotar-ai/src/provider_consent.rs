@@ -472,7 +472,12 @@ impl ConsentBoundary {
             return Err(ConsentError::InvalidBudget);
         }
         let effect_id = format!("provider:{}:{}", intent.run_id, record.preview.fingerprint);
-        fence.reserve_once(&effect_id)?;
+        // Even a failed reservation may have committed before a lost response.
+        // Mark uncertain rather than allowing another call to attempt the claim.
+        if let Err(error) = fence.reserve_once(&effect_id) {
+            record.decision = Decision::Uncertain;
+            return Err(error);
+        }
         record.decision = Decision::Uncertain;
         let deadline_ms = now_ms.saturating_add(intent.limits.max_elapsed_ms);
         drop(records);
