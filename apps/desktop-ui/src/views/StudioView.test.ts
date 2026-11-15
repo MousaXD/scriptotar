@@ -418,6 +418,28 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('option', { name: 'Arabic follow-up version' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('Independent second direction');
+    await fireEvent.click(screen.getByRole('button', { name: 'Archive script' }));
+    expect(screen.getByText(/hidden from active candidates/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm archive' }));
+    await waitFor(async () => {
+      const latest = await api.getStudy('p-creator-lab', study.id);
+      expect(latest.drafts).toHaveLength(1);
+      expect(latest.archivedDrafts).toHaveLength(1);
+    });
+    const archived = await api.getStudy('p-creator-lab', study.id);
+    await expect(api.setStudyDraftArchived('p-creator-lab', study.id, firstId,
+      archived.drafts![0].revision, true)).rejects.toThrow();
+    await expect(api.setStudyDraftArchived('p-client-a', study.id,
+      archived.archivedDrafts![0].id, archived.archivedDrafts![0].revision, false))
+      .rejects.toThrow();
+    expect(screen.queryByRole('button', { name: 'Archive script' })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Restore archived script' }));
+    await waitFor(async () => {
+      const latest = await api.getStudy('p-creator-lab', study.id);
+      expect(latest.drafts).toHaveLength(2);
+      expect(latest.archivedDrafts).toHaveLength(0);
+      expect(latest.draft).toBe('Independent second direction');
+    });
     view.unmount();
 
     render(App, { props: { api } });

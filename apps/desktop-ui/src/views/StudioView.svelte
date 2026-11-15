@@ -448,7 +448,8 @@
 
   async function restoreArchivedDraft() {
     const ownerStudy = studyId;
-    const archivedId = selectedArchivedDraftId || record?.archivedDrafts?.[0]?.id;
+    const archivedId = record?.archivedDrafts?.some((item) => item.id === selectedArchivedDraftId)
+      ? selectedArchivedDraftId : record?.archivedDrafts?.[0]?.id;
     if (!gateway?.setStudyDraftArchived || !record || !archivedId ||
         busy || saving || loading) return;
     busy = true;

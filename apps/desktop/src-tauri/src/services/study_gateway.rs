@@ -1216,5 +1216,43 @@ mod tests {
             .get_studio_study_draft(project_id, study_id, original_id)
             .unwrap();
         assert_eq!(original.draft, "An independent original script");
+        let archived = restarted
+            .set_studio_draft_archived(
+                project_id,
+                study_id,
+                copy_id,
+                renamed.draft_revision.unwrap(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(archived.draft_id.as_deref(), Some(&original_id.to_string()).map(String::as_str));
+        assert_eq!(archived.drafts.len(), 1);
+        assert_eq!(archived.archived_drafts.len(), 1);
+        assert!(restarted
+            .set_studio_draft_archived(
+                project_id,
+                study_id,
+                original_id,
+                original.draft_revision.unwrap(),
+                true,
+            )
+            .is_err());
+        assert!(restarted
+            .set_studio_draft_archived(Uuid::new_v4(), study_id, copy_id, 4, false)
+            .is_err());
+        let restored = restarted
+            .set_studio_draft_archived(
+                project_id,
+                study_id,
+                copy_id,
+                archived.archived_drafts[0].revision,
+                false,
+            )
+            .unwrap();
+        assert_eq!(restored.draft_id.as_deref(), Some(&copy_id.to_string()).map(String::as_str));
+        assert_eq!(restored.draft, "A DIFFERENT second script");
+        assert!(restored.archived_drafts.is_empty());
+        assert_eq!(restored.drafts.len(), 2);
+        assert_eq!(restored.draft_versions.len(), 5);
     }
 }

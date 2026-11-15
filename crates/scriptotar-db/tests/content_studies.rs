@@ -682,4 +682,28 @@ fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
         .rename_draft(foreign.id, second.id, renamed.revision, "Foreign")
         .is_err());
     assert_eq!(db.get_draft(owner.id, first.id).unwrap().title, "Original");
+    let archived = db
+        .set_study_draft_archived_checked(owner.id, study.id, second.id, renamed.revision, true)
+        .unwrap();
+    assert!(archived.archived_at.is_some());
+    assert_eq!(db.list_draft_summaries(owner.id, study.id, 200).unwrap().len(), 1);
+    assert_eq!(db.list_archived_draft_summaries(owner.id, study.id, 200).unwrap().len(), 1);
+    assert!(matches!(
+        db.set_study_draft_archived_checked(owner.id, study.id, first.id, first.revision, true),
+        Err(RepositoryError::Conflict(_))
+    ));
+    assert!(matches!(
+        db.set_study_draft_archived_checked(owner.id, study.id, second.id, renamed.revision, false),
+        Err(RepositoryError::Conflict(_))
+    ));
+    assert!(db
+        .set_study_draft_archived_checked(foreign.id, study.id, second.id, archived.revision, false)
+        .is_err());
+    let restored = db
+        .set_study_draft_archived_checked(owner.id, study.id, second.id, archived.revision, false)
+        .unwrap();
+    assert!(restored.archived_at.is_none());
+    assert_eq!(restored.body, large_body);
+    assert_eq!(db.list_draft_versions(owner.id, second.id).unwrap().len(), 4);
+    assert!(db.list_archived_draft_summaries(owner.id, study.id, 200).unwrap().is_empty());
 }
