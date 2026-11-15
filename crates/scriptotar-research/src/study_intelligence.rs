@@ -229,7 +229,6 @@ fn has_narrative_turn(text: &str) -> bool {
         .any(|word| matches!(word, "but" | "however" | "instead" | "لكن" | "ولكن" | "ثم"))
 }
 
-
 fn opening_hook_category(text: &str) -> Option<&'static str> {
     let lowered = text.trim_start().to_lowercase();
     if lowered.contains('?')
@@ -240,8 +239,14 @@ fn opening_hook_category(text: &str) -> Option<&'static str> {
     {
         Some("question-led")
     } else if [
-        "i'll show", "i will show", "learn how", "here's how", "you can",
-        "سأريك", "تعلم", "سنتعلم",
+        "i'll show",
+        "i will show",
+        "learn how",
+        "here's how",
+        "you can",
+        "سأريك",
+        "تعلم",
+        "سنتعلم",
     ]
     .iter()
     .any(|phrase| lowered.contains(phrase))
@@ -719,6 +724,8 @@ mod tests {
             .iter()
             .all(|o| !o.statement.contains("IGNORE ALL")));
         assert!(first.source_text_is_untrusted_data);
-        assert!(observations.iter().all(|o| o.feature != Some(TranscriptFeature::Hook)));
+        assert!(observations
+            .iter()
+            .all(|o| o.feature != Some(TranscriptFeature::Hook)));
     }
 }
