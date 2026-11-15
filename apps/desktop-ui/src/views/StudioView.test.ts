@@ -619,6 +619,10 @@ describe('Content Study Studio', () => {
       expect(current.drafts).toHaveLength(2);
       expect(current.draft).toContain('An original concrete opening');
     });
+    await expect(api.reviewStudyScript('p-creator-lab', study.id,
+      study.revision, prepared.prompt, response, 'angle-1',
+      (single as HTMLTextAreaElement).value, scriptJson, true)).rejects.toThrow();
+    expect((await api.getStudy('p-creator-lab', study.id)).drafts).toHaveLength(2);
     expect(provider).not.toHaveBeenCalled();
   });
 

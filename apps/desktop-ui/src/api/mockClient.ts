@@ -491,7 +491,8 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         draftCopies.get(studyId)?.set(draftId, {
           title, body, revision: 1, versions: [snapshot], archived: false
         });
-        savedStudy = { ...current, draftId, draftRevision: 1, draft: body,
+        savedStudy = { ...current, revision: current.revision + 1,
+          draftId, draftRevision: 1, draft: body,
           draftVersions: [snapshot], drafts: [
             { id: draftId, title, revision: 1 }, ...(current.drafts ?? [])
           ] };

@@ -1417,7 +1417,12 @@ mod tests {
                 .unwrap();
             let candidate = saved_script.saved_study.unwrap();
             assert_eq!(candidate.drafts.len(), 2);
+            assert_eq!(candidate.revision, saved.revision + 1);
             assert_eq!(candidate.draft_versions.len(), 1);
+            // Replaying an acceptance after a successful commit is denied.
+            assert!(services
+                .review_studio_script(project_id, study_id, &accepted)
+                .is_err());
             assert!(candidate.draft.contains("source IDs"));
             assert!(candidate.draft.contains("Unverified"));
             let generated_id = Uuid::parse_str(candidate.draft_id.as_deref().unwrap()).unwrap();
@@ -1634,7 +1639,7 @@ mod tests {
                 Err(RepositoryError::Conflict(_))
             ));
             let unchanged = services.get_studio_study(project_id, study_id).unwrap();
-            assert_eq!(unchanged.revision, saved.revision);
+            assert_eq!(unchanged.revision, saved.revision + 1);
             assert_eq!(unchanged.sources.len(), sources.len());
             assert!(sources
                 .iter()

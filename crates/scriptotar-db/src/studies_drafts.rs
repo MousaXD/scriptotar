@@ -348,6 +348,27 @@ impl SqliteStore {
         }
         let id = Uuid::new_v4();
         let now = now_rfc3339();
+        // Consume the Study's expected revision in this same transaction.
+        // A lost successful reply may be reconciled by reopening the Study,
+        // but retrying the old approval must NEVER create a second candidate.
+        let changed = tx
+            .execute(
+                "UPDATE content_studies
+                 SET revision=revision+1,updated_at=?1
+                 WHERE id=?2 AND project_id=?3 AND revision=?4 AND archived_at IS NULL",
+                params![
+                    now,
+                    study_id.to_string(),
+                    project_id.to_string(),
+                    expected_study_revision
+                ],
+            )
+            .map_err(db_error)?;
+        if changed != 1 {
+            return Err(RepositoryError::Conflict(
+                "Study changed before script acceptance".into(),
+            ));
+        }
         tx.execute(
             "INSERT INTO creative_drafts(
                  id,project_id,study_id,title,body,revision,created_at,updated_at
