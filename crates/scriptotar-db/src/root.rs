@@ -15,8 +15,8 @@ mod studies;
 mod studies_schema;
 
 mod writing_schema;
-pub use writing_schema::WRITING_RECEIPT_MIGRATION;
 pub use studies::EvidenceReview;
+pub use writing_schema::WRITING_RECEIPT_MIGRATION;
 
 mod studies_atomic;
 pub use studies_atomic::StudioBundleUpdate;
