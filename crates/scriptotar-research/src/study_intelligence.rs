@@ -609,9 +609,15 @@ mod tests {
             CreatorComparison::Unavailable { .. }
         ));
         assert_eq!(result.sources[0].study_source_id, r.study_source_id);
-        assert_eq!(result.sources[0].origin_revision.as_deref(), Some("2026-11-15T12:00:00Z"));
+        assert_eq!(
+            result.sources[0].origin_revision.as_deref(),
+            Some("2026-11-15T12:00:00Z")
+        );
         assert!(result.feature_support.is_empty());
-        assert!(result.sources[0].limitations.iter().any(|warning| warning.contains("No live platform access")));
+        assert!(result.sources[0]
+            .limitations
+            .iter()
+            .any(|warning| warning.contains("No live platform access")));
     }
     #[test]
     fn cross_project_collision_and_duplicate_selection_are_refused() {
@@ -707,17 +713,16 @@ mod tests {
                 partial: false,
             }),
         };
-        let result = analyze_study_sources(
-            project,
-            study,
-            when(),
-            vec![spoken, metadata],
-        ).unwrap();
+        let result = analyze_study_sources(project, study, when(), vec![spoken, metadata]).unwrap();
         assert_eq!(result.sources.len(), 2);
         let measured = result.sources.iter().find(|s| s.metrics.is_some()).unwrap();
         assert_eq!(measured.metrics.as_ref().unwrap().views, Some(500));
         assert!(measured.observations.is_empty());
-        let interpreted = result.sources.iter().find(|s| !s.observations.is_empty()).unwrap();
+        let interpreted = result
+            .sources
+            .iter()
+            .find(|s| !s.observations.is_empty())
+            .unwrap();
         assert!(interpreted.metrics.is_none());
         assert_eq!(
             interpreted.origin_revision.as_deref(),
