@@ -58,6 +58,10 @@ pub struct StudyScope {
 /// snapshot is a security bug in an authority implementation.
 pub trait ScopeDispatchGuard {
     fn scope(&self) -> &StudyScope;
+
+    /// Fresh trusted host time, read while the dispatch guard is held.
+    /// The earlier dispatch(now_ms) argument may predate a blocked reservation.
+    fn now_ms(&self) -> Result<u64, ConsentError>;
 }
 
 pub trait ScopeAuthority: Send + Sync {
@@ -557,12 +561,38 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::ChangedContext);
         }
+        // Validate the *actual* time under the guard. A slow effect reservation
+        // must never extend the one-shot approval's lifetime.
+        let fresh_now = match scope_guard.now_ms() {
+            Ok(value) => value,
+            Err(_) => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+        if fresh_now > record.preview.expires_at_ms || fresh_now >= deadline_ms {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::Expired);
+        }
 
         // Agent 02's CAS must commit DISPATCHED before network I/O; never
         // treat the RESERVED state as permission to call a provider.
         if fence.mark_dispatched_once(&effect_id).is_err() {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
+        }
+        // The CAS can also block. Re-read trusted time at the final send
+        // boundary, not only when reservation or gate acquisition completed.
+        match scope_guard.now_ms() {
+            Ok(value) if value <= record.preview.expires_at_ms && value < deadline_ms => {}
+            Ok(_) => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::Expired);
+            }
+            Err(_) => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
         }
 
         // Keep only this run's consent mutex through the send. A concurrent
@@ -634,6 +664,12 @@ mod tests {
     impl ScopeDispatchGuard for FrozenGuard<'_> {
         fn scope(&self) -> &StudyScope {
             self.0
+        }
+
+        fn now_ms(&self) -> Result<u64, ConsentError> {
+            // Synthetic time for the immutable fixture; production must read
+            // the actual trusted host clock while holding the shared gate.
+            Ok(103)
         }
     }
 
@@ -1090,6 +1126,10 @@ mod tests {
     impl ScopeDispatchGuard for LockedScopeGuard<'_> {
         fn scope(&self) -> &StudyScope {
             &self.0
+        }
+
+        fn now_ms(&self) -> Result<u64, ConsentError> {
+            Ok(103)
         }
     }
 
