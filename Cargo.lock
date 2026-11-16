@@ -2969,6 +2969,7 @@ name = "scriptotar-ai"
 version = "1.4.1"
 dependencies = [
  "reqwest 0.12.28",
+ "sha2",
  "serde",
  "serde_json",
  "sha2",
