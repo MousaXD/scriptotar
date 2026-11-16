@@ -13,6 +13,7 @@
   import { studioStrings } from '../studio/strings';
   import StudioAgentReview from '../studio/StudioAgentReview.svelte';
   import StudioCandidateCompare from '../studio/StudioCandidateCompare.svelte';
+  import StudioResearchReview from '../studio/StudioResearchReview.svelte';
   import { workflowStrings } from '../studio/workflowStrings';
 
   export let api: ScriptotarApi;
@@ -1101,6 +1102,11 @@
         {/if}
         {#if inspectionError}<p role="alert" class="studio-error">{inspectionError}</p>{/if}
       </section>
+    {/if}
+    {#if record}
+      {#key projectId + ':' + record.id}
+        <StudioResearchReview {api} {projectId} studyId={record.id} />
+      {/key}
     {/if}
     <section class="panel studio-history">
       <h2>{t.history}</h2>
