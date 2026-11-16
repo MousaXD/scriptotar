@@ -24,6 +24,26 @@ async function fixture() {
 describe('Study research is a local, explicitly authorized workflow', () => {
   it('prepares, approves, reads and reopens the durable source-scoped report', async () => {
     const { api, projectId, studyId } = await fixture();
+    const readCanonical = api.readStudyResearchReport.bind(api);
+    api.readStudyResearchReport = async (project, study, artifact) => {
+      const report = await readCanonical(project, study, artifact);
+      const source = report.sources[0];
+      source.observations = [{
+        statement: 'Observed opening question', beat: null, feature: null,
+        confidence: 'source_observation',
+        evidence: {
+          study_source_id: source.study_source_id,
+          reference_id: source.reference_id,
+          locator: source.locator,
+          transcript_id: source.reference_id,
+          transcript_revision: 'mock:unchanged',
+          segment_id: 'segment-7', start_ms: 1250, end_ms: 3100,
+          excerpt: 'What would you do first?'
+        },
+        limitations: ['Quoted text is not an independently verified fact']
+      }];
+      return report;
+    };
     const view = render(StudioResearchReview, { props: { api, projectId, studyId } });
     const prepare = screen.getByRole('button', { name: 'Prepare research' });
     await waitFor(() => expect(prepare).toBeEnabled());
@@ -34,6 +54,10 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     await fireEvent.click(approve);
     await waitFor(() => expect(screen.getByText(/completed/)).toBeInTheDocument());
     expect(screen.getAllByText(/not independently fact-checked/).length).toBe(2);
+    expect(screen.getByText('Observed opening question')).toBeInTheDocument();
+    expect(screen.getByText('What would you do first?')).toBeInTheDocument();
+    expect(screen.getByText(/segment-7/)).toBeInTheDocument();
+    expect(screen.getByText(/1\.25–3\.10s/)).toBeInTheDocument();
     const runs = await api.listStudyResearchRuns(projectId, studyId);
     expect(runs).toHaveLength(1);
     expect(runs[0].plan.steps[0].input.tool).toBe('analyze_evidence');

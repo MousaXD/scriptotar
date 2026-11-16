@@ -1,3 +1,12 @@
+# CHECKPOINT — 2026-11-16 Agent 00 user-facing local research, consent-scope display and report excerpts (candidate)
+
+- Added a real Studio Research review panel (`apps/desktop-ui/src/studio/StudioResearchReview.svelte`), rendering only Study-scoped canonical source attachments, locally generated zero-provider-cost `AnalyzeEvidence` runs, exact approved source selection, explicit approve/deny/cancel, and persisted report reopening. A pending approval freezes source selection and reflects the run's actual saved inputs even after Studio reload; no UI-only selection mutation can silently change consent.
+- Display actual saved source-specific pattern observations with literal excerpt, locator and segment/time bounds where present, plus explicit data limitations and a warning that creative patterns are not independently fact-checked. Svelte interpolation escapes untrusted transcript/excerpt data; no fabricated visuals, metrics or claims of causal virality. English/Arabic UI and frontend approval/reopen/changed-source tests added.
+- Integrated Research, fail-closed Verification, Studio and GUI, durable v10 effects, and benchmark tooling remain separate from a paid provider. Provider egress is deliberately disabled. At checkpoint `e6733731`, exact-head Rust foundation, CI, Desktop UI, GUI visual QA and security hygiene passed. Installer, MCP and migration aggregate outcomes still require final exact-head verification. This checkpoint commit requires its own new exact-head CI.
+- Still **NO-GO** for release. #118 provider revocation race, #121 v11 three-draft atomic transaction, #124 security adversarial regression gate and #126 real installed WebView certification remain outstanding. #122 temporary probe is excluded. `main` untouched, no tag/release.
+
+---
+
 # CHECKPOINT — 2026-11-16 Agent 00 functional research IPC + verification + Studio integration (candidate)
 
 - Integration advanced through Agent 02 #119 (durable v10 effects), Agent 03 #120 (research engine and five public zero-cost, approval-gated Tauri/TS/mock APIs), Agent 04 #117 (fail-closed private verification), Agent 06 #123 (unified Studio and optional consent UI), Agent 09 #125 (GUI polishing) and Agent 08 #127 (benchmark infrastructure). The latest integration source commit is `dc66977e40f9a2ceaad56a6355fc800f1e7d5108`; this checkpoint commit will advance that SHA. No main changes.

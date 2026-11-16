@@ -62,7 +62,24 @@ export interface StudyResearchReport {
     access: 'available' | 'partial' | 'unavailable' | 'deleted' | 'revoked' | 'access_denied' | 'unsupported';
     origin_revision: string | null;
     metrics: Record<string, unknown> | null;
-    observations: unknown[];
+    observations: Array<{
+      statement: string;
+      beat: unknown;
+      feature: unknown;
+      confidence: unknown;
+      evidence: {
+        study_source_id: string;
+        reference_id: string;
+        locator: string;
+        transcript_id: string;
+        transcript_revision: string;
+        segment_id: string | null;
+        start_ms: number | null;
+        end_ms: number | null;
+        excerpt: string;
+      };
+      limitations: string[];
+    }>;
     limitations: string[];
   }>;
   feature_support: unknown[];

@@ -91,6 +91,11 @@
       selectedIds = (prior.length ? prior : attached.filter((source) => source.available)
         .slice(0, 8).map((source) => source.id));
       activeRun = runs.find(scoped) ?? null;
+      if (activeRun?.state === 'awaiting_approval') {
+        // The pending approval is for the saved immutable run selection, not a
+        // freshly auto-selected set of sources after reopening Studio.
+        selectedIds = [...activeRun.plan.steps[0].input.source_ids];
+      }
       if (activeRun?.state === 'completed') await openReport(activeRun, requestEpoch);
     } catch (cause) {
       if (alive && requestEpoch === epoch) errorText = showError(cause);
@@ -100,7 +105,7 @@
   }
 
   function toggle(id: string): void {
-    if (busy || loading) return;
+    if (busy || loading || activeRun?.state === 'awaiting_approval') return;
     if (selectedIds.includes(id)) {
       selectedIds = selectedIds.filter((value) => value !== id);
     } else if (selectedIds.length < 8) {
@@ -113,7 +118,7 @@
   }
 
   async function prepare(): Promise<void> {
-    if (busy || loading) return;
+    if (busy || loading || activeRun?.state === 'awaiting_approval') return;
     if (!selectedIds.length) { errorText = t.choose; return; }
     const requestEpoch = ++epoch;
     busy = true;
@@ -163,7 +168,7 @@
     <div class="research-attachments" role="group" aria-label={t.title}>
       {#each sources as source (source.id)}
         <button type="button" class="research-source" class:selected={selectedIds.includes(source.id)}
-          aria-pressed={selectedIds.includes(source.id)} disabled={!source.available || busy || loading}
+          aria-pressed={selectedIds.includes(source.id)} disabled={!source.available || busy || loading || activeRun?.state === 'awaiting_approval'}
           on:click={() => toggle(source.id)} dir="auto">
           <span>{source.kind === 'transcript' ? 'Transcript' : 'Research'} · {source.locator}</span>
           <small>{selectedIds.includes(source.id) ? t.selected : source.available ? '' : t.unavailable}</small>
@@ -173,7 +178,7 @@
   {:else if !loading}
     <p class="muted">{t.noSources}</p>
   {/if}
-  <button type="button" class="button secondary" disabled={busy || loading || !selectedIds.length}
+  <button type="button" class="button secondary" disabled={busy || loading || !selectedIds.length || activeRun?.state === 'awaiting_approval'}
     on:click={() => void prepare()}>{t.prepare}</button>
   {#if activeRun}
     <p class="muted" role="status">{t.state}: {activeRun.state}</p>
@@ -199,6 +204,30 @@
         <div class="result-source">
           <strong dir="auto">{item.kind} · {item.locator}</strong>
           <p>{item.observations.length} {t.observations}</p>
+          {#if item.observations.length}
+            <ul class="observations">
+              {#each item.observations as observation, i (i)}
+                <li>
+                  <strong dir="auto">{observation.statement}</strong>
+                  <blockquote dir="auto">{observation.evidence.excerpt}</blockquote>
+                  <small dir="auto">
+                    {observation.evidence.locator}
+                    {#if observation.evidence.segment_id}
+                      · {observation.evidence.segment_id}
+                    {/if}
+                    {#if observation.evidence.start_ms !== null && observation.evidence.end_ms !== null}
+                      · {(observation.evidence.start_ms / 1000).toFixed(2)}–{(observation.evidence.end_ms / 1000).toFixed(2)}s
+                    {/if}
+                  </small>
+                  {#if observation.limitations.length}
+                    <ul>{#each observation.limitations as limitation, j (j)}
+                      <li dir="auto">{limitation}</li>
+                    {/each}</ul>
+                  {/if}
+                </li>
+              {/each}
+            </ul>
+          {/if}
           {#if item.limitations.length}
             <details><summary>{t.limits}</summary>
               <ul>{#each item.limitations as limitation, i (i)}
@@ -234,6 +263,10 @@
   .research-source small, .result-source p { font-size: var(--text-xs); color: var(--color-text-muted); }
   .result-source { border-top: 1px solid var(--color-border); padding-block: 9px; overflow-wrap: anywhere; }
   .research-result { margin-block: 12px; }
+  .observations { display: grid; gap: 8px; padding-inline-start: 20px; }
+  .observations blockquote { margin: 5px 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--color-border-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .observations li { font-size: var(--text-xs); }
+  .observations small { display: block; overflow-wrap: anywhere; color: var(--color-text-muted); }
   details { font-size: var(--text-xs); }
   .studio-error { color: var(--color-danger, #b44); font-size: var(--text-xs); overflow-wrap: anywhere; }
 </style>
