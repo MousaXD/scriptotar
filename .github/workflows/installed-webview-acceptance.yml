@@ -204,11 +204,14 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Bundle exact-source NSIS installer
+      - name: Build production-mode release binary and NSIS installer
+        working-directory: apps/desktop
         run: |
-          cargo build --release --locked -p scriptotar-desktop
-          cd apps/desktop
-          tauri bundle
+          # IMPORTANT: `cargo build --release` followed by `tauri bundle` can
+          # package a devUrl binary that tries http://localhost:5173. The
+          # installed WebView2 then displays ERR_CONNECTION_REFUSED instead of
+          # embedded frontend assets. Let Tauri set the production build mode.
+          tauri build --bundles nsis -- --locked
       - name: Stage installer and machine evidence
         shell: pwsh
         run: |
