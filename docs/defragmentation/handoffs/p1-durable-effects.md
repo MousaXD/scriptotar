@@ -82,3 +82,24 @@ Unit tests under agent_effects_external.rs cover: pre-reservation absent state; 
 ### CI recovery correction
 - First new-head Actions exposed a rustfmt ordering issue in DB exports and a legacy v5 upgrade fixture that did not strip v10 before downgrading. Both addressed on the next Agent 02 patch; no production feature was removed.
 - The service driver now has an offline AppServices + true scoped checkpoint mock test for single send, restart uncertainty, duplicate dispatch denial and trusted final receipt reconciliation. No network provider is used.
+
+
+## Finalization hardening — one external effect per planned step (2026-11-16)
+
+**Candidate patch:** `c44110761d77906692d1cf49a9519da7544d17c2` (subsequent handoff-only commit may advance HEAD).
+
+- v10 initially enforced `UNIQUE(project_id,study_id,run_id,step_id,fingerprint)`. That allowed two rows for the SAME planned step if the snapshot/idempotency key and request fingerprint were changed between attempts. The v8 table alone only checks each row's active run/study scope; it does not globally prohibit a different key for the same step.
+- An additive **unique SQLite index** `idx_external_effect_one_per_step` now enforces `(project_id,study_id,run_id,step_id)` across all request keys and fingerprints. Explicit provider-proven nonexecution retries still update the SAME effect row and preserve attempt history, so remain supported. A conflicting legacy draft-bootstrap table fails migration without deleting user records. Central migration version stays **v10**; no new version 11 is consumed.
+- A native regression seeds a second valid legacy v8 effect claim under a different idempotency key and fingerprint, then asserts that v10 rejects a second external-effect row and leaves the first intact.
+- This strengthens the **local database dispatch fence**; it does **not** close the Agent 01 / Agent 10 consent/context revocation TOCTOU. Current `ExternalEffectPolicy::authorize` only returns `()` and is not a transactionally revocable grant. No real paid provider adapter is registered.
+
+### Required protocol freeze before any paid egress
+
+1. Agent 01 and Agent 00 must specify an immutable, scoped approval ID and outbound wire-payload SHA-256 that includes model, endpoint, headers affecting semantics, prompts, tools, generation parameters, source/evidence and Study digests, and authorized budgets. Require a per-step consent identity for Agent 05's four stages.
+2. Approval revocation / source-context invalidation and the final **pre-I/O** dispatch permit must share one linearizable authorization boundary. Checking approval before/after SQLite CAS without a cross-process invalidation lock is NOT sufficient. A safe implementation must specify the lock/lease holder, revocation wait semantics, expiry, crash recovery, and whether an already-permitted in-flight send is considered started before revocation completes. Persist an unambiguous dispatch decision and use provider-side idempotency.
+3. Every dispatch must reserve scoped run-level token/cost liabilities and bind final trusted usage receipts to the same approval/attempt identity. Unknown/queued/404/network failure remains Uncertain; no automatic replay. Store any provider output separately as a scoped durable artifact, not inside these metadata-only receipts.
+4. Agent 00 must integrate the reviewed v10 code before allocating **v11 or later** to Agent 05's atomic three-draft persistence. Register startup Uncertain recovery and complete installed native WebView plus authoritative provider canary QA. Never enable paid transport through a string-only `PaidEffectFence`.
+
+### Exact-head certification
+
+Previous exact commit `9da21c96a62d7a041b64500841b89dc6dc649703` had Rust foundation SUCCESS; other six jobs were still pending when inspected. The unique-index patch and this handoff create a NEW HEAD, so all seven required workflows must pass on the **final exact SHA** before Agent 00 can promote the code. Prior green evidence cannot be carried forward. No production paid adapter, integration merge, main merge or release is authorized.
