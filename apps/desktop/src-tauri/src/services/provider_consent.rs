@@ -91,6 +91,8 @@ impl AppServices {
     /// Prepare the exact server-derived three-angle request, never an arbitrary
     /// model prompt supplied by the client. Approval remains blocked if the
     /// trusted catalog has no verified ceiling for this specific model.
+    // Explicit project, Study, run, provider, and independent limits are intentional.
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_provider_angle_consent(
         &self,
         boundary: &ConsentBoundary,
