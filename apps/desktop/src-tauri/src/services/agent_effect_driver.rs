@@ -1,5 +1,5 @@
-//! Adapter seam for explicit provider policy and Agent 05 orchestration.
-//! Agent 00 registers this private service module and shared API.
+// Adapter seam for explicit provider policy and Agent 05 orchestration.
+// Agent 00 owns any public IPC/shared provider authorization wiring.
 use super::AppServices;
 use scriptotar_agent::ExecutionContext;
 use scriptotar_core::{RepositoryError, RepositoryResult};

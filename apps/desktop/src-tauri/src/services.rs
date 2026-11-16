@@ -1,4 +1,10 @@
 mod agent_inspection;
+// Private-only provider fence: compile in the real desktop host without IPC/egress.
+// The source is included inside a module until Agent 00 normalizes formatting.
+#[allow(dead_code)]
+mod agent_effect_driver {
+    include!("services/agent_effect_driver.rs");
+}
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;

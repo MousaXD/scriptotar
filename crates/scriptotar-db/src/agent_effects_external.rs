@@ -253,7 +253,7 @@ impl SqliteStore {
         let cost = to_i64(limits.cost_microusd)?;
         let mut db = database(self)?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
-        migration_external(&tx).map_err(db_error)?; // safe bootstrap until Agent 00 registers the next migration
+        // Schema v10 is installed atomically when SqliteStore opens. No per-request DDL.
         // An existing key from a local tool is not an external reservation.
         if let Some(existing) = scoped(&tx, key)? {
             if existing.fingerprint != fingerprint || existing.provider != provider
@@ -301,12 +301,7 @@ impl SqliteStore {
         -> RepositoryResult<Option<ExternalEffect>> {
         let db = database(self)?;
         verified_scope(&db,key.project,key.study,key.run_id)?;
-        // A not-yet-initialized additive table means no external reservation.
-        let exists: i64 = db.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_external_effects'",
-            [], |r| r.get(0),
-        ).map_err(db_error)?;
-        if exists == 0 { return Ok(None); }
+        // A missing v10 table is corruption, not an empty ledger.
         scoped(&db,key)
     }
 
@@ -915,6 +910,107 @@ mod tests {
         conn.execute_batch("DROP TRIGGER external_test_rollback;").unwrap();
         assert_eq!(db.mark_external_dispatched(key,reserved.revision,1).unwrap().status,
                    ExternalEffectStatus::Dispatched);
+    }
+
+    #[test]
+    fn schema_v10_upgrade_from_v9_is_versioned_and_repeatable() {
+        let (dir, db, project, study, snap) = setup();
+        let path = dir.path().join("external.sqlite3");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE agent_external_attempt_history;
+                 DROP TABLE agent_external_effects;
+                 DELETE FROM schema_migrations WHERE version = 10;
+                 PRAGMA user_version = 9;",
+            ).unwrap();
+        }
+        drop(db);
+        let upgraded = SqliteStore::open(&path).unwrap();
+        assert_eq!(upgraded.schema_version().unwrap(), 10);
+        let receipt = reserve(&upgraded, &snap, project, study);
+        assert_eq!(receipt.status, ExternalEffectStatus::Reserved);
+        drop(upgraded);
+        let reopened = SqliteStore::open(&path).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 10);
+        assert!(matches!(
+            reopened.reserve_external_effect(identity(&snap, project, study), fp(), "openai", limits()).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        let conn = rusqlite::Connection::open(path).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version = 10
+             AND name = 'agent_external_provider_effects'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn malformed_preexisting_v10_table_rolls_back_without_migration_ledger_change() {
+        let (dir, db, project, study, _snap) = setup();
+        let path = dir.path().join("external.sqlite3");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE agent_external_attempt_history;
+                 DROP TABLE agent_external_effects;
+                 DELETE FROM schema_migrations WHERE version = 10;
+                 PRAGMA user_version = 9;
+                 CREATE TABLE agent_external_effects (sentinel INTEGER);",
+            ).unwrap();
+        }
+        drop(db);
+        assert!(SqliteStore::open(&path).is_err());
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0),
+        ).unwrap();
+        let history_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE name = 'agent_external_attempt_history'",
+            [],
+            |r| r.get(0),
+        ).unwrap();
+        let project_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM projects WHERE id = ?1",
+            params![project.to_string()],
+            |r| r.get(0),
+        ).unwrap();
+        let study_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM content_studies WHERE id = ?1",
+            params![study.to_string()],
+            |r| r.get(0),
+        ).unwrap();
+        assert_eq!((version, count, history_exists, project_exists, study_exists), (9, 9, 0, 1, 1));
+    }
+
+    #[test]
+    fn independently_opened_connections_compete_for_single_external_dispatch() {
+        let (dir, db, project, study, snap) = setup();
+        let reserved = reserve(&db, &snap, project, study);
+        let path = dir.path().join("external.sqlite3");
+        let barrier = Arc::new(Barrier::new(3));
+        let workers = (0..2).map(|_| {
+            let worker = SqliteStore::open(&path).unwrap();
+            let snapshot = snap.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                worker.mark_external_dispatched(
+                    identity(&snapshot, project, study),
+                    reserved.revision, reserved.attempt,
+                )
+            })
+        }).collect::<Vec<_>>();
+        barrier.wait();
+        let outcomes = workers.into_iter().map(|worker| worker.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_err()).count(), 1);
+        let got = db.get_external_effect(identity(&snap, project, study)).unwrap().unwrap();
+        assert_eq!(got.status, ExternalEffectStatus::Dispatched);
     }
 
 }
