@@ -49,8 +49,27 @@ pub struct StudyScope {
 }
 
 /// Implementations must use the currently active project and read canonical Study data.
+/// A guard backed by the SAME synchronization boundary as every project switch,
+/// Study/source/evidence write, and consent revocation. The approved snapshot
+/// must remain immutable until this guard is dropped. Returning an unguarded
+/// snapshot is a security bug in an authority implementation.
+pub trait ScopeDispatchGuard {
+    fn scope(&self) -> &StudyScope;
+}
+
 pub trait ScopeAuthority: Send + Sync {
     fn current_scope(&self, project_id: &str, study_id: &str) -> Result<StudyScope, ConsentError>;
+
+    /// Linearization boundary for egress: the guard must block all changes that
+    /// would invalidate this scope until the provider send has completed. A
+    /// plain re-read cannot satisfy this contract. Fail closed until Agent 00
+    /// installs a process-wide, shared, authoritative host implementation.
+    fn lock_dispatch_scope(
+        &self,
+        _scope: &StudyScope,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        Err(ConsentError::EffectFenceUnavailable)
+    }
 }
 
 /// This is an explicit run intent; the server must prepare the prompt and confirm its scope.
@@ -138,6 +157,15 @@ pub struct ConsentBoundary {
 /// permission to send a second paid request. Agent 02 must supply this implementation.
 pub trait PaidEffectFence: Send + Sync {
     fn reserve_once(&self, effect_id: &str) -> Result<(), ConsentError>;
+
+    /// Commit the one-winner pre-send DISPATCHED CAS in the durable effect
+    /// ledger, after acquiring the authoritative scope/consent gate and before
+    /// provider I/O. A reserved effect alone never authorizes a network send.
+    /// Agent 02's v10 driver must implement this; fail closed by default.
+    fn mark_dispatched_once(&self, _effect_id: &str) -> Result<(), ConsentError> {
+        Err(ConsentError::EffectFenceUnavailable)
+    }
+
     fn settle(&self, effect_id: &str, usage: &ActualUsage) -> Result<(), ConsentError>;
     fn mark_uncertain(&self, effect_id: &str);
 }
@@ -484,10 +512,47 @@ impl ConsentBoundary {
             record.decision = Decision::Uncertain;
             return Err(error);
         }
+        // An ambiguous reservation is never safe to replay, even if it was
+        // denied before I/O. Keep this consent consumed and reconcile the ledger.
         record.decision = Decision::Uncertain;
         let deadline_ms = now_ms.saturating_add(intent.limits.max_elapsed_ms);
-        drop(records);
 
+        // Agent 10's regression changes the Study inside reserve_once. This
+        // re-read catches that specific transition; it is NOT our concurrency
+        // boundary, because a revocation could otherwise occur just after it.
+        if let Err(error) = validate_context(&record.intent.scope, authority) {
+            fence.mark_uncertain(&effect_id);
+            return Err(error);
+        }
+
+        // This guard MUST be shared by all project/Study/source mutations and
+        // revocations. It remains held through generate_once, so a revocation
+        // cannot linearize before a subsequently started HTTP send.
+        let scope_guard = match authority.lock_dispatch_scope(&record.intent.scope) {
+            Ok(guard) => guard,
+            Err(_) => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+        if scope_guard.scope() != &record.intent.scope
+            || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
+        {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::ChangedContext);
+        }
+
+        // Agent 02's CAS must commit DISPATCHED before network I/O; never
+        // treat the RESERVED state as permission to call a provider.
+        if fence.mark_dispatched_once(&effect_id).is_err() {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::UncertainEffect);
+        }
+
+        // Keep the per-process consent lock through the send. A concurrent
+        // cancellation can only linearize after this already-started attempt;
+        // it cannot revoke and then race a later send. Agent 00 owns adapting
+        // this to a per-run lock for responsive parallel approvals.
         let generated = runner.generate_once(
             &intent.provider,
             api_key,
@@ -497,6 +562,8 @@ impl ConsentBoundary {
             intent.max_output_tokens,
             deadline_ms,
         );
+        drop(scope_guard);
+        drop(records);
         let mut generated = match generated {
             Ok(response) => response,
             Err(_) => {
@@ -551,6 +618,15 @@ mod tests {
 
     use super::*;
 
+    // Static authority is immutable by construction; no writer can race the
+    // returned guard. Mutable authorities below use a real exclusive mutex.
+    struct FrozenGuard<'a>(&'a StudyScope);
+    impl ScopeDispatchGuard for FrozenGuard<'_> {
+        fn scope(&self) -> &StudyScope {
+            self.0
+        }
+    }
+
     struct Authority(StudyScope);
     impl ScopeAuthority for Authority {
         fn current_scope(
@@ -562,6 +638,13 @@ mod tests {
                 return Err(ConsentError::WrongProjectOrStudy);
             }
             Ok(self.0.clone())
+        }
+
+        fn lock_dispatch_scope(
+            &self,
+            _scope: &StudyScope,
+        ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+            Ok(Box::new(FrozenGuard(&self.0)))
         }
     }
 
@@ -591,6 +674,10 @@ mod tests {
                 return Err(ConsentError::UncertainEffect);
             }
             claims.push(id.into());
+            Ok(())
+        }
+
+        fn mark_dispatched_once(&self, _id: &str) -> Result<(), ConsentError> {
             Ok(())
         }
 
