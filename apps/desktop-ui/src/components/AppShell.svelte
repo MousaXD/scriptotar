@@ -42,7 +42,6 @@
 
   $: createNav = [
     { id: 'studio', label: $locale === 'ar' ? 'الاستوديو' : 'Studio', icon: 'sparkles', shortcut: 'S' },
-    { id: 'ai', label: $translator('nav.ai'), icon: 'sparkles', shortcut: 'A' },
     { id: 'library', label: $translator('nav.library'), icon: 'library', shortcut: 'L' }
   ] satisfies NavItem[];
 
@@ -53,7 +52,8 @@
     command('queue', $translator('command.openQueue'), $translator('search.navigate'), 'queue jobs activity', () => navigate('jobs')),
     command('transcripts', $translator('command.openTranscripts'), $translator('search.navigate'), 'transcript reader', () => navigate('transcript')),
     command('studio', $locale === 'ar' ? 'فتح الاستوديو' : 'Open Studio', $translator('search.navigate'), 'studio content study script writing', () => navigate('studio')),
-    command('ai', $translator('command.openAi'), $translator('search.navigate'), 'ai studio prompt', () => navigate('ai')),
+    // Legacy prompt tools stay reachable without duplicating the Studio destination in the rail.
+    command('ai', $translator('command.openAi'), $translator('search.navigate'), 'legacy ai tools studio prompt', () => navigate('ai')),
     command('library', $translator('command.openLibrary'), $translator('search.navigate'), 'library local index', () => navigate('library')),
     command('settings', $translator('command.openSettings'), $translator('search.navigate'), 'settings preferences', () => navigate('settings'))
   ] satisfies PaletteItem[];
@@ -132,6 +132,12 @@
 
   function changeLocale(next: string) {
     setLocale(next as AppLocale);
+  }
+
+  function openMcpSettings() {
+    navigate('settings');
+    // The utility shortcut must open the actual MCP section, not merely the Settings landing page.
+    void tick().then(() => document.getElementById('settings-mcp')?.scrollIntoView?.({ block: 'start' }));
   }
 
   async function openPalette() {
@@ -232,7 +238,7 @@
     <div class="brand-row">
       <div class="brand-lockup">
         <div class="brand-mark">S</div>
-        <div class="brand-copy"><strong>Scriptotar</strong><span>{$translator('brand.subtitle')}</span></div>
+        <div class="brand-copy"><strong>Scriptotar</strong></div>
       </div>
       <button class="rail-toggle" type="button" on:click={toggleSidebar} aria-label={sidebarCollapsed ? $translator('sidebar.expand') : $translator('sidebar.collapse')} title={sidebarCollapsed ? $translator('sidebar.expand') : $translator('sidebar.collapse')}>
         <Icon name="panel" size={17} />
@@ -254,7 +260,7 @@
       <section class="nav-group" aria-label={$translator('nav.create')}>
         <span class="nav-group-label">{$translator('nav.create')}</span>
         {#each createNav as item}
-          <button data-view-id={item.id} class:active={activeView === item.id} aria-label={item.label} aria-current={activeView === item.id ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
+          <button data-view-id={item.id} class:active={activeView === item.id || (item.id === 'studio' && activeView === 'ai')} aria-label={item.label} aria-current={activeView === item.id || (item.id === 'studio' && activeView === 'ai') ? 'page' : undefined} title={`${item.label} · ${item.shortcut}`} on:click={() => navigate(item.id)}>
             <Icon name={item.icon} />
             <span class="nav-label">{item.label}</span>
           </button>
@@ -263,7 +269,7 @@
     </nav>
 
     <div class="sidebar-utility">
-      <button class="settings-link" type="button" aria-label={$translator('mcp.setup')} title={$translator('mcp.openSettings')} on:click={() => navigate('settings')}>
+      <button class="settings-link" type="button" aria-label={$translator('mcp.setup')} title={$translator('mcp.openSettings')} on:click={openMcpSettings}>
         <Icon name="globe" />
         <span class="nav-label">{$translator('mcp.setup')}</span>
       </button>
@@ -364,7 +370,6 @@
   .brand-lockup { flex: 1; min-width: 0; padding: 0; border: 0; }
   .brand-copy { min-width: 0; overflow: hidden; }
   .brand-copy strong { font-size: var(--text-md); letter-spacing: -.01em; }
-  .brand-copy span { margin-top: 2px; font-size: 9px; white-space: nowrap; }
   .brand-mark { flex: 0 0 auto; width: 34px; height: 34px; border-radius: var(--radius-md); }
   .rail-toggle { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--color-text-faint); }
   .rail-toggle:hover { border-color: var(--color-border); color: var(--color-text); background: var(--color-surface-raised); }

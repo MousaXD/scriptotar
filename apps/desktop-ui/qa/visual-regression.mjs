@@ -59,7 +59,8 @@ async function routeTo(page, view) {
     await page.locator('.sidebar-utility .settings-link[aria-current="page"]').waitFor({ timeout: 5000 });
   } else {
     // Stable view identity: adding Studio must not change existing QA routes.
-    const viewId = view.name === 'ai-studio' ? 'ai' : view.name;
+    // Legacy AI tools retain the A shortcut; Studio is the consolidated rail destination.
+    const viewId = view.name === 'ai-studio' ? 'studio' : view.name;
     await page.locator(`.primary-nav button[data-view-id="${viewId}"][aria-current="page"]`)
       .waitFor({ timeout: 5000 });
   }

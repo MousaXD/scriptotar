@@ -305,7 +305,7 @@
             </article>
           {/each}
           {#if visibleCount < readingSegments.length}
-            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label="Show more transcript segments">Show more ({visibleCount} / {readingSegments.length})</button>
+            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label={$locale === 'ar' ? 'عرض مقاطع تفريغ إضافية' : 'Show more transcript segments'}>{$locale === 'ar' ? 'عرض المزيد' : 'Show more'} ({visibleCount} / {readingSegments.length})</button>
           {/if}
         {/if}
       </div>
