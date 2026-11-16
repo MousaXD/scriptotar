@@ -366,6 +366,15 @@ async function runBootState(browser, locale, theme, state) {
       ? page.locator('[aria-busy="true"]').first()
       : page.getByText('QA injected bootstrap failure');
     await indicator.waitFor({ timeout: 15000 });
+    if (state === 'loading') {
+      // Startup may contain skeletal work rows, but must not advertise fake
+      // dashboard metrics while the real workspace is still unavailable.
+      const metricSkeletonsVisible = await page.locator('.workspace-skeleton .metric-skeletons')
+        .evaluate((element) => getComputedStyle(element).display !== 'none');
+      if (metricSkeletonsVisible) {
+        recordFailure(label + '/loading-hierarchy', 'Startup still displays a decorative metric dashboard');
+      }
+    }
     await screenshot(page, label);
   } catch (error) {
     recordFailure(label, error);
