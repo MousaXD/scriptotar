@@ -49,6 +49,25 @@ case "$gate:$pr" in
       cargo test --locked -p scriptotar-ai verification
     )
     ;;
+  combined-v11:114)
+    # This is an integration-source DB/writing gate, never full host approval.
+    # It must still run while the guarded paid provider path is disabled.
+    for file in \
+      target/crates/scriptotar-db/src/writing_schema.rs \
+      target/apps/desktop/src-tauri/src/services/study_writing_persistence.rs \
+      target/apps/desktop/src-tauri/tests/study_writing.rs; do
+      test -f "$file" || { echo "NOT INTEGRATED V11: $file" >&2; exit 4; }
+    done
+    cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    (
+      cd target
+      # Real versioned migrations, historical upgrades, collision rollback.
+      cargo test --locked -p scriptotar-db
+      # Real canonical SQLite three-draft transaction and independent v11 tests.
+      cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture
+    )
+    ;;
   combined:114)
     # This exact PR #114 head must have all feature owners integrated by Agent 00.
     # A missing module is a release-blocking FAIL, not a skipped test.
