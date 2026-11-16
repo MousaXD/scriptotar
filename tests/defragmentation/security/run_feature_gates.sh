@@ -32,6 +32,7 @@ case "$gate:$pr" in
     test -f target/apps/desktop/src-tauri/src/services/study_writing_persistence.rs
     test -f target/apps/desktop/src-tauri/tests/study_writing.rs
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     (
       cd target
       # Compiles the unregistered canonical production persistence module via #[path].
@@ -64,12 +65,18 @@ case "$gate:$pr" in
     cp audit/tests/defragmentation/security/Cargo.toml target/tests/defragmentation/security/Cargo.toml
     cp audit/tests/defragmentation/security/tests/provider_context_race.rs target/tests/defragmentation/security/tests/
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
+    cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
+    # Assert production wiring, not merely that feature files exist on disk.
+    (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v)
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
       cargo test --locked -p scriptotar-ai provider_consent
       cargo test --locked -p scriptotar-db
+      # Compile/test the actual Tauri host, not only path-included feature modules.
+      cargo test --locked -p scriptotar-desktop --lib
       cargo test --locked -p scriptotar-ai verification
       python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
       cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture
