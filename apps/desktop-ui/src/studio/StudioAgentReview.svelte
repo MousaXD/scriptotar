@@ -174,6 +174,7 @@
     <p class="run-muted">{t.noStudy}</p>
   {:else}
     {#if !prompt && !run}<p class="run-muted">{t.noPrompt}</p>{/if}
+    {#if prompt || run}
     {#if !bridge?.proposeStudioRun || !bridge?.decideStudioRun}
       <p class="run-muted" role="status">{t.disconnected}</p>
     {/if}
@@ -238,6 +239,7 @@
     {#if run && !isCurrentRun}<p class="run-error" role="alert">{t.stale}</p>{/if}
     {#if error}<p class="run-error" role="alert">{error}</p>{/if}
     <p class="run-muted">{t.notApproved}</p>
+    {/if}
   {/if}
 </section>
 
