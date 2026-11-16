@@ -959,7 +959,6 @@ async fn decide_local_inspection(
     .await
 }
 
-
 #[tauri::command]
 async fn list_study_research_sources(
     project_id: String,
@@ -989,12 +988,17 @@ async fn start_study_research(
     }
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
-    let source_ids = source_ids.iter().map(|id| artifact_uuid(id, "Study source id"))
+    let source_ids = source_ids
+        .iter()
+        .map(|id| artifact_uuid(id, "Study source id"))
         .collect::<Result<Vec<_>, _>>()?;
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.start_study_research(project_id, study_id, source_ids).map_err(command_error)
-    }).await
+        service
+            .start_study_research(project_id, study_id, source_ids)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1007,8 +1011,11 @@ async fn list_study_research_runs(
     let study_id = artifact_uuid(&study_id, "study id")?;
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.list_study_research_runs(project_id, study_id).map_err(command_error)
-    }).await
+        service
+            .list_study_research_runs(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1029,9 +1036,11 @@ async fn decide_study_research(
     }
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.decide_study_research(project_id, study_id, &run_id, &action)
+        service
+            .decide_study_research(project_id, study_id, &run_id, &action)
             .map_err(command_error)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1046,9 +1055,11 @@ async fn read_study_research_report(
     let artifact_id = artifact_uuid(&artifact_id, "research artifact id")?;
     let service = state.inner().clone();
     on_blocking_worker(move || {
-        service.read_study_research_report(project_id, study_id, artifact_id)
+        service
+            .read_study_research_report(project_id, study_id, artifact_id)
             .map_err(command_error)
-    }).await
+    })
+    .await
 }
 
 #[tauri::command]

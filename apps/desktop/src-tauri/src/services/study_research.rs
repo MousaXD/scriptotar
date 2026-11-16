@@ -931,7 +931,6 @@ impl ToolExecutor for StudyResearchDriver {
     }
 }
 
-
 const RESEARCH_RUN_DEADLINE_MS: u64 = 300_000;
 
 /// IDs are the canonical Study attachments, not original video/research IDs.
@@ -955,9 +954,9 @@ fn research_run_error(error: RuntimeError) -> RepositoryError {
         RuntimeError::Store(scriptotar_agent::StoreError::Conflict)
         | RuntimeError::Store(scriptotar_agent::StoreError::Exists)
         | RuntimeError::WrongState
-        | RuntimeError::StepMismatch => RepositoryError::Conflict(
-            "research run changed or is not awaiting that action".into(),
-        ),
+        | RuntimeError::StepMismatch => {
+            RepositoryError::Conflict("research run changed or is not awaiting that action".into())
+        }
         RuntimeError::PolicyDenied => not_found(),
         _ => invalid("research run is invalid or unavailable"),
     }
@@ -1050,7 +1049,9 @@ impl AppServices {
             },
         };
         let created = engine.create(plan, now).map_err(research_run_error)?;
-        engine.tick(&created.plan.id, now).map_err(research_run_error)
+        engine
+            .tick(&created.plan.id, now)
+            .map_err(research_run_error)
     }
 
     pub fn list_study_research_runs(
@@ -1094,7 +1095,9 @@ impl AppServices {
                 let approved = engine
                     .approve(run_id, "analyze_evidence", now)
                     .map_err(research_run_error)?;
-                engine.tick(&approved.plan.id, now).map_err(research_run_error)?
+                engine
+                    .tick(&approved.plan.id, now)
+                    .map_err(research_run_error)?
             }
             "deny" => engine
                 .deny(run_id, "analyze_evidence", now)
@@ -1180,7 +1183,7 @@ mod tests {
 
     #[test]
     fn approved_agent_research_persists_effect_and_can_reopen_result() {
-        use scriptotar_agent::{CheckpointStore, Estimate, Limits, Plan, RunState, StepPlan};
+        use scriptotar_agent::RunState;
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
         let project;
@@ -1229,7 +1232,9 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let sources = services.list_study_research_sources(project, study).unwrap();
+            let sources = services
+                .list_study_research_sources(project, study)
+                .unwrap();
             assert_eq!(sources.len(), 1);
             assert_eq!(sources[0].origin_id, recorded[0].id.to_string());
             assert_eq!(sources[0].id, attached.id.to_string());
@@ -1243,7 +1248,13 @@ mod tests {
                 .get_agent_effect(project, study, &run_id, &pending.steps[0].idempotency_key)
                 .unwrap()
                 .is_none());
-            assert_eq!(services.list_study_research_runs(project, study).unwrap().len(), 1);
+            assert_eq!(
+                services
+                    .list_study_research_runs(project, study)
+                    .unwrap()
+                    .len(),
+                1
+            );
             assert!(services
                 .decide_study_research(Uuid::new_v4(), study, &run_id, "approve")
                 .is_err());
@@ -1254,9 +1265,8 @@ mod tests {
             assert!(services
                 .decide_study_research(project, study, &run_id, "approve")
                 .is_err());
-            artifact = Uuid::parse_str(
-                &completed.steps[0].output.as_ref().unwrap().artifact_id
-            ).unwrap();
+            artifact =
+                Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
             let report = read_study_research_artifact(&services, project, study, artifact).unwrap();
             assert_eq!(report.sources.len(), 1);
             assert_eq!(report.sources[0].study_source_id, attached.id);
@@ -1264,10 +1274,20 @@ mod tests {
             assert_eq!(report.sources[0].metrics.as_ref().unwrap().likes, None);
         }
         let restarted = AppServices::new(dir.path()).unwrap();
-        let report = restarted.read_study_research_report(project, study, artifact).unwrap();
+        let report = restarted
+            .read_study_research_report(project, study, artifact)
+            .unwrap();
         assert_eq!(report.study_id, study);
-        assert_eq!(restarted.list_study_research_runs(project, study).unwrap().len(), 1);
-        assert!(restarted.read_study_research_report(Uuid::new_v4(), study, artifact).is_err());
+        assert_eq!(
+            restarted
+                .list_study_research_runs(project, study)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(restarted
+            .read_study_research_report(Uuid::new_v4(), study, artifact)
+            .is_err());
         let ledger = restarted
             .store
             .get_agent_effect(
