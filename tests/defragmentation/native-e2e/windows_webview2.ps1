@@ -145,7 +145,8 @@ function Find-InstalledDocumentAndStudio([object]$process) {
       [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
   )
   $handles = @($process.MainWindowHandle)
-  $handles += @([NativeWebViewWindow]::Children($process.MainWindowHandle))
+  $handles += @([NativeWebViewWindow]::Children($process.MainWindowHandle) |
+    Where-Object { [NativeWebViewWindow]::ClassName($_) -match 'Chrome_|WRY_|WebView' })
   $foundDocument = $null
   $foundStudio = $null
   $providerHandle = $null
