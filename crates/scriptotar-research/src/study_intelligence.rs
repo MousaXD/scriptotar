@@ -128,6 +128,9 @@ pub struct StudySourceFinding {
     pub locator: String,
     pub collected_at: String,
     pub access: StudyResearchAccess,
+    /// Exact scanned_at (research) or updated_at (transcript) at extraction.
+    /// A later update must invalidate a persisted report, not silently reuse it.
+    pub origin_revision: Option<String>,
     pub metrics: Option<ObservedMetrics>,
     pub observations: Vec<StudyPatternObservation>,
     pub limitations: Vec<String>,
@@ -505,6 +508,11 @@ pub fn analyze_study_sources(
                     .insert(source.study_source_id);
             }
         }
+        let origin_revision = source
+            .research
+            .as_ref()
+            .map(|item| item.scanned_at.clone())
+            .or_else(|| source.transcript.as_ref().map(|item| item.revision.clone()));
         findings.push(StudySourceFinding {
             study_source_id: source.study_source_id,
             reference_id: source.reference_id,
@@ -512,6 +520,7 @@ pub fn analyze_study_sources(
             locator: source.locator,
             collected_at: source.collected_at,
             access: source.access,
+            origin_revision,
             metrics,
             observations,
             limitations,
@@ -595,6 +604,7 @@ mod tests {
             CreatorComparison::Unavailable { .. }
         ));
         assert_eq!(result.sources[0].study_source_id, r.study_source_id);
+        assert_eq!(result.sources[0].origin_revision.as_deref(), Some("2026-11-15T12:00:00Z"));
         assert!(result.feature_support.is_empty());
     }
     #[test]
@@ -625,6 +635,7 @@ mod tests {
         r.access = StudyResearchAccess::Deleted;
         let result = analyze_study_sources(p, st, when(), vec![r]).unwrap();
         assert_eq!(result.sources[0].access, StudyResearchAccess::Deleted);
+        assert!(result.sources[0].origin_revision.is_none());
         assert!(result.sources[0].metrics.is_none());
         assert!(!result.sources[0].limitations.is_empty());
     }
