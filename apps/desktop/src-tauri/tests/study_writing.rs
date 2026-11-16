@@ -1223,3 +1223,28 @@ fn canonical_store_rejects_duplicate_script_prose_without_partial_writes() {
         1
     );
 }
+
+#[test]
+fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    // Angle selection plus two candidate drafts succeeded and may be billed.
+    // A failure at the fourth provider stage cannot save a partial Study batch.
+    provider.fail_on = Some(4);
+    let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
+    assert_eq!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::ProviderFailed)
+    );
+    assert_eq!(gate.step_response.len(), 3);
+    assert_eq!(gate.uncertain.len(), 1);
+    assert_eq!(sink.count(), 0);
+
+    provider.fail_on = None;
+    assert_eq!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::UncertainEffect)
+    );
+    assert_eq!(provider.calls, 4, "must never silently rebill failed stage");
+    assert_eq!(gate.step_response.len(), 3, "previous paid receipts remain");
+    assert_eq!(sink.count(), 0);
+}
