@@ -1,3 +1,48 @@
+# Agent 10 — combined-security refresh, 2026-11-16 (latest checkpoint)
+
+**Release decision: NO-GO.** Independent security regressions are now executable in PR #124, but neither the newer audit changes nor the final *combined host* have a passing exact-head run. Keep production paid egress disabled and PR #114 draft. This checkpoint supersedes older current-head tables farther below.
+
+## Latest refreshed PR heads at audit checkpoint
+
+| Owner | PR | Observed exact SHA | Current interpretation |
+| --- | --- | --- | --- |
+| Agent 00 integration | #114 | `e965bb3633eef76d5fc30ef37757bb437afb4f4c` | **FAIL / NOT CERTIFIED**; provider-consent implementation absent on this head, regardless of partial private v11 writing integration |
+| Agent 01 consent | #118 | `544aa2ee2f63f0a04e79a4eca6e45f84d44bfde4` | Newer than last independently passing provider snapshot; **NOT TESTED** by independent runner at this exact SHA |
+| Agent 02 effects | #119 | `9da21c96a62d7a041b64500841b89dc6dc649703` | Merged; independent native migration gate **PASS** at this exact SHA |
+| Agent 05 writing | #121 | `6d9e3ca75ebcc65be05678ea5a99cc688d515a96` | Replaced the failing fixture's synthetic source fingerprints with real DB metadata; **NOT TESTED** by independent runner at this exact SHA |
+| Agent 04 verification | #117 | `1ffb0fffad71a6fb2980966e1eec106174f543ff` | Independent verification gate **PASS** at this exact SHA, not full host certification |
+| Agent 10 audit | #124 | `2100f65b3f93bce7a0eb358367e6dce6d3758e81` | Three more native v11 adversarial tests and combined-host structural/host-library compilation gate; new exact-head CI **NOT TESTED** yet |
+
+## Reproducible exact-commit evidence: independent workflow 43882281063
+
+[Full workflow and jobs](https://github.com/MousaXD/scriptotar/actions/runs/43882281063). The checkout audit SHA printed in those logs is `73ab34b2017da944321ec5fb1a4cc5c2ab465ff3` (CI pull-request checkout); feature SHAs are printed by the runner. The SHA at which a *job executed*, not its subsequent branch head, controls status.
+
+| Case | Result at tested SHA | Command / evidence | Responsible owner |
+| --- | --- | --- | --- |
+| Post-reservation source revocation, concurrent cancellation and guarded mock dispatch | **PASS (feature-only)** @ #118 `1852dab7a8f7d9032c66095d85db88a6b7e31bba`: 5 independent and 18 provider tests | `cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture`; `cargo test --locked -p scriptotar-ai provider_consent`; [run](https://github.com/MousaXD/scriptotar/actions/runs/43882281063) | Agent 01; Agent 00 for host linearization |
+| Historical v4/v5 SQLite, v10 receipt/cancellation, migration integrity | **PASS (effects feature)** @ #119 `9da21c96a62d7a041b64500841b89dc6dc649703` | `cargo test --locked -p scriptotar-db`; [run](https://github.com/MousaXD/scriptotar/actions/runs/43882281063) | Agent 02 / Agent 00 |
+| Canonical writing source identity | **FAIL** @ #121 `81dafac2713b21b8aacf215d0f25c99dc63e7220`: `canonical_gateway_adapter_reuses_real_source_rows_and_rejects_cross_project` failed at `study_writing.rs:714`, expected synthetic fixture fingerprint/revision while SQLite returned canonical source metadata; 31 passed, 1 failed | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture`; [run](https://github.com/MousaXD/scriptotar/actions/runs/43882281063) | Agent 05; refreshed `6d9e3ca` needs executed proof |
+| Independent verification: source lineage and distrust of model-supported claims | **PASS (verification feature)** @ #117 `1ffb0fffad71a6fb2980966e1eec106174f543ff` | `python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v`; `cargo test --locked -p scriptotar-ai verification`; [run](https://github.com/MousaXD/scriptotar/actions/runs/43882281063) | Agent 04 / Agent 00 |
+| Final combined host | **FAIL** @ #114 `88419a813d4deb00978a90b0d8756b47b058842f`: `NOT INTEGRATED: target/crates/scriptotar-ai/src/provider_consent.rs` (exit 4) | `bash audit/tests/defragmentation/security/run_feature_gates.sh combined 114`; [run](https://github.com/MousaXD/scriptotar/actions/runs/43882281063) | Agent 00 / Agent 01 |
+
+## Newly added release-blocking tests on Agent 10 branch
+
+- `canonical_v11_integrity_tests.rs` is appended **only to the combined integration**: real SQLite immutable batch receipt UPDATE/DELETE denial, immutable first structured draft version, cross-project forged writing receipt denial, and exact restart reopen. Existing `scriptotar-db` tests already cover v10-to-v11 malformed table collisions and rollback; the combined gate runs these without changing historical migration definitions.
+- `test_combined_host_wiring.py` requires the provider policy to be exported and referenced in central Tauri services, actual host `ScopeAuthority` + `ScopeDispatchGuard` implementations, and a host `PaidEffectFence` implementing pre-send `mark_dispatched_once`. A file merely present in a detached feature branch is insufficient; the combined job also executes `cargo test --locked -p scriptotar-desktop --lib`. These structural assertions are necessary but **not sufficient** proof that every source/project mutator shares the egress lock.
+- Existing independent tests still cover revocation at reservation, concurrent source changes, missing guard fail closed, duplicate provider claims, wrong-project lineage, model-faked Supported claims, stale source fingerprints, tampered duplicate runs and three-draft rollback.
+
+**New cases: NOT TESTED until a completed exact-head run records them.** The current integration SHA still lacks provider consent, so even a clean v11-only run cannot override the combined NO-GO.
+
+## Outstanding threats and required proof
+
+- **Agent 00 + Agent 01 + Agent 02:** install one production-authoritative active-project/Study/source synchronization boundary, hold the dispatch scope guard through the real send, enforce durable pre-send DISPATCHED CAS and unknown-pricing denial. A mock guard does not certify production HTTP egress. The source may be intentionally disabled; do not enable real spending to satisfy this test.
+- **Agent 05 + Agent 00:** run corrected canonical writing tests at exact latest #121 and then **against combined v11**, including historical upgrades, malformed collision, partial rollback, immutable receipt, duplicate replay, restart, stale Study, foreign project and edited source.
+- **Agent 04 + Agent 00:** require independent-origin corroboration from stored immutable source + trusted draft body, not caller-authored text or model claims. No API may promote an unbound caller draft to Verified.
+- **Agent 07 + Agent 00:** installed Windows WebView2 and Linux WebKitGTK UI/IPC security, no secrets in logs, bounded paid provider transport/cost receipt authenticity and native package-specific authentication all remain **NOT TESTED**.
+- **Agent 10:** run independent matrix again after owner heads advance; record checked-out audit SHA and all feature SHAs, command, logs, and PASS/FAIL/NOT TESTED. A historical green run or source review cannot certify the current host.
+
+---
+
 # Agent 10 — 2026-11-16 independent executable regression update
 
 **Latest audit work:** independent security CI added on PR #124. **NO-GO: combined production security is NOT TESTED.** This supersedes any earlier "current head" rows below; they are retained as dated historical evidence.
