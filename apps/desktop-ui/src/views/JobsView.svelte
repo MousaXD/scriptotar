@@ -187,10 +187,11 @@
 
 <header class="queue-header" data-i18n-ignore>
   <h1>{$translator('queue.heading')}</h1>
-  <div class="queue-indicators" aria-label={$translator('queue.filters')}>
-    <span>{activeCount} {$translator('queue.filterActive')}</span>
-    {#if attentionCount}<span class="attention-indicator">{attentionCount} {$translator('queue.filterAttention')}</span>{/if}
-  </div>
+  {#if attentionCount}
+    <div class="queue-indicators" aria-label={$translator('queue.filterAttention')}>
+      <span class="attention-indicator">{attentionCount} {$translator('queue.filterAttention')}</span>
+    </div>
+  {/if}
 </header>
 
 <section
@@ -260,7 +261,16 @@
   </div>
   <div class="jobs-list" aria-busy={busy}>
     {#if visible.length === 0}
-      <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
+      {#if jobs.length > 0 && filter !== 'all'}
+        <div class="queue-filter-empty">
+          <strong>{$locale === 'ar' ? 'لا توجد مهام بهذه الحالة' : 'No jobs in this filter'}</strong>
+          <button type="button" class="button secondary" on:click={() => changeFilter('all')}>
+            {$locale === 'ar' ? 'عرض كل المهام' : 'Show all jobs'}
+          </button>
+        </div>
+      {:else}
+        <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
+      {/if}
     {:else}
       {#each shown as job (job.id)}
         <div class="job-with-actions">
@@ -282,6 +292,8 @@
 </section>
 
 <style>
+  .queue-filter-empty { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-5); }
+  .queue-filter-empty strong { font-size: var(--text-sm); color: var(--color-text-muted); }
   .queue-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
   .queue-header h1 { margin: 0; font-size: var(--text-xl); }
   .queue-indicators { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); }

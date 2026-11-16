@@ -28,7 +28,7 @@ describe('dashboard creator workflow', () => {
     const { onNavigate, onCreateProject } = setup();
     await fireEvent.click(screen.getAllByRole('button', { name: 'Add transcription job' })[0]);
     expect(onNavigate).toHaveBeenCalledWith('jobs');
-    await fireEvent.click(screen.getByRole('button', { name: 'Jobs' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Open queue/ }));
     expect(onNavigate).toHaveBeenCalledWith('jobs');
     await fireEvent.click(screen.getAllByRole('button', { name: 'New research scan' })[0]);
     expect(onNavigate).toHaveBeenCalledWith('research');
