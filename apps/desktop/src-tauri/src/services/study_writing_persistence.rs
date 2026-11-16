@@ -1,9 +1,8 @@
 //! Canonical, all-or-nothing persistence for Agent 05's three-script result.
 //!
-//! This module is deliberately not registered in the live Tauri host. Agent 00
-//! must install RECEIPT_MIGRATION as the next versioned DB migration, expose
-//! this adapter through the scoped Study gateway, and supply a *real* CurrentStudy
-//! loader. No provider transport or paid execution is enabled here.
+//! Compiled privately in the production Tauri host. SQLite v11 is registered
+//! centrally and a real, scoped CurrentStudy loader is implemented in the Study
+//! gateway. Public generation IPC and paid-provider dispatch are NOT enabled.
 use std::{collections::HashSet, time::Duration};
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
@@ -18,8 +17,8 @@ use super::study_writing::{
     WritingWorkflowError,
 };
 
-/// Agent 00 must fold this additive schema into a numbered migration, not run
-/// CREATE TABLE on arbitrary app startup or silently mutate the migration ledger.
+/// The additive schema is registered exclusively as the central v11 migration;
+/// never re-execute CREATE TABLE at startup or alter prior migration history.
 /// The receipt and its three canonical drafts are inserted in ONE transaction.
 #[cfg(test)]
 pub use scriptotar_db::WRITING_RECEIPT_MIGRATION as RECEIPT_MIGRATION;
