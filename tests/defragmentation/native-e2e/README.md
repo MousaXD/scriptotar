@@ -12,7 +12,7 @@
 
 ## Remaining required fixtures
 
-The Linux journey creates fresh projects, one Study, a hand-edited script candidate, duplicates it, renames it, switches projects, and tests quit/relaunch. A disposable new profile intentionally has no real downloaded research or transcript sources. Multi-source transcript preview, source revocation, forged cross-project API requests, deterministic GUI fault recovery, independently inspected light/dark screenshots, full Arabic RTL, and genuine AI candidate orchestration are therefore **NOT TESTED**. Do not substitute fixtures pretending to be provider output or describe UI isolation as backend authorization proof.
+The Linux journey creates fresh projects, one Study, a hand-edited script candidate, duplicates it, renames it, switches projects, tests the Arabic language and dark/system selectors, and tests quit/relaunch. A disposable new profile intentionally has no real downloaded research or transcript sources. Multi-source transcript preview, source revocation, forged cross-project API requests, deterministic GUI fault recovery, independently inspected light/dark screenshots, full Arabic RTL, and genuine AI candidate orchestration are therefore **NOT TESTED**. Do not substitute fixtures pretending to be provider output or describe UI isolation as backend authorization proof.
 
 The Windows probe is currently **initial native discovery and Studio invocation only**. Port the Linux workflows to Windows UIA once an actual interactive desktop and stable provider tree are confirmed; each unimplemented scenario stays NOT TESTED.
 
