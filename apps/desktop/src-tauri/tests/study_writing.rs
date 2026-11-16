@@ -1005,3 +1005,53 @@ fn canonical_receipt_rejects_tampering_cross_project_and_withdrawn_origins() {
     );
     assert_eq!(ids.len(), 3);
 }
+
+
+#[test]
+fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versions() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let ids = sink.commit_three(&batch).unwrap();
+    let mut latest = plan.context.clone();
+    latest.study_revision += 1; // consumed by the three-candidate acceptance
+    *current.0.borrow_mut() = latest.clone();
+    let original = &batch.candidates[0];
+    let before = original.draft.beats[0].narration.clone();
+    let response = json!({
+        "beat_id": "hook",
+        "replacement_narration": "A revised, independently written new opening"
+    }).to_string();
+    let revised = apply_reviewed_beat_revision(
+        original, &latest, &response, "hook", "Revise only the opening",
+        &before, false
+    ).unwrap();
+    let next = study_writing::VersionedCandidateStore::save_revision(
+        &mut sink, &latest, ids[0], 1, &before, "hook", &revised
+    ).unwrap();
+    assert_eq!(next, 2);
+    let current_draft = db.get_draft(latest.project_id, ids[0]).unwrap();
+    assert_eq!(current_draft.revision, 2);
+    assert!(current_draft.body.contains("A revised, independently written new opening"));
+    assert!(current_draft.body.contains(&original.draft.beats[1].narration));
+    let versions = db.list_draft_versions(latest.project_id, ids[0]).unwrap();
+    assert_eq!(versions.len(), 2);
+    assert!(versions.iter().any(|v| v.version == 1 && v.body.contains(&before)));
+    assert!(versions.iter().any(|v| v.version == 2 &&
+        v.body.contains("A revised, independently written new opening")));
+    assert!(matches!(
+        study_writing::VersionedCandidateStore::save_revision(
+            &mut sink, &latest, ids[0], 1, &before, "hook", &revised
+        ),
+        Err(WritingWorkflowError::StaleContext)
+    ));
+    db.update_draft(latest.project_id, ids[0], 2, "Hand-edited title", "New human authored body")
+        .unwrap();
+    assert!(matches!(
+        study_writing::VersionedCandidateStore::save_revision(
+            &mut sink, &latest, ids[0], 3, &before, "hook", &revised
+        ),
+        Err(WritingWorkflowError::StaleContext)
+    ));
+    assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().body, "New human authored body");
+}
