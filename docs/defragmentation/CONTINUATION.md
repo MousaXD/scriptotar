@@ -1,3 +1,13 @@
+# CHECKPOINT — 2026-11-16 Agent 00 repaired v11 upgrade regressions and registered real CurrentStudy loader (candidate)
+
+- Starting exact SHA `4bbec0f18d9a2f064d34da1fa8955ccbf1c98b46` had four failing GitHub workflows: Rust foundation (rustfmt), CI, MCP E2E, and Tauri migration (both due to two v10 fixtures unaware of v11). Other seven? Do not assume old green checks certify the updated branch; Linux/Windows packages were in progress.
+- New owner code commits `0a0b8b1` → `f0e8cbb` → `b7d8dc2` → `10b3c3a` fix exact logged formatting and correctly reconstruct v9 after v11 by dropping v11 tables/triggers and removing migration 11. After reopening, tests expect full latest schema (11); historical v10 migration unchanged.
+- Owner commit `e965bb3` installs `CurrentStudy for AppServices` in `study_gateway.rs` using actual project lock, canonical selected source IDs/fingerprints/revisions, persisted Study creative brief and attributed transcript/observation evidence. The loader rejects archived/foreign Study access, detects changed source/Study snapshots and participates in the v11 sink's transaction-time revalidation. Native test exercises three real transcript attachments, source-text change without revision bump and subsequent source revocation. Its execution is NOT yet certified on this code head.
+- Updated private sink comments to reflect central v11 registration and real loader availability. Paid transport remains completely unwired. No Tauri three-generation IPC, no combined Agent 01 consent/effects guard, no trusted billing or WebView installed-app certification. Preserve manual Copy Prompt and user data; PR #114 remains DRAFT / NO-GO.
+- **Next owner code change:** compose PR #118 with the shared host authorization/epoch guard and Agent 02's exact wire-byte v10 reservation/CAS, then expose the production three-candidate workflow only after controlled provider receipt and cancellation gates pass. Run all exact-head CI, historical fixtures, Agent 10 executable security gates and Agent 07 native WebView checks. No main merge, tag or release.
+
+---
+
 # CHECKPOINT — 2026-11-16 Agent 00 additive v11 canonical three-script persistence (candidate, unvalidated)
 
 - Incorporated Agent 05 PR #121's original three-script orchestration and `CanonicalSqliteCandidateStore` as **private compiled Rust/Tauri modules**, plus its independent native contract tests. Owner integration commit `0e5eb00ce4356335ec4836072d8b6e184219c0ac` installs the additive SQLite **v11** `canonical_study_writing_batches` migration in the central migration ledger after v10. Receipt SQL is maintained in the DB crate and shared with the writing test adapter; it is never executed as an unversioned startup CREATE TABLE.
