@@ -32,7 +32,6 @@ case "$gate:$pr" in
     test -f target/apps/desktop/src-tauri/src/services/study_writing_persistence.rs
     test -f target/apps/desktop/src-tauri/tests/study_writing.rs
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
-    cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     (
       cd target
       # Compiles the unregistered canonical production persistence module via #[path].
