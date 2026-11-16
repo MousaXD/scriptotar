@@ -1111,6 +1111,204 @@ mod tests {
     }
 
     #[test]
+    fn malformed_transcript_segments_never_gain_synthetic_timecodes() {
+        let transcript_id = Uuid::new_v4();
+        let malformed = parse_transcript(
+            transcript_id,
+            "Untimed transcript only",
+            Some("{not valid json"),
+            "2026-11-16T00:00:00Z".into(),
+        );
+        assert!(malformed.partial);
+        assert!(malformed.segments.is_empty());
+        assert_eq!(
+            malformed.untimed_text.as_deref(),
+            Some("Untimed transcript only")
+        );
+        let invalid_times = parse_transcript(
+            transcript_id,
+            "A plain original transcript",
+            Some(r#"[{"index":1,"start":9.0,"end":2.0,"text":"False time"}]"#),
+            "2026-11-16T00:00:00Z".into(),
+        );
+        assert!(invalid_times.partial);
+        assert!(invalid_times.segments.is_empty());
+    }
+
+    #[test]
+    fn three_exact_selected_sources_retain_provenance_and_invalidate_transcript_edits() {
+        use scriptotar_core::ResearchRepository;
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Multiple sources", "")
+            .unwrap()
+            .id;
+        let research_items = (0..2)
+            .map(|index| ResearchItem {
+                id: Uuid::new_v4(),
+                project_id: project,
+                creator_id: None,
+                source_url: format!("https://www.youtube.com/watch?v=agent03source{index}"),
+                platform: "YouTube".into(),
+                title: None,
+                view_count: if index == 0 { Some(0) } else { None },
+                like_count: None,
+                comment_count: None,
+                published_at: None,
+                duration_seconds: None,
+                raw_json: None,
+                scanned_at: "2026-11-15T00:00:00Z".into(),
+            })
+            .collect::<Vec<_>>();
+        services
+            .store
+            .upsert_research_items(&research_items)
+            .unwrap();
+        let attached_research = research_items
+            .iter()
+            .map(|item| {
+                services
+                    .store
+                    .add_study_source(
+                        project,
+                        study,
+                        &StudySourceInput {
+                            kind: StudySourceKind::ResearchItem,
+                            reference_id: Some(item.id),
+                            locator: None,
+                            manual_text: None,
+                            source_revision: None,
+                            uncertainty: None,
+                        },
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        let db = Connection::open(services.store.path()).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        let raw_source = Uuid::new_v4();
+        let media = Uuid::new_v4();
+        let transcript = Uuid::new_v4();
+        let timestamp = "2026-11-15T00:00:00Z";
+        db.execute(
+            "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+             VALUES(?1,?2,'local_file','/mock/research-proof.mp4','Research proof',?3)",
+            params![raw_source.to_string(), project.to_string(), timestamp],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+             VALUES(?1,?2,'/mock/research-proof.mp4',6.0,?3)",
+            params![media.to_string(), raw_source.to_string(), timestamp],
+        )
+        .unwrap();
+        let segments = serde_json::json!([
+            {"index":0,"start":0.0,"end":2.0,"text":"How does this work?"},
+            {"index":1,"start":2.0,"end":5.0,"text":"But there is another way."},
+            {"index":2,"start":5.0,"end":6.0,"text":"Subscribe to follow."}
+        ])
+        .to_string();
+        db.execute(
+            "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+             VALUES(?1,?2,'en','How does this work? But there is another way. Subscribe to follow.',?3,?4,?4)",
+            params![transcript.to_string(), media.to_string(), segments, timestamp],
+        )
+        .unwrap();
+        let attached_transcript = services
+            .store
+            .add_study_source(
+                project,
+                study,
+                &StudySourceInput {
+                    kind: StudySourceKind::Transcript,
+                    reference_id: Some(transcript),
+                    locator: None,
+                    manual_text: None,
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        let selected = vec![
+            attached_research[1].id,
+            attached_transcript.id,
+            attached_research[0].id,
+        ];
+        let (revision, report) = inspect_selected(
+            &services,
+            project,
+            study,
+            &selected,
+            ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(report.sources.len(), 3);
+        assert!(report.source_text_is_untrusted_data);
+        let transcript_finding = report
+            .sources
+            .iter()
+            .find(|finding| finding.study_source_id == attached_transcript.id)
+            .unwrap();
+        assert_eq!(transcript_finding.origin_revision.as_deref(), Some(timestamp));
+        assert!(!transcript_finding.observations.is_empty());
+        assert!(transcript_finding.observations.iter().all(|observation| {
+            observation.evidence.study_source_id == attached_transcript.id
+                && observation.evidence.transcript_id == transcript
+                && observation.evidence.start_ms.is_some()
+                && observation.evidence.end_ms.is_some()
+        }));
+        let first = report
+            .sources
+            .iter()
+            .find(|finding| finding.study_source_id == attached_research[0].id)
+            .unwrap();
+        let second = report
+            .sources
+            .iter()
+            .find(|finding| finding.study_source_id == attached_research[1].id)
+            .unwrap();
+        assert_eq!(first.metrics.as_ref().unwrap().views, Some(0));
+        assert_eq!(second.metrics.as_ref().unwrap().views, None);
+
+        let artifact = Uuid::new_v4();
+        let envelope = ReportEnvelope {
+            project_id: project,
+            study_id: study,
+            study_revision: revision,
+            run_id: "three-source-test".into(),
+            step_id: "analyze".into(),
+            idempotency_key: "three-source-key".into(),
+            report,
+        };
+        write_envelope(&services, artifact, &serde_json::to_vec(&envelope).unwrap()).unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
+        assert!(read_study_research_artifact(&services, project, study, artifact).is_err());
+        let other_study = services
+            .store
+            .create_study(project, "Other study", "")
+            .unwrap()
+            .id;
+        assert!(inspect_selected(
+            &services,
+            project,
+            other_study,
+            &selected,
+            ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap(),
+        )
+        .is_err());
+        db.execute(
+            "UPDATE transcripts SET updated_at='2026-11-16T01:00:00Z' WHERE id=?1",
+            params![transcript.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+    }
+
+    #[test]
     fn report_survives_restart_but_revoked_source_is_not_readable() {
         let dir = TempDir::new().unwrap();
         let project;
