@@ -69,8 +69,8 @@ class AxWebKit:
         for app in desktop:
             try:
                 name = app.name or ""
-                if "scriptotar" not in name.lower():
-                    continue
+                # Bind to the installed process before matching the accessible
+                # name: GTK can publish an empty or branded application name.
                 # Newer AT-SPI bindings expose the process PID directly. On
                 # older pyatspi, bind the sole app in isolated Xvfb to the
                 # X11 window owned by the exact installed executable PID.
@@ -80,7 +80,7 @@ class AxWebKit:
                     owner_pid = None
                 if owner_pid == self.pid:
                     apps.append(app)
-                elif owner_pid in (0, None):
+                elif owner_pid in (0, None) and "scriptotar" in name.lower():
                     windows = command("xdotool", "search", "--pid", str(self.pid), check=False)
                     if windows.returncode == 0 and windows.stdout.strip():
                         apps.append(app)
@@ -139,6 +139,41 @@ class AxWebKit:
             except Exception:
                 pass
         return False
+
+    def diagnostics(self) -> dict:
+        """Bounded native AT-SPI evidence on failure; never substitutes for PASS."""
+        result = {"expected_pid": self.pid, "desktop_apps": [], "x11_windows": []}
+        try:
+            windows = command("xdotool", "search", "--pid", str(self.pid), check=False)
+            result["x11_windows"] = windows.stdout.split()[:20]
+        except Exception as exc:
+            result["x11_error"] = f"{type(exc).__name__}: {exc}"
+        try:
+            desktop = self.atspi.Registry.getDesktop(0)
+            for app in desktop:
+                entry = {"name": (app.name or "")[:120], "nodes": []}
+                try:
+                    entry["pid"] = app.get_process_id()
+                except Exception as exc:
+                    entry["pid_error"] = type(exc).__name__
+                pending = [(app, 0)]
+                while pending and len(entry["nodes"]) < 160:
+                    node, depth = pending.pop(0)
+                    try:
+                        entry["nodes"].append({
+                            "depth": depth, "role": node.getRoleName(),
+                            "name": (node.name or "")[:120]
+                        })
+                        if depth < 5:
+                            pending.extend((child, depth + 1) for child in node)
+                    except Exception as exc:
+                        entry["nodes"].append({"depth": depth, "error": type(exc).__name__})
+                result["desktop_apps"].append(entry)
+                if len(result["desktop_apps"]) >= 12:
+                    break
+        except Exception as exc:
+            result["atspi_error"] = f"{type(exc).__name__}: {exc}"
+        return result
 
     def click(self, name: str, role: str | None = None) -> None:
         node = self.find(name, role)
@@ -227,9 +262,16 @@ class Session:
             except NativeUnavailable:
                 pass
             time.sleep(0.6)
+        diagnostics = self.ax.diagnostics()
+        (self.root / "a11y-diagnostics.json").write_text(
+            json.dumps(diagnostics, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        self.screenshot("unverified-window")
         raise NativeUnavailable(
-            "Installed app launched but WebKitGTK document and Scriptotar UI "
-            "were not both exposed through AT-SPI"
+            "Installed app launched but the native WebKitGTK accessibility gate "
+            "was not satisfied; see a11y-diagnostics.json "
+            f"(apps={[(item.get('name'), item.get('pid')) for item in diagnostics['desktop_apps']]}, "
+            f"windows={diagnostics['x11_windows']})"
         )
 
     def screenshot(self, name: str):
@@ -275,6 +317,9 @@ def checked(report: dict, key: str, fn):
         status(report, key, "NOT TESTED", str(exc))
     except (NativeFailure, Exception) as exc:
         status(report, key, "FAIL", f"{type(exc).__name__}: {exc}")
+    if report["cases"][key]["status"] != "PASS":
+        print(f"NATIVE {key}: {report['cases'][key]['status']}: "
+              f"{report['cases'][key]['reason']}", flush=True)
     return False
 
 
@@ -456,6 +501,11 @@ def main() -> int:
             photo.replace(args.output / photo.name)
         if (root / "desktop.log").exists():
             (args.output / "desktop.log").write_bytes((root / "desktop.log").read_bytes()[-100000:])
+        if (root / "a11y-diagnostics.json").exists():
+            (args.output / "a11y-diagnostics.json").write_bytes(
+                (root / "a11y-diagnostics.json").read_bytes()
+            )
+            report["native_accessibility_diagnostics"] = "a11y-diagnostics.json"
     states = [item["status"] for item in report["cases"].values()]
     report["verdict"] = "FAIL" if "FAIL" in states else "NOT TESTED" if "NOT TESTED" in states else "PASS"
     (args.output / "result.json").write_text(
