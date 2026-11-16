@@ -282,7 +282,8 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 .query_row(
                     "SELECT COUNT(*) FROM study_sources ss WHERE
                  ss.id=?1 AND ss.study_id=?2 AND ss.project_id=?3
-                 AND ss.reference_id=?4 AND (
+                 AND ss.reference_id=?4 AND ss.fingerprint=?5
+                 AND ss.source_revision IS ?6 AND ss.collected_at=?7 AND (
                    (ss.kind='research_item' AND ss.research_id=ss.reference_id) OR
                    (ss.kind='source' AND ss.legacy_source_id=ss.reference_id) OR
                    (ss.kind='media' AND ss.media_id=ss.reference_id) OR
@@ -294,7 +295,10 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                         source.study_source_id.to_string(),
                         study.to_string(),
                         project.to_string(),
-                        source.origin_id.to_string()
+                        source.origin_id.to_string(),
+                        source.fingerprint,
+                        source.source_revision,
+                        source.collected_at
                     ],
                     |row| row.get(0),
                 )
