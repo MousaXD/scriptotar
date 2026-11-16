@@ -1300,3 +1300,123 @@ fn canonical_concurrent_same_run_commits_only_three_drafts() {
         2
     );
 }
+
+#[test]
+fn canonical_parallel_projects_preserve_independent_studies_and_source_links() {
+    use scriptotar_core::{Project, ProjectRepository, StudySourceInput, StudySourceKind};
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan_a, _current, batch_a) = canonical_batch_fixture();
+    let project_b = Project::new("Independent parallel writing project");
+    db.create_project(&project_b).unwrap();
+    let study_b = db
+        .create_study(project_b.id, "Parallel writing", "Separate scripts")
+        .unwrap();
+    let connection = Connection::open(db.path()).unwrap();
+
+    let mut context_b = plan_a.context.clone();
+    context_b.project_id = project_b.id;
+    context_b.study_id = study_b.id;
+    context_b.study_revision = study_b.revision;
+    for index in 0..3 {
+        let original = Uuid::new_v4();
+        connection
+            .execute(
+                "INSERT INTO research_items (id,project_id,source_url,platform,scanned_at)
+                 VALUES (?1,?2,?3,'sample','2026-11-13T10:00:00Z')",
+                params![
+                    original.to_string(),
+                    project_b.id.to_string(),
+                    format!("https://example.org/parallel/{}", index)
+                ],
+            )
+            .unwrap();
+        let source = db
+            .add_study_source(
+                project_b.id,
+                study_b.id,
+                &StudySourceInput {
+                    kind: StudySourceKind::ResearchItem,
+                    reference_id: Some(original),
+                    locator: None,
+                    manual_text: None,
+                    source_revision: Some("snapshot-1".into()),
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        context_b.sources[index] = SelectedWritingSource {
+            study_source_id: source.id,
+            origin_id: original,
+            fingerprint: source.fingerprint,
+            source_revision: source.source_revision,
+            collected_at: source.collected_at,
+        };
+        context_b.evidence[index].locator.source_id = original.to_string();
+    }
+
+    let mut batch_b = batch_a.clone();
+    batch_b.run_id = "independent-parallel-run".into();
+    batch_b.context = context_b.clone();
+    for candidate in &mut batch_b.candidates {
+        candidate.lineage =
+            study_writing::lineage_for(&context_b, &candidate.angle, &candidate.draft).unwrap();
+    }
+
+    let path = db.path().to_path_buf();
+    let context_a = plan_a.context.clone();
+    let (ids_a, ids_b) = std::thread::scope(|threads| {
+        let first = threads.spawn({
+            let path = path.clone();
+            move || {
+                let reopened = scriptotar_db::SqliteStore::open(path).unwrap();
+                let live = study_writing::FixedStudy(&context_a);
+                let mut sink = CanonicalSqliteCandidateStore {
+                    store: &reopened,
+                    current: &live,
+                };
+                sink.commit_three(&batch_a).unwrap()
+            }
+        });
+        let second = threads.spawn({
+            let path = path.clone();
+            move || {
+                let reopened = scriptotar_db::SqliteStore::open(path).unwrap();
+                let live = study_writing::FixedStudy(&context_b);
+                let mut sink = CanonicalSqliteCandidateStore {
+                    store: &reopened,
+                    current: &live,
+                };
+                sink.commit_three(&batch_b).unwrap()
+            }
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+
+    assert_ne!(ids_a, ids_b);
+    assert_eq!(
+        db.list_draft_summaries(plan_a.context.project_id, plan_a.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        db.list_draft_summaries(project_b.id, study_b.id, 200)
+            .unwrap()
+            .len(),
+        3
+    );
+    for id in ids_a {
+        assert!(db.get_draft(project_b.id, id).is_err());
+    }
+    for id in ids_b {
+        assert!(db.get_draft(plan_a.context.project_id, id).is_err());
+    }
+    assert_eq!(
+        db.get_study(plan_a.context.project_id, plan_a.context.study_id)
+            .unwrap()
+            .revision,
+        2
+    );
+    assert_eq!(db.get_study(project_b.id, study_b.id).unwrap().revision, 2);
+}
