@@ -8,7 +8,7 @@ use std::{collections::HashSet, time::Duration};
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use scriptotar_ai::writing::{ClaimStatus, EvidenceKind, EvidenceStatus};
-use scriptotar_core::{now_rfc3339, RepositoryError};
+use scriptotar_core::now_rfc3339;
 use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
@@ -65,16 +65,27 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
 
 impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
     #[cfg(test)]
-    pub fn fail_after_candidate(&mut self, batch: &GeneratedBatch, index: usize) -> WriteResult<[Uuid; 3]> {
+    pub fn fail_after_candidate(
+        &mut self,
+        batch: &GeneratedBatch,
+        index: usize,
+    ) -> WriteResult<[Uuid; 3]> {
         self.commit_inner(batch, Some(index))
     }
 
-    fn commit_inner(&mut self, batch: &GeneratedBatch, fail_after: Option<usize>) -> WriteResult<[Uuid; 3]> {
+    fn commit_inner(
+        &mut self,
+        batch: &GeneratedBatch,
+        fail_after: Option<usize>,
+    ) -> WriteResult<[Uuid; 3]> {
         batch.context.validate()?;
         if batch.candidates.len() != 3
             || batch.run_id.is_empty()
             || batch.run_id.len() > 128
-            || !batch.run_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            || !batch
+                .run_id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         {
             return Err(denied("expected three scripts and a valid run"));
         }
@@ -82,9 +93,18 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         // Model output may assert 'supported', but that is NEVER a verification
         // decision. Save these claims as unverified until Agent 04 reviews them.
         let mut normalized = batch.clone();
-        let evidence_ids: HashSet<_> = batch.context.evidence.iter().map(|e| e.id.as_str()).collect();
-        let selected_sources: HashSet<_> =
-            batch.context.sources.iter().map(|s| s.study_source_id).collect();
+        let evidence_ids: HashSet<_> = batch
+            .context
+            .evidence
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect();
+        let selected_sources: HashSet<_> = batch
+            .context
+            .sources
+            .iter()
+            .map(|s| s.study_source_id)
+            .collect();
         let mut angles = HashSet::new();
         let mut scripts = HashSet::new();
         for candidate in &mut normalized.candidates {
@@ -99,7 +119,11 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 return Err(denied("draft identities, language, or title"));
             }
             for claim in &mut candidate.draft.claims {
-                if !claim.evidence_ids.iter().all(|id| evidence_ids.contains(id.as_str())) {
+                if !claim
+                    .evidence_ids
+                    .iter()
+                    .all(|id| evidence_ids.contains(id.as_str()))
+                {
                     return Err(denied("unknown claim evidence"));
                 }
                 if claim.status == ClaimStatus::Supported {
@@ -107,9 +131,15 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 }
             }
             for beat in &candidate.draft.beats {
-                if !beat.evidence_ids.iter().all(|id| evidence_ids.contains(id.as_str()))
-                    || !beat.shots.iter().all(|shot|
-                        shot.evidence_ids.iter().all(|id| evidence_ids.contains(id.as_str())))
+                if !beat
+                    .evidence_ids
+                    .iter()
+                    .all(|id| evidence_ids.contains(id.as_str()))
+                    || !beat.shots.iter().all(|shot| {
+                        shot.evidence_ids
+                            .iter()
+                            .all(|id| evidence_ids.contains(id.as_str()))
+                    })
                 {
                     return Err(denied("unknown beat or shot evidence"));
                 }
@@ -120,8 +150,10 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 }
                 for evidence in &line.evidence {
                     if !evidence_ids.contains(evidence.id.as_str())
-                        || (matches!(evidence.kind, EvidenceKind::SocialTranscript | EvidenceKind::CreativeObservation)
-                            && evidence.status == EvidenceStatus::Corroborated)
+                        || (matches!(
+                            evidence.kind,
+                            EvidenceKind::SocialTranscript | EvidenceKind::CreativeObservation
+                        ) && evidence.status == EvidenceStatus::Corroborated)
                     {
                         return Err(denied("forged lineage status"));
                     }
@@ -140,9 +172,12 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             return Err(denied("generation batch too large"));
         }
         let mut db = Connection::open(self.store.path()).map_err(error)?;
-        db.pragma_update(None, "foreign_keys", true).map_err(error)?;
+        db.pragma_update(None, "foreign_keys", true)
+            .map_err(error)?;
         db.busy_timeout(Duration::from_secs(5)).map_err(error)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(error)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(error)?;
 
         // Check receipt FIRST: after a successful write whose reply is lost,
         // the Study revision has advanced and an exact retry must reconcile
@@ -166,15 +201,19 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
                 .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
             for id in ids {
-                let exists: i64 = tx.query_row(
-                    "SELECT COUNT(*) FROM creative_drafts d
+                let exists: i64 = tx
+                    .query_row(
+                        "SELECT COUNT(*) FROM creative_drafts d
                      JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
                      WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                    params![id.to_string(), project, study],
-                    |row| row.get(0),
-                ).map_err(error)?;
+                        params![id.to_string(), project, study],
+                        |row| row.get(0),
+                    )
+                    .map_err(error)?;
                 if exists != 1 {
-                    return Err(WritingWorkflowError::PersistFailed("receipt has missing initial draft".into()));
+                    return Err(WritingWorkflowError::PersistFailed(
+                        "receipt has missing initial draft".into(),
+                    ));
                 }
             }
             tx.commit().map_err(error)?;
@@ -183,14 +222,17 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
 
         let project = batch.context.project_id;
         let study = batch.context.study_id;
-        let revision: Option<i64> = tx.query_row(
-            "SELECT st.revision FROM content_studies st
+        let revision: Option<i64> = tx
+            .query_row(
+                "SELECT st.revision FROM content_studies st
              JOIN projects p ON p.id=st.project_id
              WHERE st.id=?1 AND st.project_id=?2
                AND st.archived_at IS NULL AND p.archived_at IS NULL",
-            params![study.to_string(), project.to_string()],
-            |row| row.get(0),
-        ).optional().map_err(error)?;
+                params![study.to_string(), project.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(error)?;
         if revision != Some(batch.context.study_revision) {
             return Err(WritingWorkflowError::StaleContext);
         }
@@ -204,8 +246,9 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         }
 
         for source in &batch.context.sources {
-            let belongs: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM study_sources ss WHERE
+            let belongs: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM study_sources ss WHERE
                  ss.id=?1 AND ss.study_id=?2 AND ss.project_id=?3
                  AND ss.reference_id=?4 AND (
                    (ss.kind='research_item' AND ss.research_id=ss.reference_id) OR
@@ -215,33 +258,52 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                    (ss.kind='job' AND ss.job_id=ss.reference_id) OR
                    (ss.kind='ai_run' AND ss.ai_run_id=ss.reference_id)
                  )",
-                params![source.study_source_id.to_string(), study.to_string(),
-                        project.to_string(), source.origin_id.to_string()],
-                |row| row.get(0),
-            ).map_err(error)?;
+                    params![
+                        source.study_source_id.to_string(),
+                        study.to_string(),
+                        project.to_string(),
+                        source.origin_id.to_string()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(error)?;
             if belongs != 1 {
                 return Err(WritingWorkflowError::StaleContext);
             }
         }
-        let existing: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM creative_drafts WHERE project_id=?1
+        let existing: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM creative_drafts WHERE project_id=?1
              AND study_id=?2 AND archived_at IS NULL",
-            params![project.to_string(), study.to_string()],
-            |row| row.get(0),
-        ).map_err(error)?;
+                params![project.to_string(), study.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(error)?;
         if existing > 197 {
-            return Err(WritingWorkflowError::PersistFailed("Study has reached its 200-draft limit".into()));
+            return Err(WritingWorkflowError::PersistFailed(
+                "Study has reached its 200-draft limit".into(),
+            ));
         }
         let ids: [Uuid; 3] = std::array::from_fn(|index| {
-            let material = format!("scriptotar/writing-batch/v1/{project}/{study}/{}/{}", batch.run_id, index);
+            let material = format!(
+                "scriptotar/writing-batch/v1/{project}/{study}/{}/{}",
+                batch.run_id, index
+            );
             Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
         });
         let now = now_rfc3339();
-        let consumed = tx.execute(
-            "UPDATE content_studies SET revision=revision+1,updated_at=?1
+        let consumed = tx
+            .execute(
+                "UPDATE content_studies SET revision=revision+1,updated_at=?1
              WHERE id=?2 AND project_id=?3 AND revision=?4 AND archived_at IS NULL",
-            params![now, study.to_string(), project.to_string(), batch.context.study_revision],
-        ).map_err(error)?;
+                params![
+                    now,
+                    study.to_string(),
+                    project.to_string(),
+                    batch.context.study_revision
+                ],
+            )
+            .map_err(error)?;
         if consumed != 1 {
             return Err(WritingWorkflowError::StaleContext);
         }
@@ -256,13 +318,22 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 "INSERT INTO creative_drafts(
                   id,project_id,study_id,title,body,revision,created_at,updated_at)
                  VALUES(?1,?2,?3,?4,?5,1,?6,?6)",
-                params![id.to_string(), project.to_string(), study.to_string(), title, body, now],
-            ).map_err(error)?;
+                params![
+                    id.to_string(),
+                    project.to_string(),
+                    study.to_string(),
+                    title,
+                    body,
+                    now
+                ],
+            )
+            .map_err(error)?;
             tx.execute(
                 "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
                  VALUES(?1,?2,1,?3,?4,?5)",
                 params![Uuid::new_v4().to_string(), id.to_string(), title, body, now],
-            ).map_err(error)?;
+            )
+            .map_err(error)?;
             for source in &batch.context.sources {
                 tx.execute(
                     "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
@@ -272,7 +343,9 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 ).map_err(error)?;
             }
             if fail_after == Some(index + 1) {
-                return Err(WritingWorkflowError::PersistFailed("injected rollback".into()));
+                return Err(WritingWorkflowError::PersistFailed(
+                    "injected rollback".into(),
+                ));
             }
         }
         let ids_json = serde_json::to_string(&ids)
@@ -281,9 +354,16 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             "INSERT INTO study_writing_batches(
                 run_id,project_id,study_id,payload_json,draft_ids_json,committed_at)
              VALUES(?1,?2,?3,?4,?5,?6)",
-            params![batch.run_id, project.to_string(), study.to_string(),
-                    payload, ids_json, now],
-        ).map_err(error)?;
+            params![
+                batch.run_id,
+                project.to_string(),
+                study.to_string(),
+                payload,
+                ids_json,
+                now
+            ],
+        )
+        .map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(ids)
     }
