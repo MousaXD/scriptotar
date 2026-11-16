@@ -7,6 +7,7 @@ must be empty. Never run this against an existing application/user database.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import json
 from pathlib import Path
 import re
@@ -35,12 +36,12 @@ def build(template: Path, output: Path, rows: int, source_sha: str) -> dict:
     template = template.resolve()
     output = output.resolve()
     # Reject before making a destination; seed_workspace rejects nonempty templates.
-    with sqlite3.connect(template.as_uri() + "?mode=ro", uri=True) as original:
+    with closing(sqlite3.connect(template.as_uri() + "?mode=ro", uri=True)) as original:
         require_study_migrations(original)
     seed_workspace(template, output, rows)
     project = identity("project", rows)
     try:
-        with sqlite3.connect(output) as db:
+        with closing(sqlite3.connect(output)) as db:
             db.execute("PRAGMA foreign_keys=ON")
             version = require_study_migrations(db)
             db.execute("BEGIN IMMEDIATE")
