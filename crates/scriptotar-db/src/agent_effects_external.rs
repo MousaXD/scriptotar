@@ -338,6 +338,43 @@ impl SqliteStore {
 
     /// Store trusted provider evidence. Duplicate identical terminal callbacks
     /// are idempotent; contradictory or older-attempt callbacks are rejected.
+    /// Persist an authoritative provider acceptance ID before any follow-up
+    /// status polling. This is NOT a completion or replay permit. A crash
+    /// after acknowledgement can be reconciled by the exact provider ID.
+    pub fn record_external_ack(
+        &self,key:ExternalEffectKey<'_>,attempt:i64,request_id:&str,
+    ) -> RepositoryResult<ExternalEffect> {
+        if !bounded_id(request_id) {
+            return Err(invalid("provider acknowledgement"));
+        }
+        let mut db=database(self)?;
+        let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
+        let old=checked(&tx,key)?;
+        if old.attempt!=attempt
+            || !matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain) {
+            return Err(conflict("acknowledgement is not for an active dispatched attempt"));
+        }
+        if let Some(id)=old.provider_request_id.as_deref() {
+            if id==request_id { return Ok(old); }
+            return Err(conflict("conflicting provider request ID"));
+        }
+        let updated=tx.execute(
+            "UPDATE agent_external_effects SET provider_request_id=?1,
+             revision=revision+1,updated_at=?2
+             WHERE idempotency_key=?3 AND project_id=?4 AND study_id=?5
+               AND run_id=?6 AND step_id=?7 AND attempt=?8
+               AND revision=?9 AND status IN ('dispatched','uncertain')
+               AND provider_request_id IS NULL",
+            params![request_id,now_rfc3339(),key.idempotency_key,
+                key.project.to_string(),key.study.to_string(),key.run_id,key.step_id,
+                attempt,old.revision],
+        ).map_err(db_error)?;
+        if updated!=1 { return Err(conflict("provider acknowledgement CAS lost")); }
+        let after=checked(&tx,key)?;
+        tx.commit().map_err(db_error)?;
+        Ok(after)
+    }
+
     pub fn reconcile_external_effect(
         &self, key: ExternalEffectKey<'_>, attempt: i64, resolution: ExternalResolution<'_>,
     ) -> RepositoryResult<ExternalEffect> {
@@ -363,10 +400,13 @@ impl SqliteStore {
             || tokens>old.token_limit || cost>old.cost_limit_microusd {
             return Err(invalid("bounded provider receipt"));
         }
+        if let (Some(existing),Some(incoming))=(old.provider_request_id.as_deref(),provider_id) {
+            if existing!=incoming { return Err(conflict("provider request identity changed")); }
+        }
         if old.status==status && matches!(status,ExternalEffectStatus::Completed
             | ExternalEffectStatus::Failed | ExternalEffectStatus::Cancelled
             | ExternalEffectStatus::NotExecuted)
-            && old.provider_request_id.as_deref()==provider_id
+            && (provider_id.is_none() || old.provider_request_id.as_deref()==provider_id)
             && old.receipt_id.as_deref()==receipt_id
             && old.reconciliation_id.as_deref()==evidence_id
             && old.actual_tokens==tokens && old.actual_cost_microusd==cost {
@@ -416,7 +456,8 @@ impl SqliteStore {
                 tx.execute(
                     "UPDATE agent_effects SET status=?1,external_id=COALESCE(?2,external_id),
                      artifact_id=?3,revision=revision+1,updated_at=?4 WHERE idempotency_key=?5",
-                    params![next,provider_id,artifact,now_rfc3339(),key.idempotency_key],
+                    params![next,provider_id.or(old.provider_request_id.as_deref()),
+                        artifact,now_rfc3339(),key.idempotency_key],
                 ).map_err(db_error)?;
             }
         }
@@ -746,6 +787,43 @@ mod tests {
         assert!(db.reserve_external_effect(key,fp(),"openai",limits()).is_err());
         assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
     }
+    #[test]
+    fn provider_ack_is_durable_unique_and_reconciles_after_restart() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let first=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,first.revision,1).unwrap();
+        let ack=db.record_external_ack(key,1,"provider_req_71").unwrap();
+        assert_eq!(ack.status,ExternalEffectStatus::Dispatched);
+        assert_eq!(ack.provider_request_id.as_deref(),Some("provider_req_71"));
+        assert_eq!(db.record_external_ack(key,1,"provider_req_71").unwrap(),ack);
+        assert!(db.record_external_ack(key,1,"different_request").is_err());
+        drop(db);
+        let reopened=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let recovered=reopened.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(recovered.status,ExternalEffectStatus::Uncertain);
+        assert_eq!(recovered.provider_request_id.as_deref(),Some("provider_req_71"));
+        assert!(reopened.mark_external_dispatched(key,recovered.revision,1).is_err());
+        assert!(reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("wrong_req"),receipt_id:"receipt_77",
+            tokens:25,cost_microusd:400,
+        }).is_err());
+        let settled=reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:None,receipt_id:"receipt_77",
+            tokens:25,cost_microusd:400,
+        }).unwrap();
+        assert_eq!(settled.provider_request_id.as_deref(),Some("provider_req_71"));
+        assert_eq!(reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:None,receipt_id:"receipt_77",
+            tokens:25,cost_microusd:400,
+        }).unwrap(),settled);
+        let legacy=reopened.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(legacy.external_id.as_deref(),Some("provider_req_71"));
+        assert_eq!(legacy.status,super::super::EffectStatus::Applied);
+    }
+
     #[test]
     fn revoked_running_intent_blocks_external_dispatch() {
         let (_dir,db,project,study,snap)=setup();
