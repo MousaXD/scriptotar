@@ -69,8 +69,21 @@ class AxWebKit:
         for app in desktop:
             try:
                 name = app.name or ""
-                if app.get_process_id() == self.pid and "scriptotar" in name.lower():
+                if "scriptotar" not in name.lower():
+                    continue
+                # Newer AT-SPI bindings expose the process PID directly. On
+                # older pyatspi, bind the sole app in isolated Xvfb to the
+                # X11 window owned by the exact installed executable PID.
+                try:
+                    owner_pid = app.get_process_id()
+                except AttributeError:
+                    owner_pid = None
+                if owner_pid == self.pid:
                     apps.append(app)
+                elif owner_pid in (0, None):
+                    windows = command("xdotool", "search", "--pid", str(self.pid), check=False)
+                    if windows.returncode == 0 and windows.stdout.strip():
+                        apps.append(app)
             except Exception:
                 continue
         if not apps:
