@@ -789,6 +789,38 @@ mod tests {
             .all(|o| o.confidence != SourceConfidence::Unverified)));
     }
     #[test]
+    fn unregistered_study_service_is_valid_and_formatted_rust() {
+        use std::{path::Path, process::Command};
+
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apps/desktop/src-tauri/src/services/study_research.rs");
+        if !source.is_file() {
+            // The research crate can also be built outside the desktop monorepo.
+            return;
+        }
+        if !Command::new("rustfmt")
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            // This syntax/format guard runs on the exact-head GitHub Rust
+            // foundation toolchain, which installs rustfmt explicitly.
+            return;
+        }
+        let output = Command::new("rustfmt")
+            .args(["--edition", "2021", "--check"])
+            .arg(&source)
+            .output()
+            .expect("rustfmt was available during feature detection");
+        assert!(
+            output.status.success(),
+            "unregistered host adapter must parse and pass rustfmt:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
     fn hostile_transcript_instructions_remain_quoted_data_only() {
         let p = Uuid::new_v4();
         let st = Uuid::new_v4();
