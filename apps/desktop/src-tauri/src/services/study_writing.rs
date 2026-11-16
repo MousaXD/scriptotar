@@ -324,6 +324,15 @@ pub struct GeneratedBatch {
 /// A duplicate run returns the already committed draft IDs, never new drafts.
 pub trait AtomicCandidateStore {
     fn commit_three(&mut self, batch: &GeneratedBatch) -> WriteResult<[Uuid; 3]>;
+
+    /// Read-only reconciliation BEFORE any billable step or current-Study CAS.
+    /// Only return a committed receipt for the exact original run/plan/context.
+    /// Real adapters must verify scope, receipt and all three initial versions.
+    /// A missing receipt means generation may proceed ONLY through the separate
+    /// permission and paid-effect boundary, never by inference from a timeout.
+    fn recover_committed(&mut self, _plan: &GenerationPlan) -> WriteResult<Option<[Uuid; 3]>> {
+        Ok(None)
+    }
 }
 
 /// Always local and copyable; no provider, gate, key or network is needed.
@@ -419,6 +428,17 @@ where
     S: StopSignal,
     D: AtomicCandidateStore,
 {
+    // A lost success reply must not cause the already completed Study's CAS
+    // revision to block read-only recovery. Revalidate the exact signed-off
+    // plan shape and prompt BEFORE looking up the durable receipt. No provider
+    // call or permission reservation occurs on this path.
+    let prepared = prepare_three(&plan.run_id, plan.context.clone())?;
+    if prepared.angles_prompt != plan.angles_prompt {
+        return Err(WritingWorkflowError::StaleContext);
+    }
+    if let Some(ids) = sink.recover_committed(plan)? {
+        return Ok(ids);
+    }
     check_current(current, plan)?;
     let angles_json = execute_step(gate, provider, stop, plan, "angles", &plan.angles_prompt)?;
     check_current(current, plan)?;
