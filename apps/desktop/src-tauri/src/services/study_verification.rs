@@ -524,6 +524,43 @@ mod authenticity_tests {
     }
 
     #[test]
+    fn sqlite_manual_content_binding_is_host_derived_not_caller_revision() {
+        use scriptotar_core::StudySourceInput;
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let services = AppServices::new(tmp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Integrity", "Source binding")
+            .unwrap();
+        let text = "Persisted primary bytes, not an independently checked fact";
+        let source = services
+            .store
+            .add_study_source(
+                project,
+                study.id,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("section 1".into()),
+                    manual_text: Some(text.into()),
+                    source_revision: Some("sha256:invented-by-caller".into()),
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        let binding = load_host_source_binding(&services, project, study.id, &source).unwrap();
+        assert_eq!(
+            binding.content_sha256,
+            Some(verification::canonical_source_sha256(&[text.as_bytes()]))
+        );
+        assert_ne!(binding.content_sha256, source.source_revision);
+        assert!(binding.segments.is_empty());
+    }
+
+    #[test]
     fn exact_stored_segment_id_time_and_quote_are_all_required() {
         let binding = HostSourceBinding {
             content_sha256: Some(verification::canonical_source_sha256(&[b"transcript"])),
