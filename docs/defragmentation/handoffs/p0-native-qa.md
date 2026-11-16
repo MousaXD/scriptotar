@@ -7,6 +7,42 @@
 **Branch:** agent-07/p0-native-webview-qa-20261116  
 **Release decision:** **NO-GO — native graphical certification NOT COMPLETE.** Main and production implementation are untouched.
 
+## Exact-head diagnostic recovery — second native run, 2026-11-16
+
+**Observed run:** [#43879991872](https://github.com/MousaXD/scriptotar/actions/runs/43879991872), source commit `a233911d7a62ed70320f93b9d25ff3f17399da3e`. Both native jobs **FAILED their release gate**. Actual installation and rendering evidence was obtained, but native accessibility-driven user interaction was **NOT TESTED**.
+
+**Linux WebKitGTK:** the installed deb and binary were verifiably installed and the D-Bus session activated `org.a11y.atspi.Registry`. The actual `scriptotar-desktop` process (PID 26382) exposed an AT-SPI application and a native Scriptotar frame. A captured screenshot shows the rendered home UI. But the diagnostic AT-SPI traversal stopped at depth 5, exactly at an unnamed scroll pane. No `document web` or actionable Studio control was observed. First failing case: `installed_webview = NOT TESTED`. Other graphical and persisted cases were not executed. The new harness expands diagnostics beyond depth 5 and no longer prunes whole WebKit subtrees solely on `STATE_VISIBLE`. This is a test-harness correction, **not proof the WebKit document is exposed**.
+
+Linux package SHA-256: `229f43466c8770086fe505955b7849067692daf5a847d8a030141d015c7ad439`.
+Linux installed binary SHA-256: `808544f2aaf3b235dc7f3c78b13d5abb2d3029bc0c5cf1cf2510a2546a6156d4`.
+
+**Windows WebView2:** the Windows Server 2025 hosted runner reported `UserInteractive=true`, runner session 2, app session 2, and a valid native Tauri HWND. Its UIA RawView tree exposed a `Tauri Window` with one `WRY_WEBVIEW` Pane but **no Document provider or actionable Studio control**. The captured screenshot showed a blank white webview area; treat this as a readiness, startup or accessibility-provider finding, not a certified product defect. The old runner stopped checking as soon as the native shell HWND appeared. The updated runner now polls for 90 seconds, captures readiness metadata and enumerates only child HWNDs of the installed app to find an independent WebView2 UIA provider. It still requires actual UIA Studio invocation and heading verification for PASS.
+
+Windows installer SHA-256: `e4826f754ab668968bab7dfde119cd60bb61ced59edd73a7e06a08d1d019b318`.
+Windows installed binary SHA-256: `9267e1132ba9888574df3e6c39cadcbf209c73486bf71c0a642e92f27be06473`.
+
+**Inspect original artifacts:**
+- [Linux small diagnostic ZIP](https://github.com/MousaXD/scriptotar/actions/runs/43879991872/artifacts/14232259592) — result.json, a11y-diagnostics.json, screenshot, SHA256SUMS, host.txt
+- [Windows small diagnostic ZIP](https://github.com/MousaXD/scriptotar/actions/runs/43879991872/artifacts/14232636975) — result.json, uia-diagnostics.json, screenshot, host.json
+- [Linux full package evidence](https://github.com/MousaXD/scriptotar/actions/runs/43879991872/artifacts/14233067625)
+- [Windows full installer evidence](https://github.com/MousaXD/scriptotar/actions/runs/43879991872/artifacts/14233112003)
+
+| Second run at `a233911d` | Linux | Windows |
+|---|---|---|
+| Exact-source checkout / package build / installation | PASS | PASS |
+| Hashes and host evidence preserved | PASS | PASS |
+| Actual native process/window observed | PASS | PASS |
+| Rendered app screenshot observed | PASS (home rendered) | FAIL (blank web area) |
+| Web content accessibility document + actionable interaction | NOT TESTED | NOT TESTED |
+| Study create/open, candidate edit/save/selection | NOT TESTED | NOT TESTED |
+| Quit/restart persisted reopening | NOT TESTED | NOT TESTED |
+| Keyboard custom controls, Arabic RTL and theme review | NOT TESTED | NOT TESTED |
+| Multi-source, revocation, error states and three-script integration | NOT TESTED | NOT TESTED |
+
+**Recovery commits** on Agent 07's branch are harness-only. They need **their own exact-head CI** before any row can advance. Until the installed document is exposed and real persisted interactions are observed, retain **NO-GO**. The Windows hosted desktop is interactive at the shell level; a fully functioning WebView2 provider has not been established.
+
+**Agent 00 dependency:** provide a disposable authorized Study/project source fixture and a controlled revocation/failure state, plus the integrated production three-script contract. Those inputs must not be simulated as paid provider output, and foreign-project UI isolation must not be represented as an IPC authorization test.
+
 ## Executed CI — first immutable native run (2026-11-16)
 
 **Actual tested source SHA:** `45c0e71f684063aed45eeb17a3f8355302bbd02e` (before the subsequent harness-only diagnostic patches).
