@@ -616,9 +616,7 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
-        let mut record = consent
-            .lock()
-            .map_err(|_| ConsentError::UncertainEffect)?;
+        let mut record = consent.lock().map_err(|_| ConsentError::UncertainEffect)?;
         record.decision = Decision::Complete;
         Ok(generated)
     }
@@ -1086,7 +1084,6 @@ mod tests {
         assert_eq!(response.usage.cost_microusd, 7);
     }
 
-
     struct LockedAuthority(Mutex<StudyScope>);
 
     struct LockedScopeGuard<'a>(std::sync::MutexGuard<'a, StudyScope>);
@@ -1249,7 +1246,10 @@ mod tests {
             reached_rx.recv().unwrap();
             // A project switch, source removal or Study edit must acquire this
             // exact mutex. They cannot linearize while egress is in flight.
-            assert!(matches!(authority.0.try_lock(), Err(TryLockError::WouldBlock)));
+            assert!(matches!(
+                authority.0.try_lock(),
+                Err(TryLockError::WouldBlock)
+            ));
             resume_tx.send(()).unwrap();
             assert!(attempt.join().unwrap().is_ok());
         });
