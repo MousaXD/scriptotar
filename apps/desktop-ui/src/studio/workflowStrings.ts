@@ -1,6 +1,7 @@
 /** Agent 06-specific UX labels; all visible additions have English/Arabic parity. */
 export const workflowStrings = {
   en: {
+    workflow: 'Study workflow', prepared: 'Prompt ready',
     runHeading: 'AI execution review',
     noStudy: 'Save a Study before preparing a provider request.',
     noPrompt: 'Prepare the three-angle prompt to inspect exactly what could leave this device.',
@@ -47,6 +48,7 @@ export const workflowStrings = {
     researchStatus: 'Review source locators and uncertainty before writing.'
   },
   ar: {
+    workflow: 'مسار الدراسة', prepared: 'الطلب جاهز',
     runHeading: 'مراجعة تنفيذ الذكاء الاصطناعي',
     noStudy: 'احفظ الدراسة قبل إعداد طلب المزوّد.',
     noPrompt: 'جهّز طلب الزوايا الثلاث لمراجعة البيانات التي قد تُرسل خارج الجهاز.',
