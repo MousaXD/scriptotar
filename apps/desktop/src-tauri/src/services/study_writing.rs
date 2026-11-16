@@ -501,7 +501,7 @@ where
     })
 }
 
-fn lineage_for(
+pub(super) fn lineage_for(
     context: &StudyWritingContext,
     angle: &AngleOption,
     draft: &ScriptDraft,
