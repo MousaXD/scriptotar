@@ -13,7 +13,7 @@ beforeEach(() => {
 async function ready(api: ScriptotarApi = createMockClient()) {
   render(App, { props: { api } });
   await screen.findByRole('heading', { name: 'Creator Lab' });
-  await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+  await fireEvent.keyDown(window, { key: 'a' });
 }
 
 async function chooseSource(name: string) {
@@ -67,7 +67,7 @@ describe('AI source selection', () => {
     api.getTranscript = async () => ({ ...mockBootstrap.transcripts[0], id: 'unrelated-id' });
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
-    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+    await fireEvent.keyDown(window, { key: 'a' });
 
     await chooseSource('Hook breakdown — Arabic sample');
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
@@ -94,7 +94,7 @@ describe('AI source selection', () => {
     api.runAi = async (input) => { runCalls.push(input.sourceText); return runAi(input); };
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
-    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+    await fireEvent.keyDown(window, { key: 'a' });
 
     await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), { target: { value: 'Manual source' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
