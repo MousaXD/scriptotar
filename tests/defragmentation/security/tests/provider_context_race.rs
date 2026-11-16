@@ -203,6 +203,7 @@ struct GuardAuthority(std::sync::RwLock<StudyScope>);
 struct HeldGuard<'a>(std::sync::RwLockReadGuard<'a, StudyScope>);
 impl scriptotar_ai::provider_consent::ScopeDispatchGuard for HeldGuard<'_> {
     fn scope(&self) -> &StudyScope { &self.0 }
+    fn now_ms(&self) -> Result<u64, ConsentError> { Ok(103) }
 }
 impl ScopeAuthority for GuardAuthority {
     fn current_scope(&self, project: &str, study: &str) -> Result<StudyScope, ConsentError> {
