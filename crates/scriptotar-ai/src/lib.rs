@@ -1,3 +1,4 @@
+pub mod provider_consent;
 pub mod writing;
 
 use std::{io::Read, time::Duration};
