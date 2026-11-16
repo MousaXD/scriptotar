@@ -65,3 +65,12 @@
 - Last checked `7a1c381` passes six workflows: Rust foundation, CI, Desktop UI, GUI Visual and Performance QA, Security hygiene and P1 independent provider race. Others were running. All checks on latest head after QA and document pushes remain subject to revalidation.
 - **Next blocker:** a single host-authoritative scope epoch lock for project/Study/selected source/evidence revocation + cancellation and actual network admission, trusted serialized byte digest, bounded priced provider receipt, v10 mark-dispatched-once transaction, no replay on uncertain outcome and the real three-draft UI/restart E2E. Paid egress disabled; PR #114 DRAFT/NO-GO, no main changes.
 
+
+## Agent 00 — 2026-11-17 controlled dispatch admission checkpoint
+
+**Implementation candidate:** `7d62930df6158d00da40e9e344ef46dde6b2f3cf`, formatting fix `7c2478ca6200dd19ff73fd514bc0f192d1002f90`, private sibling visibility fix `bcf14edb322d100ee71f8f5e0ad697505f936778`.
+
+- `ScopeDispatchGuard` is implemented in the desktop host on the existing active-project lock, shared by canonical Studio mutations and project switching. It reconstructs the actual Study/source/evidence/Copy Prompt snapshot while locked and keeps it pinned through the CAS and synchronous provider send. It must still be audited for background transcript writes, direct DB writers, multi-process access and cancellation ordering before claiming host-wide coverage.
+- The internal `SqlitePaidEffectFence` implements v10 reservation, one-winner `mark_external_dispatched`, bounded trusted receipt settlement and uncertain no-replay, with deterministic tests. It stores the supplied *wire fingerprint*, not unbounded prompt/credentials. Caller-provided digests and IDs are **not** proof of a real authenticated transport: the production bounded serializer/response authenticator and trusted pricing catalog are not wired.
+- Production `NoTrustedPricing` / `DisabledPaidEffectFence` / `ExistingAiServiceAdapter` remain in effect and no public paid Tauri command exists. Earlier SHA `e65e08e` passed ten of eleven workflows; installed native WebView failed. New head's CI/independent combined and combined-v11 are not yet certified.
+- No main merge, version bump, release or enabled spending. Next acceptance: full source-writer synchronization + wire-byte/usage proof, then controlled three-draft IPC/save/restart and native WebView CI.
