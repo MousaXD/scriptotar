@@ -919,7 +919,15 @@ mod tests {
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute_batch(
-                "DROP TABLE agent_external_attempt_history;
+                "DROP TRIGGER study_writing_batches_scope_insert;
+                 DROP TRIGGER study_writing_batches_immutable_delete;
+                 DROP TRIGGER study_writing_batches_immutable_update;
+                 DROP TRIGGER study_writing_revisions_immutable_delete;
+                 DROP TRIGGER study_writing_revisions_immutable_update;
+                 DROP TABLE study_writing_revisions;
+                 DROP TABLE study_writing_batches;
+                 DELETE FROM schema_migrations WHERE version = 11;
+                 DROP TABLE agent_external_attempt_history;
                  DROP TABLE agent_external_effects;
                  DELETE FROM schema_migrations WHERE version = 10;
                  PRAGMA user_version = 9;",
@@ -927,12 +935,12 @@ mod tests {
         }
         drop(db);
         let upgraded = SqliteStore::open(&path).unwrap();
-        assert_eq!(upgraded.schema_version().unwrap(), 10);
+        assert_eq!(upgraded.schema_version().unwrap(), crate::LATEST_SCHEMA_VERSION);
         let receipt = reserve(&upgraded, &snap, project, study);
         assert_eq!(receipt.status, ExternalEffectStatus::Reserved);
         drop(upgraded);
         let reopened = SqliteStore::open(&path).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 10);
+        assert_eq!(reopened.schema_version().unwrap(), crate::LATEST_SCHEMA_VERSION);
         assert!(matches!(
             reopened.reserve_external_effect(identity(&snap, project, study), fp(), "openai", limits()).unwrap(),
             ExternalReservation::Existing(_)
@@ -954,7 +962,15 @@ mod tests {
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute_batch(
-                "DROP TABLE agent_external_attempt_history;
+                "DROP TRIGGER study_writing_batches_scope_insert;
+                 DROP TRIGGER study_writing_batches_immutable_delete;
+                 DROP TRIGGER study_writing_batches_immutable_update;
+                 DROP TRIGGER study_writing_revisions_immutable_delete;
+                 DROP TRIGGER study_writing_revisions_immutable_update;
+                 DROP TABLE study_writing_revisions;
+                 DROP TABLE study_writing_batches;
+                 DELETE FROM schema_migrations WHERE version = 11;
+                 DROP TABLE agent_external_attempt_history;
                  DROP TABLE agent_external_effects;
                  DELETE FROM schema_migrations WHERE version = 10;
                  PRAGMA user_version = 9;
