@@ -1258,9 +1258,11 @@ fn canonical_concurrent_same_run_commits_only_three_drafts() {
     // Two separate database handles compete for the same run under BEGIN IMMEDIATE.
     // The loser must observe the committed receipt, not create another batch.
     let results = std::thread::scope(|threads| {
-        let launch = |batch: GeneratedBatch, context: StudyWritingContext| {
+        let first = threads.spawn({
             let path = path.clone();
-            threads.spawn(move || {
+            let context = context.clone();
+            let batch = batch.clone();
+            move || {
                 let reopened = scriptotar_db::SqliteStore::open(path).unwrap();
                 let live = study_writing::FixedStudy(&context);
                 let mut sink = CanonicalSqliteCandidateStore {
@@ -1268,10 +1270,20 @@ fn canonical_concurrent_same_run_commits_only_three_drafts() {
                     current: &live,
                 };
                 sink.commit_three(&batch)
-            })
-        };
-        let first = launch(batch.clone(), context.clone());
-        let second = launch(batch, context);
+            }
+        });
+        let second = threads.spawn({
+            let path = path.clone();
+            move || {
+                let reopened = scriptotar_db::SqliteStore::open(path).unwrap();
+                let live = study_writing::FixedStudy(&context);
+                let mut sink = CanonicalSqliteCandidateStore {
+                    store: &reopened,
+                    current: &live,
+                };
+                sink.commit_three(&batch)
+            }
+        });
         [first.join().unwrap().unwrap(), second.join().unwrap().unwrap()]
     });
     assert_eq!(results[0], results[1]);
