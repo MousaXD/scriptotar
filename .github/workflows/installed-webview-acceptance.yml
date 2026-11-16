@@ -124,6 +124,20 @@ jobs:
           path: native-evidence/linux/
           if-no-files-found: warn
           retention-days: 30
+      - name: Upload small Linux GUI evidence separately for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-webkit-review-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            native-evidence/linux/result.json
+            native-evidence/linux/a11y-diagnostics.json
+            native-evidence/linux/desktop.log
+            native-evidence/linux/SHA256SUMS.txt
+            native-evidence/linux/host.txt
+            native-evidence/linux/*.png
+          if-no-files-found: warn
+          retention-days: 30
 
   windows-webview2:
     name: Installed Windows WebView2 / UI Automation (fail closed)
@@ -206,5 +220,17 @@ jobs:
         with:
           name: installed-webview2-exact-${{ github.event.pull_request.head.sha || github.sha }}
           path: native-evidence/windows/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload small Windows UIA evidence separately for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-webview2-review-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            native-evidence/windows/result.json
+            native-evidence/windows/uia-diagnostics.json
+            native-evidence/windows/host.json
+            native-evidence/windows/*.png
           if-no-files-found: warn
           retention-days: 30
