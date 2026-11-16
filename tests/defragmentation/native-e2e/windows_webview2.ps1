@@ -250,6 +250,7 @@ try {
     main_window_seen = $false
     web_document_seen = $false
     studio_control_seen = $false
+    dev_server_error_seen = $false
     poll_count = 0
     source_process_id = $proc.Id
     foreground_requested = $false
@@ -271,7 +272,20 @@ try {
       if (-not $root) { continue }
       $readiness.foreground_requested = [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)
       $probe = Find-InstalledDocumentAndStudio $proc
-      if ($probe.document) { $readiness.web_document_seen = $true }
+      if ($probe.document) {
+        $readiness.web_document_seen = $true
+        # A WebView2 Document can be the built-in browser network-error
+        # document. Fail early instead of polling 90s and misreporting a
+        # missing UIA provider when the installed binary points at devUrl.
+        $connectionRefused = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'ERR_CONNECTION_REFUSED'
+        )
+        if ($probe.document.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree, $connectionRefused)) {
+          $readiness.dev_server_error_seen = $true
+          break
+        }
+      }
       if ($probe.studio) { $readiness.studio_control_seen = $true }
       if ($probe.document -and $probe.studio) { break }
     } catch {
@@ -310,7 +324,7 @@ try {
         $report['network_error_probe_warning'] = $_.Exception.Message
       }
     }
-    if ($hasDevServerError) {
+    if ($readiness.dev_server_error_seen -or $hasDevServerError) {
       $cases.installed_webview = @{
         status='FAIL'
         reason='Installed NSIS binary rendered localhost ERR_CONNECTION_REFUSED instead of embedded Scriptotar UI. Check production Tauri build mode; do not classify the browser error page as app UI.'
