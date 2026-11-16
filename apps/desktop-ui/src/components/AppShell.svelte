@@ -437,6 +437,20 @@
 
   .workspace { width: min(var(--workspace-max), 100%); padding: 26px 28px 48px; }
 
+  /* Bootstrap uses an existing shared skeleton. Restrict the visual change to the
+     shell: a title and work rows, never fake dashboard statistics. Keep its
+     aria-busy/status semantics intact and preserve the interactive chrome. */
+  .workspace :global(.workspace-skeleton .heading-skeleton .subtitle),
+  .workspace :global(.workspace-skeleton .metric-skeletons),
+  .workspace :global(.workspace-skeleton .panel-skeleton:nth-child(2)) { display: none; }
+  .workspace :global(.workspace-skeleton .heading-skeleton) { gap: 0; margin-block-end: 0; }
+  .workspace :global(.workspace-skeleton .panel-skeletons) { grid-template-columns: minmax(0, 1fr); }
+  .workspace :global(.workspace-skeleton .panel-skeleton) {
+    width: min(640px, 100%); min-height: 120px; padding: var(--space-3) 0;
+    gap: var(--space-3); border: 0; border-block-start: 1px solid var(--color-border);
+    border-radius: 0; background: transparent;
+  }
+
   .palette-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: start center; padding: min(15vh, 130px) var(--space-4) var(--space-4); background: rgb(0 0 0 / 48%); backdrop-filter: blur(6px); }
   .command-palette { width: min(680px, 100%); overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-overlay); }
   .palette-search { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 58px; padding: 0 var(--space-4); border-bottom: 1px solid var(--color-border); color: var(--color-text-faint); }
