@@ -12,13 +12,13 @@ use std::{
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use scriptotar_agent::{
-    Certainty, ExecutionContext, Plan, PolicyGate, ProbeResult, RuntimeError, StepInput,
-    StepOutput, StepPlan, ToolExecutor, ToolFailure, ToolReceipt,
+    Certainty, Engine, ExecutionContext, Plan, PolicyGate, ProbeResult, RuntimeError, StepInput,
+    StepOutput, StepPlan, ToolExecutor, ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
 };
 use scriptotar_core::{
     ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind,
 };
-use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate};
+use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate, ScopedAgentCheckpointStore};
 use scriptotar_research::{
     intelligence::{ObservationTimestamp, TranscriptSegment},
     study_intelligence::{
@@ -653,6 +653,13 @@ impl PolicyGate for StudyResearchGate {
             || step.estimate.tokens != 0
             || step.estimate.cost_microusd != 0
             || step.estimate.max_output_bytes > MAX_REPORT_BYTES as u64
+            || step.max_attempts != 1
+            || step.estimate.cpu_ms == 0
+            || step.estimate.cpu_ms > 5_000
+            || step.estimate.peak_memory_mib == 0
+            || step.estimate.peak_memory_mib > 128
+            || plan.limits.max_tokens != 0
+            || plan.limits.max_cost_microusd != 0
         {
             return Err(RuntimeError::PolicyDenied);
         }
@@ -771,6 +778,29 @@ impl StudyResearchDriver {
     }
 }
 
+/// Typed, deny-by-default service boundary for Agent 00's authorized run/approval
+/// endpoints. Creating an engine does not dispatch any tool or grant consent.
+pub(super) type StudyResearchEngine =
+    Engine<ScopedAgentCheckpointStore, StudyResearchDriver, StudyResearchGate>;
+
+pub(super) fn build_study_research_engine(
+    services: &AppServices,
+    project: Uuid,
+    study: Uuid,
+) -> RepositoryResult<StudyResearchEngine> {
+    scoped_study(services, project, study, &[])?;
+    let checkpoints = services.store.scoped_agent_checkpoints(project, study)?;
+    let gate = StudyResearchGate::new(services.clone(), project, study);
+    let mut registry = ToolRegistry::default();
+    registry.allow(ToolKind::AnalyzeEvidence);
+    Ok(Engine::new(
+        checkpoints,
+        StudyResearchDriver::new(gate.clone()),
+        gate,
+        registry,
+    ))
+}
+
 fn failed() -> ToolFailure {
     ToolFailure {
         code: "study_research_denied".into(),
@@ -806,17 +836,10 @@ impl ToolExecutor for StudyResearchDriver {
         let output = match self.inspect(ctx, input) {
             Ok(result) => result,
             Err(_) => {
-                // If the report file reached disk but a subsequent durability
-                // or validation step failed, NotApplied would be false.
-                // Persist Unknown and permit only a read-only receipt probe.
-                let possibly_written = artifact_path(&self.gate.services, report_id(ctx))
-                    .ok()
-                    .is_some_and(|path| path.is_file());
-                let update = if possibly_written {
-                    EffectUpdate::Unknown
-                } else {
-                    EffectUpdate::NotApplied
-                };
+                // After reservation, failure might occur before or after a
+                // durable file write. A missing/unreadable path is not proof
+                // of non-execution (including on transient filesystem errors).
+                // Fail closed and reconcile only an already-persisted artifact.
                 if self
                     .gate
                     .services
@@ -826,17 +849,13 @@ impl ToolExecutor for StudyResearchDriver {
                         self.gate.study,
                         &ctx.run_id,
                         &ctx.idempotency_key,
-                        update,
+                        EffectUpdate::Unknown,
                     )
                     .is_err()
                 {
                     return Err(uncertain());
                 }
-                return Err(if possibly_written {
-                    uncertain()
-                } else {
-                    failed()
-                });
+                return Err(uncertain());
             }
         };
         self.gate
@@ -875,6 +894,9 @@ impl ToolExecutor for StudyResearchDriver {
         let Some(effect) = effect else {
             return Ok(ProbeResult::Unknown);
         };
+        if effect.step_id != ctx.step_id || effect.tool_kind != "AnalyzeEvidence" {
+            return Ok(ProbeResult::Unknown);
+        }
         match effect.status {
             EffectStatus::NotApplied => Ok(ProbeResult::NotApplied),
             EffectStatus::Accepted => Ok(ProbeResult::Unknown),
@@ -952,8 +974,7 @@ mod tests {
     #[test]
     fn approved_agent_research_persists_effect_and_can_reopen_result() {
         use scriptotar_agent::{
-            CheckpointStore, Engine, Estimate, Limits, Plan, RunState, StepPlan, ToolKind,
-            ToolRegistry,
+            CheckpointStore, Estimate, Limits, Plan, RunState, StepPlan,
         };
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
@@ -1003,18 +1024,7 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let gate = StudyResearchGate::new(services.clone(), project, study);
-            let mut registry = ToolRegistry::default();
-            registry.allow(ToolKind::AnalyzeEvidence);
-            let engine = Engine::new(
-                services
-                    .store
-                    .scoped_agent_checkpoints(project, study)
-                    .unwrap(),
-                StudyResearchDriver::new(gate.clone()),
-                gate,
-                registry,
-            );
+            let engine = build_study_research_engine(&services, project, study).unwrap();
             let created = engine
                 .create(
                     Plan {
