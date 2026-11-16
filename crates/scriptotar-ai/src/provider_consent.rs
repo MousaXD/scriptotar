@@ -142,6 +142,9 @@ pub struct ConsentPreview {
 enum Decision {
     Pending,
     Approved,
+    /// Approved request is awaiting durable reservation; cancellation is
+    /// permitted until the thread reacquires this run's lock for pre-send CAS.
+    Reserving,
     Denied,
     Uncertain,
     Complete,
@@ -455,7 +458,7 @@ impl ConsentBoundary {
             .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         match record.decision {
-            Decision::Pending | Decision::Approved => {
+            Decision::Pending | Decision::Approved | Decision::Reserving => {
                 record.decision = Decision::Denied;
                 Ok(())
             }
@@ -498,7 +501,7 @@ impl ConsentBoundary {
             Decision::Pending => return Err(ConsentError::NoApproval),
             Decision::Denied => return Err(ConsentError::Denied),
             Decision::Uncertain => return Err(ConsentError::UncertainEffect),
-            Decision::Complete => return Err(ConsentError::AlreadyUsed),
+            Decision::Complete | Decision::Reserving => return Err(ConsentError::AlreadyUsed),
             Decision::Approved => {}
         }
         if now_ms > record.preview.expires_at_ms {
@@ -526,16 +529,38 @@ impl ConsentBoundary {
             return Err(ConsentError::InvalidBudget);
         }
         let effect_id = format!("provider:{}:{}", intent.run_id, record.preview.fingerprint);
-        // Even a failed reservation may have committed before a lost response.
-        // Mark uncertain rather than allowing another call to attempt the claim.
-        if let Err(error) = fence.reserve_once(&effect_id) {
+        let deadline_ms = now_ms.saturating_add(intent.limits.max_elapsed_ms);
+
+        // Release ONLY the per-run approval lock while a durable reservation
+        // waits on SQLite or another process. A cancellation can then
+        // linearize and deny this run *before* provider dispatch. Reserving
+        // prevents another caller from attempting the same durable effect.
+        record.decision = Decision::Reserving;
+        drop(record);
+        let reservation = fence.reserve_once(&effect_id);
+        let mut record = match consent.lock() {
+            Ok(record) => record,
+            Err(_) => {
+                // A claim may already have committed before its response.
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+        // A failed reservation is ambiguous: it may have committed already.
+        // Never retry it, even if cancellation completed while it was pending.
+        if let Err(error) = reservation {
             record.decision = Decision::Uncertain;
             return Err(error);
         }
-        // An ambiguous reservation is never safe to replay, even if it was
-        // denied before I/O. Keep this consent consumed and reconcile the ledger.
+        if record.decision != Decision::Reserving {
+            // The cancellation acquired the approval lock first. A reserved
+            // effect is not authorization to send and must be reconciled.
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::Denied);
+        }
+        // Irrevocable pending paid-effect attempt. The same per-run lock is
+        // retained through guard acquisition, dispatch CAS and actual send.
         record.decision = Decision::Uncertain;
-        let deadline_ms = now_ms.saturating_add(intent.limits.max_elapsed_ms);
 
         // Agent 10's regression changes the Study inside reserve_once. This
         // re-read catches that specific transition; it is NOT our concurrency
