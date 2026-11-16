@@ -3,6 +3,7 @@ mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
 mod study_gateway;
+#[cfg(test)]
 mod study_research;
 
 use std::{
