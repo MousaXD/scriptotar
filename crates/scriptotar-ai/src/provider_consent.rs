@@ -458,8 +458,11 @@ impl ConsentBoundary {
             return Err(ConsentError::Expired);
         }
         validate_context(&record.intent.scope, authority)?;
+        let trusted_price = pricing
+            .ceiling(&intent.provider)
+            .ok_or(ConsentError::UnknownPricing)?;
         if record.intent != *intent
-            || record.preview.fingerprint != hash_intent(intent, &pricing.ceiling(&intent.provider))
+            || record.preview.fingerprint != hash_intent(intent, &Some(trusted_price.clone()))
         {
             return Err(ConsentError::ChangedContext);
         }
@@ -490,14 +493,28 @@ impl ConsentBoundary {
             intent.max_output_tokens,
             deadline_ms,
         );
-        let generated = match generated {
+        let mut generated = match generated {
             Ok(response) => response,
             Err(_) => {
                 fence.mark_uncertain(&effect_id);
                 return Err(ConsentError::UncertainEffect);
             }
         };
-        let usage = generated.usage;
+        let mut usage = generated.usage;
+        // USD accounting is owned by this trusted policy, never by a provider
+        // adapter's estimated/request-supplied cost field.
+        usage.cost_microusd = match reserved_cost(
+            usage.input_tokens,
+            usage.output_tokens,
+            &trusted_price,
+        ) {
+            Some(cost) => cost,
+            None => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+        generated.usage = usage;
         if usage.input_tokens
             > u64::try_from(intent.prompt.len())
                 .unwrap_or(u64::MAX)
@@ -946,6 +963,26 @@ mod tests {
         });
         assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn trusted_pricing_overrides_adapter_supplied_cost() {
+        let (boundary, intent, authority) = approved();
+        let response = boundary
+            .dispatch(
+                &intent,
+                &authority,
+                &Prices,
+                &Fence::default(),
+                &Runner::default(),
+                "key",
+                103,
+            )
+            .unwrap();
+        // Input: ceil(9 * 100_000 / 1_000_000) = 1 micro-USD.
+        // Output: ceil(30 * 200_000 / 1_000_000) = 6 micro-USD.
+        // The fake adapter reports 50; the server-authoritative ceiling is 7.
+        assert_eq!(response.usage.cost_microusd, 7);
     }
 
     #[test]
