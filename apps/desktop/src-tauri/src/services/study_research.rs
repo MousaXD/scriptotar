@@ -418,6 +418,16 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     }
     let path = artifact_path(services, artifact_id)?;
     let directory = path.parent().ok_or_else(storage)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(directory).map_err(|_| storage())?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|_| storage())?;
+    }
+    #[cfg(not(unix))]
     fs::create_dir_all(directory).map_err(|_| storage())?;
     if path.exists() {
         let existing = fs::read(&path).map_err(|_| storage())?;
@@ -429,14 +439,25 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     }
     let temporary = directory.join(format!("{artifact_id}.{}.pending", Uuid::new_v4()));
     let result = (|| {
-        let mut handle = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-            .map_err(|_| storage())?;
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut handle = options.open(&temporary).map_err(|_| storage())?;
         handle.write_all(data).map_err(|_| storage())?;
         handle.sync_all().map_err(|_| storage())?;
         fs::rename(&temporary, &path).map_err(|_| storage())?;
+        #[cfg(unix)]
+        {
+            // Make the directory entry durable before recording the SQLite
+            // Applied receipt. A failure remains uncertain, never replayed.
+            fs::File::open(directory)
+                .and_then(|dir| dir.sync_all())
+                .map_err(|_| storage())?;
+        }
         Ok(())
     })();
     if result.is_err() {
@@ -683,13 +704,24 @@ impl ToolExecutor for StudyResearchDriver {
         let output = match self.inspect(ctx, input) {
             Ok(result) => result,
             Err(_) => {
+                // If the report file reached disk but a subsequent durability
+                // or validation step failed, NotApplied would be false.
+                // Persist Unknown and permit only a read-only receipt probe.
+                let possibly_written = artifact_path(&self.gate.services, report_id(ctx))
+                    .ok()
+                    .is_some_and(|path| path.is_file());
+                let update = if possibly_written {
+                    EffectUpdate::Unknown
+                } else {
+                    EffectUpdate::NotApplied
+                };
                 if self.gate.services.store.record_agent_effect(
                     self.gate.project, self.gate.study, &ctx.run_id,
-                    &ctx.idempotency_key, EffectUpdate::NotApplied,
+                    &ctx.idempotency_key, update,
                 ).is_err() {
                     return Err(uncertain());
                 }
-                return Err(failed());
+                return Err(if possibly_written { uncertain() } else { failed() });
             }
         };
         self.gate.services.store.record_agent_effect(
