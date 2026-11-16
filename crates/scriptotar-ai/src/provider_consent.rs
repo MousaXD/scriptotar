@@ -654,7 +654,7 @@ impl ConsentBoundary {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     use super::*;
 
@@ -1356,6 +1356,105 @@ mod tests {
             Err(ConsentError::UncertainEffect)
         ));
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+    }
+
+
+    #[test]
+    fn consent_expiring_inside_reserved_effect_never_starts_a_late_send() {
+        use std::sync::mpsc;
+
+        struct ClockAuthority {
+            scope: StudyScope,
+            now: AtomicU64,
+        }
+        struct ClockGuard<'a>(&'a ClockAuthority);
+        impl ScopeDispatchGuard for ClockGuard<'_> {
+            fn scope(&self) -> &StudyScope {
+                &self.0.scope
+            }
+
+            fn now_ms(&self) -> Result<u64, ConsentError> {
+                Ok(self.0.now.load(Ordering::SeqCst))
+            }
+        }
+        impl ScopeAuthority for ClockAuthority {
+            fn current_scope(
+                &self,
+                project_id: &str,
+                study_id: &str,
+            ) -> Result<StudyScope, ConsentError> {
+                if self.scope.project_id != project_id || self.scope.study_id != study_id {
+                    return Err(ConsentError::WrongProjectOrStudy);
+                }
+                Ok(self.scope.clone())
+            }
+
+            fn lock_dispatch_scope(
+                &self,
+                _scope: &StudyScope,
+            ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+                Ok(Box::new(ClockGuard(self)))
+            }
+        }
+
+        struct WaitingReservation {
+            reached: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            uncertain: AtomicUsize,
+            dispatched: AtomicUsize,
+        }
+        impl PaidEffectFence for WaitingReservation {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.reached.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.dispatched.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {
+                self.uncertain.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (intent, _) = fixture();
+        let authority = ClockAuthority {
+            scope: intent.scope.clone(),
+            now: AtomicU64::new(102),
+        };
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+
+        let (reached_tx, reached_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let fence = WaitingReservation {
+            reached: reached_tx,
+            resume: Mutex::new(resume_rx),
+            uncertain: AtomicUsize::new(0),
+            dispatched: AtomicUsize::new(0),
+        };
+        let provider = Runner::default();
+        std::thread::scope(|scope| {
+            let attempt = scope.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 102)
+            });
+            reached_rx.recv().unwrap();
+            authority.now.store(20_000, Ordering::SeqCst);
+            resume_tx.send(()).unwrap();
+            assert!(matches!(attempt.join().unwrap(), Err(ConsentError::Expired)));
+        });
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.dispatched.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
     }
 
     #[test]
