@@ -784,12 +784,16 @@ fn writing_v10_upgrade_and_schema_collision_rollback_preserve_existing_studies()
         )
         .unwrap();
     assert_eq!(title, "Preserved Study");
-    conn.execute_batch("DROP TABLE study_writing_batches;").unwrap();
+    conn.execute_batch("DROP TABLE study_writing_batches;")
+        .unwrap();
     drop(conn);
 
     let upgraded = SqliteStore::open(&path).unwrap();
     assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
-    assert_eq!(upgraded.get_study(project.id, study.id).unwrap().title, title);
+    assert_eq!(
+        upgraded.get_study(project.id, study.id).unwrap().title,
+        title
+    );
     drop(upgraded);
     let reopened = SqliteStore::open(&path).unwrap();
     assert_eq!(reopened.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
