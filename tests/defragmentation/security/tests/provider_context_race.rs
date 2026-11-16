@@ -39,6 +39,9 @@ impl TrustedPricing for Catalog {
 struct CountingProvider(AtomicUsize);
 impl BoundedProvider for CountingProvider {
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
+    fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
+        reply.provider_request_id == "fixture-request-id"
+    }
     fn generate_once(
         &self, _: &ProviderConfig, _: &str, _: &AiRequest,
         _: u64, _: u64,
@@ -46,6 +49,7 @@ impl BoundedProvider for CountingProvider {
         self.0.fetch_add(1, Ordering::SeqCst);
         Ok(MeteredReply {
             text: "test response".into(),
+            provider_request_id: "fixture-request-id".into(),
             usage: ActualUsage {
                 input_tokens: 10, output_tokens: 10,
                 tool_calls: 1, elapsed_ms: 10, cost_microusd: 0,
@@ -62,7 +66,7 @@ impl PaidEffectFence for ChangeContextAtFence<'_> {
         self.0.0.lock().unwrap().material_digest = "b".repeat(64);
         Ok(())
     }
-    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
+    fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
     fn mark_uncertain(&self, _: &str) {}
 }
 
@@ -71,7 +75,7 @@ impl PaidEffectFence for RejectingFence {
     fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
         Err(ConsentError::UncertainEffect)
     }
-    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+    fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
         Err(ConsentError::UncertainEffect)
     }
     fn mark_uncertain(&self, _: &str) {}
@@ -151,7 +155,7 @@ impl PaidEffectFence for PausedReservation<'_> {
         self.allow_reservation_return.wait();
         Ok(())
     }
-    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
+    fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
     fn mark_uncertain(&self, _: &str) {}
 }
 
@@ -237,7 +241,7 @@ impl PaidEffectFence for DispatchedFence {
         self.dispatches.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
-    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+    fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
         self.receipts.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
@@ -251,6 +255,9 @@ struct PausedProvider<'a> {
 }
 impl BoundedProvider for PausedProvider<'_> {
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
+    fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
+        reply.provider_request_id == "fixture-request-id"
+    }
     fn generate_once(
         &self, _: &ProviderConfig, _: &str, _: &AiRequest, _: u64, _: u64,
     ) -> Result<MeteredReply, ConsentError> {
@@ -259,6 +266,7 @@ impl BoundedProvider for PausedProvider<'_> {
         self.release.wait();
         Ok(MeteredReply {
             text: "bounded test receipt".into(),
+            provider_request_id: "fixture-request-id".into(),
             usage: ActualUsage {
                 input_tokens: 10, output_tokens: 10,
                 tool_calls: 1, elapsed_ms: 10, cost_microusd: 0,
@@ -313,4 +321,46 @@ fn missing_shared_authority_guard_fails_closed_even_with_valid_fence() {
     ));
     assert_eq!(provider.0.load(Ordering::SeqCst), 0);
     assert_eq!(fence.dispatches.load(Ordering::SeqCst), 0);
+}
+
+#[derive(Default)]
+struct UnverifiedReceiptProvider(AtomicUsize);
+impl BoundedProvider for UnverifiedReceiptProvider {
+    fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
+    // Deliberately do NOT override verified_usage_receipt: an arbitrary
+    // model/server-supplied string cannot authenticate a paid receipt.
+    fn generate_once(
+        &self, _: &ProviderConfig, _: &str, _: &AiRequest, _: u64, _: u64,
+    ) -> Result<MeteredReply, ConsentError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Ok(MeteredReply {
+            text: "unverified paid response".into(),
+            provider_request_id: "self-claimed-unverified-id".into(),
+            usage: ActualUsage {
+                input_tokens: 10, output_tokens: 10,
+                tool_calls: 1, elapsed_ms: 10, cost_microusd: 0,
+            },
+        })
+    }
+}
+
+#[test]
+fn unauthenticated_paid_receipt_is_uncertain_and_never_replayed() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let provider = UnverifiedReceiptProvider::default();
+    let fence = DispatchedFence::default();
+    let first = boundary.dispatch(
+        &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 102
+    );
+    assert!(matches!(first, Err(ConsentError::UncertainEffect)));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.receipts.load(Ordering::SeqCst), 0);
+    let retry = boundary.dispatch(
+        &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 104
+    );
+    assert!(matches!(retry, Err(ConsentError::UncertainEffect | ConsentError::AlreadyUsed)));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1, "unverified acknowledgement caused duplicate paid send");
+    assert_eq!(fence.receipts.load(Ordering::SeqCst), 0);
 }
