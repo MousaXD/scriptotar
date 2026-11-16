@@ -88,7 +88,8 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
             return Err(WritingWorkflowError::StaleContext);
         }
         let db = Connection::open(self.store.path()).map_err(error)?;
-        db.pragma_update(None, "foreign_keys", true).map_err(error)?;
+        db.pragma_update(None, "foreign_keys", true)
+            .map_err(error)?;
         let row: Option<(String, String, String, String)> = db
             .query_row(
                 "SELECT project_id,study_id,payload_json,draft_ids_json
@@ -124,7 +125,8 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
                      JOIN study_writing_revisions sr
                        ON sr.draft_id=d.id AND sr.version=1
                      WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                    params![id.to_string(), project, study],
+                    params![
+                    id.to_string(), project, study],
                     |row| row.get(0),
                 )
                 .map_err(error)?;
@@ -432,8 +434,10 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                  VALUES(?1,1,?2)",
                 params![id.to_string(),
                     serde_json::to_string(candidate)
-                        .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?],
-            ).map_err(error)?;
+                        .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?
+                ],
+            )
+            .map_err(error)?;
             for source in &batch.context.sources {
                 tx.execute(
                     "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
@@ -496,9 +500,12 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         let mut db = Connection::open(self.store.path()).map_err(error)?;
         db.pragma_update(None, "foreign_keys", true).map_err(error)?;
         db.busy_timeout(Duration::from_secs(5)).map_err(error)?;
-        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(error)?;
-        let (body, title, snapshot): (String, String, String) = tx.query_row(
-            "SELECT d.body,d.title,r.structured_json
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(error)?;
+        let (body, title, snapshot): (String, String, String) = tx
+            .query_row(
+                "SELECT d.body,d.title,r.structured_json
              FROM creative_drafts d
              JOIN study_writing_revisions r
                ON r.draft_id=d.id AND r.version=d.revision
@@ -507,17 +514,27 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
              WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3
                AND d.revision=?4 AND d.archived_at IS NULL
                AND s.archived_at IS NULL AND p.archived_at IS NULL",
-            params![canonical_draft_id.to_string(), context.project_id.to_string(),
-                    context.study_id.to_string(), expected_draft_revision],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).optional().map_err(error)?
+                params![
+                    canonical_draft_id.to_string(),
+                    context.project_id.to_string(),
+                    context.study_id.to_string(),
+                    expected_draft_revision
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(error)?
             .ok_or(WritingWorkflowError::StaleContext)?;
         if self.current.load(context.project_id, context.study_id)? != *context {
             return Err(WritingWorkflowError::StaleContext);
         }
-        let original: GeneratedCandidate = serde_json::from_str(&snapshot)
-            .map_err(|_| WritingWorkflowError::PersistFailed("corrupt structured revision".into()))?;
-        let position = original.draft.beats.iter()
+        let original: GeneratedCandidate = serde_json::from_str(&snapshot).map_err(|_| {
+            WritingWorkflowError::PersistFailed("corrupt structured revision".into())
+        })?;
+        let position = original
+            .draft
+            .beats
+            .iter()
             .position(|beat| beat.id == beat_id)
             .ok_or(denied("beat not in current version"))?;
         let before = &original.draft.beats[position];
@@ -554,7 +571,9 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
             }
         }
         if reviewed.draft != expected {
-            return Err(denied("revision modified untouched beats or citation statuses"));
+            return Err(denied(
+                "revision modified untouched beats or citation statuses",
+            ));
         }
         if body.matches(previous_beat_text).count() != 1 {
             return Err(WritingWorkflowError::StaleContext);
@@ -565,22 +584,37 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         }
         let next = expected_draft_revision + 1;
         let now = now_rfc3339();
-        let changed = tx.execute(
-            "UPDATE creative_drafts SET body=?1,revision=?2,updated_at=?3
+        let changed = tx
+            .execute(
+                "UPDATE creative_drafts SET body=?1,revision=?2,updated_at=?3
              WHERE id=?4 AND project_id=?5 AND study_id=?6 AND revision=?7",
-            params![next_body, next, now, canonical_draft_id.to_string(),
-                    context.project_id.to_string(), context.study_id.to_string(),
-                    expected_draft_revision],
-        ).map_err(error)?;
+                params![
+                    next_body,
+                    next,
+                    now,
+                    canonical_draft_id.to_string(),
+                    context.project_id.to_string(),
+                    context.study_id.to_string(),
+                    expected_draft_revision
+                ],
+            )
+            .map_err(error)?;
         if changed != 1 {
             return Err(WritingWorkflowError::StaleContext);
         }
         tx.execute(
             "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
              VALUES(?1,?2,?3,?4,?5,?6)",
-            params![Uuid::new_v4().to_string(), canonical_draft_id.to_string(),
-                    next, title, next_body, now],
-        ).map_err(error)?;
+            params![
+                Uuid::new_v4().to_string(),
+                canonical_draft_id.to_string(),
+                next,
+                title,
+                next_body,
+                now
+            ],
+        )
+        .map_err(error)?;
         // A revised beat may remove stale evidence, but may not invent new
         // source content or silently change a source's status.
         for lineage in &reviewed.lineage {
@@ -618,10 +652,14 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         tx.execute(
             "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
              VALUES(?1,?2,?3)",
-            params![canonical_draft_id.to_string(), next,
-                    serde_json::to_string(&saved)
-                        .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?],
-        ).map_err(error)?;
+            params![
+                canonical_draft_id.to_string(),
+                next,
+                serde_json::to_string(&saved)
+                    .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?
+            ],
+        )
+        .map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(next)
     }
