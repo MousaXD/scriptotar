@@ -24,6 +24,8 @@ jobs:
           - { gate: migration, pr: 119 }
           - { gate: writing, pr: 121 }
           - { gate: verification, pr: 117 }
+          # Integration branch: strictly fails closed until all feature modules land.
+          - { gate: combined, pr: 114 }
     steps:
       - name: Checkout independent security tests
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
