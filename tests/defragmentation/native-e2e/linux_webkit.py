@@ -301,36 +301,46 @@ class Session:
     def stop(self):
         if self.proc is None:
             return
-        if self.proc.poll() is None:
-            # Alt+F4 is a window-manager command. The CI session must run
-            # Openbox and target the mapped Scriptotar window, not the first
-            # arbitrary XID (which may be an unmapped WebKit helper).
-            windows = command("xdotool", "search", "--onlyvisible",
-                              "--pid", str(self.proc.pid), check=False)
-            ids = windows.stdout.split()
-            titled = []
-            for window_id in ids:
-                title = command("xdotool", "getwindowname", window_id, check=False)
-                if title.returncode == 0 and "scriptotar" in title.stdout.lower():
-                    titled.append(window_id)
-            if not titled:
-                raise NativeFailure(
-                    f"No visible Scriptotar main window found for native graphical quit (XIDs={ids})"
-                )
-            target = titled[0]
-            focus = command("xdotool", "windowactivate", "--sync", target, check=False)
-            if focus.returncode != 0:
-                raise NativeFailure(f"Window manager could not activate Scriptotar window {target}")
-            key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
-            if key.returncode != 0:
-                raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
-            try:
-                self.proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                self.proc.terminate()
-                self.proc.wait(timeout=8)
-                raise NativeFailure("Installed app did not quit via graphical Alt+F4")
-        self.proc = None
+        proc = self.proc
+        try:
+            if proc.poll() is None:
+                # Target only the mapped installed app, not its hidden X11 helpers.
+                windows = command("xdotool", "search", "--onlyvisible",
+                                  "--pid", str(proc.pid), check=False)
+                ids = windows.stdout.split()
+                titled = []
+                for window_id in ids:
+                    title = command("xdotool", "getwindowname", window_id, check=False)
+                    if title.returncode == 0 and "scriptotar" in title.stdout.lower():
+                        titled.append(window_id)
+                if not titled:
+                    raise NativeFailure(
+                        f"No visible Scriptotar window for graphical quit (XIDs={ids})"
+                    )
+                target = titled[0]
+                focus = command("xdotool", "windowactivate", "--sync", target, check=False)
+                if focus.returncode != 0:
+                    raise NativeFailure(f"Window manager could not activate Scriptotar {target}")
+                key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
+                if key.returncode != 0:
+                    raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
+                try:
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired as exc:
+                    raise NativeFailure("Installed app did not quit via graphical Alt+F4") from exc
+        except Exception:
+            # A failed graphical quit stays FAIL, but must not leak a process
+            # or interfere with the installed package uninstall.
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=8)
+            raise
+        finally:
+            self.proc = None
 
 
 def status(report: dict, scenario: str, state: str, reason: str, image: str | None = None):
