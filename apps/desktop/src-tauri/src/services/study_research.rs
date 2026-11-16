@@ -12,7 +12,7 @@ use std::{
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use scriptotar_agent::{
-    Certainty, CheckpointStore, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
+    Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
     ProbeResult, RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor,
     ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
 };
@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn approved_agent_research_persists_effect_and_can_reopen_result() {
-        use scriptotar_agent::RunState;
+        use scriptotar_agent::{CheckpointStore, RunState};
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
         let project;
