@@ -7,6 +7,34 @@
 **Branch:** agent-07/p0-native-webview-qa-20261116  
 **Release decision:** **NO-GO — native graphical certification NOT COMPLETE.** Main and production implementation are untouched.
 
+## Exact-head installed WebView recovery — third native run, 2026-11-16
+
+**Observed run:** [#43897349298](https://github.com/MousaXD/scriptotar/actions/runs/43897349298), source `fc8594d2273c5258a247fa11bc041ac302ab17b2`. Both native acceptance jobs **failed closed**, while [ordinary CI #43897349143](https://github.com/MousaXD/scriptotar/actions/runs/43897349143) and security hygiene **passed** on this same head. Evidence is from **actual installed packages**, not mock or browser preview.
+
+**Linux:** `installed_webview = PASS`. After adding a real Openbox WM, explicit GTK accessibility bridge and deeper AT-SPI traversal, the installed binary produced a **real WebKit document with rendered Scriptotar Studio control**. Xvfb/D-Bus/WebKit instrumented successfully. First genuine interaction failure: `create_switch_projects = FAIL`, because after invoking the New project → Project name → Create project sequence, no accessible heading named `NativeQA-fc8594d2-A` appeared within the selector timeout. The current artifact has only the initial native screenshot, not a post-failure screenshot, so **do not attribute the failure to a product mutation defect yet**. A subsequent commit adds failure-snapshot and AT-SPI tree capture *before* GUI quit. `cleanup_warning` is absent in this run: Openbox graphical quit recovery worked.
+
+- Linux exact-source .deb SHA-256: `98f20dc21d483183ee1e6309731a08b83d0f7e1356050c9ce598382e04ea8f06`
+- Linux installed executable SHA-256: `808544f2aaf3b235dc7f3c78b13d5abb2d3029bc0c5cf1cf2510a2546a6156d4`
+- [Small Linux evidence ZIP](https://github.com/MousaXD/scriptotar/actions/runs/43897349298/artifacts/14239444701) and [full .deb evidence](https://github.com/MousaXD/scriptotar/actions/runs/43897349298/artifacts/14241750374)
+
+**Windows:** The *same Windows hosted runner* confirms an interactive desktop (sessions 2/2), six WebView2 processes, trusted Tauri-owned child HWNDs, and a **genuine UIA Document** on `Chrome_RenderWidgetHostHWND`. However the document is a **localhost network error page** (`ERR_CONNECTION_REFUSED`) and contains no Scriptotar Studio button. The script's original `installed_webview=NOT TESTED` instrument classification was too coarse: this is a **broken installed frontend payload / dev URL product packaging** observation, not absent UIA. The Windows CI job used `cargo build --release --locked -p scriptotar-desktop` followed by `tauri bundle`, i.e. bundled an executable which appears to use `build.devUrl=http://localhost:5173`. The workflow now instead calls the supported `tauri build --bundles nsis -- --locked` so production-mode embedded assets are compiled. Test logic also explicitly reports `FAIL` if a genuine installed UIA document displays `ERR_CONNECTION_REFUSED`. These changes need a **new exact-head rerun** to prove resolution; the previous ZIP cannot prove the fix.
+
+- Windows installed NSIS SHA-256: `a4d3846013e96ba74c2f4a394fe53fce73cf0eb91c343496202144b43415d287`
+- Windows installed executable SHA-256: `14b2eacbacad2121b775135855995e2f3b13bb23b7617846a159b61d43d44144`
+- [Small Windows evidence ZIP](https://github.com/MousaXD/scriptotar/actions/runs/43897349298/artifacts/14240018444) and [full NSIS evidence](https://github.com/MousaXD/scriptotar/actions/runs/43897349298/artifacts/14240467880)
+
+| Installed release-blocking case at `fc8594d` | Linux WebKitGTK | Windows WebView2 |
+|---|---|---|
+| Exact-source package installed with hashes | PASS | PASS |
+| Actual native WebView document and Scriptotar controls | PASS | FAIL (network-error document instead of Scriptotar) |
+| Create two projects, switch both directions | FAIL (new heading not observed) | NOT TESTED |
+| Create Study, edit/save/select three candidates | NOT TESTED | NOT TESTED |
+| Graphical quit/restart and SQLite persistence | NOT TESTED | NOT TESTED |
+| Keyboard navigation/custom controls; Arabic RTL; visual themes | NOT TESTED | NOT TESTED |
+| Revocation, cross-project forged IPC, real multi-source, fault states | NOT TESTED | NOT TESTED |
+
+**Status:** **NO-GO.** Agent 07 has only changed the QA-owned harness, native packaging workflow, diagnostics, tests, handoff and instructions. Agent 00 owns production code and genuine fixture contracts. Neither first-gate accessibility success nor ordinary CI success implies installed Study persistence acceptance.
+
 ## Exact-head diagnostic recovery — second native run, 2026-11-16
 
 **Observed run:** [#43879991872](https://github.com/MousaXD/scriptotar/actions/runs/43879991872), source commit `a233911d7a62ed70320f93b9d25ff3f17399da3e`. Both native jobs **FAILED their release gate**. Actual installation and rendering evidence was obtained, but native accessibility-driven user interaction was **NOT TESTED**.
