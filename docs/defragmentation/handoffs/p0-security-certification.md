@@ -1,3 +1,36 @@
+# Agent 10 — latest completed six-boundary security checkpoint (2026-11-16)
+
+**FINAL RELEASE STATUS: NO-GO.** PR #124 is an independent security regression branch, not a release approval. Audit branch head when this addendum was prepared: `b1d723ab6ac6d0a00e76071142d6df2a269871e8`. The newest sixth `combined-v11` job is authored but has **no completed run at this audit SHA**. Preserve the current test failures and keep paid HTTP dispatch disabled.
+
+## Last completed executable matrix — [run 43896067292](https://github.com/MousaXD/scriptotar/actions/runs/43896067292)
+
+CI audit checkout printed `5c8c2b55886626f56679702b10ec66df3d3a6b99`, from PR #124 source head `02e19dcd6d5202dfa8627708921ebb825e242249`. Results are limited to **the checked-out feature SHA**, not a newer PR commit.
+
+| Boundary | Exact feature SHA | Verdict | Native command, failure/result, owner |
+| --- | --- | --- | --- |
+| Consent, revocation, cancellation, pre-send CAS and unverified receipt no-replay | #118 `d6d738ec84ac6eff1aae26edbd79e44995f2e82b` | **PASS — isolated feature only** | `cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture` (**6 passed**); `cargo test --locked -p scriptotar-ai provider_consent` (**20 passed**); Agent 01, integration Agent 00 |
+| Historical v4/v5 and v10 SQLite upgrades / ledger / rollback | #119 `9da21c96a62d7a041b64500841b89dc6dc649703` | **PASS — effects feature only** | `cargo test --locked -p scriptotar-db`; Agent 02 + Agent 00 |
+| Real canonical candidate store, original independent four tests, source fingerprint, forged lineage, duplicate receipt, rollback | #121 `467023db81985cc5af45bb6f28d93f2fd3fbd7af` | **PASS — isolated feature only** | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture` (**32 passed, 0 failed**); Agent 05 + Agent 00 |
+| Source-origin independence, high-stakes claim safeguards and unbound caller-draft quarantine | #117 `1ffb0fffad71a6fb2980966e1eec106174f543ff` | **PASS — verification feature only** | `python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v`; `cargo test --locked -p scriptotar-ai verification`; Agent 04 + Agent 00 |
+| Full production Tauri shared-host dispatch/paid-effect wiring | #114 `3aeaa922a06504f44aa25d62182a9b9966ebc8ac` | **FAIL — release-blocking** | `bash audit/tests/defragmentation/security/run_feature_gates.sh combined 114`; `test_actual_host_implements_shared_scope_guard_and_authority` **FAIL** (host has no `ScopeDispatchGuard`); `test_actual_host_has_durable_paid_claim_and_pre_send_cas_adapter` **FAIL** (no host `PaidEffectFence` and `mark_dispatched_once`). Provider policy export/registration structural test passed; Agent 00 + Agent 01 + Agent 02 |
+| Native integrated **v11** historical migrations/collision, immutable receipts/version, three-draft atomicity, restart, forged project | newest #114, checkout must be recorded by CI | **NOT TESTED at newest audit SHA** | New independent `combined-v11:114` executes `cargo test --locked -p scriptotar-db` and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture`, with original four and new three adversarial native tests appended to true integration checkout. Agent 00 (owner) + Agent 10 (audit) |
+| Native installed Windows WebView2/Linux WebKitGTK, real provider usage receipt authenticity, secret/log forensics, real egress budgeting and cross-process lock | no certified combined SHA | **NOT TESTED** | Mandatory installed-app and trusted-adapter acceptance; Agent 00 / 01 / 07 / 10 |
+
+## New adversarial test inventory and trust boundaries
+
+- `tests/defragmentation/security/canonical_v11_integrity_tests.rs`: immutable v11 `study_writing_batches` receipt UPDATE/DELETE, first structured `study_writing_revisions` UPDATE/DELETE, foreign-project valid-shape receipt rejection and DB restart/reopen. Runs against true production SQLite tables in **combined-v11 and combined**, never isolated #121 where v11 isn't registered.
+- `test_combined_host_wiring.py`: bounded-failure structural checks for real `ScopeAuthority`, `ScopeDispatchGuard`, durable host `PaidEffectFence::mark_dispatched_once`, exported provider policy and service graph. Full combined job compiles `cargo test --locked -p scriptotar-desktop --lib`. Structural checks are *necessary but insufficient*: they do not prove that every canonical project/Study/source mutator takes one process-wide read/write gate during the outbound send.
+- Existing `provider_context_race.rs` now matches the trusted provider request-ID API, tests held guard/source revocation and single-use consent, and rejects replay after an unauthenticated paid acknowledgement. Zero live requests or credentials used; passing this mock contract is **not** real HTTP billing verification.
+- Separate `combined-v11` gate was added so a missing paid adapter cannot hide data migration or three-draft regressions. Its PASS would **not** override a full `combined` FAIL, and its checks must be verified on one exact-head run.
+
+## Source-level inspection limitations
+
+At #118 `d6d738e`, core provider consent enforces bounded prompt/response/output tokens, requires verified provider request ID and metered usage and denies unknown pricing via `NoTrustedPricing`; reviewed core source showed no explicit print/logger calls in that module. At #114 `772d10b`, production host adapter still selected `NoTrustedPricing`, `DisabledPaidEffectFence`, `ExistingAiServiceAdapter`, with no real shared dispatch guard and no active paid egress. This is a **narrow inspection only**: no global credential grep, installed binary/log forensic scan, live pricing/transport assessment or cross-process lock proof was executed. Do not mark secret leakage or budget bypass fully cleared from this static review.
+
+**Required next owner action:** Agent 00 must compose real shared authorization guard + durable paid-effect CAS adapter with all canonical mutations, keep disabled until bounded authentic receipts and timing are verified, merge the corrected writing fixture into combined source, and obtain green `combined-v11` **and** `combined` at the same final integration SHA. Release stays NO-GO.
+
+---
+
 # Agent 10 — combined-security refresh, 2026-11-16 (latest checkpoint)
 
 **Release decision: NO-GO.** Independent security regressions are now executable in PR #124, but neither the newer audit changes nor the final *combined host* have a passing exact-head run. Keep production paid egress disabled and PR #114 draft. This checkpoint supersedes older current-head tables farther below.
