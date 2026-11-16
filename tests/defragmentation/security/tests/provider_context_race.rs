@@ -115,7 +115,7 @@ fn control_existing_fence_rejection_never_sends() {
     let result = boundary.dispatch(
         &intent, &authority, &Catalog, &RejectingFence, &provider, "fixture-key", 102
     );
-    assert_eq!(result.unwrap_err(), ConsentError::UncertainEffect);
+    assert!(matches!(result, Err(ConsentError::UncertainEffect)));
     assert_eq!(provider.0.load(Ordering::SeqCst), 0);
 }
 
@@ -129,7 +129,7 @@ fn changed_study_after_effect_reservation_must_not_egress() {
     );
     assert!(
         matches!(result, Err(ConsentError::ChangedContext | ConsentError::UncertainEffect | ConsentError::Denied)),
-        "a changed Study after durable claim must fail before any provider egress; got {result:?}"
+        "a changed Study after durable claim must fail before any provider egress"
     );
     assert_eq!(
         provider.0.load(Ordering::SeqCst), 0,
