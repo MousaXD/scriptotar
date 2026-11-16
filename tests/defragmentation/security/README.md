@@ -15,7 +15,8 @@ historical success. The log prints the exact audit and feature commit SHAs.
 | PR #119 — migration | `cargo test --locked -p scriptotar-db` on real SQLite databases | Historical v4/v5 upgrade preservation, v10 schema/ledger, cross-project and crash recovery |
 | PR #121 — writing | Production-path `study_writing.rs` integration tests plus independent appended tests that call `CanonicalSqliteCandidateStore` | Three-draft atomicity, duplicate receipts, tampered payload, stale source fingerprint, forged provenance, model-supported claim quarantine |
 | PR #117 — verification | `scriptotar-ai` verification unit tests + independent host contract | Source-content hashes, independent origin, high-stakes review, model-claim distrust, project/Study isolation, fail-closed unbound canonical draft |
-| PR #114 — combined | **All four groups plus native v11 writing integrity and real host registration checks on the exact integration HEAD** | FAIL if provider is absent, a policy has no central service reference, a host dispatch/effect adapter is missing, or any test fails; no SKIP-as-PASS |
+| PR #114 — combined-v11 | **Real integration SHA, native v11 migration and canonical writing SQLite tests** | Runs even if the paid provider remains disabled; includes receipt/version immutability, historical upgrade/collision rollback, lineage, duplicate and three-draft atomicity. This PASS is NOT full-host certification. |
+| PR #114 — combined | **All four feature groups plus native v11 writing integrity and real host registration checks on exact integration SHA** | FAIL if a guard/paid-effect adapter is absent or any native test fails; no SKIP-as-PASS |
 
 This audit workflow is separate from `ci.yml`; its status must be configured
 as a **required release/integration check** by Agent 00 before final signoff.
@@ -59,6 +60,8 @@ The **three additional native SQLite v11 tests** in
 structured first versions, cross-project forged receipt rejection and reopen
 after process restart. The isolated #121 writing branch deliberately does not
 need to carry Agent 00's v11 migration.
+
+The separate **combined-v11** gate uses the same actual integration checkout but does not require a live paid adapter. The full **combined** gate still fails closed if paid-host authorization is not implemented. Do not equate a v11-only PASS with a release certificate.
 
 The combined host gate copies `test_combined_host_wiring.py` and runs it via
 Python unittest against the real `target/apps/desktop/src-tauri/src` tree;
