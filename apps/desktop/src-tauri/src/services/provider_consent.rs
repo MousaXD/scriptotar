@@ -7,9 +7,9 @@ use super::AppServices;
 use scriptotar_agent::ExecutionContext;
 use scriptotar_ai::{
     provider_consent::{
-        sha256_hex, ConsentBoundary, ConsentError, ConsentPreview, DisabledPaidEffectFence,
-        ActualUsage, ExistingAiServiceAdapter, NoTrustedPricing,
-        PaidEffectFence, ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard, StudyScope,
+        sha256_hex, ActualUsage, ConsentBoundary, ConsentError, ConsentPreview,
+        DisabledPaidEffectFence, ExistingAiServiceAdapter, NoTrustedPricing, PaidEffectFence,
+        ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard, StudyScope,
     },
     ProviderConfig,
 };
@@ -74,11 +74,7 @@ impl AppServices {
     /// Caller MUST own active_project for the entire snapshot. Use the same
     /// lock-free-internal Studio builder as Copy Prompt to avoid recursive
     /// locking and bind the literal excerpt/review content to the digest.
-    fn consent_scope_locked(
-        &self,
-        project: Uuid,
-        study: Uuid,
-    ) -> Result<StudyScope, ConsentError> {
+    fn consent_scope_locked(&self, project: Uuid, study: Uuid) -> Result<StudyScope, ConsentError> {
         let current = self.store.get_study(project, study).map_err(scope_error)?;
         if current.archived_at.is_some() {
             return Err(ConsentError::WrongProjectOrStudy);
@@ -197,8 +193,8 @@ impl SqlitePaidEffectFence {
                     .bytes()
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
         }
-        let project = Uuid::parse_str(&context.project_id)
-            .map_err(|_| ConsentError::WrongProjectOrStudy)?;
+        let project =
+            Uuid::parse_str(&context.project_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
         let study =
             Uuid::parse_str(&context.study_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
         if !digest(approved_fingerprint)
@@ -223,10 +219,7 @@ impl SqlitePaidEffectFence {
             run_id: context.run_id.clone(),
             step_id: context.step_id.clone(),
             idempotency_key: context.idempotency_key.clone(),
-            consent_effect_id: format!(
-                "provider:{}:{}",
-                context.run_id, approved_fingerprint
-            ),
+            consent_effect_id: format!("provider:{}:{}", context.run_id, approved_fingerprint),
             wire_sha256: wire_sha256.to_owned(),
             provider: provider.to_owned(),
             limits,
@@ -256,12 +249,7 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         self.check_effect_id(effect_id)?;
         match self
             .store
-            .reserve_external_effect(
-                self.key(),
-                &self.wire_sha256,
-                &self.provider,
-                self.limits,
-            )
+            .reserve_external_effect(self.key(), &self.wire_sha256, &self.provider, self.limits)
             .map_err(|_| ConsentError::UncertainEffect)?
         {
             ExternalReservation::Fresh(_) => Ok(()),
@@ -307,9 +295,9 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         // until the wire adapter exposes a distinct provider receipt ID.
         if provider_request_id.is_empty()
             || provider_request_id.len() > 128
-            || !provider_request_id.bytes().all(|c| {
-                c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'/' | b':')
-            })
+            || !provider_request_id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'/' | b':'))
             || usage
                 .input_tokens
                 .checked_add(usage.output_tokens)
