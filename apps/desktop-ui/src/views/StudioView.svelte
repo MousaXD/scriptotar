@@ -11,6 +11,8 @@
   import { evidencePromptContext } from '../studio/evidencePrompt';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
+  import StudioAgentReview from '../studio/StudioAgentReview.svelte';
+  import StudioCandidateCompare from '../studio/StudioCandidateCompare.svelte';
 
   export let api: ScriptotarApi;
   export let projectId: string;
@@ -1134,6 +1136,11 @@
       </div>
     </section>
 
+    <section class="panel studio-provider-review">
+      <StudioAgentReview {projectId} study={record} {gateway} prompt={anglePromptSource}
+        dirty={dirty || saving || loading || importingSavedResult} />
+    </section>
+
     {#if historical}
       <section class="panel studio-historical">
         <div class="section-heading"><h2>{historical.result === null ? t.prompt : t.result}: {historical.title}</h2>
@@ -1234,6 +1241,8 @@
             on:click={() => void restoreArchivedDraft()}>{t.restoreDraft}</button>
         </div>
       {/if}
+      <StudioCandidateCompare study={record} {gateway} {projectId}
+        pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
           <button type="button" class:chosen={!previewVersion} on:click={() => previewVersion = null}>{t.currentDraft}</button>
