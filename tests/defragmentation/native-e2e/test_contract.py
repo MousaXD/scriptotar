@@ -13,7 +13,8 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "installed_webview", "create_switch_projects", "create_study",
             "edit_save_duplicate_candidate", "quit_relaunch_persistence",
             "wrong_project_ipc_denial", "multi_source_transcript",
-            "source_revocation", "keyboard_custom_controls", "arabic_rtl",
+            "source_revocation", "keyboard_custom_controls", "arabic_locale_control",
+            "theme_mode_control", "arabic_rtl",
             "light_dark_visual", "windows_webview2",
         ):
             self.assertIn(name, native.CASES)
