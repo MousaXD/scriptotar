@@ -13,7 +13,7 @@ use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
 use super::study_writing::{
-    export_candidate, prepare_three, AtomicCandidateStore, CurrentStudy, GeneratedBatch,
+    export_candidate, lineage_for, prepare_three, AtomicCandidateStore, CurrentStudy, GeneratedBatch,
     GeneratedCandidate, GenerationPlan, VersionedCandidateStore, WriteResult, WritingWorkflowError,
 };
 
@@ -202,6 +202,9 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 .all(|id| evidence_ids.contains(id.as_str()))
             {
                 return Err(denied("unknown angle evidence"));
+            }
+            if candidate.lineage != lineage_for(&batch.context, &candidate.angle, &candidate.draft)? {
+                return Err(denied("incomplete or forged source lineage"));
             }
             for claim in &mut candidate.draft.claims {
                 if !claim
