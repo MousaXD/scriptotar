@@ -867,12 +867,17 @@ fn canonical_three_script_receipt_reopens_and_respects_manual_editor_updates() {
                 .len(),
             1
         );
-        assert_eq!(
-            db.list_draft_source_ids(plan.context.project_id, *id)
-                .unwrap()
-                .len(),
-            3
-        );
+        let linked = db
+            .list_draft_source_ids(plan.context.project_id, *id)
+            .unwrap()
+            .into_iter()
+            .collect::<HashSet<_>>();
+        let cited = batch.candidates[index]
+            .lineage
+            .iter()
+            .map(|line| line.source_id)
+            .collect::<HashSet<_>>();
+        assert_eq!(linked, cited, "candidate must link only its cited sources");
     }
     let edited = db
         .update_draft(
