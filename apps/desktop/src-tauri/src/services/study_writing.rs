@@ -73,7 +73,9 @@ impl StudyWritingContext {
         input: WritingInput,
     ) -> WriteResult<Self> {
         if !matches!(&input.task, WritingTask::ProposeAngles { count: 3 }) {
-            return Err(WritingWorkflowError::InvalidContext("expected three-angle input"));
+            return Err(WritingWorkflowError::InvalidContext(
+                "expected three-angle input",
+            ));
         }
         if canonical_sources
             .iter()
@@ -81,19 +83,20 @@ impl StudyWritingContext {
         {
             return Err(WritingWorkflowError::InvalidContext("foreign source row"));
         }
-        let sources = canonical_sources
-            .iter()
-            .filter(|source| source.available)
-            .take(8)
-            .map(|source| {
-                Ok(SelectedWritingSource {
-                    study_source_id: source.id,
-                    origin_id: source.reference_id.ok_or(
-                        WritingWorkflowError::InvalidContext("unresolved source origin"),
-                    )?,
+        let sources =
+            canonical_sources
+                .iter()
+                .filter(|source| source.available)
+                .take(8)
+                .map(|source| {
+                    Ok(SelectedWritingSource {
+                        study_source_id: source.id,
+                        origin_id: source.reference_id.ok_or(
+                            WritingWorkflowError::InvalidContext("unresolved source origin"),
+                        )?,
+                    })
                 })
-            })
-            .collect::<WriteResult<Vec<_>>>()?;
+                .collect::<WriteResult<Vec<_>>>()?;
         let context = Self {
             project_id,
             study_id,
