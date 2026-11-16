@@ -28,7 +28,7 @@ CASES = (
     "multi_source_transcript", "source_revocation",
     "error_recovery", "keyboard_custom_controls", "arabic_locale_control",
     "theme_mode_control", "arabic_rtl",
-    "light_dark_visual", "windows_webview2",
+    "light_dark_visual",
 )
 
 
