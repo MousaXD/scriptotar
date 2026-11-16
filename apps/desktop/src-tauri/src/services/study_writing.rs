@@ -164,6 +164,14 @@ impl StudyWritingContext {
                     "foreign evidence source",
                 ))?;
             covered.insert(binding.study_source_id);
+            // A disputed/contradicted observation is not an eligible citation
+            // or writing input. The canonical gateway already filters these;
+            // enforce the exclusion again at the workflow boundary.
+            if item.status == EvidenceStatus::Contradicted {
+                return Err(WritingWorkflowError::InvalidContext(
+                    "disputed evidence is not eligible for generation",
+                ));
+            }
             // The existing Study bridge emits only attributed transcripts and
             // unverified human observations. A creator observation cannot become
             // independent corroboration by supplying a different enum variant.
