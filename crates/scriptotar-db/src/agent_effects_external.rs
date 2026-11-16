@@ -480,16 +480,29 @@ impl SqliteStore {
                  revision=revision+1,updated_at=?1 WHERE idempotency_key=?2 AND revision=?3",
                 params![now_rfc3339(),key.idempotency_key,old.revision],
             ).map_err(db_error)?;
-            // Cancellation before provider I/O is *proven* nonapplication,
-            // not a pending effect. Settle the existing v8 fence atomically.
-            let settled=tx.execute(
-                "UPDATE agent_effects SET status='not_applied',revision=revision+1,
-                 updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
-                 AND study_id=?4 AND run_id=?5 AND status='reserved'",
-                params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
-                    key.study.to_string(),key.run_id],
-            ).map_err(db_error)?;
-            if settled!=1 { return Err(conflict("legacy effect fence changed before cancellation")); }
+            // A first-attempt reservation has never gone to the provider.
+            // A prepared retry has *earlier* dispatched history and its v8
+            // Unknown fence must remain blocking even though the retry itself
+            // can be stopped before sending any additional request.
+            if old.attempt==1 {
+                let settled=tx.execute(
+                    "UPDATE agent_effects SET status='not_applied',revision=revision+1,
+                     updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+                     AND study_id=?4 AND run_id=?5 AND status='reserved'",
+                    params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                        key.study.to_string(),key.run_id],
+                ).map_err(db_error)?;
+                if settled!=1 { return Err(conflict("legacy effect fence changed before cancellation")); }
+            } else {
+                let fence:String=tx.query_row(
+                    "SELECT status FROM agent_effects WHERE idempotency_key=?1
+                     AND project_id=?2 AND study_id=?3 AND run_id=?4",
+                    params![key.idempotency_key,key.project.to_string(),
+                        key.study.to_string(),key.run_id],
+                    |r|r.get(0),
+                ).map_err(db_error)?;
+                if fence!="unknown" { return Err(conflict("retry cancellation requires blocked v8 fence")); }
+            }
         } else if matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain)
             && !old.cancel_requested {
             tx.execute(
@@ -788,6 +801,27 @@ mod tests {
         assert!(db.reserve_external_effect(key,fp(),"openai",limits()).is_err());
         assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
     }
+    #[test]
+    fn cancelling_prepared_retry_preserves_prior_dispatched_effect_fence() {
+        let (_dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let first=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,first.revision,1).unwrap();
+        let proven=db.reconcile_external_effect(key,1,ExternalResolution::VerifiedNotExecuted {
+            evidence_id:"provider_confirmed_no_charge",
+        }).unwrap();
+        let retry=db.prepare_external_retry(key,proven.revision).unwrap();
+        assert_eq!(retry.status,ExternalEffectStatus::Reserved);
+        assert_eq!(retry.attempt,2);
+        let cancelled=db.request_external_cancel(key).unwrap();
+        assert_eq!(cancelled.status,ExternalEffectStatus::Cancelled);
+        assert!(cancelled.cancel_requested);
+        assert_eq!(db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap().status,super::super::EffectStatus::Unknown);
+        assert!(db.mark_external_dispatched(key,cancelled.revision,2).is_err());
+        assert!(db.prepare_external_retry(key,cancelled.revision).is_err());
+    }
+
     #[test]
     fn provider_ack_is_durable_unique_and_reconciles_after_restart() {
         let (dir,db,project,study,snap)=setup();
