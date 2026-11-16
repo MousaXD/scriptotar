@@ -32,15 +32,19 @@ def summary(samples: list[float | int | None]) -> dict:
 
 
 def run_trials(executable: Path, package: Path, source_sha: str, mode: str,
-               cache_state: str, count: int, seconds: float, ready_dir: Path) -> dict:
+               cache_state: str, count: int, seconds: float, ready_dir: Path,
+               data_dir: Path) -> dict:
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise ValueError("source SHA must be 40 lowercase hex")
     if mode not in ("cold", "warm") or cache_state not in ("unknown", "warm-cache", "operator-rebooted", "operator-dropped-caches"):
         raise ValueError("invalid mode or declared cache state")
     if not 3 <= count <= 30 or not 1 <= seconds <= 180:
         raise ValueError("3..30 trials, 1..180 seconds required")
-    if not executable.is_file() or not package.is_file() or not ready_dir.is_dir():
-        raise ValueError("installed executable, package and ready directory must exist")
+    if not executable.is_file() or not package.is_file() or not ready_dir.is_dir() or not data_dir.is_dir():
+        raise ValueError("installed executable, package, ready directory and isolated data directory must exist")
+    sentinel = data_dir / ".scriptotar-benchmark-only"
+    if data_dir.resolve() == Path.home().resolve() or not sentinel.is_file() or sentinel.read_text(encoding="utf-8").strip() != "SYNTHETIC_ONLY":
+        raise ValueError("isolated data directory must contain .scriptotar-benchmark-only with SYNTHETIC_ONLY")
     if mode == "cold" and cache_state == "warm-cache":
         raise ValueError("cannot label warm-cache trials cold")
     if mode == "warm" and cache_state in ("operator-rebooted", "operator-dropped-caches"):
@@ -54,7 +58,9 @@ def run_trials(executable: Path, package: Path, source_sha: str, mode: str,
         command = [sys.executable, str(Path(__file__).with_name("native_session.py")),
                    "--executable", str(executable), "--source-sha", source_sha,
                    "--trial", mode, "--seconds", str(seconds), "--ready-file", str(ready)]
-        complete = subprocess.run(command, capture_output=True, text=True, check=True)
+        env = dict(os.environ)
+        env["SCRIPTOTAR_DATA_DIR"] = str(data_dir.resolve())
+        complete = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
         trial = json.loads(complete.stdout)
         # Existing sampler reports only process observations and operator marker.
         # Never upgrade that claim to native GUI certification.
@@ -74,6 +80,7 @@ def run_trials(executable: Path, package: Path, source_sha: str, mode: str,
         "source_sha_operator_supplied": source_sha,
         "package_path": str(package.resolve()), "package_sha256": sha256(package),
         "executable_path": str(executable.resolve()), "executable_sha256": sha256(executable),
+        "isolated_data_dir": str(data_dir.resolve()),
         "platform": platform.platform(), "cpu": platform.processor() or "unknown",
         "cpu_logical_count": os.cpu_count(), "system_ram_bytes": total_mem_kib * 1024 if total_mem_kib else None,
         "cache_mode_operator_declared": mode, "cache_state_operator_declared": cache_state,
@@ -98,12 +105,13 @@ def main() -> None:
     parser.add_argument("--trials", type=int, default=5)
     parser.add_argument("--seconds", type=float, default=30)
     parser.add_argument("--ready-dir", type=Path, required=True)
+    parser.add_argument("--data-dir", type=Path, required=True, help="Isolated benchmark-only SCRIPTOTAR_DATA_DIR with sentinel")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if not args.output.parent.is_dir() or args.output.exists():
         parser.error("report parent must exist and file must not exist")
     report = run_trials(args.executable, args.package, args.source_sha, args.mode,
-                        args.cache_state, args.trials, args.seconds, args.ready_dir)
+                        args.cache_state, args.trials, args.seconds, args.ready_dir, args.data_dir)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(f"Process-only report: {args.output}")
 
