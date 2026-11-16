@@ -438,12 +438,31 @@ impl SqliteStore {
                  revision=revision+1,updated_at=?1 WHERE idempotency_key=?2 AND revision=?3",
                 params![now_rfc3339(),key.idempotency_key,old.revision],
             ).map_err(db_error)?;
+            // Cancellation before provider I/O is *proven* nonapplication,
+            // not a pending effect. Settle the existing v8 fence atomically.
+            let settled=tx.execute(
+                "UPDATE agent_effects SET status='not_applied',revision=revision+1,
+                 updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+                 AND study_id=?4 AND run_id=?5 AND status='reserved'",
+                params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                    key.study.to_string(),key.run_id],
+            ).map_err(db_error)?;
+            if settled!=1 { return Err(conflict("legacy effect fence changed before cancellation")); }
         } else if matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain)
             && !old.cancel_requested {
             tx.execute(
                 "UPDATE agent_external_effects SET cancel_requested=1,revision=revision+1,
                  updated_at=?1 WHERE idempotency_key=?2 AND revision=?3",
                 params![now_rfc3339(),key.idempotency_key,old.revision],
+            ).map_err(db_error)?;
+            // A dispatched cancellation request does not prove a provider stop.
+            // Preserve the pending/uncertain fence until a verified receipt.
+            tx.execute(
+                "UPDATE agent_effects SET status='unknown',revision=revision+1,
+                 updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+                 AND study_id=?4 AND run_id=?5 AND status='reserved'",
+                params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                    key.study.to_string(),key.run_id],
             ).map_err(db_error)?;
         } else if matches!(old.status,ExternalEffectStatus::Completed
             | ExternalEffectStatus::Failed | ExternalEffectStatus::NotExecuted) {
@@ -667,6 +686,8 @@ mod tests {
         reserve(&db,&snap,project,study);
         let cancelled=db.request_external_cancel(key).unwrap();
         assert_eq!(cancelled.status,ExternalEffectStatus::Cancelled);
+        assert_eq!(db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap().status,super::super::EffectStatus::NotApplied);
         assert!(db.mark_external_dispatched(key,cancelled.revision,1).is_err());
         // A separate run models cancellation after a dispatch marker.
         let (_dir2,db2,p2,s2,run2)=setup();
@@ -676,6 +697,8 @@ mod tests {
         let pending=db2.request_external_cancel(key2).unwrap();
         assert_eq!(pending.status,ExternalEffectStatus::Dispatched);
         assert!(pending.cancel_requested);
+        assert_eq!(db2.get_agent_effect(p2,s2,&run2.plan.id,key2.idempotency_key)
+            .unwrap().unwrap().status,super::super::EffectStatus::Unknown);
         assert!(db2.mark_external_dispatched(key2,pending.revision,1).is_err());
         let settled=db2.reconcile_external_effect(key2,1,
             ExternalResolution::ProviderCancelled {evidence_id:"provider_cancel_1"}).unwrap();
