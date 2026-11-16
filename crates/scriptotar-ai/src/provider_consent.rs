@@ -558,28 +558,54 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::Denied);
         }
-        // Irrevocable pending paid-effect attempt. The same per-run lock is
-        // retained through guard acquisition, dispatch CAS and actual send.
-        record.decision = Decision::Uncertain;
+        // Waiting on the host's authorization gate must NOT hold the per-run
+        // consent mutex. Cancellation can linearize before the final durable
+        // dispatch CAS even if another host mutation holds that gate.
+        drop(record);
 
         // Agent 10's regression changes the Study inside reserve_once. This
-        // re-read catches that specific transition; it is NOT our concurrency
-        // boundary, because a revocation could otherwise occur just after it.
-        if let Err(error) = validate_context(&record.intent.scope, authority) {
+        // re-read catches that specific transition; the exclusive guard below
+        // is still the required pre-egress concurrency boundary.
+        if let Err(error) = validate_context(&intent.scope, authority) {
             fence.mark_uncertain(&effect_id);
+            if let Ok(mut pending) = consent.lock() {
+                if pending.decision == Decision::Reserving {
+                    pending.decision = Decision::Uncertain;
+                }
+            }
             return Err(error);
         }
 
-        // This guard MUST be shared by all project/Study/source mutations and
-        // revocations. It remains held through generate_once, so a revocation
-        // cannot linearize before a subsequently started HTTP send.
-        let scope_guard = match authority.lock_dispatch_scope(&record.intent.scope) {
+        // All project/Study/source mutations and revocations must acquire this
+        // SAME gate. Do not hold a SQLite write transaction during HTTP I/O.
+        let scope_guard = match authority.lock_dispatch_scope(&intent.scope) {
             Ok(guard) => guard,
+            Err(_) => {
+                fence.mark_uncertain(&effect_id);
+                if let Ok(mut pending) = consent.lock() {
+                    if pending.decision == Decision::Reserving {
+                        pending.decision = Decision::Uncertain;
+                    }
+                }
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+
+        // Reacquire consent only after the authoritative guard. A cancel that
+        // won while the gate was blocked must prevent both the pre-send CAS
+        // and network I/O. Retain the lock from this point through the send.
+        let mut record = match consent.lock() {
+            Ok(record) => record,
             Err(_) => {
                 fence.mark_uncertain(&effect_id);
                 return Err(ConsentError::UncertainEffect);
             }
         };
+        if record.decision != Decision::Reserving {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::Denied);
+        }
+        record.decision = Decision::Uncertain;
         if scope_guard.scope() != &record.intent.scope
             || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
         {
@@ -1448,6 +1474,74 @@ mod tests {
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103),
             Err(ConsentError::Denied)
         ));
+    }
+
+    #[test]
+    fn cancellation_while_authorization_gate_is_blocked_prevents_dispatch_cas() {
+        use std::sync::mpsc;
+
+        // Models a host mutation owning the common scope gate while a
+        // reservation has completed but the dispatch guard is still blocked.
+        struct WaitingGateAuthority {
+            scope: StudyScope,
+            entered: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+        }
+        impl ScopeAuthority for WaitingGateAuthority {
+            fn current_scope(
+                &self,
+                project_id: &str,
+                study_id: &str,
+            ) -> Result<StudyScope, ConsentError> {
+                if project_id != self.scope.project_id || study_id != self.scope.study_id {
+                    return Err(ConsentError::WrongProjectOrStudy);
+                }
+                Ok(self.scope.clone())
+            }
+
+            fn lock_dispatch_scope(
+                &self,
+                _scope: &StudyScope,
+            ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+                self.entered.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                Ok(Box::new(FrozenGuard(&self.scope)))
+            }
+        }
+
+        let (intent, _) = fixture();
+        let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let authority = WaitingGateAuthority {
+            scope: intent.scope.clone(),
+            entered: entered_tx,
+            resume: Mutex::new(resume_rx),
+        };
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let fence = Fence::default();
+        let provider = Runner::default();
+        std::thread::scope(|scope| {
+            let attempt = scope.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 102)
+            });
+            // The dispatch has reserved its effect and is waiting to acquire
+            // the authoritative host scope gate. Cancel MUST return now,
+            // without waiting on the held gate or the HTTP provider.
+            entered_rx.recv().unwrap();
+            boundary.cancel(&intent.run_id).unwrap();
+            resume_tx.send(()).unwrap();
+            assert!(matches!(attempt.join().unwrap(), Err(ConsentError::Denied)));
+        });
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.settled.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
+        assert_eq!(fence.claims.lock().unwrap().len(), 1);
     }
 
     #[test]
