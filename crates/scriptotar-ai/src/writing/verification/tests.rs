@@ -412,7 +412,6 @@ fn model_supplied_json_fixture_is_not_an_authorized_review_or_source() {
     assert!(has(&result, FindingCode::ConsequentialHumanReviewRequired));
 }
 
-
 #[test]
 fn repeated_claim_identifier_blocks_every_occurrence_including_the_first() {
     let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
