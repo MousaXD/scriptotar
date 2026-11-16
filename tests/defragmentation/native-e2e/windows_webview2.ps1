@@ -232,6 +232,14 @@ try {
   $stopwatch.Stop()
   $readiness.elapsed_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds,1)
   $report.readiness = $readiness
+  # WebView2 may have failed to spawn/render even though the Tauri shell exists.
+  # Record child process ancestry, not command lines or unrelated user data.
+  $report.webview2_processes = @(
+    Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.SessionId -eq $proc.SessionId } |
+      Select-Object ProcessId,ParentProcessId,SessionId
+  )
+  $report.webview2_process_count_in_session = @($report.webview2_processes).Count
   Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
   $report.uia_diagnostics = 'uia-diagnostics.json'
   Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'unverified-window.png')
