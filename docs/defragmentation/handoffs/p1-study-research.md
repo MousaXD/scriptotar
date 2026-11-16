@@ -38,3 +38,16 @@ Pure-crate tests authored: exact Study/source project ID refusal, duplicate IDs,
 2. The local JSON report store lives next to the SQLite database under `study-research-reports/`. Before shipping, confirm backup, deletion/retention and profile migration policy; no P2 scheduler or background collection is enabled.
 3. Exact research URL equivalences are not guessed. Transcript-only sources are represented by their real transcript UUID, never by a fabricated research item ID.
 4. No frame detection, platform bypass, unsupported source type, automatic posting or paid-provider execution. The main integration PR remains **DRAFT / NO-GO** until independent review, nine exact-head workflows and installed native QA.
+
+
+## 2026-11-16 follow-up hardening
+
+- Newly generated reports include `StudySourceFinding.origin_revision` derived from the original `research_items.scanned_at` or `transcripts.updated_at`. Reading a saved report now fails closed if its canonical origin was edited, deleted, detached, or its recorded revision no longer matches; this prevents silently presenting stale excerpts as current. **These timestamps are revision indicators, not cryptographic source-content attestations**; Agent 04 still needs authenticated content hashes and independent claims review.
+- The exported `read_study_research_artifact` now requires an **Applied** v8 `AnalyzeEvidence` receipt with the matching run, step, idempotency key and exact artifact UUID. A standalone JSON file or an unsettled claim is not user-visible success. The driver-only reconciliation path may read a reserved already-persisted file without executing another tool.
+- The preapproval gate requires an active project and Study with the selected exact StudySource IDs of `research_item` or `transcript`; manual/unattached/foreign sources are refused. Retrieved platform counts are explicitly labeled **stored metadata only**, not a fresh availability or live performance check.
+- Additional tests: wrong-Study / access-denied / revoked / unsupported statuses, mixed research+transcript sources, historical snapshot invalidation and missing ledger receipt. A host-level approval → v8 receipt → local JSON → restart/reopen test is authored in the unregistered adapter.
+- **Verification:** the previous head `56ee14b7` passed seven available GitHub Actions workflows on the same SHA; newer hardening commits require their own exact-head CI. Even a green workspace build does **not** compile `services/study_research.rs` until Agent 00 registers it. No native GUI or external platform acceptance is claimed.
+
+### Additional Agent 00 integration requirement
+
+After adding `mod study_research;` and wiring an approved `AnalyzeEvidence` run, execute the adapter's new host tests and confirm that the persisted effect receipt is required for user-facing report reads; the `probe` path must reconcile only already-present local artifacts, never rerun a missing reserved effect. Ensure canonical transcript revisions change on every text/segment edit; provider source snapshots and future authenticated hashes remain distinct. Confirm local report file retention, backup and deletion behavior before release.
