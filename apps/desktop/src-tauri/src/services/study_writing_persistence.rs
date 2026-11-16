@@ -13,7 +13,7 @@ use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
 use super::study_writing::{
-    export_candidate, AtomicCandidateStore, CurrentStudy, GeneratedBatch, WriteResult,
+    export_candidate, AtomicCandidateStore, CurrentStudy, GeneratedBatch, GeneratedCandidate,\n    VersionedCandidateStore, WriteResult,
     WritingWorkflowError,
 };
 
@@ -29,6 +29,23 @@ CREATE TABLE study_writing_batches (
     draft_ids_json TEXT NOT NULL CHECK(json_valid(draft_ids_json)),
     committed_at TEXT NOT NULL
 );
+-- Each independently saved revision gets a matching structured copy.
+-- If a manual Studio edit creates an unstructured draft version, targeted
+-- AI revision MUST fail closed instead of quietly replacing that user's text.
+CREATE TABLE study_writing_revisions (
+    draft_id TEXT NOT NULL REFERENCES creative_drafts(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version >= 1),
+    structured_json TEXT NOT NULL CHECK(json_valid(structured_json) AND length(structured_json) <= 1000000),
+    PRIMARY KEY(draft_id, version)
+);
+CREATE TRIGGER study_writing_revisions_immutable_update
+    BEFORE UPDATE ON study_writing_revisions
+    BEGIN SELECT RAISE(ABORT, 'structured revision is immutable'); END;
+CREATE TRIGGER study_writing_revisions_immutable_delete
+    BEFORE DELETE ON study_writing_revisions
+    WHEN EXISTS (SELECT 1 FROM creative_drafts WHERE id=OLD.draft_id)
+    BEGIN SELECT RAISE(ABORT, 'structured revision is immutable'); END;
+
 CREATE INDEX idx_study_writing_batches_scope
     ON study_writing_batches(project_id, study_id, committed_at);
 CREATE TRIGGER study_writing_batches_immutable_update
@@ -334,6 +351,13 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 params![Uuid::new_v4().to_string(), id.to_string(), title, body, now],
             )
             .map_err(error)?;
+            tx.execute(
+                "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+                 VALUES(?1,1,?2)",
+                params![id.to_string(),
+                    serde_json::to_string(candidate)
+                        .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?],
+            ).map_err(error)?;
             for source in &batch.context.sources {
                 tx.execute(
                     "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
@@ -366,5 +390,138 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         .map_err(error)?;
         tx.commit().map_err(error)?;
         Ok(ids)
+    }
+}
+
+
+/// A targeted model suggestion may only revise the named, still-current
+/// narration. The rest of the editor's body is preserved byte for byte.
+/// Normal Studio edits still own their versions; when they create a version
+/// without structured revision metadata, the agent must ask for a new review.
+impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<'_, C> {
+    fn save_revision(
+        &mut self,
+        context: &super::study_writing::StudyWritingContext,
+        canonical_draft_id: Uuid,
+        expected_draft_revision: i64,
+        previous_beat_text: &str,
+        beat_id: &str,
+        reviewed: &GeneratedCandidate,
+    ) -> WriteResult<i64> {
+        context.validate()?;
+        if canonical_draft_id.is_nil()
+            || expected_draft_revision < 1
+            || beat_id.trim().is_empty()
+            || previous_beat_text.trim().is_empty()
+            || previous_beat_text.chars().count() > 4000
+        {
+            return Err(denied("invalid targeted revision"));
+        }
+        let mut db = Connection::open(self.store.path()).map_err(error)?;
+        db.pragma_update(None, "foreign_keys", true).map_err(error)?;
+        db.busy_timeout(Duration::from_secs(5)).map_err(error)?;
+        let tx = db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(error)?;
+        let (body, title, snapshot): (String, String, String) = tx.query_row(
+            "SELECT d.body,d.title,r.structured_json
+             FROM creative_drafts d
+             JOIN study_writing_revisions r
+               ON r.draft_id=d.id AND r.version=d.revision
+             JOIN content_studies s ON s.id=d.study_id AND s.project_id=d.project_id
+             JOIN projects p ON p.id=d.project_id
+             WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3
+               AND d.revision=?4 AND d.archived_at IS NULL
+               AND s.archived_at IS NULL AND p.archived_at IS NULL",
+            params![canonical_draft_id.to_string(), context.project_id.to_string(),
+                    context.study_id.to_string(), expected_draft_revision],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).optional().map_err(error)?
+            .ok_or(WritingWorkflowError::StaleContext)?;
+        if self.current.load(context.project_id, context.study_id)? != *context {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let original: GeneratedCandidate = serde_json::from_str(&snapshot)
+            .map_err(|_| WritingWorkflowError::PersistFailed("corrupt structured revision".into()))?;
+        let position = original.draft.beats.iter()
+            .position(|beat| beat.id == beat_id)
+            .ok_or(denied("beat not in current version"))?;
+        let before = &original.draft.beats[position];
+        if before.narration != previous_beat_text || before.manually_edited {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        if reviewed.angle != original.angle
+            || reviewed.draft.id != original.draft.id
+            || reviewed.draft.angle_id != original.draft.angle_id
+            || reviewed.draft.language != original.draft.language
+            || reviewed.draft.title != original.draft.title
+            || reviewed.draft.beats.len() != original.draft.beats.len()
+            || reviewed.draft.beats[position].id != beat_id
+        {
+            return Err(denied("revision changes identity or other fields"));
+        }
+        let replacement = &reviewed.draft.beats[position].narration;
+        if replacement.trim().is_empty()
+            || replacement.chars().count() > 4000
+            || replacement == previous_beat_text
+        {
+            return Err(denied("empty or unchanged revision"));
+        }
+        // The typed writing primitive clears claims/citations made stale by
+        // changed narration, and preserves all other beats. Verify that exact
+        // transformation rather than trusting arbitrary model-provided JSON.
+        let mut expected = original.draft.clone();
+        expected.beats[position].narration.clone_from(replacement);
+        expected.beats[position].evidence_ids.clear();
+        for claim in &mut expected.claims {
+            if claim.beat_id == beat_id {
+                claim.status = ClaimStatus::Unverified;
+                claim.evidence_ids.clear();
+            }
+        }
+        if reviewed.draft != expected {
+            return Err(denied("revision modified untouched beats or citation statuses"));
+        }
+        if body.matches(previous_beat_text).count() != 1 {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let next_body = body.replacen(previous_beat_text, replacement, 1);
+        if next_body.chars().count() > 2_000_000 {
+            return Err(denied("updated body exceeds canonical bound"));
+        }
+        let next = expected_draft_revision + 1;
+        let now = now_rfc3339();
+        let changed = tx.execute(
+            "UPDATE creative_drafts SET body=?1,revision=?2,updated_at=?3
+             WHERE id=?4 AND project_id=?5 AND study_id=?6 AND revision=?7",
+            params![next_body, next, now, canonical_draft_id.to_string(),
+                    context.project_id.to_string(), context.study_id.to_string(),
+                    expected_draft_revision],
+        ).map_err(error)?;
+        if changed != 1 {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        tx.execute(
+            "INSERT INTO draft_versions(id,draft_id,version,title,body,saved_at)
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![Uuid::new_v4().to_string(), canonical_draft_id.to_string(),
+                    next, title, next_body, now],
+        ).map_err(error)?;
+        let mut saved = reviewed.clone();
+        for claim in &mut saved.draft.claims {
+            if claim.status == ClaimStatus::Supported {
+                claim.status = ClaimStatus::Unverified;
+            }
+        }
+        for finding in &mut saved.review_findings {
+            finding.needs_human_review = true;
+        }
+        tx.execute(
+            "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+             VALUES(?1,?2,?3)",
+            params![canonical_draft_id.to_string(), next,
+                    serde_json::to_string(&saved)
+                        .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?],
+        ).map_err(error)?;
+        tx.commit().map_err(error)?;
+        Ok(next)
     }
 }
