@@ -1248,3 +1248,43 @@ fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
     assert_eq!(gate.step_response.len(), 3, "previous paid receipts remain");
     assert_eq!(sink.count(), 0);
 }
+
+#[test]
+fn canonical_concurrent_same_run_commits_only_three_drafts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, _current, batch) = canonical_batch_fixture();
+    let path = db.path().to_path_buf();
+    let context = plan.context.clone();
+    // Two separate database handles compete for the same run under BEGIN IMMEDIATE.
+    // The loser must observe the committed receipt, not create another batch.
+    let results = std::thread::scope(|threads| {
+        let launch = |batch: GeneratedBatch, context: StudyWritingContext| {
+            let path = path.clone();
+            threads.spawn(move || {
+                let reopened = scriptotar_db::SqliteStore::open(path).unwrap();
+                let live = study_writing::FixedStudy(&context);
+                let mut sink = CanonicalSqliteCandidateStore {
+                    store: &reopened,
+                    current: &live,
+                };
+                sink.commit_three(&batch)
+            })
+        };
+        let first = launch(batch.clone(), context.clone());
+        let second = launch(batch, context);
+        [first.join().unwrap().unwrap(), second.join().unwrap().unwrap()]
+    });
+    assert_eq!(results[0], results[1]);
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        2
+    );
+}
