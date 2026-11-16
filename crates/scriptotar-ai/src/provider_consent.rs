@@ -177,7 +177,15 @@ pub trait PaidEffectFence: Send + Sync {
         Err(ConsentError::EffectFenceUnavailable)
     }
 
-    fn settle(&self, effect_id: &str, usage: &ActualUsage) -> Result<(), ConsentError>;
+    /// Persist the authenticated provider request ID with metered usage.
+    /// Never persist prompt text, credentials or provider response bodies.
+    /// A failed acknowledgement/settlement is uncertain and must not replay.
+    fn settle(
+        &self,
+        effect_id: &str,
+        provider_request_id: &str,
+        usage: &ActualUsage,
+    ) -> Result<(), ConsentError>;
     fn mark_uncertain(&self, effect_id: &str);
 }
 
@@ -187,7 +195,12 @@ impl PaidEffectFence for DisabledPaidEffectFence {
         Err(ConsentError::EffectFenceUnavailable)
     }
 
-    fn settle(&self, _effect_id: &str, _usage: &ActualUsage) -> Result<(), ConsentError> {
+    fn settle(
+        &self,
+        _effect_id: &str,
+        _provider_request_id: &str,
+        _usage: &ActualUsage,
+    ) -> Result<(), ConsentError> {
         Err(ConsentError::EffectFenceUnavailable)
     }
 
@@ -728,7 +741,10 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UsageOverBudget);
         }
-        if fence.settle(&effect_id, &usage).is_err() {
+        if fence
+            .settle(&effect_id, &generated.provider_request_id, &usage)
+            .is_err()
+        {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
@@ -796,6 +812,7 @@ mod tests {
     #[derive(Default)]
     struct Fence {
         claims: Mutex<Vec<String>>,
+        receipts: Mutex<Vec<String>>,
         settled: AtomicUsize,
         uncertain: AtomicUsize,
     }
@@ -813,7 +830,13 @@ mod tests {
             Ok(())
         }
 
-        fn settle(&self, _id: &str, _usage: &ActualUsage) -> Result<(), ConsentError> {
+        fn settle(
+            &self,
+            _id: &str,
+            provider_request_id: &str,
+            _usage: &ActualUsage,
+        ) -> Result<(), ConsentError> {
+            self.receipts.lock().unwrap().push(provider_request_id.into());
             self.settled.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -1046,6 +1069,10 @@ mod tests {
             .dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103)
             .unwrap();
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fence.receipts.lock().unwrap().as_slice(),
+            &["fixture-request-id"]
+        );
         assert!(matches!(
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 104),
             Err(ConsentError::AlreadyUsed)
@@ -1138,7 +1165,7 @@ mod tests {
             fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
                 Err(ConsentError::UncertainEffect)
             }
-            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 Err(ConsentError::UncertainEffect)
             }
             fn mark_uncertain(&self, _: &str) {}
@@ -1327,7 +1354,7 @@ mod tests {
                 self.dispatched.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 Ok(())
             }
             fn mark_uncertain(&self, _: &str) {
@@ -1468,7 +1495,7 @@ mod tests {
             fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
                 Ok(())
             }
-            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 Ok(())
             }
             fn mark_uncertain(&self, _: &str) {}
@@ -1528,7 +1555,7 @@ mod tests {
                 self.dispatched.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 Ok(())
             }
             fn mark_uncertain(&self, _: &str) {
@@ -1697,7 +1724,7 @@ mod tests {
                 self.dispatched.fetch_add(1, Ordering::SeqCst);
                 Ok(())
             }
-            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 Ok(())
             }
             fn mark_uncertain(&self, _: &str) {
