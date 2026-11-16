@@ -1358,7 +1358,6 @@ mod tests {
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
     }
 
-
     #[test]
     fn consent_expiring_inside_reserved_effect_never_starts_a_late_send() {
         use std::sync::mpsc;
@@ -1450,7 +1449,10 @@ mod tests {
             reached_rx.recv().unwrap();
             authority.now.store(20_000, Ordering::SeqCst);
             resume_tx.send(()).unwrap();
-            assert!(matches!(attempt.join().unwrap(), Err(ConsentError::Expired)));
+            assert!(matches!(
+                attempt.join().unwrap(),
+                Err(ConsentError::Expired)
+            ));
         });
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
         assert_eq!(fence.dispatched.load(Ordering::SeqCst), 0);
