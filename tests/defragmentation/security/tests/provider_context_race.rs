@@ -196,3 +196,120 @@ fn concurrent_source_revocation_before_effect_permit_never_egresses() {
     ));
     assert_eq!(provider.0.load(Ordering::SeqCst), 0);
 }
+
+/// A fully functional test authority: unlike the fail-closed default, it
+/// enforces the identical read/write gate on scope reads and mutations.
+struct GuardAuthority(std::sync::RwLock<StudyScope>);
+struct HeldGuard<'a>(std::sync::RwLockReadGuard<'a, StudyScope>);
+impl scriptotar_ai::provider_consent::ScopeDispatchGuard for HeldGuard<'_> {
+    fn scope(&self) -> &StudyScope { &self.0 }
+}
+impl ScopeAuthority for GuardAuthority {
+    fn current_scope(&self, project: &str, study: &str) -> Result<StudyScope, ConsentError> {
+        let scope = self.0.read().unwrap().clone();
+        if scope.project_id != project || scope.study_id != study {
+            return Err(ConsentError::WrongProjectOrStudy);
+        }
+        Ok(scope)
+    }
+    fn lock_dispatch_scope(
+        &self, approved: &StudyScope,
+    ) -> Result<Box<dyn scriptotar_ai::provider_consent::ScopeDispatchGuard + '_>, ConsentError> {
+        let guard = self.0.read().unwrap();
+        if &*guard != approved { return Err(ConsentError::ChangedContext); }
+        Ok(Box::new(HeldGuard(guard)))
+    }
+}
+
+#[derive(Default)]
+struct DispatchedFence {
+    reservations: AtomicUsize,
+    dispatches: AtomicUsize,
+    receipts: AtomicUsize,
+}
+impl PaidEffectFence for DispatchedFence {
+    fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+        self.reservations.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+        self.dispatches.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+        self.receipts.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn mark_uncertain(&self, _: &str) {}
+}
+
+struct PausedProvider<'a> {
+    entered: &'a std::sync::Barrier,
+    release: &'a std::sync::Barrier,
+    sent: &'a AtomicUsize,
+}
+impl BoundedProvider for PausedProvider<'_> {
+    fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
+    fn generate_once(
+        &self, _: &ProviderConfig, _: &str, _: &AiRequest, _: u64, _: u64,
+    ) -> Result<MeteredReply, ConsentError> {
+        self.sent.fetch_add(1, Ordering::SeqCst);
+        self.entered.wait();
+        self.release.wait();
+        Ok(MeteredReply {
+            text: "bounded test receipt".into(),
+            usage: ActualUsage {
+                input_tokens: 10, output_tokens: 10,
+                tool_calls: 1, elapsed_ms: 10, cost_microusd: 0,
+            },
+        })
+    }
+}
+
+#[test]
+fn valid_guarded_dispatch_blocks_concurrent_revocation_until_send_finishes() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let entered = std::sync::Barrier::new(2);
+    let release = std::sync::Barrier::new(2);
+    let calls = AtomicUsize::new(0);
+    let provider = PausedProvider { entered: &entered, release: &release, sent: &calls };
+    let fence = DispatchedFence::default();
+    std::thread::scope(|threads| {
+        let revoke = threads.spawn(|| {
+            entered.wait();
+            // Network send has begun; the scoped read lock must prevent a
+            // source revocation from linearizing until that attempt finishes.
+            assert!(matches!(
+                authority.0.try_write(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            release.wait();
+            authority.0.write().unwrap().material_digest = "b".repeat(64);
+        });
+        let result = boundary.dispatch(
+            &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 102
+        );
+        assert!(result.is_ok(), "a valid, fenced request must still be executable");
+        revoke.join().unwrap();
+    });
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.reservations.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.receipts.load(Ordering::SeqCst), 1);
+    assert_eq!(authority.0.read().unwrap().material_digest, "b".repeat(64));
+}
+
+#[test]
+fn missing_shared_authority_guard_fails_closed_even_with_valid_fence() {
+    let (boundary, intent, authority) = approval();
+    let provider = CountingProvider::default();
+    let fence = DispatchedFence::default();
+    assert!(matches!(
+        boundary.dispatch(&intent, &authority, &Catalog, &fence,
+            &provider, "fixture-key", 102),
+        Err(ConsentError::UncertainEffect | ConsentError::EffectFenceUnavailable)
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 0);
+}
