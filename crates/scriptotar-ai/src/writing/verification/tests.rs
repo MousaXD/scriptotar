@@ -411,3 +411,56 @@ fn model_supplied_json_fixture_is_not_an_authorized_review_or_source() {
     assert!(has(&result, FindingCode::ModelPromotionAttempt));
     assert!(has(&result, FindingCode::ConsequentialHumanReviewRequired));
 }
+
+
+#[test]
+fn repeated_claim_identifier_blocks_every_occurrence_including_the_first() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Verified);
+
+    let report = verify_claims(&ctx, &[claim.clone(), claim]);
+    assert_eq!(report.claims.len(), 2);
+    assert!(report.claims.iter().all(|result| {
+        result.status == VerificationStatus::Blocked && has(result, FindingCode::InvalidClaim)
+    }));
+    assert!(report.publication_review_required);
+}
+
+#[test]
+fn extra_unassessed_citation_cannot_be_laundered_by_two_good_sources() {
+    let mut ctx = scope(vec![
+        source("a", "publisher-a"),
+        source("b", "publisher-b"),
+        source("c", "publisher-c"),
+    ]);
+    ctx.evidence[2].relation = EvidenceRelation::Unassessed;
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    let result = evaluated(&ctx, &claim);
+    assert_eq!(result.status, VerificationStatus::Unverified);
+    assert!(has(&result, FindingCode::UnassessedCitation));
+
+    ctx.evidence[2].relation = EvidenceRelation::Supports;
+    ctx.evidence[2].state = EvidenceState::Unreviewed;
+    let result = evaluated(&ctx, &claim);
+    assert_eq!(result.status, VerificationStatus::Unverified);
+    assert!(has(&result, FindingCode::UnassessedCitation));
+}
+
+#[test]
+fn human_review_preceding_evidence_collection_cannot_certify_a_fact() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Verified);
+
+    // All citation IDs, quotes and source revisions remain unchanged.
+    // It is still impossible for the recorded review to attest content
+    // collected later than its own immutable timestamp.
+    ctx.evidence[1].collected_at_epoch = Some(200);
+    let result = evaluated(&ctx, &claim);
+    assert_eq!(result.status, VerificationStatus::Unverified);
+    assert!(has(&result, FindingCode::InvalidReviewLineage));
+}
