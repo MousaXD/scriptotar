@@ -225,7 +225,7 @@ try {
       if ($probe.studio) { $readiness.studio_control_seen = $true }
       if ($probe.document -and $probe.studio) { break }
     } catch {
-      $readiness.last_provider_exception = $_.Exception.Message
+      $readiness['last_provider_exception'] = $_.Exception.Message
     }
   }
   $stopwatch.Stop()
