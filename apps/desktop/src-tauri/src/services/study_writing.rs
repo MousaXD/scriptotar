@@ -709,7 +709,10 @@ pub fn export_candidate(candidate: &GeneratedCandidate) -> String {
     if !candidate.audit.advisories.is_empty() {
         text.push_str("\n## Writing quality advisories (not factual verification)\n");
         for advisory in &candidate.audit.advisories {
-            text.push_str(&format!("- {:?}: {}\n", advisory.level, advisory.description));
+            text.push_str(&format!(
+                "- {:?}: {}\n",
+                advisory.level, advisory.description
+            ));
         }
     }
     text

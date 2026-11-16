@@ -736,7 +736,14 @@ fn forged_prompt_or_run_identity_never_reaches_provider_or_ledger() {
     let mut altered = expected;
     altered.run_id = "unsafe/invalid".into();
     assert!(matches!(
-        generate_three(&altered, &current, &mut gate, &mut provider, &stop, &mut sink),
+        generate_three(
+            &altered,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            &mut sink
+        ),
         Err(WritingWorkflowError::InvalidContext(_))
     ));
     assert_eq!(gate.attempts, 0);
