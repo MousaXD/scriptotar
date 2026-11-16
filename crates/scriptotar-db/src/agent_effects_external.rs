@@ -147,6 +147,12 @@ CREATE TRIGGER IF NOT EXISTS external_attempt_history_immutable
  BEGIN SELECT RAISE(ABORT,'external attempt history immutable'); END;
 CREATE INDEX IF NOT EXISTS idx_external_effects_scope
  ON agent_external_effects(project_id,study_id,run_id,status);
+-- A changed fingerprint or second idempotency key must not create another
+-- paid request for the same immutable planned step. Explicit proof-backed
+-- retries update the SAME row and therefore do not need a second identity.
+-- Keep this additive index to harden pre-v10 draft-bootstrap table upgrades.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_effect_one_per_step
+ ON agent_external_effects(project_id,study_id,run_id,step_id);
 CREATE TRIGGER IF NOT EXISTS external_effects_owner_insert
  BEFORE INSERT ON agent_external_effects
  WHEN NOT EXISTS (SELECT 1 FROM agent_effects e WHERE
@@ -1011,6 +1017,45 @@ mod tests {
         assert_eq!(outcomes.iter().filter(|outcome| outcome.is_err()).count(), 1);
         let got = db.get_external_effect(identity(&snap, project, study)).unwrap().unwrap();
         assert_eq!(got.status, ExternalEffectStatus::Dispatched);
+    }
+
+    #[test]
+    fn different_fingerprint_or_key_cannot_create_second_effect_for_same_step() {
+        let (_dir, db, project, study, snap) = setup();
+        let _first = reserve(&db, &snap, project, study);
+        let key = identity(&snap, project, study);
+        let alternate_key = format!("{}:changed", key.idempotency_key);
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let now = now_rfc3339();
+
+        // The v8 ledger permits a second scoped effect claim, so the v10
+        // boundary must independently forbid a changed-key/fingerprint send.
+        conn.execute(
+            "INSERT INTO agent_effects
+             (idempotency_key,run_id,project_id,study_id,step_id,tool_kind,
+              status,revision,created_at,updated_at)
+             VALUES(?1,?2,?3,?4,?5,'DraftScript','reserved',1,?6,?6)",
+            params![alternate_key, snap.plan.id, project.to_string(),
+                    study.to_string(), key.step_id, now],
+        ).unwrap();
+        let alternate_fingerprint =
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        assert!(conn.execute(
+            "INSERT INTO agent_external_effects
+             (idempotency_key,project_id,study_id,run_id,step_id,fingerprint,
+              provider,status,token_limit,cost_limit_microusd,created_at,updated_at)
+             VALUES (?1,?2,?3,?4,?5,?6,'openai','reserved',500,2500,?7,?7)",
+            params![alternate_key, project.to_string(), study.to_string(),
+                    snap.plan.id, key.step_id, alternate_fingerprint, now],
+        ).is_err());
+        let existing: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_external_effects
+             WHERE project_id=?1 AND study_id=?2 AND run_id=?3 AND step_id=?4",
+            params![project.to_string(),study.to_string(),snap.plan.id,key.step_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(existing, 1);
     }
 
 }
