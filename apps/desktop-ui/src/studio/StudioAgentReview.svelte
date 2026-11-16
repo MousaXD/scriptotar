@@ -33,6 +33,7 @@
   $: if (context !== observedContext) {
     observedContext = context;
     requestEpoch++;
+    pending = false;
     consent = false;
     error = '';
     // The previous run may still exist durably in the backend. Do not
