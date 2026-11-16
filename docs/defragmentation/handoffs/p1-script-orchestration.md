@@ -96,3 +96,12 @@ Agent 00 owns `services.rs`, Tauri `lib.rs` command registration, DTOs, Studio U
 ### Exact-head validation
 
 As of writing this addendum, the first canonical test push failed Rustfmt; formatting was applied and re-pushed. Exact-head workflows must be rechecked on the final commit. Tests cannot certify real provider usage or packaged GUI paths without the owner integration. Never count earlier seven green workflows as proof of this new implementation.
+
+
+### Additional recovery hardening — targeted revisions and source stamps
+
+- `SelectedWritingSource` now preserves the exact canonical `fingerprint`, `source_revision`, and `collected_at` fields. `from_scoped_study` builds these from actual attached source rows; `StudyWritingContext::validate` rejects missing stamps; the canonical commit checks those fields under the IMMEDIATE SQLite lock. **A source's attached revision is not a cryptographic digest of an edited transcript**; Agent 00 must also build a live content-revision/digest check for sources where original text can mutate without changing these metadata fields.
+- The additive receipt migration now contains **two** tables: `study_writing_batches` (idempotent original batch provenance) and `study_writing_revisions` (immutable structured per-draft versions). Allocate both in the same Agent 00-approved numbered migration; neither is automatically installed by this PR.
+- `CanonicalSqliteCandidateStore` implements `VersionedCandidateStore` for targeted beat edits: expected draft revision CAS, exact prior narration, no changed unrelated beats/citations, one immutable `draft_versions` row plus one structured revision row in the same transaction. Human Studio edits lacking a matching structured revision fail closed rather than being overwritten. Manual editing through existing Studio remains unchanged.
+- Tests cover stale/duplicate targeted revision, unchanged other beats and preserved human text; a fabricated lineage excerpt must fail before any draft write. Test fixture research origins are deterministic source-link fixtures, **not** evidence of actual transcript authenticity or independent fact verification.
+- Agent 00 should evaluate project-lock ordering and read stability when calling the live scoped context gateway during an IMMEDIATE transaction, including concurrent editor save and evidence-review writers. If the current gateway cannot meet this contract, keep Tauri registration disabled until it can.
