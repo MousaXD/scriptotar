@@ -465,12 +465,15 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 ],
             )
             .map_err(error)?;
-            for source in &batch.context.sources {
+            // Link only sources actually used by this angle/script. The
+            // Study's full selected-source set remains in the immutable batch
+            // receipt, but it is not a citation by every individual draft.
+            for source in &candidate.lineage {
                 tx.execute(
                     "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
                      VALUES(?1,?2,?3,?4)",
                     params![project.to_string(), id.to_string(),
-                            source.study_source_id.to_string(), now],
+                            source.source_id.to_string(), now],
                 ).map_err(error)?;
             }
             if fail_after == Some(index + 1) {
