@@ -7,6 +7,42 @@
 **Branch:** agent-07/p0-native-webview-qa-20261116  
 **Release decision:** **NO-GO — native graphical certification NOT COMPLETE.** Main and production implementation are untouched.
 
+## Executed CI — first immutable native run (2026-11-16)
+
+**Actual tested source SHA:** `45c0e71f684063aed45eeb17a3f8355302bbd02e` (before the subsequent harness-only diagnostic patches).
+
+**Workflow:** https://github.com/MousaXD/scriptotar/actions/runs/43875131901 — **FAIL**, as required by the fail-closed release gate.
+
+- Linux job: https://github.com/MousaXD/scriptotar/actions/runs/43875131901/job/133326081585
+- Windows job: https://github.com/MousaXD/scriptotar/actions/runs/43875131901/job/133326081192
+- Linux packaged evidence: https://github.com/MousaXD/scriptotar/actions/runs/43875131901/artifacts/14231550069
+- Windows packaged evidence: https://github.com/MousaXD/scriptotar/actions/runs/43875131901/artifacts/14231890199
+
+Both jobs checked out the exact immutable source SHA; successfully built frontend/package, installed the resulting package, reached their genuine native graphical probe, returned **NOT TESTED** for the native document requirement and failed the job. Linux successfully started the AT-SPI D-Bus registry and installed `scriptotar` 1.4.1 with `/usr/bin/scriptotar-desktop`; it did **not** prove a PID-owned accessible WebKit document. Windows successfully installed NSIS and recorded package SHA-256 `12b2b4da097d481aca5c6f219b7b8761eb2846aa80e64ae98ac7c70e401472e0` and executable SHA-256 `cf9b2da78d2705e38417833a7796e2f5adcf526fa31696be9e2ef53b889e8f87`. It observed a shell but could not locate both a WebView2 UIA Document and interactive Studio control. Linux's package/executable hashes are saved in the original SHA256SUMS artifact; the text logs alone do not independently expose those values.
+
+The first run's Linux artifact had five files and Windows artifact had three; neither probe produced an accepted installed GUI screenshot or UI-accessibility tree. There is no basis for screenshot or navigation approval. An unavailable accessibility provider is **NOT TESTED**, not proof of a production UI bug and not a PASS.
+
+| Observed, exact SHA 45c0e71 | Linux WebKitGTK | Windows WebView2 |
+|---|---|---|
+| Immutable-source checkout and package build | PASS | PASS |
+| Real package installation + hash recorded | PASS | PASS |
+| Accessible installed WebView document + UI interaction | NOT TESTED | NOT TESTED |
+| Project create/switch | NOT TESTED | NOT TESTED |
+| Study create/open | NOT TESTED | NOT TESTED |
+| Candidate edit/save/duplicate/rename | NOT TESTED | NOT TESTED |
+| Quit/relaunch persistence | NOT TESTED | NOT TESTED |
+| Wrong-project UI or IPC denial | NOT TESTED | NOT TESTED |
+| Real multi-source/transcript/revocation | NOT TESTED | NOT TESTED |
+| Keyboard/focus, EN/AR, RTL, custom controls, errors | NOT TESTED | NOT TESTED |
+| Light/dark actual installed screenshots and human review | NOT TESTED | NOT TESTED |
+| Three scripts and authorized paid generation | NOT TESTED | NOT TESTED |
+
+**Harness follow-up on the same agent-owned branch (NOT YET CERTIFIED):** bind Linux AT-SPI applications first by the genuine installed process PID rather than rejecting non-Scriptotar accessible names; preserve bounded AT-SPI desktop tree, X11 windows, unverified screenshot and failure reason; preserve Windows UIA RawView tree and runner/app session details; upload lightweight review artifacts distinct from hundreds-of-MB installer artifacts. The next exact-head CI must be checked independently. Never credit the first run's install PASS to new commits.
+
+**Windows execution requirement:** If hosted CI's session still does not expose WebView2 UIA, run the same installed NSIS test in an unlocked, interactive Windows 11 desktop session under a normal logged-in user with WebView2 Runtime and UIA provider available. Save the installer hash, installed exe hash, UIA raw tree, screenshots, case matrix and full run provenance. A hosted runner's process launch is not Windows graphical certification.
+
+**Agent 00 fixture dependency:** Request canonical disposable Study DB fixtures with genuine authorized transcript/source records, deterministic revocation/failure controls and project boundaries. Do not inject fake AI/provider content. Agent 00 must finish production integration before three-candidate or consented-provider native cases can be executed. Keep this PR draft and the release gate NO-GO.
+
 ## Baseline investigation
 
 Read CONTINUATION.md, ROADMAP_P0_P3.md, issues #100/#116, PR #114, tests/defragmentation, Linux/Windows Tauri package workflows and Chromium GUI QA. Existing Linux package CI performs a real package install, startup process check and Rust installed IPC/restart tests, not native graphical WebKit actions. Windows installer CI installs NSIS and performs process/backend/MCP checks, not installed WebView2 user journeys. Chromium screenshots are mocked frontend rendering and are **not** native installed evidence.
