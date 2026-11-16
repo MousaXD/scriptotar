@@ -20,16 +20,38 @@ The Windows probe is currently **initial native discovery and Studio invocation 
 
 Workflow: .github/workflows/installed-webview-acceptance.yml. Trigger by opening/updating a PR with paths under this directory, or start workflow_dispatch for a specific commit/ref after merging this workflow into an accessible branch.
 
-For an independently packaged Linux binary, invoke on a graphical test host:
+For an independently packaged Linux binary, run under a **real X11 window manager**.
+Bare Xvfb has no window manager and cannot certify graphical Alt+F4 quit. Install
+`openbox`, `xvfb`, `dbus-x11`, `xdotool`, `scrot`, `python3-pyatspi` and
+AT-SPI support, then run from the exact source checkout:
 
-    xvfb-run -a dbus-run-session -- env NO_AT_BRIDGE=0 GTK_A11Y=1 \
-      /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
-      --executable /usr/bin/scriptotar-desktop --package /path/to/installed.deb \
-      --source-sha FULL_40_CHAR_SHA \
-      --run-url https://github.com/MousaXD/scriptotar/actions/runs/RUN_ID \
-      --output native-evidence/linux
+```bash
+export APP_BIN=/usr/bin/scriptotar-desktop
+export PACKAGE=/path/to/installed.deb
+export SOURCE_SHA=FULL_40_CHAR_SHA
+export RUN_URL=https://github.com/MousaXD/scriptotar/actions/runs/RUN_ID
+export EVIDENCE=native-evidence/linux
+mkdir -p "$EVIDENCE"
+xvfb-run -a -s '-screen 0 1440x900x24' dbus-run-session -- bash -euo pipefail -c '
+  openbox --sm-disable > "$EVIDENCE/openbox.log" 2>&1 &
+  wm_pid=$!
+  trap "kill $wm_pid 2>/dev/null || true" EXIT
+  sleep 1
+  NO_AT_BRIDGE=0 GTK_A11Y=1 GTK_MODULES=atk-bridge \
+    /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
+    --executable "$APP_BIN" --package "$PACKAGE" \
+    --source-sha "$SOURCE_SHA" --run-url "$RUN_URL" \
+    --output "$EVIDENCE"
+'
+```
 
-Use the *actual* dpkg-installed executable path; /usr/bin/scriptotar-desktop above is only an example, not an asserted path. Do not pass a Vite preview binary, browser runner, backend smoke executable, or user profile. The workflow discovers the correct path with dpkg -L.
+Replace each placeholder with the actual installed package, exact commit SHA,
+and real run metadata. The run URL is an evidence reference, not proof a manual
+machine execution ran in GitHub Actions. The installed binary must be discovered
+from the real package (the workflow uses `dpkg -L`) and hashes preserved.
+
+**Windows packaging gotcha exposed by native UIA:** [exact run #43897349298](https://github.com/MousaXD/scriptotar/actions/runs/43897349298) showed a *live* WebView2 Document with `ERR_CONNECTION_REFUSED` from localhost instead of the Scriptotar UI. The previous job used plain `cargo build --release` plus `tauri bundle`, which can package a binary configured for `build.devUrl`. The harness workflow now invokes `tauri build --bundles nsis -- --locked` to build production-mode frontend assets, following the same procedure as Linux. Do not bypass this by starting a dev server; a packaged release must render offline.
+
 
 ## Run against a real interactive Windows desktop
 
