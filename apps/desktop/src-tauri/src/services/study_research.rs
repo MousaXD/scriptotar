@@ -421,6 +421,34 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     result
 }
 
+/// Reads only source revision metadata; never loads full transcript text when
+/// checking whether a previously persisted excerpt is still current.
+fn current_origin_revision(
+    db: &Connection,
+    project: Uuid,
+    kind: StudyResearchKind,
+    origin: Uuid,
+) -> RepositoryResult<Option<String>> {
+    let sql = match kind {
+        StudyResearchKind::ResearchItem => {
+            "SELECT scanned_at FROM research_items WHERE id=?1 AND project_id=?2"
+        }
+        StudyResearchKind::Transcript => {
+            "SELECT t.updated_at FROM transcripts t
+             JOIN media m ON m.id=t.media_id
+             JOIN sources s ON s.id=m.source_id
+             WHERE t.id=?1 AND s.project_id=?2"
+        }
+    };
+    db.query_row(
+        sql,
+        params![origin.to_string(), project.to_string()],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|_| storage())
+}
+
 fn checked_report(
     services: &AppServices,
     project: Uuid,
@@ -441,12 +469,27 @@ fn checked_report(
     if record.revision != saved.study_revision {
         return Err(RepositoryError::Conflict("Study changed since research snapshot".into()));
     }
+    let db = read_db(services)?;
     for finding in &saved.report.sources {
         let source = services.store.get_study_source(project, study, finding.study_source_id)?;
         if source.reference_id != Some(finding.reference_id)
             || source.locator != finding.locator
             || (!source.available && matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial))
         {
+            return Err(not_found());
+        }
+        if let Some(expected) = finding.origin_revision.as_deref() {
+            if !source.available
+                || current_origin_revision(&db, project, finding.kind, finding.reference_id)?
+                    .as_deref() != Some(expected)
+            {
+                return Err(RepositoryError::Conflict(
+                    "source changed or was removed after research analysis".into(),
+                ));
+            }
+        } else if matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial) {
+            // An allegedly inspected source must always be tied to a live
+            // origin version. Missing version is not evidence of success.
             return Err(not_found());
         }
     }
@@ -462,7 +505,26 @@ pub(super) fn read_study_research_artifact(
     study: Uuid,
     artifact: Uuid,
 ) -> RepositoryResult<StudyResearchReport> {
-    checked_report(services, project, study, artifact).map(|saved| saved.report)
+    let saved = checked_report(services, project, study, artifact)?;
+    // A file on disk is not itself an approved, completed agent action.
+    // The user-facing read requires the *committed* ledger receipt. The
+    // internal probe path can still inspect a reserved file to reconcile a
+    // crash between durable file write and effect settlement.
+    let effect = services.store.get_agent_effect(
+        project,
+        study,
+        &saved.run_id,
+        &saved.idempotency_key,
+    )?;
+    if !matches!(effect, Some(ref receipt)
+        if receipt.status == EffectStatus::Applied
+            && receipt.step_id == saved.step_id
+            && receipt.tool_kind == "AnalyzeEvidence"
+            && receipt.artifact_id.as_deref() == Some(artifact.to_string().as_str()))
+    {
+        return Err(not_found());
+    }
+    Ok(saved.report)
 }
 
 #[derive(Clone)]
@@ -707,17 +769,26 @@ mod tests {
             write_envelope(&services, artifact, &serde_json::to_vec(&envelope).unwrap()).unwrap();
         }
         let reopened = AppServices::new(dir.path()).unwrap();
-        assert!(read_study_research_artifact(&reopened, project, study, artifact).is_ok());
-        assert!(read_study_research_artifact(&reopened, Uuid::new_v4(), study, artifact).is_err());
+        assert!(checked_report(&reopened, project, study, artifact).is_ok());
+        // An arbitrary persisted JSON file cannot masquerade as a completed
+        // agent action: this fixture has no approved run or effect receipt.
+        assert!(read_study_research_artifact(&reopened, project, study, artifact).is_err());
+        assert!(checked_report(&reopened, Uuid::new_v4(), study, artifact).is_err());
         let db = Connection::open(reopened.store.path()).unwrap();
         db.pragma_update(None, "foreign_keys", true).unwrap();
+        db.execute(
+            "UPDATE research_items SET scanned_at='2026-11-16T08:00:00Z'
+             WHERE id=?1 AND project_id=?2",
+            params![research_id.to_string(), project.to_string()],
+        ).unwrap();
+        assert!(checked_report(&reopened, project, study, artifact).is_err());
         db.execute(
             "DELETE FROM research_items WHERE id=?1 AND project_id=?2",
             params![research_id.to_string(), project.to_string()],
         ).unwrap();
         assert!(!reopened.store.get_study_source(project, study, source).unwrap().available);
-        assert!(read_study_research_artifact(&reopened, project, study, artifact).is_err());
+        assert!(checked_report(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
-        assert!(read_study_research_artifact(&reopened, project, study, artifact).is_err());
+        assert!(checked_report(&reopened, project, study, artifact).is_err());
     }
 }
