@@ -295,9 +295,32 @@ try {
   if (-not $root) {
     $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable UIA main window for the installed process; see uia-diagnostics.json' }
   } elseif (-not $probe -or -not $probe.document -or -not $probe.studio) {
-    $cases.installed_webview = @{
-      status='NOT TESTED'
-      reason='After 90s, installed shell had no confirmed WebView2 Document + Studio button; nested HWNDs and readiness logged in uia-diagnostics.json/result.json'
+    # When a genuine WebView2 document exposes the dev server error page,
+    # this is a failed installed product/installer, not missing UIA support.
+    $hasDevServerError = $false
+    if ($probe -and $probe.document) {
+      try {
+        $networkError = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'ERR_CONNECTION_REFUSED'
+        )
+        $hasDevServerError = [bool]$probe.document.FindFirst(
+          [System.Windows.Automation.TreeScope]::Subtree, $networkError
+        )
+      } catch {
+        $report['network_error_probe_warning'] = $_.Exception.Message
+      }
+    }
+    if ($hasDevServerError) {
+      $cases.installed_webview = @{
+        status='FAIL'
+        reason='Installed NSIS binary rendered localhost ERR_CONNECTION_REFUSED instead of embedded Scriptotar UI. Check production Tauri build mode; do not classify the browser error page as app UI.'
+      }
+      $report['browser_network_error'] = 'ERR_CONNECTION_REFUSED'
+    } else {
+      $cases.installed_webview = @{
+        status='NOT TESTED'
+        reason='After 90s, installed shell had no confirmed Scriptotar WebView2 Document + Studio button; inspect child HWNDs, readiness and native screenshot'
+      }
     }
   } else {
     try {
