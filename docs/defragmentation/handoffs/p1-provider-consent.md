@@ -57,3 +57,34 @@ cargo test --locked -p scriptotar-desktop provider_consent -- --nocapture
 cargo test --locked --workspace
 cargo clippy --locked --workspace --all-targets -- -D warnings
 ```
+
+## 2026-11-16 — recovery from failing exact-head CI (Agent 01)
+
+**Starting PR #118 SHA:** `bcb3f3a7d08426ee013530236ea2252012fa4da3`. Exact-head GitHub Actions logs showed four failing workflows:
+
+| Workflow | Failure | Recovery |
+|---|---|---|
+| Rust foundation | `cargo fmt --check`, near `provider_consent.rs:503` | Match rustfmt's compact `reserved_cost` assignment |
+| Tauri migration integration | Same Rustfmt failure | Same source fix |
+| Main CI | `provider_consent::tests::exact_prompt_model_sources_and_evidence_are_bound` at line 749 | Check immutable approved intent **before** pricing lookup |
+| MCP E2E | Same changed-context assertion | Same authorization-order fix |
+
+The original dispatch would query `TrustedPricing::ceiling` on a client-modified model; this returned `UnknownPricing` rather than the required `ChangedContext`. The fix first compares the *entire* approved `ProviderIntent`, then revalidates host-derived Study scope, and then looks up pricing for the stored approved provider/model and checks the stored SHA-256 fingerprint against the current trusted quote. This is a denial-order and integrity fix, **not** a change permitting a paid call. The existing negative test covers prompt, model, source selection, material/evidence digest and budget mutations, and additionally asserts zero provider calls and zero paid-effect claims.
+
+**Fix commits:** `8e1e8d5140194514a2600bb3681fc27f653b3625` (auth + initial formatting), then `e24770f6f230bac07a1d8c741b93e7b5201ce91c` (restores rustfmt-compliant test structure after first fix HEAD reported a remaining test-loop style difference). These are superseded by this handoff update; validate on the **newest PR head only**. The previous 9/9 integration baseline and PR #118 older passing jobs are not current-head evidence. No Cargo/Rustfmt toolchain or network git clone is available locally; GitHub Actions is the verification authority.
+
+### Security audit and remaining blockers
+
+- **Context invalidation / scope:** Exact prompt bytes, Study revision, selected source IDs and host-recomputed material digest are bound; altered submission is now rejected before price lookup. The current host authority obtains Study/brief/sources/evidence/prompt across multiple reads and does not hold an atomic active-project/Study snapshot through the paid send. Agent 00 must supply that host lock/transaction and revalidate before pre-send CAS. No live egress until then.
+- **Pricing provenance:** `NoTrustedPricing` remains the production default and cannot grant approval; tests supply a fake catalog only. A signed/versioned host-owned provider/model price schedule with support for non-token charges and authoritative token receipts is not implemented. Catalog-revision drift is bound by the fingerprint; a client price estimate is never a legitimate quote.
+- **Canonical fingerprint:** `hash_intent` binds typed intent, provider/model/base URL, complete prompt, source/material digests, limits and the pricing quote. It is **not yet** a fingerprint of the *wire-level* HTTP body or later parameters (system text, sampling temperature, format, tools). Agent 02 must not use the present fingerprint as proof that an unimplemented HTTP payload was reviewed; enforce exact canonical payload serialization before live dispatch.
+- **Session/cancellation:** In-memory approvals are single-use, scoped, expire and disappear on restart. Cancellation before reservation denies; after a reservation or ambiguous network result the run is uncertain and must not retry. Clock and scope authority are trusted host responsibilities; an unregistered helper is not a user-facing lifecycle.
+- **Concurrency / crash recovery:** A mutex blocks in-process double send and deterministic tests cover eight concurrent attempts. Real cross-process/restart claims, receipts, cancellation races, ACK recovery, and authoritative nonexecution proofs belong to Agent 02's external ledger. The current `PaidEffectFence` string-only bridge cannot safely implement the scoped external-ledger contract without a typed integration review.
+- **Legacy/manual BYOK:** Existing `run_ai` is out of this new policy; do not claim it is covered. `ExistingAiServiceAdapter` cannot enforce all model-level hard output/token/receipt controls, so the new policy refuses to send through it.
+- **Privacy:** API keys are request-time-only, never stored in consent records or receipts; no new network, silent calls, persisted credentials or public Tauri commands were added.
+
+### Agent 02 coordination and integration sequence
+
+Agent 01 posted [the typed policy/ledger integration review on PR #119](https://github.com/MousaXD/scriptotar/pull/119#issuecomment-6917344870). Agree with Agent 00 on project/Study/run/step + checkpoint and approval identity; canonical full outbound HTTP payload hash; exact selected sources/evidence and quote revision; per-step and cumulative token/time/USD ceilings; and an atomic revocation/active-project check at dispatch. Agent 05's four-step angles + three drafts require separately permitted requests (one angle approval is not blanket approval). Agent 02 owns durable pre-send CAS/receipt/ACK reconciliation; unknown outcomes cannot be retried; Agent 00 registers the versioned migration/driver/IPC and installed-app acceptance. No paid egress until those gates are proven.
+
+**Owner integration:** cherry-pick Agent 01's recovered branch only after all relevant exact-head checks pass and QA reviews the interface; preserve disabled paid adapter, do not merge #114 or modify `main`, and do not ship a release.
