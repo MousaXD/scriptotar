@@ -151,7 +151,7 @@ impl PaidEffectFence for PausedReservation<'_> {
         self.allow_reservation_return.wait();
         Ok(())
     }
-    fn settle(&self, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
+    fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
     fn mark_uncertain(&self, _: &str) {}
 }
 
