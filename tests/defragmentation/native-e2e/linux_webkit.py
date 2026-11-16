@@ -302,11 +302,28 @@ class Session:
         if self.proc is None:
             return
         if self.proc.poll() is None:
-            windows = command("xdotool", "search", "--pid", str(self.proc.pid), check=False)
+            # Alt+F4 is a window-manager command. The CI session must run
+            # Openbox and target the mapped Scriptotar window, not the first
+            # arbitrary XID (which may be an unmapped WebKit helper).
+            windows = command("xdotool", "search", "--onlyvisible",
+                              "--pid", str(self.proc.pid), check=False)
             ids = windows.stdout.split()
-            if ids:
-                command("xdotool", "windowactivate", "--sync", ids[0], check=False)
-                command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
+            titled = []
+            for window_id in ids:
+                title = command("xdotool", "getwindowname", window_id, check=False)
+                if title.returncode == 0 and "scriptotar" in title.stdout.lower():
+                    titled.append(window_id)
+            if not titled:
+                raise NativeFailure(
+                    f"No visible Scriptotar main window found for native graphical quit (XIDs={ids})"
+                )
+            target = titled[0]
+            focus = command("xdotool", "windowactivate", "--sync", target, check=False)
+            if focus.returncode != 0:
+                raise NativeFailure(f"Window manager could not activate Scriptotar window {target}")
+            key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
+            if key.returncode != 0:
+                raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
             try:
                 self.proc.wait(timeout=8)
             except subprocess.TimeoutExpired:
