@@ -309,9 +309,10 @@ mod tests {
             .unwrap();
         assert!(report.publication_review_required);
         assert!(!report.inventory_complete);
-        assert!(report.claims.iter().all(|claim| {
-            claim.status != verification::VerificationStatus::Verified
-        }));
+        assert!(report
+            .claims
+            .iter()
+            .all(|claim| { claim.status != verification::VerificationStatus::Verified }));
 
         // Matching a real project and draft ID is not enough: the Study itself
         // must be the same and the revisions must still be current.
@@ -354,5 +355,4 @@ mod tests {
             )
             .is_err());
     }
-
 }
