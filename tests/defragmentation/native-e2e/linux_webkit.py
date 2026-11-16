@@ -383,17 +383,55 @@ def exercise(args, report: dict, root: Path):
         ax = session.ax
 
         def projects():
-            for name in (name_a, name_b):
-                ax.click("New project", "button")
+            # A fresh isolated installation may have no project at all.
+            # Startup exposes the Studio rail before the asynchronous workspace
+            # bootstrap is finished. Wait for a real *workspace* state instead
+            # of assuming the dashboard's New project button already exists.
+            deadline = time.monotonic() + 45
+            initial_mode = None
+            while time.monotonic() < deadline:
+                if ax.available("Create your first project", "heading"):
+                    initial_mode = "first_project"
+                    break
+                if ax.available("New project", "button"):
+                    initial_mode = "dashboard"
+                    break
+            if not initial_mode:
+                raise NativeFailure(
+                    "Workspace never exposed either the first-project form or "
+                    "the dashboard New project button after native WebKit startup"
+                )
+            report["project_start_mode"] = initial_mode
+            for index, name in enumerate((name_a, name_b)):
+                if index != 0 or initial_mode == "dashboard":
+                    ax.click("New project", "button")
                 ax.type_into("Project name", name)
                 ax.click("Create project", "button")
-                ax.heading(name)
+                # A real dashboard h1 is required. Seeing only an option in
+                # the project chooser would not prove that creation activated it.
+                try:
+                    ax.find(name, "heading", timeout=25)
+                except NativeFailure as exc:
+                    screenshot = session.screenshot(f"project-{index + 1}-failure")
+                    diagnostics = ax.diagnostics()
+                    diagnostics["failure_phase"] = "project_creation_or_activation"
+                    diagnostics["expected_project"] = name
+                    diagnostics["failure_screenshot"] = screenshot
+                    (root / "a11y-diagnostics.json").write_text(
+                        json.dumps(diagnostics, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    raise NativeFailure(
+                        f"Create project returned to native UI without dashboard heading "
+                        f"{name!r}; screenshot={screenshot}, see a11y-diagnostics.json"
+                    ) from exc
+                session.screenshot(f"project-{index + 1}-created")
             ax.choose("Project", name_a)
             ax.heading(name_a)
             ax.choose("Project", name_b)
             ax.heading(name_b)
             session.screenshot("projects")
-            return "Created two real SQLite-backed projects and switched both directions via custom selector"
+            return "Created and activated two real projects, then switched both directions via custom selector"
         if not checked(report, "create_switch_projects", projects):
             return
 
