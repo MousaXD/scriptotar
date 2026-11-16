@@ -406,6 +406,38 @@ impl AppServices {
         }
     }
 
+    /// Private production entrypoint: reconstruct canonical request material
+    /// directly from the active Study, never from a browser-supplied context.
+    /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_writing_plan(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        run_id: &str,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let current = CurrentStudy::load(self, project_id, study_id)?;
+        super::study_writing::prepare_three(run_id, current)
+    }
+
+    /// Private production v11 sink: three new drafts, immutable versions,
+    /// canonical source links and one receipt in a single SQLite transaction.
+    /// This MUST NOT be surfaced as a client-controlled direct-save command.
+    /// A future caller must prove consent/effect/receipt identity first.
+    #[allow(dead_code)]
+    pub(super) fn persist_three_writing_candidates(
+        &self,
+        batch: &super::study_writing::GeneratedBatch,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]> {
+        use super::study_writing::AtomicCandidateStore;
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        sink.commit_three(batch)
+    }
+
     /// P1 writing bridge: scoped, bounded, no provider call and no side effects.
     /// Real transcript excerpts are attributed, not fact-checked. User notes
     /// are unverified, and disputed observations never enter the prompt.
@@ -1192,6 +1224,10 @@ mod tests {
                     .iter()
                     .any(|reference| reference.id == source.origin_id.to_string())
         }));
+        let plan = services
+            .prepare_three_writing_plan(project, study_id, "canonical-study-1")
+            .unwrap();
+        assert_eq!(plan.context, current);
         assert!(prepare_three("canonical-study-1", current.clone()).is_ok());
         assert!(CurrentStudy::load(&services, Uuid::new_v4(), study_id).is_err());
 
