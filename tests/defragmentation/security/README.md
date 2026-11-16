@@ -15,7 +15,7 @@ historical success. The log prints the exact audit and feature commit SHAs.
 | PR #119 — migration | `cargo test --locked -p scriptotar-db` on real SQLite databases | Historical v4/v5 upgrade preservation, v10 schema/ledger, cross-project and crash recovery |
 | PR #121 — writing | Production-path `study_writing.rs` integration tests plus independent appended tests that call `CanonicalSqliteCandidateStore` | Three-draft atomicity, duplicate receipts, tampered payload, stale source fingerprint, forged provenance, model-supported claim quarantine |
 | PR #117 — verification | `scriptotar-ai` verification unit tests + independent host contract | Source-content hashes, independent origin, high-stakes review, model-claim distrust, project/Study isolation, fail-closed unbound canonical draft |
-| PR #114 — combined | **All four test groups on the exact integration HEAD** | FAIL if a required feature module has not been integrated; no SKIP-as-PASS |
+| PR #114 — combined | **All four groups plus native v11 writing integrity and real host registration checks on the exact integration HEAD** | FAIL if provider is absent, a policy has no central service reference, a host dispatch/effect adapter is missing, or any test fails; no SKIP-as-PASS |
 
 This audit workflow is separate from `ci.yml`; its status must be configured
 as a **required release/integration check** by Agent 00 before final signoff.
@@ -52,6 +52,22 @@ The four independent Rust writing tests in
 05's canonical integration fixture by `run_feature_gates.sh`, not independently
 compiled as a free-standing test crate. Calling only `cargo test --test
 study_writing` without that appended file omits these extra tests.
+
+The **three additional native SQLite v11 tests** in
+`canonical_v11_integrity_tests.rs` run only on the combined PR #114 checkout
+(after v11 is registered). They verify immutable batch receipts, immutable
+structured first versions, cross-project forged receipt rejection and reopen
+after process restart. The isolated #121 writing branch deliberately does not
+need to carry Agent 00's v11 migration.
+
+The combined host gate copies `test_combined_host_wiring.py` and runs it via
+Python unittest against the real `target/apps/desktop/src-tauri/src` tree;
+then it runs `cargo test --locked -p scriptotar-desktop --lib` along with the
+nested provider race suite and full native SQLite and writing tests. This
+structural check fails closed for missing real host authorization/paid-effect
+implementations, but cannot by itself prove an atomic lock is shared with
+every Study/source/project mutator. The final exact-SHA native integration,
+production transport and installed-app evidence remain mandatory.
 
 The nested Cargo manifest uses its own test workspace. The normal root
 `cargo test --workspace` **does not include** the provider race regression.
