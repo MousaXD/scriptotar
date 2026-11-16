@@ -1094,6 +1094,8 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let mut missing = batch.clone();
+    missing.candidates[0].lineage.clear();
     batch.candidates[0].lineage[0].evidence[0].excerpt =
         "Falsified transcript content masquerading as a real source".into();
     let mut sink = CanonicalSqliteCandidateStore {
@@ -1102,6 +1104,10 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     };
     assert!(matches!(
         sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(matches!(
+        sink.commit_three(&missing),
         Err(WritingWorkflowError::InvalidContext(_))
     ));
     assert!(db
