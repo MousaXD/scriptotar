@@ -39,6 +39,8 @@ This matrix reports **verified evidence as of handoff**, not implementation inte
 | Select multiple real sources + transcript preview | NOT TESTED | NOT TESTED | Requires genuine authorized media fixtures |
 | Revoked source + error recovery | NOT TESTED | NOT TESTED | Requires safe test fixture/failure control |
 | Custom selector Escape/keyboard | NOT TESTED | NOT TESTED | Partial Linux journey implemented |
+| Arabic language selector operation | NOT TESTED | NOT TESTED | Linux installed UI interaction added; no observed run yet |
+| Dark/system theme selector operation | NOT TESTED | NOT TESTED | Linux installed UI interaction added; visual review separate |
 | Arabic locale + actual RTL layout, mixed content | NOT TESTED | NOT TESTED | Independent native visual/a11y review required |
 | Light/dark screenshots and approval | NOT TESTED | NOT TESTED | App currently offers dark/system; verify OS light mapping |
 | Three original agent-produced candidates, approved egress | NOT TESTED | NOT TESTED | Not a GUI-only feature; depends on Agent 00/01/02/05/06 integration |
