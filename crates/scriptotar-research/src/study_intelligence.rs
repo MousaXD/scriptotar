@@ -623,6 +623,10 @@ mod tests {
             StudyResearchError::WrongScope
         );
         assert_eq!(
+            analyze_study_sources(p, Uuid::new_v4(), when(), vec![r.clone()]).unwrap_err(),
+            StudyResearchError::WrongScope
+        );
+        assert_eq!(
             analyze_study_sources(p, st, when(), vec![r.clone(), r]).unwrap_err(),
             StudyResearchError::InvalidSelection
         );
@@ -644,6 +648,81 @@ mod tests {
         assert!(result.sources[0].origin_revision.is_none());
         assert!(result.sources[0].metrics.is_none());
         assert!(!result.sources[0].limitations.is_empty());
+    }
+    #[test]
+    fn revoked_and_access_denied_sources_never_claim_inspection() {
+        let p = Uuid::new_v4();
+        let study = Uuid::new_v4();
+        for access in [
+            StudyResearchAccess::Revoked,
+            StudyResearchAccess::AccessDenied,
+            StudyResearchAccess::Unsupported,
+        ] {
+            let mut record = source(
+                p,
+                study,
+                Uuid::new_v4(),
+                research(p, Uuid::new_v4(), Some(1_000_000)),
+            );
+            record.access = access;
+            record.research = None;
+            let result = analyze_study_sources(p, study, when(), vec![record]).unwrap();
+            assert_eq!(result.sources[0].access, access);
+            assert!(result.sources[0].metrics.is_none());
+            assert!(result.sources[0].observations.is_empty());
+            assert!(result.sources[0].origin_revision.is_none());
+        }
+    }
+    #[test]
+    fn mixed_sources_preserve_measured_counts_without_inventing_transcript_patterns() {
+        let project = Uuid::new_v4();
+        let study = Uuid::new_v4();
+        let metadata = source(
+            project,
+            study,
+            Uuid::new_v4(),
+            research(project, Uuid::new_v4(), Some(500)),
+        );
+        let transcript_id = Uuid::new_v4();
+        let spoken = StudySourceMaterial {
+            project_id: project,
+            study_id: study,
+            study_source_id: Uuid::new_v4(),
+            kind: StudyResearchKind::Transcript,
+            reference_id: transcript_id,
+            locator: format!("transcript:{transcript_id}"),
+            collected_at: "2026-11-15T12:00:00Z".into(),
+            access: StudyResearchAccess::Available,
+            research: None,
+            transcript: Some(StudyTranscriptMaterial {
+                transcript_id,
+                revision: "2026-11-15T12:01:00Z".into(),
+                segments: vec![TranscriptSegment {
+                    segment_id: "5".into(),
+                    start_ms: 250,
+                    end_ms: 1200,
+                    text: "How could this work?".into(),
+                }],
+                untimed_text: None,
+                partial: false,
+            }),
+        };
+        let result = analyze_study_sources(
+            project,
+            study,
+            when(),
+            vec![spoken, metadata],
+        ).unwrap();
+        assert_eq!(result.sources.len(), 2);
+        let measured = result.sources.iter().find(|s| s.metrics.is_some()).unwrap();
+        assert_eq!(measured.metrics.as_ref().unwrap().views, Some(500));
+        assert!(measured.observations.is_empty());
+        let interpreted = result.sources.iter().find(|s| !s.observations.is_empty()).unwrap();
+        assert!(interpreted.metrics.is_none());
+        assert_eq!(
+            interpreted.origin_revision.as_deref(),
+            Some("2026-11-15T12:01:00Z")
+        );
     }
     #[test]
     fn three_transcript_sources_count_observations_not_success() {
