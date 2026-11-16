@@ -127,8 +127,7 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
                      JOIN study_writing_revisions sr
                        ON sr.draft_id=d.id AND sr.version=1
                      WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                    params![
-                    id.to_string(), project, study],
+                    params![id.to_string(), project, study],
                     |row| row.get(0),
                 )
                 .map_err(error)?;
@@ -461,7 +460,8 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             tx.execute(
                 "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
                  VALUES(?1,1,?2)",
-                params![id.to_string(),
+                params![
+                    id.to_string(),
                     serde_json::to_string(candidate)
                         .map_err(|e| WritingWorkflowError::PersistFailed(e.to_string()))?
                 ],
@@ -504,7 +504,6 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         Ok(ids)
     }
 }
-
 
 /// A targeted model suggestion may only revise the named, still-current
 /// narration. The rest of the editor's body is preserved byte for byte.

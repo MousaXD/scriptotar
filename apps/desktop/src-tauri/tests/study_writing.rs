@@ -675,35 +675,29 @@ fn arabic_output_and_locator_remain_intact() {
 #[test]
 fn canonical_gateway_adapter_reuses_real_source_rows_and_rejects_cross_project() {
     use scriptotar_ai::writing::{WritingInput, WritingTask};
-    use scriptotar_core::{StudySource, StudySourceKind};
 
-    let scoped = context();
-    let sources: Vec<_> = scoped
-        .sources
-        .iter()
-        .map(|source| StudySource {
-            id: source.study_source_id,
-            project_id: scoped.project_id,
-            study_id: scoped.study_id,
-            kind: StudySourceKind::Transcript,
-            reference_id: Some(source.origin_id),
-            locator: "fixture local transcript".into(),
-            manual_text: None,
-            fingerprint: source.origin_id.to_string(),
-            source_revision: None,
-            collected_at: "2026-11-01T10:00:00Z".into(),
-            uncertainty: None,
-            available: true,
-            created_at: "2026-11-01T10:00:00Z".into(),
-        })
-        .collect();
+    // Read persisted canonical StudySource rows, never independently invented
+    // fingerprints or revisions that can diverge from the storage contract.
+    let (_temp, db, plan, _current, _batch) = canonical_batch_fixture();
+    let scoped = plan.context;
+    let sources = db
+        .list_study_sources(scoped.project_id, scoped.study_id)
+        .unwrap();
+    assert_eq!(sources.len(), 3);
+    for source in &sources {
+        assert!(source.available);
+        assert_ne!(
+            source.fingerprint,
+            source.reference_id.unwrap().to_string()
+        );
+    }
     let input = WritingInput {
         brief: scoped.brief.clone(),
         evidence: scoped.evidence.clone(),
         findings: scoped.findings.clone(),
         task: WritingTask::ProposeAngles { count: 3 },
     };
-    let reconstructed = StudyWritingContext::from_scoped_study(
+    let mut reconstructed = StudyWritingContext::from_scoped_study(
         scoped.project_id,
         scoped.study_id,
         scoped.study_revision,
@@ -711,13 +705,42 @@ fn canonical_gateway_adapter_reuses_real_source_rows_and_rejects_cross_project()
         input.clone(),
     )
     .unwrap();
-    assert_eq!(reconstructed, scoped);
+    for source in &sources {
+        let selected = reconstructed
+            .sources
+            .iter()
+            .find(|selected| selected.study_source_id == source.id)
+            .unwrap();
+        assert_eq!(selected.fingerprint, source.fingerprint);
+        assert_eq!(selected.source_revision, source.source_revision);
+        assert_eq!(selected.collected_at, source.collected_at);
+        assert_eq!(Some(selected.origin_id), source.reference_id);
+    }
+    let mut expected = scoped.clone();
+    expected.sources.sort_by_key(|source| source.study_source_id);
+    reconstructed
+        .sources
+        .sort_by_key(|source| source.study_source_id);
+    assert_eq!(reconstructed, expected);
+
     assert!(matches!(
         StudyWritingContext::from_scoped_study(
             Uuid::new_v4(),
             scoped.study_id,
             scoped.study_revision,
             &sources,
+            input.clone(),
+        ),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    let mut foreign_sources = sources;
+    foreign_sources[0].project_id = Uuid::new_v4();
+    assert!(matches!(
+        StudyWritingContext::from_scoped_study(
+            scoped.project_id,
+            scoped.study_id,
+            scoped.study_revision,
+            &foreign_sources,
             input,
         ),
         Err(WritingWorkflowError::InvalidContext(_))
@@ -897,7 +920,6 @@ fn canonical_three_script_receipt_reopens_and_respects_manual_editor_updates() {
         current: &current,
     };
     assert_eq!(recovered.commit_three(&batch).unwrap(), ids);
-    assert_eq!(reopened.get_draft(plan.context.project_id, ids[0]).unwrap().body, "Human-owned body");
     assert_eq!(
         reopened
             .get_draft(plan.context.project_id, ids[0])
@@ -1017,7 +1039,6 @@ fn canonical_receipt_rejects_tampering_cross_project_and_withdrawn_origins() {
     assert_eq!(ids.len(), 3);
 }
 
-
 #[test]
 fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versions() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
@@ -1094,7 +1115,6 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
     );
 }
 
-
 #[test]
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
@@ -1126,7 +1146,6 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
         1
     );
 }
-
 
 #[test]
 fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
@@ -1284,7 +1303,10 @@ fn canonical_concurrent_same_run_commits_only_three_drafts() {
                 sink.commit_three(&batch)
             }
         });
-        [first.join().unwrap().unwrap(), second.join().unwrap().unwrap()]
+        [
+            first.join().unwrap().unwrap(),
+            second.join().unwrap().unwrap(),
+        ]
     });
     assert_eq!(results[0], results[1]);
     assert_eq!(
