@@ -14,7 +14,8 @@ $caseNames = @(
   'edit_save_duplicate_candidate', 'quit_relaunch_persistence',
   'wrong_project_ui_isolation', 'wrong_project_ipc_denial',
   'multi_source_transcript', 'source_revocation', 'error_recovery',
-  'keyboard_custom_controls', 'arabic_rtl', 'light_dark_visual'
+  'keyboard_custom_controls', 'arabic_locale_control', 'theme_mode_control',
+  'arabic_rtl', 'light_dark_visual'
 )
 $cases = [ordered]@{}
 foreach ($name in $caseNames) { $cases[$name] = @{ status = 'NOT TESTED'; reason = 'Not executed' } }
@@ -34,6 +35,56 @@ $report = [ordered]@{
   native_ui_probe = $null
   cases = $cases
   verdict = 'NOT TESTED'
+}
+function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess) {
+  # RawView includes provider objects that ControlView and Document queries
+  # may omit. This is diagnostic evidence, NOT an acceptance bypass.
+  $probe = [ordered]@{
+    runner_interactive = [Environment]::UserInteractive
+    runner_session_id = [System.Diagnostics.Process]::GetCurrentProcess().SessionId
+    app_session_id = $appProcess.SessionId
+    main_window_handle = [string]$appProcess.MainWindowHandle
+    nodes = @()
+  }
+  if ($root) {
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    $pending = [System.Collections.Generic.Queue[object]]::new()
+    $pending.Enqueue(@($root,0))
+    while ($pending.Count -gt 0 -and $probe.nodes.Count -lt 180) {
+      $item = $pending.Dequeue()
+      $node = $item[0]
+      $depth = [int]$item[1]
+      try {
+        $probe.nodes += @{ depth=$depth; control_type=$node.Current.ControlType.ProgrammaticName;
+          name=[string]$node.Current.Name; class_name=[string]$node.Current.ClassName }
+        if ($depth -lt 6) {
+          $child = $walker.GetFirstChild($node)
+          while ($child) {
+            $pending.Enqueue(@($child,($depth+1)))
+            $child = $walker.GetNextSibling($child)
+          }
+        }
+      } catch {
+        $probe.nodes += @{ depth=$depth; error=$_.Exception.GetType().Name }
+      }
+    }
+  }
+  $probe | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $path
+}
+function Save-UnverifiedWindow([object]$root, [string]$path) {
+  if (-not $root) { return }
+  try {
+    $bounds = $root.Current.BoundingRectangle
+    if ($bounds.Width -le 0 -or $bounds.Height -le 0) { return }
+    $bitmap = [System.Drawing.Bitmap]::new([int]$bounds.Width,[int]$bounds.Height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+      $graphics.CopyFromScreen([int]$bounds.X,[int]$bounds.Y,0,0,$bitmap.Size)
+      $bitmap.Save($path)
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+  } catch {
+    Write-Warning ("Installed shell screenshot capture failed: " + $_.Exception.Message)
+  }
 }
 $installDir = Join-Path $env:RUNNER_TEMP ('scriptotar-native-' + $SourceSha.Substring(0,8))
 $dataDir = Join-Path $env:RUNNER_TEMP ('scriptotar-native-data-' + $SourceSha.Substring(0,8))
@@ -67,8 +118,11 @@ try {
       if ($root) { break }
     } catch { }
   }
+  Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+  $report.uia_diagnostics = 'uia-diagnostics.json'
+  Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'unverified-window.png')
   if (-not $root) {
-    $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable interactive desktop/UIA main window on Windows runner' }
+    $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable interactive desktop/UIA main window on Windows runner; see uia-diagnostics.json' }
   } else {
     $tree = [System.Windows.Automation.TreeScope]::Descendants
     $condition = [System.Windows.Automation.PropertyCondition]::new(
@@ -87,7 +141,7 @@ try {
     if (-not $document -or -not $studioButton) {
       $cases.installed_webview = @{
         status='NOT TESTED'
-        reason='Installed shell present, but WebView2 UIA Document + Studio interactive button not exposed'
+        reason='Installed shell present, but WebView2 UIA Document + Studio button not exposed; inspect uia-diagnostics.json and unverified-window.png'
       }
     } else {
       $invoke = $studioButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
