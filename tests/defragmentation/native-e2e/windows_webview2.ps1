@@ -46,6 +46,7 @@ function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess)
     main_window_handle = [string]$appProcess.MainWindowHandle
     nodes = @()
     child_windows = @()
+    child_webview_provider_nodes = @()
   }
   if ($root) {
     if ($appProcess.MainWindowHandle -ne [IntPtr]::Zero) {
@@ -58,6 +59,54 @@ function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess)
       }
     }
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    # Tauri/WRY's parent Pane can omit the WebView2 UIA fragment.
+    # Record bounded accessibility descendants starting at trusted child HWNDs.
+    $checkedHandles = 0
+    foreach ($hwnd in [NativeWebViewWindow]::Children($appProcess.MainWindowHandle)) {
+      if ($checkedHandles -ge 20 -or $probe.child_webview_provider_nodes.Count -ge 240) { break }
+      $className = [NativeWebViewWindow]::ClassName($hwnd)
+      if ($className -notmatch 'Chrome_RenderWidgetHostHWND|Chrome_WidgetWin_0|Chrome_WidgetWin_1') { continue }
+      $checkedHandles++
+      try {
+        $providerRoot = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+        if (-not $providerRoot) { continue }
+        $webQueue = [System.Collections.Generic.Queue[object]]::new()
+        $webQueue.Enqueue(@($providerRoot,0))
+        while ($webQueue.Count -gt 0 -and $probe.child_webview_provider_nodes.Count -lt 240) {
+          $entry = $webQueue.Dequeue()
+          $element = $entry[0]
+          $depth = [int]$entry[1]
+          try {
+            $probe.child_webview_provider_nodes += @{
+              hwnd = $hwnd.ToInt64()
+              host_class = $className
+              depth = $depth
+              control_type = $element.Current.ControlType.ProgrammaticName
+              name = [string]$element.Current.Name
+            }
+            if ($depth -lt 8) {
+              $child = $walker.GetFirstChild($element)
+              while ($child -and $webQueue.Count -lt 180) {
+                $webQueue.Enqueue(@($child,($depth+1)))
+                $child = $walker.GetNextSibling($child)
+              }
+            }
+          } catch {
+            $probe.child_webview_provider_nodes += @{
+              hwnd = $hwnd.ToInt64()
+              depth = $depth
+              error = $_.Exception.GetType().Name
+            }
+          }
+        }
+      } catch {
+        $probe.child_webview_provider_nodes += @{
+          hwnd = $hwnd.ToInt64()
+          host_class = $className
+          error = $_.Exception.Message
+        }
+      }
+    }
     $pending = [System.Collections.Generic.Queue[object]]::new()
     $pending.Enqueue(@($root,0))
     while ($pending.Count -gt 0 -and $probe.nodes.Count -lt 180) {
