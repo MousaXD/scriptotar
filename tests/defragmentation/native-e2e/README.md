@@ -31,6 +31,28 @@ For an independently packaged Linux binary, invoke on a graphical test host:
 
 Use the *actual* dpkg-installed executable path; /usr/bin/scriptotar-desktop above is only an example, not an asserted path. Do not pass a Vite preview binary, browser runner, backend smoke executable, or user profile. The workflow discovers the correct path with dpkg -L.
 
+## Run against a real interactive Windows desktop
+
+The November 16 hosted Windows Server 2025 run [#43879991872](https://github.com/MousaXD/scriptotar/actions/runs/43879991872) **was interactive at the top-level window** (runner and app session 2), but UIA showed only `Tauri Window > WRY_WEBVIEW Pane`, while the screenshot was white. Do not describe this as a proven headless session. The upgraded probe waits up to 90 seconds for content and checks descendant WebView2 render-widget HWNDs, whose UIA provider can be disconnected from the parent Pane. It still refuses PASS unless a WebView2 Document, actionable Studio control and post-invocation heading are observed.
+
+To independently reproduce on a Windows 11 native-machine, sign in to an **unlocked, interactive desktop** with a normal, non-elevated user, a working WebView2 Runtime and PowerShell 7. Use the repository at the **exact source commit** used to produce the NSIS installer. Run from the repository root:
+
+```powershell
+$sha = (git rev-parse HEAD).Trim()
+$run = 'https://github.com/MousaXD/scriptotar/actions/runs/43879991872'
+$installer = (Resolve-Path 'C:\path\to\Scriptotar_1.4.1_x64-setup.exe').Path
+New-Item -ItemType Directory -Force '.\native-evidence\windows' | Out-Null
+& '.\tests\defragmentation\native-e2e\windows_webview2.ps1' `
+  -Installer $installer -SourceSha $sha -RunUrl $run `
+  -EvidenceDir '.\native-evidence\windows'
+```
+
+Replace the example installer path with the **actual exact-SHA NSIS artifact**, and associate the manual test with its real execution date, operator, OS build, installer SHA and binary SHA. The supplied run URL identifies the original CI artifact, **not** a new machine test run. Include the `result.json`, `uia-diagnostics.json`, screenshots, WebView2 Runtime version and a note identifying the manual host. A locally run test is not hosted-CI success. A missing provider is NOT TESTED, not PASS.
+
+If the WebView2 provider remains absent, inspect descendant HWND class names and PIDs in `uia-diagnostics.json`, review whether `msedgewebview2.exe` has started, capture Windows Event Viewer application errors and verify the desktop remains unlocked. A white app region is insufficient to conclude an accessibility-only issue.
+
+**Current limits:** the Windows script still implements only installed WebView2 discovery and a Studio invocation. Full project/Study/candidate/persistence and Arabic scenarios must be ported and executed on real UIA controls; until then the Windows release gate remains red. Neither screenshots nor backend IPC tests can replace these journeys.
+
 ## Evidence authenticity and review
 
 Keep screenshots and exact run artifacts; the JSON is a **machine-generated claim**, not independent human visual approval. A native PASS also requires a matching source commit, installed binary provenance, reviewed screenshots, verified source fixtures, accessibility audit, and release owner signoff. Issue #100 and #116 remain release blockers; Agent 00 owns merging. No release flags are changed here.
