@@ -790,7 +790,10 @@ fn canonical_batch_fixture() -> (
     // v11 writing receipts are installed by the canonical migration ledger.
     // Do not manually execute production DDL a second time.
     assert!(study_writing_persistence::RECEIPT_MIGRATION.contains("study_writing_batches"));
-    assert_eq!(db.schema_version().unwrap(), scriptotar_db::LATEST_SCHEMA_VERSION);
+    assert_eq!(
+        db.schema_version().unwrap(),
+        scriptotar_db::LATEST_SCHEMA_VERSION
+    );
 
     let mut context = context();
     context.project_id = project.id;
