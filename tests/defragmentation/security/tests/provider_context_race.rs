@@ -136,3 +136,63 @@ fn changed_study_after_effect_reservation_must_not_egress() {
         "changed Study was sent to provider after approval became stale"
     );
 }
+
+
+/// This race has a deterministic linearization point: the authoritative Study
+/// revocation commits before reserve_once returns its dispatch permit. The
+/// consent-record mutex must not be mistaken for a lock on canonical sources.
+struct PausedReservation<'a> {
+    reservation_reached: &'a std::sync::Barrier,
+    allow_reservation_return: &'a std::sync::Barrier,
+}
+impl PaidEffectFence for PausedReservation<'_> {
+    fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+        self.reservation_reached.wait();
+        self.allow_reservation_return.wait();
+        Ok(())
+    }
+    fn settle(&self, _: &ActualUsage) -> Result<(), ConsentError> { Ok(()) }
+    fn mark_uncertain(&self, _: &str) {}
+}
+
+#[test]
+fn concurrent_source_revocation_before_effect_permit_never_egresses() {
+    let (boundary, intent, authority) = approval();
+    let provider = CountingProvider::default();
+    let reservation_reached = std::sync::Barrier::new(2);
+    let allow_reservation_return = std::sync::Barrier::new(2);
+    let fence = PausedReservation {
+        reservation_reached: &reservation_reached,
+        allow_reservation_return: &allow_reservation_return,
+    };
+    std::thread::scope(|threads| {
+        threads.spawn(|| {
+            // The dispatch thread already performed its authorization check.
+            reservation_reached.wait();
+            authority.0.lock().unwrap().material_digest = "b".repeat(64);
+            // Canonical revocation has now completed before the external-effect
+            // reservation is allowed to return to the sender.
+            allow_reservation_return.wait();
+        });
+        let result = boundary.dispatch(
+            &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 102
+        );
+        assert!(
+            matches!(result, Err(ConsentError::ChangedContext |
+                ConsentError::WrongProjectOrStudy |
+                ConsentError::UncertainEffect | ConsentError::Denied)),
+            "source revocation committed before dispatch permit must prevent egress"
+        );
+    });
+    assert_eq!(
+        provider.0.load(Ordering::SeqCst), 0,
+        "provider invoked after canonical Study revocation finished"
+    );
+    assert!(matches!(
+        boundary.dispatch(&intent, &authority, &Catalog, &RejectingFence,
+            &provider, "fixture-key", 103),
+        Err(ConsentError::ChangedContext | ConsentError::UncertainEffect |
+            ConsentError::Denied | ConsentError::AlreadyUsed)
+    ));
+    assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+}
