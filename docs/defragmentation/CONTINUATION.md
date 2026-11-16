@@ -1,3 +1,14 @@
+# CHECKPOINT — 2026-11-16 Agent 00 functional research IPC + verification + Studio integration (candidate)
+
+- Integration advanced through Agent 02 #119 (durable v10 effects), Agent 03 #120 (research engine and five public zero-cost, approval-gated Tauri/TS/mock APIs), Agent 04 #117 (fail-closed private verification), Agent 06 #123 (unified Studio and optional consent UI), Agent 09 #125 (GUI polishing) and Agent 08 #127 (benchmark infrastructure). The latest integration source commit is `dc66977e40f9a2ceaad56a6355fc800f1e7d5108`; this checkpoint commit will advance that SHA. No main changes.
+- New owner production research commits: `1cb89766` (source/run/approve/recover/read IPC), `46086d71` (Rustfmt), `0ce7adb1` (Clippy import and exhaustive API inventory), `d32441d3` (enforce SQLite checkpoint list maximum 50). New Rust integration test exercises API-level authorization, durable reopen and duplicate refusal; mock/TS tests exercise canonical identity, stale revision and project denial.
+- The latest full combined Rust/CI/packaging runs must complete on the final exact SHA. Earlier intermediate failures were diagnosed and repaired rather than treated as permanent defects; do not transfer isolated CI successes or count cancelled runs as passes.
+- Provider consent #118, production triple-script persistence #121, independent security gate #124 and installed WebView QA #126 remain outside integration. Latest writing PR #121 had four failing isolated workflows at the last review; do not merge it blindly. #122 is a temporary compilation probe and is excluded.
+- Paid execution remains disabled; the app cannot yet automatically produce three separately persisted scripts from approved AI generation. Existing manual Copy Prompt, editing and exports remain. Independently verified claim status is NOT yet available. No release or main merge.
+- Frozen owner contracts: `docs/defragmentation/P1_INTEGRATION_CONTRACT_20261116.md`.
+
+---
+
 # CHECKPOINT — 2026-11-16 Agent 00 begins actual P1 integration (candidate; NOT release ready)
 
 - The integration branch was fast-forwarded from `3009989a3aa73248b6432ba0cd84821c59110993` to Agent 02 PR #119 head `9da21c96a62d7a041b64500841b89dc6dc649703` (25 commits, nine affected files), incorporating the canonical additive SQLite v10 external-effect migration, host-private effect driver and corresponding tests. No main merge or paid provider request is enabled.
