@@ -114,3 +114,20 @@ The first persistence implementation could reconcile `commit_three`, but `genera
 A regression constructs a completed three-script transaction, manually edits one saved draft, advances the Study revision, and retries orchestration using a **denied provider gate**. Recovery must return the three original IDs with zero new authorization/dispatch attempts and preserve the human edit. A modified prompt fails closed.
 
 Agent 00 must expose this as a **read-only reconcile action** on a project-scoped persisted run. Never accept a `GenerationPlan` supplied directly by an untrusted webview as authorization; reconstruct and match it to the authorized original run/Study. This receipt is not a provider acknowledgement or factual verification.
+
+
+## 2026-11-16 — additional canonical delivery hardening
+
+The current owner contract is `docs/defragmentation/P1_INTEGRATION_CONTRACT_20261116.md` on the integration branch. Agent 02's v10 external-provider-effect migration is already integrated. Agent 00 must allocate the **next additive numbered migration after v10** for `RECEIPT_MIGRATION` (both writing batch receipts and immutable structured revision rows), without altering existing migration history.
+
+Changes in this continuation, all on PR #121's existing agent-owned branch:
+
+- The canonical SQLite acceptance sink independently rejects duplicate/similar angles and duplicate normalized script narration, even if a caller bypasses `generate_three`. Its prior run, context, evidence, membership and source-link checks remain in place.
+- `draft_source_links` now contains only **the actual per-candidate `CandidateLineage.source_id` StudySource IDs**; the complete selected-Study source set stays in the immutable batch receipt. All three candidates no longer misleadingly claim every Study source as an individual citation.
+- Real canonical-database regression asserts those exact source associations and that invalid duplicate script bodies do not advance the Study revision or write any partial draft.
+- Additional tests exercise a late fourth paid-stage failure (preserve three earlier step receipts, mark the failed step uncertain, never silently rebill) and two concurrent SQLite connections submitting the same run (exactly three persisted drafts, one revision increment, identical returned IDs).
+
+**Agent 00 integration sequence:** (1) apply the approved next numbered migration to the actual canonical DB migration ledger; (2) privately register both writing service modules for real host Rust compilation, without adding a paid Tauri invocation; (3) construct `CurrentStudy` from the active-project-locked `scoped_writing_input_locked` authoritative gateway with immutable transcript-byte/source fingerprints and evidence-review state; (4) bind run authorization, consent-revocation linearization, provider exact-request hash and real v10 external-effect receipts before allowing a paid step; (5) only then expose typed Studio EN/AR create/reconcile/select/edit/export calls and installed native WebView restart acceptance. The sink's in-memory/fixture `CurrentStudy` and offline provider are NOT production authorization. A batch receipt is NOT a provider settlement receipt.
+
+**Pending release gates:** exact-head full CI including Rustfmt, Clippy, workspace tests, package tests; production host compilation on the combined integration SHA; approved-provider/effect handshake and true source-content hashing; verified factual review remains Agent 04's responsibility; native installed EN/AR WebView journey. Paid execution stays disabled, PR draft, main unchanged.
+
