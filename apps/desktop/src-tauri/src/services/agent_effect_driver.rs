@@ -72,7 +72,7 @@ impl AppServices {
         let ExternalReservation::Fresh(fresh)=claim else {
             return Err(RepositoryError::Conflict("existing paid effect: reconcile, do not replay".into()));
         };
-        self.execute_fenced_external_attempt(ctx,provider_name,fingerprint,limits,
+        self.execute_fenced_external_attempt(ctx,fingerprint,limits,
             policy,provider,fresh)
     }
 
@@ -99,24 +99,24 @@ impl AppServices {
                 "retry is not proven, prepared and authorized".into()
             ));
         }
-        self.execute_fenced_external_attempt(ctx,provider_name,fingerprint,limits,
+        self.execute_fenced_external_attempt(ctx,fingerprint,limits,
             policy,provider,ready)
     }
 
     fn execute_fenced_external_attempt(
-        &self,ctx:&ExecutionContext,provider_name:&str,fingerprint:&str,
+        &self,ctx:&ExecutionContext,fingerprint:&str,
         limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
         provider:&dyn ExternalEffectProvider,ready:ExternalEffect,
     )->RepositoryResult<ExternalEffect> {
         let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
-        policy.authorize(ctx,provider_name,fingerprint,limits)?;
+        policy.authorize(ctx,&ready.provider,fingerprint,limits)?;
         let dispatched=self.store.mark_external_dispatched(key,ready.revision,ready.attempt)?;
         // This transaction is committed before ANY external call. If the app
         // crashes now, a later caller must reconcile rather than replay.
         // A pre-I/O revocation means the service can prove nonexecution locally.
         if self.require_active_project(key.project).is_err()
-            || policy.authorize(ctx,provider_name,fingerprint,limits).is_err() {
+            || policy.authorize(ctx,&ready.provider,fingerprint,limits).is_err() {
             return self.store.reconcile_external_effect(key,dispatched.attempt,
                 ExternalResolution::VerifiedNotExecuted {evidence_id:"local_pre_send_revoked"});
         }
@@ -249,7 +249,7 @@ mod recovery_driver_tests {
             steps: vec![StepPlan {
                 id: "draft".into(),
                 input: StepInput::DraftScript { brief_id: Uuid::new_v4().to_string() },
-                estimate: estimate.clone(),
+                estimate,
                 max_attempts: 3,
                 requires_approval: true,
             }],
