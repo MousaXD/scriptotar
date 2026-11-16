@@ -588,7 +588,10 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
             .unwrap();
     }
     conn.execute_batch(
-        "DROP TABLE agent_external_attempt_history;
+        "DROP TABLE study_writing_revisions;
+         DROP TABLE study_writing_batches;
+         DELETE FROM schema_migrations WHERE version=11;
+         DROP TABLE agent_external_attempt_history;
          DROP TABLE agent_external_effects;
          DELETE FROM schema_migrations WHERE version=10;
          DROP TABLE evidence_reviews;
@@ -725,4 +728,80 @@ fn draft_candidate_index_loads_only_metadata_and_denies_foreign_project() {
         .list_archived_draft_summaries(owner.id, study.id, 200)
         .unwrap()
         .is_empty());
+}
+
+// v11 is an additive transaction. A corrupted existing table must fail closed
+// without advancing the migration ledger or losing historical content.
+#[test]
+fn writing_v10_upgrade_and_schema_collision_rollback_preserve_existing_studies() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("writing-migration.sqlite");
+    let store = SqliteStore::open(&path).unwrap();
+    store.run_integration_migrations().unwrap();
+    let project = Project::new("Preserved writing project");
+    store.create_project(&project).unwrap();
+    let study = store
+        .create_study(project.id, "Preserved Study", "Keep original")
+        .unwrap();
+    drop(store);
+
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys=ON;
+         DROP TRIGGER study_writing_batches_scope_insert;
+         DROP TRIGGER study_writing_batches_immutable_delete;
+         DROP TRIGGER study_writing_batches_immutable_update;
+         DROP TRIGGER study_writing_revisions_immutable_delete;
+         DROP TRIGGER study_writing_revisions_immutable_update;
+         DROP TABLE study_writing_revisions;
+         DROP TABLE study_writing_batches;
+         DELETE FROM schema_migrations WHERE version=11;
+         PRAGMA user_version=10;
+         CREATE TABLE study_writing_batches(sentinel INTEGER);",
+    )
+    .unwrap();
+    drop(conn);
+
+    assert!(SqliteStore::open(&path).is_err());
+    let conn = Connection::open(&path).unwrap();
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 10);
+    let applied: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version=11",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(applied, 0);
+    let title: String = conn
+        .query_row(
+            "SELECT title FROM content_studies WHERE id=?1",
+            params![study.id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(title, "Preserved Study");
+    conn.execute_batch("DROP TABLE study_writing_batches;").unwrap();
+    drop(conn);
+
+    let upgraded = SqliteStore::open(&path).unwrap();
+    assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
+    assert_eq!(upgraded.get_study(project.id, study.id).unwrap().title, title);
+    drop(upgraded);
+    let reopened = SqliteStore::open(&path).unwrap();
+    assert_eq!(reopened.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
+    let second = Project::new("Foreign writing project");
+    reopened.create_project(&second).unwrap();
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON").unwrap();
+    let mismatched = conn.execute(
+        "INSERT INTO study_writing_batches(
+             run_id,project_id,study_id,payload_json,draft_ids_json,committed_at)
+         VALUES('foreign-claim',?1,?2,'{}','[1,2,3]','2026-11-16T00:00:00Z')",
+        params![second.id.to_string(), study.id.to_string()],
+    );
+    assert!(mismatched.is_err());
 }

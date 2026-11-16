@@ -13,6 +13,9 @@ pub use operational_status::*;
 mod evidence_review_schema;
 mod studies;
 mod studies_schema;
+
+mod writing_schema;
+pub use writing_schema::WRITING_RECEIPT_MIGRATION;
 pub use studies::EvidenceReview;
 
 mod studies_atomic;

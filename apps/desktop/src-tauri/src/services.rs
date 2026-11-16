@@ -13,6 +13,12 @@ mod study_gateway;
 pub(super) mod study_research;
 // Fail-closed, read-only claim verification; no public certification endpoint yet.
 mod study_verification;
+// Compile the original-writing engine and canonical atomic sink privately.
+// Paid provider/egress and public generation IPC remain explicitly disabled.
+#[allow(dead_code)]
+mod study_writing;
+#[allow(dead_code)]
+mod study_writing_persistence;
 
 use std::{
     collections::{HashMap, HashSet},
