@@ -836,7 +836,10 @@ mod tests {
             provider_request_id: &str,
             _usage: &ActualUsage,
         ) -> Result<(), ConsentError> {
-            self.receipts.lock().unwrap().push(provider_request_id.into());
+            self.receipts
+                .lock()
+                .unwrap()
+                .push(provider_request_id.into());
             self.settled.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
