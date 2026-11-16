@@ -69,11 +69,49 @@ impl AppServices {
         let ExternalReservation::Fresh(fresh)=claim else {
             return Err(RepositoryError::Conflict("existing paid effect: reconcile, do not replay".into()));
         };
+        self.execute_fenced_external_attempt(ctx,provider_name,fingerprint,limits,
+            policy,provider,fresh)
+    }
+
+    /// Explicit second/third attempt only. An earlier provider-confirmed
+    /// NotExecuted receipt and manual prepare_external_after_verified_nonexecution
+    /// MUST already have durably prepared this attempt. The normal "first call"
+    /// path never dispatches an Existing reservation.
+    pub fn dispatch_prepared_external_retry(
+        &self,ctx:&ExecutionContext,provider_name:&str,fingerprint:&str,
+        limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
+        provider:&dyn ExternalEffectProvider,
+    )->RepositoryResult<ExternalEffect> {
+        let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
         policy.authorize(ctx,provider_name,fingerprint,limits)?;
-        let dispatched=self.store.mark_external_dispatched(key,fresh.revision,fresh.attempt)?;
-        // There has been no network I/O. Local pre-send abort can therefore
-        // certify non-execution, but it never triggers an automatic retry.
+        let ready=self.store.get_external_effect(key)?
+            .ok_or_else(||RepositoryError::NotFound("prepared external retry".into()))?;
+        if ready.status!=ExternalEffectStatus::Reserved || ready.attempt<=1
+            || ready.provider!=provider_name || ready.fingerprint!=fingerprint
+            || ready.token_limit!=limits.tokens
+            || ready.cost_limit_microusd!=limits.cost_microusd
+            || ready.cancel_requested {
+            return Err(RepositoryError::Conflict(
+                "retry is not proven, prepared and authorized".into()
+            ));
+        }
+        self.execute_fenced_external_attempt(ctx,provider_name,fingerprint,limits,
+            policy,provider,ready)
+    }
+
+    fn execute_fenced_external_attempt(
+        &self,ctx:&ExecutionContext,provider_name:&str,fingerprint:&str,
+        limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
+        provider:&dyn ExternalEffectProvider,ready:ExternalEffect,
+    )->RepositoryResult<ExternalEffect> {
+        let key=effect_key(ctx)?;
+        self.require_active_project(key.project)?;
+        policy.authorize(ctx,provider_name,fingerprint,limits)?;
+        let dispatched=self.store.mark_external_dispatched(key,ready.revision,ready.attempt)?;
+        // This transaction is committed before ANY external call. If the app
+        // crashes now, a later caller must reconcile rather than replay.
+        // A pre-I/O revocation means the service can prove nonexecution locally.
         if self.require_active_project(key.project).is_err()
             || policy.authorize(ctx,provider_name,fingerprint,limits).is_err() {
             return self.store.reconcile_external_effect(key,dispatched.attempt,
@@ -85,8 +123,6 @@ impl AppServices {
             return self.store.reconcile_external_effect(key,current.attempt,
                 ExternalResolution::VerifiedNotExecuted {evidence_id:"local_pre_send_cancelled"});
         }
-        // Provider exceptions, crashes or a lost response leave a committed
-        // dispatched marker; the restart path converts it to uncertain.
         let evidence=provider.dispatch_once(ctx,fingerprint,dispatched.attempt,limits);
         self.store.reconcile_external_effect(key,dispatched.attempt,evidence.resolution())
     }
