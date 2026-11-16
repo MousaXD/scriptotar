@@ -1420,3 +1420,28 @@ fn canonical_parallel_projects_preserve_independent_studies_and_source_links() {
     );
     assert_eq!(db.get_study(project_b.id, study_b.id).unwrap().revision, 2);
 }
+
+#[test]
+fn disputed_observation_cannot_enter_writing_plan_or_canonical_acceptance() {
+    let mut input = context();
+    input.evidence[0].status = EvidenceStatus::Contradicted;
+    assert!(matches!(
+        prepare_three("disputed-run", input),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.context.evidence[0].status = EvidenceStatus::Contradicted;
+    let mut sink = study_writing_persistence::CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
