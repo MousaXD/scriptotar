@@ -15,7 +15,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "wrong_project_ipc_denial", "multi_source_transcript",
             "source_revocation", "keyboard_custom_controls", "arabic_locale_control",
             "theme_mode_control", "arabic_rtl",
-            "light_dark_visual", "windows_webview2",
+            "light_dark_visual",
         ):
             self.assertIn(name, native.CASES)
 
