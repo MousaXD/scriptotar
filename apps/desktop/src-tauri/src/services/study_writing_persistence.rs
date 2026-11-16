@@ -7,7 +7,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use scriptotar_ai::writing::{ClaimStatus, EvidenceKind, EvidenceStatus};
+use scriptotar_ai::writing::{self, ClaimStatus, EvidenceKind, EvidenceStatus};
 use scriptotar_core::now_rfc3339;
 use scriptotar_db::SqliteStore;
 use uuid::Uuid;
@@ -183,9 +183,32 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             .iter()
             .map(|s| s.study_source_id)
             .collect();
+        // The database boundary must revalidate diversity independently of
+        // generate_three: direct batch acceptance must not bypass the
+        // orchestrator's angle/same-prose checks.
+        let proposed_angles = normalized
+            .candidates
+            .iter()
+            .map(|candidate| candidate.angle.clone())
+            .collect::<Vec<_>>();
+        if !writing::compare_angles(&proposed_angles).is_empty() {
+            return Err(denied("duplicate or similar script angles"));
+        }
         let mut angles = HashSet::new();
         let mut scripts = HashSet::new();
+        let mut normalized_prose = HashSet::new();
         for candidate in &mut normalized.candidates {
+            let prose = candidate
+                .draft
+                .beats
+                .iter()
+                .map(|beat| beat.narration.to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let prose = prose.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !normalized_prose.insert(prose) {
+                return Err(denied("duplicate script bodies"));
+            }
             if !angles.insert(candidate.angle.id.as_str())
                 || !scripts.insert(candidate.draft.id.as_str())
                 || candidate.draft.angle_id != candidate.angle.id
