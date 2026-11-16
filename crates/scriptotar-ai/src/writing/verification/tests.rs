@@ -110,6 +110,25 @@ fn two_independent_reviewed_sources_and_exact_current_human_decision_are_require
 }
 
 #[test]
+fn reviewer_cannot_approve_evidence_that_did_not_exist_at_review_time() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Verified);
+
+    // Same ID, version and quote, but a newer collection event. An approval
+    // predating the actual evidence snapshot is not a current attestation.
+    ctx.evidence[1].collected_at_epoch = Some(200);
+    let stale = evaluated(&ctx, &claim);
+    assert_eq!(stale.status, VerificationStatus::Unverified);
+    assert!(has(&stale, FindingCode::InvalidReviewLineage));
+
+    // Only a new attestation on or after that source snapshot is eligible.
+    ctx.human_reviews[0].reviewed_at_epoch = 200;
+    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Verified);
+}
+
+#[test]
 fn model_claim_of_corroboration_does_not_verify() {
     let mut ctx = scope(vec![
         source("a", "same-publisher"),
