@@ -9,6 +9,9 @@ mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
 mod study_gateway;
+// Compile the scoped offline research adapter privately before exposing IPC.
+#[allow(dead_code)]
+mod study_research;
 
 use std::{
     collections::{HashMap, HashSet},
