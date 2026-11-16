@@ -38,7 +38,9 @@
     // The previous run may still exist durably in the backend. Do not
     // display it as an authorization for a newly edited Study or payload.
     if (run && (run.studyRevision !== study?.revision || run.projectId !== projectId ||
-      run.studyId !== study?.id || !isSameSourceSet(run.selectedSources, study?.sources ?? []))) {
+      run.studyId !== study?.id || !isSameSourceSet(run.selectedSources, study?.sources ?? []) ||
+      (prompt && run.exactPrompt !== prompt) || run.provider !== provider || run.model !== model.trim() ||
+      run.maxTokens !== Number(tokens) || run.maxUsd !== Number(dollars))) {
       run = null;
     }
   }
@@ -52,6 +54,8 @@
   $: isCurrentRun = !!run && run.projectId === projectId && run.studyId === study?.id &&
     run.studyRevision === study?.revision &&
     isSameSourceSet(run.selectedSources, sources) && !dirty &&
+    run.provider === provider && run.model === model.trim() &&
+    run.maxTokens === Number(tokens) && run.maxUsd === Number(dollars) &&
     (!prompt || run.exactPrompt === prompt);
   $: canPropose = !!study && !!prompt.trim() && !!model.trim() && !dirty && !pending &&
     limitsValid(tokens, dollars) && !!bridge?.proposeStudioRun;
@@ -81,6 +85,12 @@
         throw new Error(t.stale);
       }
       run = existing[0] ?? null;
+      if (run) {
+        provider = run.provider;
+        model = run.model;
+        tokens = String(run.maxTokens);
+        dollars = String(run.maxUsd);
+      }
       consent = false;
     } catch (cause) {
       if (epoch === requestEpoch) fail(cause, t.decisionError);
