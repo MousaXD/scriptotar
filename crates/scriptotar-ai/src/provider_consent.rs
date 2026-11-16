@@ -3,7 +3,10 @@
 //! A production caller must supply a DB-backed ScopeAuthority, a trusted and current pricing
 //! catalog, and a durable, externally idempotent EffectFence. The legacy unmetered HTTP
 //! adapters are deliberately NOT eligible to dispatch via this policy.
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -149,7 +152,7 @@ struct SavedConsent {
 /// A process restart drops pending consent. It never silently reconstructs approval.
 #[derive(Default)]
 pub struct ConsentBoundary {
-    records: Mutex<HashMap<String, SavedConsent>>,
+    records: Mutex<HashMap<String, Arc<Mutex<SavedConsent>>>>,
 }
 
 /// The fence must atomically claim a never-before-dispatched provider effect in the
@@ -385,11 +388,11 @@ impl ConsentBoundary {
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         match records.entry(intent.run_id.clone()) {
             std::collections::hash_map::Entry::Vacant(slot) => {
-                slot.insert(SavedConsent {
+                slot.insert(Arc::new(Mutex::new(SavedConsent {
                     intent,
                     preview: preview.clone(),
                     decision: Decision::Pending,
-                });
+                })));
                 Ok(preview)
             }
             std::collections::hash_map::Entry::Occupied(_) => Err(ConsentError::AlreadyUsed),
@@ -404,11 +407,16 @@ impl ConsentBoundary {
         authority: &dyn ScopeAuthority,
         now_ms: u64,
     ) -> Result<(), ConsentError> {
-        let mut records = self
+        let record = self
             .records
             .lock()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?
+            .get(run_id)
+            .cloned()
+            .ok_or(ConsentError::NoApproval)?;
+        let mut record = record
+            .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
-        let record = records.get_mut(run_id).ok_or(ConsentError::NoApproval)?;
         if record.decision != Decision::Pending {
             return Err(ConsentError::AlreadyUsed);
         }
@@ -432,11 +440,16 @@ impl ConsentBoundary {
     }
 
     pub fn cancel(&self, run_id: &str) -> Result<(), ConsentError> {
-        let mut records = self
+        let record = self
             .records
             .lock()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?
+            .get(run_id)
+            .cloned()
+            .ok_or(ConsentError::NoApproval)?;
+        let mut record = record
+            .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
-        let record = records.get_mut(run_id).ok_or(ConsentError::NoApproval)?;
         match record.decision {
             Decision::Pending | Decision::Approved => {
                 record.decision = Decision::Denied;
@@ -467,13 +480,16 @@ impl ConsentBoundary {
         if api_key.trim().is_empty() {
             return Err(ConsentError::CredentialsRequired);
         }
-        let mut records = self
+        let record = self
             .records
             .lock()
-            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
-        let record = records
-            .get_mut(&intent.run_id)
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?
+            .get(&intent.run_id)
+            .cloned()
             .ok_or(ConsentError::NoApproval)?;
+        let mut record = record
+            .lock()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         match record.decision {
             Decision::Pending => return Err(ConsentError::NoApproval),
             Decision::Denied => return Err(ConsentError::Denied),
@@ -549,10 +565,9 @@ impl ConsentBoundary {
             return Err(ConsentError::UncertainEffect);
         }
 
-        // Keep the per-process consent lock through the send. A concurrent
-        // cancellation can only linearize after this already-started attempt;
-        // it cannot revoke and then race a later send. Agent 00 owns adapting
-        // this to a per-run lock for responsive parallel approvals.
+        // Keep only this run's consent mutex through the send. A concurrent
+        // cancellation linearizes after the already-started attempt, but other
+        // runs can still prepare, approve, cancel or dispatch independently.
         let generated = runner.generate_once(
             &intent.provider,
             api_key,
@@ -563,7 +578,7 @@ impl ConsentBoundary {
             deadline_ms,
         );
         drop(scope_guard);
-        drop(records);
+        drop(record);
         let mut generated = match generated {
             Ok(response) => response,
             Err(_) => {
@@ -601,13 +616,10 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
-        let mut records = self
-            .records
+        let mut record = record
             .lock()
             .map_err(|_| ConsentError::UncertainEffect)?;
-        if let Some(record) = records.get_mut(&intent.run_id) {
-            record.decision = Decision::Complete;
-        }
+        record.decision = Decision::Complete;
         Ok(generated)
     }
 }
