@@ -6,7 +6,7 @@ are not integrated. Tests for feature PRs are intentionally staged independently
 
 ## Reproduce and run
 
-1. Check out **exact PR #118 SHA** `bcb3f3a7d08426ee013530236ea2252012fa4da3`
+1. Check out **PR #118 SHA** `cdcd07d61f219e5be08052eea6ccddcafcc3c7e9` (also present on earlier `bcb3f3a`)
    and copy this directory's `Cargo.toml` and `tests/provider_context_race.rs`
    to `tests/defragmentation/security/` in that checkout. Run:
 
@@ -19,7 +19,7 @@ are not integrated. Tests for feature PRs are intentionally staged independently
    should fail on PR #118: the mock fence revokes context *after* the prior scope
    validation, yet the mock provider is called. Zero live API calls are made.
 
-2. Check out **exact PR #117 SHA** `9267066ce3576431b666c6c8cb0f20ba8eaad228`.
+2. Check out **PR #117 SHA** `0847a06cf5af0d2432ad15495a6cd6110079f954`.
    Copy `test_study_claim_boundary.py` into the same security directory, then run:
 
    ```sh
@@ -27,10 +27,11 @@ are not integrated. Tests for feature PRs are intentionally staged independently
        -p 'test_*.py' -v
    ```
 
-   It should fail because canonical metadata are checked while the supplied
-   `ScriptDraft` body is used for claim extraction. The existing successful
-   Rust host test builds an unsaved `ScriptDraft` with the correct draft UUID
-   and revision, illustrating the problematic trust boundary.
+   This contract now **passes by design** on the newer PR #117: the host
+   explicitly sets `draft_content_bound: false` for noncanonical
+   caller-provided draft text, and the verification core refuses Verified
+   status and requires publication review. The historical `9267066`
+   pre-mitigation head is expected to fail this guard.
 
 3. On the integration baseline (before #117 is merged), the Python host guard
    **SKIPS** rather than treating a missing implementation as a pass. The
@@ -39,9 +40,7 @@ are not integrated. Tests for feature PRs are intentionally staged independently
 
 ## Test evidence categories
 
-- **Code-path finding:** exact source inspection demonstrates a reachable
-  trust-boundary gap. The new test documents the expected failure but has **not
-  been executed by this Agent** against a compiled feature checkout.
+- **Code-path finding:** provider-consent race remains present at the new #118 head. The Rust test is expected to fail and has **not been executed** by this Agent against a compiled feature checkout. Latest #117 independently added a fail-closed `draft_content_bound` guard; its Python security contract is expected to pass (not executed locally).
 - **CI:** upstream GitHub Actions results are cited in the audit handoff; they
   do not execute this nested independent Rust harness.
 - **NOT TESTED:** real provider costs, installed Tauri WebView, real credentials,
