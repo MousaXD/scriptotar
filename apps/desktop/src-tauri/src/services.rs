@@ -11,6 +11,8 @@ mod project_jobs;
 mod study_gateway;
 // Compile the scoped offline research adapter privately before exposing IPC.
 pub(super) mod study_research;
+// Fail-closed, read-only claim verification; no public certification endpoint yet.
+mod study_verification;
 
 use std::{
     collections::{HashMap, HashSet},
