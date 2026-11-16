@@ -1061,7 +1061,7 @@ impl AppServices {
     ) -> RepositoryResult<Vec<RunSnapshot>> {
         let engine = build_study_research_engine(self, project, study)?;
         let mut results = Vec::new();
-        for run_id in engine.store.list_run_ids(100).map_err(|_| storage())? {
+        for run_id in engine.store.list_run_ids(50).map_err(|_| storage())? {
             let run = engine.get(&run_id).map_err(research_run_error)?;
             if valid_research_run(&run, project, study) {
                 results.push(run);
