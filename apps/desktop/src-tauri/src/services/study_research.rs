@@ -95,9 +95,33 @@ fn scoped_study(
     if record.archived_at.is_some() {
         return Err(not_found());
     }
+    let active: bool = read_db(services)?
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM content_studies st
+                JOIN projects p ON p.id=st.project_id
+                WHERE st.id=?1 AND st.project_id=?2
+                  AND st.archived_at IS NULL AND p.archived_at IS NULL
+            )",
+            params![study.to_string(), project.to_string()],
+            |row| row.get(0),
+        )
+        .map_err(|_| storage())?;
+    if !active {
+        return Err(not_found());
+    }
     for id in ids {
-        // Existing database repository validates the exact project/Study/source tuple.
-        let _ = services.store.get_study_source(project, study, *id)?;
+        // Validate *both* exact source membership and admissible source kind
+        // before requesting user approval, not only after effect reservation.
+        let attached = services.store.get_study_source(project, study, *id)?;
+        if attached.reference_id.is_none()
+            || !matches!(
+                attached.kind,
+                StudySourceKind::ResearchItem | StudySourceKind::Transcript
+            )
+        {
+            return Err(invalid("research inspection requires a research item or transcript"));
+        }
     }
     services.require_active_project(project)?;
     Ok(record)
