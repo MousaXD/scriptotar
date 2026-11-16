@@ -13,8 +13,9 @@ use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
 use super::study_writing::{
-    export_candidate, lineage_for, prepare_three, AtomicCandidateStore, CurrentStudy, GeneratedBatch,
-    GeneratedCandidate, GenerationPlan, VersionedCandidateStore, WriteResult, WritingWorkflowError,
+    export_candidate, lineage_for, prepare_three, AtomicCandidateStore, CurrentStudy,
+    GeneratedBatch, GeneratedCandidate, GenerationPlan, VersionedCandidateStore, WriteResult,
+    WritingWorkflowError,
 };
 
 /// Agent 00 must fold this additive schema into a numbered migration, not run
@@ -227,7 +228,8 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             {
                 return Err(denied("unknown angle evidence"));
             }
-            if candidate.lineage != lineage_for(&batch.context, &candidate.angle, &candidate.draft)? {
+            if candidate.lineage != lineage_for(&batch.context, &candidate.angle, &candidate.draft)?
+            {
                 return Err(denied("incomplete or forged source lineage"));
             }
             for claim in &mut candidate.draft.claims {
