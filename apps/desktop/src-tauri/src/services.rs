@@ -8,6 +8,9 @@ mod agent_effect_driver {
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
+// Compiled host consent policy; paid egress stays disabled until shared dispatch fencing.
+#[allow(dead_code)]
+mod provider_consent;
 mod study_gateway;
 // Compile the scoped offline research adapter privately before exposing IPC.
 pub(super) mod study_research;
