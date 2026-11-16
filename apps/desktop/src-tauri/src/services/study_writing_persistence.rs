@@ -13,7 +13,8 @@ use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
 use super::study_writing::{
-    export_candidate, AtomicCandidateStore, CurrentStudy, GeneratedBatch, GeneratedCandidate,\n    VersionedCandidateStore, WriteResult,
+    export_candidate, AtomicCandidateStore, CurrentStudy, GeneratedBatch, GeneratedCandidate,
+    VersionedCandidateStore, WriteResult,
     WritingWorkflowError,
 };
 
