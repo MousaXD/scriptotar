@@ -451,7 +451,7 @@ impl AppServices {
     }
 
     /// Caller must hold the project lock throughout validation and any write.
-    fn scoped_writing_input_locked(
+    pub(super) fn scoped_writing_input_locked(
         &self,
         project_id: Uuid,
         study_id: Uuid,
