@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::{AiRequest, EndpointPolicy, ProviderConfig, ProviderKind};
 
 const MAX_PROMPT_BYTES: usize = 500_000;
+const MAX_RESPONSE_BYTES: usize = 1_048_576;
 const MAX_SELECTED_SOURCES: usize = 8;
 const MAX_OUTPUT_TOKENS: u64 = 8_192;
 const MAX_ELAPSED_MS: u64 = 120_000;
@@ -204,6 +205,9 @@ pub struct ActualUsage {
 
 pub struct MeteredReply {
     pub text: String,
+    /// Opaque ID received from the authenticated provider response. Never
+    /// derive this from the prompt, API key or our local effect identity.
+    pub provider_request_id: String,
     pub usage: ActualUsage,
 }
 
@@ -211,6 +215,15 @@ pub struct MeteredReply {
 /// return verifiable usage and prohibit automatic provider retries or redirects.
 pub trait BoundedProvider: Send + Sync {
     fn supports_hard_bounds(&self, config: &ProviderConfig) -> bool;
+
+    /// Validate a real authenticated provider response with a nonempty
+    /// provider-issued request ID and provider-metered token usage. A mock
+    /// estimate, a locally synthesized ID, or a legacy text-only response
+    /// MUST NOT settle a paid effect. Deny by default.
+    fn verified_usage_receipt(&self, _config: &ProviderConfig, _reply: &MeteredReply) -> bool {
+        false
+    }
+
     fn generate_once(
         &self,
         config: &ProviderConfig,
@@ -247,6 +260,14 @@ fn scoped_id(value: &str) -> bool {
         && value
             .bytes()
             .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_'))
+}
+
+fn valid_provider_request_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -667,6 +688,20 @@ impl ConsentBoundary {
                 return Err(ConsentError::UncertainEffect);
             }
         };
+        // A fabricated usage estimate or an HTTP response missing its actual
+        // authenticated provider request ID cannot resolve the durable effect.
+        // Bound text before returning it; real adapters must also bound
+        // response buffering at the transport layer.
+        if !valid_provider_request_id(&generated.provider_request_id)
+            || !runner.verified_usage_receipt(&intent.provider, &generated)
+        {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::UncertainEffect);
+        }
+        if generated.text.len() > MAX_RESPONSE_BYTES {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::UsageOverBudget);
+        }
         let mut usage = generated.usage;
         // USD accounting is owned by this trusted policy, never by a provider
         // adapter's estimated/request-supplied cost field.
@@ -799,6 +834,10 @@ mod tests {
             true
         }
 
+        fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
+            reply.provider_request_id == "fixture-request-id"
+        }
+
         fn generate_once(
             &self,
             _: &ProviderConfig,
@@ -813,6 +852,7 @@ mod tests {
             }
             Ok(MeteredReply {
                 text: request.prompt.clone(),
+                provider_request_id: "fixture-request-id".into(),
                 usage: ActualUsage {
                     input_tokens: 9,
                     output_tokens: if self.over_budget { 9_999 } else { 30 },
@@ -1171,6 +1211,61 @@ mod tests {
         assert_eq!(response.usage.cost_microusd, 7);
     }
 
+    #[test]
+    fn missing_or_unverified_provider_usage_receipts_never_settle() {
+        struct ReceiptProvider {
+            request_id: &'static str,
+            verified: bool,
+            calls: AtomicUsize,
+        }
+        impl BoundedProvider for ReceiptProvider {
+            fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
+                true
+            }
+            fn verified_usage_receipt(&self, _: &ProviderConfig, _: &MeteredReply) -> bool {
+                self.verified
+            }
+            fn generate_once(
+                &self,
+                _: &ProviderConfig,
+                _: &str,
+                _: &AiRequest,
+                _: u64,
+                _: u64,
+            ) -> Result<MeteredReply, ConsentError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(MeteredReply {
+                    text: "response".into(),
+                    provider_request_id: self.request_id.into(),
+                    usage: ActualUsage {
+                        input_tokens: 9,
+                        output_tokens: 30,
+                        tool_calls: 1,
+                        elapsed_ms: 100,
+                        cost_microusd: 0,
+                    },
+                })
+            }
+        }
+
+        for (request_id, verified) in [("", true), ("fixture-request-id", false)] {
+            let (boundary, intent, authority) = approved();
+            let fence = Fence::default();
+            let provider = ReceiptProvider {
+                request_id,
+                verified,
+                calls: AtomicUsize::new(0),
+            };
+            assert!(matches!(
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 103),
+                Err(ConsentError::UncertainEffect)
+            ));
+            assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+            assert_eq!(fence.settled.load(Ordering::SeqCst), 0);
+            assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
+        }
+    }
+
     struct LockedAuthority(Mutex<StudyScope>);
 
     struct LockedScopeGuard<'a>(std::sync::MutexGuard<'a, StudyScope>);
@@ -1289,6 +1384,9 @@ mod tests {
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
             }
+            fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
+                reply.provider_request_id == "fixture-request-id"
+            }
             fn generate_once(
                 &self,
                 _: &ProviderConfig,
@@ -1302,6 +1400,7 @@ mod tests {
                 self.resume.lock().unwrap().recv().unwrap();
                 Ok(MeteredReply {
                     text: "complete".into(),
+                    provider_request_id: "fixture-request-id".into(),
                     usage: ActualUsage {
                         input_tokens: 9,
                         output_tokens: 30,
