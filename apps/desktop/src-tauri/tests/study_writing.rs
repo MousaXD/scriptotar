@@ -1156,8 +1156,14 @@ fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap(),
         ids,
     );
-    assert_eq!(provider.calls, 0, "recovery must not bill another provider call");
-    assert_eq!(gate.attempts, 0, "recovery must not make another effect reservation");
+    assert_eq!(
+        provider.calls, 0,
+        "recovery must not bill another provider call"
+    );
+    assert_eq!(
+        gate.attempts, 0,
+        "recovery must not make another effect reservation"
+    );
     assert_eq!(
         db.get_draft(plan.context.project_id, ids[0]).unwrap().body,
         "Do not overwrite me"
