@@ -13,9 +13,8 @@ use scriptotar_db::SqliteStore;
 use uuid::Uuid;
 
 use super::study_writing::{
-    export_candidate, AtomicCandidateStore, CurrentStudy, GeneratedBatch, GeneratedCandidate,
-    VersionedCandidateStore, WriteResult,
-    WritingWorkflowError,
+    export_candidate, prepare_three, AtomicCandidateStore, CurrentStudy, GeneratedBatch,
+    GeneratedCandidate, GenerationPlan, VersionedCandidateStore, WriteResult, WritingWorkflowError,
 };
 
 /// Agent 00 must fold this additive schema into a numbered migration, not run
@@ -78,6 +77,64 @@ pub struct CanonicalSqliteCandidateStore<'a, C: CurrentStudy> {
 impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_, C> {
     fn commit_three(&mut self, batch: &GeneratedBatch) -> WriteResult<[Uuid; 3]> {
         self.commit_inner(batch, None)
+    }
+
+    /// A confirmed receipt bypasses a stale Study CAS ONLY for read-only
+    /// recovery of already-existing scripts. Never creates a draft, calls a
+    /// provider, claims a paid effect, or restores overwritten manual content.
+    fn recover_committed(&mut self, plan: &GenerationPlan) -> WriteResult<Option<[Uuid; 3]>> {
+        let reconstructed = prepare_three(&plan.run_id, plan.context.clone())?;
+        if reconstructed.angles_prompt != plan.angles_prompt {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let db = Connection::open(self.store.path()).map_err(error)?;
+        db.pragma_update(None, "foreign_keys", true).map_err(error)?;
+        let row: Option<(String, String, String, String)> = db
+            .query_row(
+                "SELECT project_id,study_id,payload_json,draft_ids_json
+                 FROM study_writing_batches WHERE run_id=?1",
+                params![plan.run_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(error)?;
+        let Some((project, study, stored, ids_json)) = row else {
+            return Ok(None);
+        };
+        if project != plan.context.project_id.to_string()
+            || study != plan.context.study_id.to_string()
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let original: GeneratedBatch = serde_json::from_str(&stored)
+            .map_err(|_| WritingWorkflowError::PersistFailed("corrupt saved writing batch".into()))?;
+        if original.run_id != plan.run_id
+            || original.context != plan.context
+            || original.candidates.len() != 3
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
+            .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
+        for id in ids {
+            let initial: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM creative_drafts d
+                     JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
+                     JOIN study_writing_revisions sr
+                       ON sr.draft_id=d.id AND sr.version=1
+                     WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                    params![id.to_string(), project, study],
+                    |row| row.get(0),
+                )
+                .map_err(error)?;
+            if initial != 1 {
+                return Err(WritingWorkflowError::PersistFailed(
+                    "saved writing receipt missing canonical initial draft".into(),
+                ));
+            }
+        }
+        Ok(Some(ids))
     }
 }
 
