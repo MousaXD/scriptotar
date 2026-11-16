@@ -1080,3 +1080,47 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
         .is_empty());
     assert_eq!(db.get_study(plan.context.project_id, plan.context.study_id).unwrap().revision, 1);
 }
+
+
+#[test]
+fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    db.update_draft(
+        plan.context.project_id, ids[0], 1, "Saved human edit", "Do not overwrite me",
+    ).unwrap();
+    // The successful batch advanced Study revision, making the original plan
+    // stale. Its immutable receipt is nevertheless safe to READ after restart.
+    current.0.borrow_mut().study_revision += 1;
+    let mut provider = FixtureProvider {
+        responses: VecDeque::new(),
+        calls: 0,
+        on_call: None,
+        fail_on: Some(1),
+    };
+    let mut gate = FixtureBoundary::new();
+    gate.allowed = false;
+    let stop = TestStop(Rc::new(Cell::new(false)));
+    assert_eq!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap(),
+        ids,
+    );
+    assert_eq!(provider.calls, 0, "recovery must not bill another provider call");
+    assert_eq!(gate.attempts, 0, "recovery must not make another effect reservation");
+    assert_eq!(
+        db.get_draft(plan.context.project_id, ids[0]).unwrap().body,
+        "Do not overwrite me"
+    );
+    let mut forged = plan.clone();
+    forged.angles_prompt.prompt.push_str(" altered");
+    assert!(matches!(
+        generate_three(&forged, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::StaleContext)
+    ));
+    assert_eq!(provider.calls, 0);
+}
