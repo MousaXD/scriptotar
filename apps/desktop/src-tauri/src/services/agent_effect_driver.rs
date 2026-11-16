@@ -294,6 +294,120 @@ mod recovery_driver_tests {
     }
 
     #[test]
+    fn consent_fence_commits_one_winner_and_never_replays_after_receipt() {
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+        use super::super::provider_consent::SqlitePaidEffectFence;
+
+        let (_directory, services, context) = approved_host();
+        let approval = "a".repeat(64);
+        // The wire hash comes from final serialized bytes, not prompt text.
+        let wire_sha256 = "b".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            services.operational_store(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "OpenAi:test-model",
+            limits,
+        )
+        .unwrap();
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        assert_eq!(fence.reserve_once(&effect_id), Ok(()));
+        assert_eq!(
+            fence.reserve_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        assert_eq!(fence.mark_dispatched_once(&effect_id), Ok(()));
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "verified-provider-1", &usage),
+            Ok(())
+        );
+        let effect = services
+            .store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Completed);
+        assert_eq!(effect.fingerprint, wire_sha256);
+        assert_eq!(effect.actual_tokens, 50);
+        assert_eq!(effect.actual_cost_microusd, 450);
+        assert_eq!(effect.provider_request_id.as_deref(), Some("verified-provider-1"));
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        fence.mark_uncertain(&effect_id);
+        assert_eq!(
+            services
+                .store
+                .get_external_effect(effect_key(&context).unwrap())
+                .unwrap()
+                .unwrap()
+                .status,
+            ExternalEffectStatus::Completed
+        );
+    }
+
+    #[test]
+    fn consent_fence_refuses_forged_identity_and_freezes_uncertain_send() {
+        use scriptotar_ai::provider_consent::{ConsentError, PaidEffectFence};
+        use super::super::provider_consent::SqlitePaidEffectFence;
+
+        let (_directory, services, context) = approved_host();
+        let approval = "c".repeat(64);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            services.operational_store(),
+            &context,
+            &approval,
+            &"d".repeat(64),
+            "OpenAi:test-model",
+            ExternalEffectLimits {
+                tokens: 500,
+                cost_microusd: 2500,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            fence.reserve_once("provider:forged"),
+            Err(ConsentError::ChangedContext)
+        );
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+        fence.mark_uncertain(&effect_id);
+        let status = services
+            .store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap()
+            .status;
+        assert_eq!(status, ExternalEffectStatus::Uncertain);
+        assert_eq!(
+            fence.reserve_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+    }
+
+    #[test]
     fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
         let (_directory, services, context) = approved_host();
         let double = LocalProviderDouble::default();
