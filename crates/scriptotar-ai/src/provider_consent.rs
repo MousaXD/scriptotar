@@ -1384,6 +1384,73 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_preempts_stalled_reservation_and_prevents_duplicate_send() {
+        use std::sync::mpsc;
+
+        struct PendingFence {
+            entered: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            uncertain: AtomicUsize,
+            dispatched: AtomicUsize,
+        }
+        impl PaidEffectFence for PendingFence {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.entered.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.dispatched.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {
+                self.uncertain.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (boundary, intent, authority) = approved();
+        let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let fence = PendingFence {
+            entered: entered_tx,
+            resume: Mutex::new(resume_rx),
+            uncertain: AtomicUsize::new(0),
+            dispatched: AtomicUsize::new(0),
+        };
+        let runner = Runner::default();
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102)
+            });
+            entered_rx.recv().unwrap();
+
+            // The first worker has reserved its in-memory run identity but
+            // has not received a durable reservation permit. No second caller
+            // may claim the same run or begin a provider call.
+            assert!(matches!(
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102),
+                Err(ConsentError::AlreadyUsed)
+            ));
+
+            // Cancellation is allowed to complete *while* the external
+            // reservation is blocked. It must not wait for provider I/O.
+            boundary.cancel(&intent.run_id).unwrap();
+            resume_tx.send(()).unwrap();
+            assert!(matches!(worker.join().unwrap(), Err(ConsentError::Denied)));
+        });
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.dispatched.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103),
+            Err(ConsentError::Denied)
+        ));
+    }
+
+    #[test]
     fn consent_expiring_inside_reserved_effect_never_starts_a_late_send() {
         use std::sync::mpsc;
 
