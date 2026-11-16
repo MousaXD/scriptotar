@@ -1,0 +1,32 @@
+name: P1 independent provider race
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/p1-independent-provider-race.yml'
+      - 'tests/defragmentation/security/**'
+      - 'crates/scriptotar-ai/src/provider_consent.rs'
+      - 'crates/scriptotar-ai/src/lib.rs'
+      - 'apps/desktop/src-tauri/src/services/provider_consent.rs'
+      - 'apps/desktop/src-tauri/src/services.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-provider-race:
+    name: Independent consent and revocation race
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact integration head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned Rust
+        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
+      - name: Execute independent Agent 10 provider race tests
+        run: cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
+      - name: Check fail-closed production consent policy tests
+        run: cargo test --locked -p scriptotar-ai provider_consent

@@ -1,4 +1,5 @@
 pub mod intelligence;
+pub mod study_intelligence;
 
 use std::{
     env,

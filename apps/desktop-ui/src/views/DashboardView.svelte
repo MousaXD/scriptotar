@@ -66,8 +66,6 @@
       {$translator('queue.addJob')}
     </button>
     <button type="button" class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
-    <button type="button" class="text-button" on:click={() => onNavigate('jobs')}>{$translator('home.jobs')}</button>
-    <button type="button" class="text-button" on:click={() => onNavigate('research')}>{$translator('home.newResearch')}</button>
   </div>
 </header>
 

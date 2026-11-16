@@ -1,8 +1,27 @@
 mod agent_inspection;
+// Private-only provider fence: compile in the real desktop host without IPC/egress.
+// The source is included inside a module until Agent 00 normalizes formatting.
+#[allow(dead_code)]
+mod agent_effect_driver {
+    include!("services/agent_effect_driver.rs");
+}
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
+// Compiled host consent policy; paid egress stays disabled until shared dispatch fencing.
+#[allow(dead_code)]
+mod provider_consent;
 mod study_gateway;
+// Compile the scoped offline research adapter privately before exposing IPC.
+pub(super) mod study_research;
+// Fail-closed, read-only claim verification; no public certification endpoint yet.
+mod study_verification;
+// Compile the original-writing engine and canonical atomic sink privately.
+// Paid provider/egress and public generation IPC remain explicitly disabled.
+#[allow(dead_code)]
+mod study_writing;
+#[allow(dead_code)]
+mod study_writing_persistence;
 
 use std::{
     collections::{HashMap, HashSet},

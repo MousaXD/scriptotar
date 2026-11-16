@@ -16,7 +16,7 @@ import type {
   WatchlistStatus
 } from '../types';
 import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudySourceRef, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
-import type { LocalInspectionRun } from '../studio/agent';
+import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 
 export interface ResearchQuery {
   profileUrl: string;
@@ -71,6 +71,11 @@ export interface ScriptotarApi {
   startLocalInspection(projectId: string, studyId: string, transcriptId: string): Promise<LocalInspectionRun>;
   listLocalInspections(projectId: string, studyId: string): Promise<LocalInspectionRun[]>;
   decideLocalInspection(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;
+  listStudyResearchSources(projectId: string, studyId: string): Promise<StudyResearchSource[]>;
+  startStudyResearch(projectId: string, studyId: string, sourceIds: string[]): Promise<StudyResearchRun>;
+  listStudyResearchRuns(projectId: string, studyId: string): Promise<StudyResearchRun[]>;
+  decideStudyResearch(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<StudyResearchRun>;
+  readStudyResearchReport(projectId: string, studyId: string, artifactId: string): Promise<StudyResearchReport>;
   subscribeJobChanges(listener: (jobId: string) => void): Promise<() => void>;
   getWatchlistStatuses(): Promise<WatchlistStatus[]>;
   getMigrationStatus(): Promise<MigrationStatus>;

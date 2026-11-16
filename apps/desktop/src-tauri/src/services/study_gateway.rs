@@ -406,6 +406,38 @@ impl AppServices {
         }
     }
 
+    /// Private production entrypoint: reconstruct canonical request material
+    /// directly from the active Study, never from a browser-supplied context.
+    /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_writing_plan(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        run_id: &str,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let current = CurrentStudy::load(self, project_id, study_id)?;
+        super::study_writing::prepare_three(run_id, current)
+    }
+
+    /// Private production v11 sink: three new drafts, immutable versions,
+    /// canonical source links and one receipt in a single SQLite transaction.
+    /// This MUST NOT be surfaced as a client-controlled direct-save command.
+    /// A future caller must prove consent/effect/receipt identity first.
+    #[allow(dead_code)]
+    pub(super) fn persist_three_writing_candidates(
+        &self,
+        batch: &super::study_writing::GeneratedBatch,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]> {
+        use super::study_writing::AtomicCandidateStore;
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        sink.commit_three(batch)
+    }
+
     /// P1 writing bridge: scoped, bounded, no provider call and no side effects.
     /// Real transcript excerpts are attributed, not fact-checked. User notes
     /// are unverified, and disputed observations never enter the prompt.
@@ -419,7 +451,7 @@ impl AppServices {
     }
 
     /// Caller must hold the project lock throughout validation and any write.
-    fn scoped_writing_input_locked(
+    pub(super) fn scoped_writing_input_locked(
         &self,
         project_id: Uuid,
         study_id: Uuid,
@@ -1015,6 +1047,86 @@ impl AppServices {
     }
 }
 
+/*
+ * Production CurrentStudy loader. This intentionally reuses the same bounded,
+ * Study-scoped writing bridge as Copy Prompt; no untrusted DTO, provider call,
+ * or synthetic source fixture can populate the generation context.
+ *
+ * The active-project mutex excludes project switches while this snapshot is
+ * built. SQLite's batch sink independently reloads this context under its
+ * IMMEDIATE write transaction before committing any of the three drafts.
+ *
+ * NOTE: This is NOT a paid-egress authorization epoch. Source mutation and
+ * transport admission still need Agent 01's host-wide shared guard.
+ */
+impl super::study_writing::CurrentStudy for AppServices {
+    fn load(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+        use super::study_writing::{StudyWritingContext, WritingWorkflowError};
+
+        let _project_guard = self
+            .lock_studio_project(project_id)
+            .map_err(|_| WritingWorkflowError::Denied("project is not active".into()))?;
+        let study = self
+            .store
+            .get_study(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study is not accessible".into()))?;
+        if study.archived_at.is_some() {
+            return Err(WritingWorkflowError::Denied("Study is archived".into()));
+        }
+
+        let canonical_sources = self
+            .store
+            .list_study_sources(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study sources are unavailable".into()))?;
+        let (input, _, _, _, _) = self
+            .scoped_writing_input_locked(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study evidence is unavailable".into()))?;
+
+        // The gateway uses multiple repository reads. Refuse a changing Study
+        // snapshot rather than signing a mixed revision/source selection.
+        let latest = self
+            .store
+            .get_study(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if latest.revision != study.revision || latest.archived_at.is_some() {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let latest_sources = self
+            .store
+            .list_study_sources(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let signature = |rows: &[StudySource]| {
+            rows.iter()
+                .map(|source| {
+                    (
+                        source.id,
+                        source.reference_id,
+                        source.available,
+                        source.fingerprint.clone(),
+                        source.source_revision.clone(),
+                        source.collected_at.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if signature(&canonical_sources) != signature(&latest_sources) {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+
+        StudyWritingContext::from_scoped_study(
+            project_id,
+            study_id,
+            study.revision,
+            &canonical_sources,
+            input,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,6 +1142,124 @@ mod tests {
             duration: "40".into(),
             style: "Clear".into(),
         }
+    }
+
+    #[test]
+    fn current_writing_context_uses_real_scoped_sources_and_rejects_revocation() {
+        use super::super::study_writing::{prepare_three, CurrentStudy};
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let conn = rusqlite::Connection::open(services.store.path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        let mut references = Vec::new();
+        for index in 0..3 {
+            let source = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            conn.execute(
+                "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+                 VALUES(?1,?2,NULL,'url',?3,'2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("https://example.org/current-study/{index}"),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO media(id,source_id,local_path,created_at)
+                 VALUES(?1,?2,?3,'2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/tmp/scriptotar-current-study-{index}.mp4"),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+                 VALUES(?1,?2,?3,'2026-11-16T00:00:00Z','2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    transcript.to_string(),
+                    media.to_string(),
+                    format!("Distinct attributable source excerpt number {index}"),
+                ],
+            )
+            .unwrap();
+            references.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+
+        let saved = services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(references.clone()),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+
+        let current = CurrentStudy::load(&services, project, study_id).unwrap();
+        assert_eq!(current.study_revision, saved.revision);
+        assert_eq!(current.sources.len(), 3);
+        assert_eq!(current.evidence.len(), 3);
+        assert!(current.sources.iter().all(|source| {
+            !source.fingerprint.is_empty()
+                && references
+                    .iter()
+                    .any(|reference| reference.id == source.origin_id.to_string())
+        }));
+        let plan = services
+            .prepare_three_writing_plan(project, study_id, "canonical-study-1")
+            .unwrap();
+        assert_eq!(plan.context, current);
+        assert!(prepare_three("canonical-study-1", current.clone()).is_ok());
+        assert!(CurrentStudy::load(&services, Uuid::new_v4(), study_id).is_err());
+
+        let first_origin = Uuid::parse_str(&references[0].id).unwrap();
+        conn.execute(
+            "UPDATE transcripts SET text=?1, updated_at=?2 WHERE id=?3",
+            rusqlite::params![
+                "A revised source excerpt that replaces original text",
+                "2026-11-16T00:01:00Z",
+                first_origin.to_string(),
+            ],
+        )
+        .unwrap();
+        let edited = CurrentStudy::load(&services, project, study_id).unwrap();
+        assert_eq!(edited.study_revision, current.study_revision);
+        assert_ne!(edited, current);
+
+        services
+            .save_studio_study(
+                project,
+                study_id,
+                saved.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(references[..2].to_vec()),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        assert!(CurrentStudy::load(&services, project, study_id).is_err());
     }
 
     #[test]
