@@ -1055,3 +1055,22 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
     ));
     assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().body, "New human authored body");
 }
+
+
+#[test]
+fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].lineage[0].evidence[0].excerpt =
+        "Falsified transcript content masquerading as a real source".into();
+    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+    assert_eq!(db.get_study(plan.context.project_id, plan.context.study_id).unwrap().revision, 1);
+}
