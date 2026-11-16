@@ -21,6 +21,7 @@ use super::study_writing::{
 /// never re-execute CREATE TABLE at startup or alter prior migration history.
 /// The receipt and its three canonical drafts are inserted in ONE transaction.
 #[cfg(test)]
+#[allow(unused_imports)] // Used by path-imported integration tests, not the library itself.
 pub use scriptotar_db::WRITING_RECEIPT_MIGRATION as RECEIPT_MIGRATION;
 
 fn error(error: rusqlite::Error) -> WritingWorkflowError {
