@@ -135,6 +135,14 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             {
                 return Err(denied("draft identities, language, or title"));
             }
+            if !candidate
+                .angle
+                .evidence_ids
+                .iter()
+                .all(|id| evidence_ids.contains(id.as_str()))
+            {
+                return Err(denied("unknown angle evidence"));
+            }
             for claim in &mut candidate.draft.claims {
                 if !claim
                     .evidence_ids
@@ -166,7 +174,13 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                     return Err(denied("foreign source in script lineage"));
                 }
                 for evidence in &line.evidence {
-                    if !evidence_ids.contains(evidence.id.as_str())
+                    if batch
+                        .context
+                        .evidence
+                        .iter()
+                        .find(|item| item.id == evidence.id)
+                        != Some(evidence)
+                        || !evidence_ids.contains(evidence.id.as_str())
                         || (matches!(
                             evidence.kind,
                             EvidenceKind::SocialTranscript | EvidenceKind::CreativeObservation
