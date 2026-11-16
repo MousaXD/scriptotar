@@ -161,3 +161,39 @@ This matrix reports **verified evidence as of handoff**, not implementation inte
 A PASS row must derive from the same exact source commit and package SHA on the uploaded run, not a prior green run. Native UI probe must actually interact with the installed accessibility tree; no web page/preview, browser-mock, rust-ipc, MCP or screenshot-only substitution. Machines and time must be recorded, and a human reviewer must inspect raw artifacts before assigning release certification.
 
 **Agent 00 action:** Review draft PR against integration, run installed-WebView workflow, attach exact run artifacts, approve additional source fixtures/contracts, and retain draft/NO-GO until all rows pass. Do not merge or publish based on new harness files alone.
+
+## Installed integration run #43897947678 — independently inspected (2026-11-16)
+
+Production integration source: `e65e08e732de21dd29725438afc7712be3deb799` (this is **not** the Agent 07 PR head).
+Run: https://github.com/MousaXD/scriptotar/actions/runs/43897947678
+
+I inspected the actual **small review ZIPs**, not merely the job conclusion:
+- Linux: https://github.com/MousaXD/scriptotar/actions/runs/43897947678/artifacts/14241565980 — `result.json`, boot screenshot, host, checksum file, and empty desktop log. The initial screenshot shows a rendered Scriptotar shell **while workspace bootstrap was still displaying skeleton/loading text**. The run reported `installed_webview=PASS` based on an actual process-owned AT-SPI WebKit document and Studio control; `create_switch_projects=FAIL` because the expected dashboard h1 `NativeQA-e65e08e7-A` never appeared. The older integrated source **did not capture a post-click screenshot/tree**, so no claim that project creation committed to SQLite is justified. All downstream Studio and persistence cases were **NOT TESTED**.
+- Windows: https://github.com/MousaXD/scriptotar/actions/runs/43897947678/artifacts/14240258082 — actual installed window screenshot is WebView2's **localhost refused-to-connect error page** (`ERR_CONNECTION_REFUSED`), not Scriptotar. Diagnostic UIA exposes a trusted `Chrome_RenderWidgetHostHWND`, a real `ControlType.Document`, and text `ERR_CONNECTION_REFUSED`; hosted Windows Server 2025 had an interactive session 2 and six `msedgewebview2.exe` processes. The old runner reported `installed_webview=NOT TESTED` because it could not find Studio; **the packaging/application state is a concrete FAIL**, not a desktop/UIA availability limitation. All downstream cases remained **NOT TESTED**.
+
+| Native installed scenario | Linux exact-run result | Windows exact-run result |
+|---|---|---|
+| Production package installed, executable SHA captured | PASS | PASS |
+| Actual installed WebKit/WebView automation against Scriptotar controls | PASS | FAIL — browser network error; old `result.json` says NOT TESTED |
+| Two projects created, selected, active dashboard confirmed | FAIL — missing first project heading; post-action state unobserved | NOT TESTED |
+| Study open/create, candidate edit/save/rename/selection | NOT TESTED | NOT TESTED |
+| Graphical quit and actual data restoration after relaunch | NOT TESTED | NOT TESTED |
+| Wrong-project UI isolation and forged IPC denial | NOT TESTED | NOT TESTED |
+| Multiple authorized real source attachments and source revocation | NOT TESTED | NOT TESTED |
+| Keyboard, custom controls, Arabic RTL, high zoom and visual themes | NOT TESTED | NOT TESTED |
+| Integrated production three-script workflow | NOT TESTED | NOT TESTED |
+
+Immutable run hashes recorded by the runners:
+- Linux `.deb` SHA-256: `533b6e065c8748510071f0cc1bc49b1cf757964a5b3a4ba7acf6b438c1957d57`.
+- Linux installed `/usr/bin/scriptotar-desktop` SHA-256: `d67e0de8f01e3962977428db44ab7f0357ff9b5ce07ca5e3b191de41c1d66918`.
+- Windows NSIS SHA-256: `b58bedb2820a85f049a01c99f4b4525d510a498e223ecf9d1c0ae6b5cb2f94da`.
+- Windows installed executable SHA-256: `f4922f3269ba0895189b6fb6c6ce4713d402ab2c9050e43a8c722f3ffd702504`.
+
+### Agent 07 QA-only recovery after the integrated run
+
+The Agent 07 branch previously added production `tauri build --bundles nsis -- --locked` on Windows instead of bundling a bare dev-mode `cargo build` binary; the integrated run above predates that fix. Current recovery commits additionally:
+1. Wait for a real accessible first-project or ready dashboard state, and handle an empty-profile `Create your first project` form. Maintain the **actual dashboard h1** assertion after creation; do not substitute a dropdown entry for proof of activation.
+2. Capture an explicit post-create screenshot plus bounded PID-owned AT-SPI tree/expected name on heading failure so the next run can separate failed UI action, backend error, stale state, and selector defects.
+3. Detect a genuine WebView2 `ERR_CONNECTION_REFUSED` document during readiness polling, classifying it as an **installed packaging FAIL** promptly instead of a 90-second unexplained missing-document condition.
+
+These modifications are **not native PASS evidence** until a new exact-head installed workflow has run. If no PR synchronize run appears, manually dispatch **Independent Installed WebView Acceptance** against `agent-07/p0-native-webview-qa-20261116`, then compare the run's reported source SHA with the branch head. Agent 00 must separately provide controlled multi-source fixtures and the integrated three-script workflow. Until both platforms complete real installed GUI/SQLite persistence, release certification stays **NO-GO** and this PR stays draft.
