@@ -713,45 +713,44 @@ mod tests {
         let (boundary, intent, authority) = approved();
         let runner = Runner::default();
         let fence = Fence::default();
-        for (case, changed) in [
-            ("prompt", ProviderIntent {
+        for changed in [
+            ProviderIntent {
                 prompt: "changed".into(),
                 ..intent.clone()
-            }),
-            ("model", ProviderIntent {
+            },
+            ProviderIntent {
                 provider: ProviderConfig {
                     model: "other".into(),
                     ..intent.provider.clone()
                 },
                 ..intent.clone()
-            }),
-            ("evidence", ProviderIntent {
+            },
+            ProviderIntent {
                 scope: StudyScope {
                     material_digest: "b".repeat(64),
                     ..intent.scope.clone()
                 },
                 ..intent.clone()
-            }),
-            ("sources", ProviderIntent {
+            },
+            ProviderIntent {
                 scope: StudyScope {
                     selected_source_ids: vec!["source-2".into()],
                     ..intent.scope.clone()
                 },
                 ..intent.clone()
-            }),
-            ("budget", ProviderIntent {
+            },
+            ProviderIntent {
                 limits: RunBudget {
                     max_cost_microusd: 2_000,
                     ..intent.limits
                 },
                 ..intent.clone()
-            }),
+            },
         ] {
-            let result = boundary.dispatch(&changed, &authority, &Prices, &fence, &runner, "key", 102);
-            assert!(
-                matches!(result, Err(ConsentError::ChangedContext)),
-                "{case} mutation must be rejected before any provider effect: {result:?}"
-            );
+            assert!(matches!(
+                boundary.dispatch(&changed, &authority, &Prices, &fence, &runner, "key", 102),
+                Err(ConsentError::ChangedContext)
+            ));
         }
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
         assert!(fence.claims.lock().unwrap().is_empty());
