@@ -24,7 +24,10 @@ jobs:
           - { gate: migration, pr: 119 }
           - { gate: writing, pr: 121 }
           - { gate: verification, pr: 117 }
-          # Integration branch: strictly fails closed until all feature modules land.
+          # Integrated v11 checks should execute even while paid egress is disabled.
+          # This separate gate never certifies the full production security boundary.
+          - { gate: combined-v11, pr: 114 }
+          # Full combined gate still fails closed until host authorization/egress is wired.
           - { gate: combined, pr: 114 }
     steps:
       - name: Checkout independent security tests
@@ -46,7 +49,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Tauri native build dependencies for writing integration test
-        if: matrix.gate == 'writing' || matrix.gate == 'combined'
+        if: matrix.gate == 'writing' || matrix.gate == 'combined' || matrix.gate == 'combined-v11'
         run: bash target/scripts/install_tauri_deps.sh
       - name: Exact-head independent regression execution
         shell: bash
