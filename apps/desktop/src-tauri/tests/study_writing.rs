@@ -1177,3 +1177,38 @@ fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
     ));
     assert_eq!(provider.calls, 0);
 }
+
+#[test]
+fn canonical_store_rejects_duplicate_script_prose_without_partial_writes() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    // Bypass the orchestration gate deliberately. Both scripts have distinct
+    // angles and legitimate references, but identical narration.
+    let copied = batch.candidates[0]
+        .draft
+        .beats
+        .iter()
+        .map(|beat| beat.narration.clone())
+        .collect::<Vec<_>>();
+    for (beat, narration) in batch.candidates[1].draft.beats.iter_mut().zip(copied) {
+        beat.narration = narration;
+    }
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
