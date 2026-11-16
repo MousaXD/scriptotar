@@ -754,6 +754,19 @@ mod tests {
         assert!(selected_ids(&input).is_ok());
         assert!(scoped_study(&services, project, study, &[other]).is_err());
         assert!(scoped_study(&services, Uuid::new_v4(), study, &[other]).is_err());
+        let manual = services.store.add_study_source(
+            project,
+            study,
+            &StudySourceInput {
+                kind: StudySourceKind::Manual,
+                reference_id: None,
+                locator: Some("pasted note".into()),
+                manual_text: Some("No automatic research on pasted notes".into()),
+                source_revision: None,
+                uncertainty: None,
+            },
+        ).unwrap();
+        assert!(scoped_study(&services, project, study, &[manual.id]).is_err());
     }
 
     #[test]
