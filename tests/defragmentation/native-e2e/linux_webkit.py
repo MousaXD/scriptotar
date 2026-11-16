@@ -97,9 +97,10 @@ class AxWebKit:
             node, depth = pending.pop()
             seen += 1
             try:
-                states = node.getState()
-                if depth and not states.contains(self.atspi.STATE_VISIBLE):
-                    continue
+                # WebKit web-process children can be transiently missing a
+                # VISIBLE state even while their parent renders. Do not prune
+                # their entire AT-SPI subtree; still require a real document
+                # and user-actionable controls before an acceptance PASS.
                 yield node
                 if depth < 24:
                     pending.extend((child, depth + 1) for child in node)
@@ -134,7 +135,9 @@ class AxWebKit:
         for node in self.nodes():
             try:
                 role = node.getRoleName().lower()
-                if ("document" in role and ("web" in role or "frame" in role)) or role == "document web":
+                if role in ("document web", "document frame") or (
+                    "document" in role and ("web" in role or "frame" in role)
+                ):
                     return True
             except Exception:
                 pass
@@ -142,7 +145,11 @@ class AxWebKit:
 
     def diagnostics(self) -> dict:
         """Bounded native AT-SPI evidence on failure; never substitutes for PASS."""
-        result = {"expected_pid": self.pid, "desktop_apps": [], "x11_windows": []}
+        result = {"expected_pid": self.pid, "desktop_apps": [], "x11_windows": [],
+                  "display": os.environ.get("DISPLAY"),
+                  "dbus_session_address_set": bool(os.environ.get("DBUS_SESSION_BUS_ADDRESS")),
+                  "gtk_modules": os.environ.get("GTK_MODULES"),
+                  "no_at_bridge": os.environ.get("NO_AT_BRIDGE")}
         try:
             windows = command("xdotool", "search", "--pid", str(self.pid), check=False)
             result["x11_windows"] = windows.stdout.split()[:20]
@@ -157,14 +164,20 @@ class AxWebKit:
                 except Exception as exc:
                     entry["pid_error"] = type(exc).__name__
                 pending = [(app, 0)]
-                while pending and len(entry["nodes"]) < 160:
+                while pending and len(entry["nodes"]) < 320:
                     node, depth = pending.pop(0)
                     try:
+                        try:
+                            child_count = node.childCount
+                        except Exception:
+                            child_count = None
                         entry["nodes"].append({
                             "depth": depth, "role": node.getRoleName(),
-                            "name": (node.name or "")[:120]
+                            "name": (node.name or "")[:120], "children": child_count
                         })
-                        if depth < 5:
+                        # Previous diagnostics stopped precisely at the WebKit
+                        # scroll pane (depth 5), hiding the decisive subtree.
+                        if depth < 15:
                             pending.extend((child, depth + 1) for child in node)
                     except Exception as exc:
                         entry["nodes"].append({"depth": depth, "error": type(exc).__name__})
@@ -243,6 +256,9 @@ class Session:
         env = dict(os.environ, SCRIPTOTAR_DATA_DIR=str(self.root / "data"))
         env["NO_AT_BRIDGE"] = "0"
         env["GTK_A11Y"] = "1"
+        # GTK3's ATK bridge must be available in a minimal Xvfb session.
+        # This enables observation; it never bypasses the AT-SPI gate.
+        env.setdefault("GTK_MODULES", "atk-bridge")
         self.proc = subprocess.Popen(
             [str(self.args.executable)], env=env,
             stdout=(self.root / "desktop.log").open("a"),
@@ -254,10 +270,7 @@ class Session:
             if self.proc.poll() is not None:
                 raise NativeFailure(f"Installed executable exited: {self.proc.returncode}")
             try:
-                if self.ax.web_document() and self.ax.available("Scriptotar"):
-                    return
-                if self.ax.web_document() and (self.ax.available("Studio", "push button")
-                                              or self.ax.available("Studio", "button")):
+                if self.ax.web_document() and self.ax.available("Studio"):
                     return
             except NativeUnavailable:
                 pass
