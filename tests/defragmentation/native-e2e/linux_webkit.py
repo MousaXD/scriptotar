@@ -270,7 +270,10 @@ class Session:
             if self.proc.poll() is not None:
                 raise NativeFailure(f"Installed executable exited: {self.proc.returncode}")
             try:
-                if self.ax.web_document() and self.ax.available("Studio"):
+                if self.ax.web_document() and (
+                    self.ax.available("Studio", "button") or
+                    self.ax.available("Studio", "link")
+                ):
                     return
             except NativeUnavailable:
                 pass
