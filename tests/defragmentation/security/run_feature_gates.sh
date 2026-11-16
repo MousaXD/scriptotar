@@ -17,6 +17,7 @@ case "$gate:$pr" in
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
+      cargo test --locked -p scriptotar-ai provider_consent
     )
     ;;
   migration:119)
@@ -67,6 +68,7 @@ case "$gate:$pr" in
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
+      cargo test --locked -p scriptotar-ai provider_consent
       cargo test --locked -p scriptotar-db
       cargo test --locked -p scriptotar-ai verification
       python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
