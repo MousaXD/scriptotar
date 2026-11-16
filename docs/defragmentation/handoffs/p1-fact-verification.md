@@ -31,3 +31,15 @@
 - No local Rust toolchain is available in the editing environment. CI must independently run fmt, check, Clippy, tests and integrated end-to-end gates **on the exact PR SHA**. Fixture tests are not evidence of real-world factual accuracy.
 
 **Safety state:** draft, no merge, no release. Issue #116 and parent PR #114 remain open.
+
+
+## 2026-11-16 continuation — adversarial hardening and validation gate
+
+- GitHub Actions on earlier head \`54c40098f52f5b205e669b67517636aadd8ba320\`: CI, security hygiene, MCP E2E, Windows installer and Linux package passed; **Rust foundation and Tauri migration Rust workspace failed Clippy**, because \`verify_claims(ctx, &[claim.clone()])\` unnecessarily cloned a borrowed claim. The branch replaced this with \`std::slice::from_ref(claim)\`. Rustfmt later identified mechanical formatting differences, applied from the exact GitHub runner diff. **Do not reuse earlier successes for a newer head.**
+- Fail-closed improvements in \`verification/mod.rs\`: duplicate claim identifiers now invalidate all duplicates (the first no longer inherits a reviewer approval); every cited excerpt must have an authenticated claim-level assessment (two valid citations cannot launder an unassessed third); matched human reviews must not predate collection of any approved cited source. No change to legacy creator review statuses.
+- New adversarial fixtures in \`verification/tests.rs\`: duplicate claim ID ordering, unassessed extra citations, reviewer timestamp before source collection, unchanged evidence ID with altered source version/quote, incomplete claim inventory. New real SQLite-backed \`study_verification.rs\` test checks active project, foreign Study, stale Study and saved draft revisions; publication review is always required.
+- CI for the **latest branch SHA** must pass rustfmt, workspace Clippy/tests and Tauri packaging/MCP/security. Do not mark GO on an earlier SHA.
+- Adapter does not verify external source authenticity, content hash or reviewer identity, nor does it establish full claim extraction for arbitrary prose. It reads canonical records twice to detect common races but **not** inside a single SQLite read transaction. Agent 00 must build the authenticated claim-review/event ledger, source-content digest validation, actual transcript segment resolver and authoritative atomic snapshot. Until then the production adapter intentionally cannot return a factually Verified verdict.
+- Source-identity and quote snapshots in \`VerifiedReview.exact_citations\` must be copied and authenticated by trusted host code; only serialization is implemented for these authority-bearing types. Never deserialize them directly from a model reply.
+
+**Ownership decision:** PR #117 remains draft; no schema/DTO migration, merge or release authorization.
