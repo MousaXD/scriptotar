@@ -480,14 +480,14 @@ impl ConsentBoundary {
         if api_key.trim().is_empty() {
             return Err(ConsentError::CredentialsRequired);
         }
-        let record = self
+        let consent = self
             .records
             .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?
             .get(&intent.run_id)
             .cloned()
             .ok_or(ConsentError::NoApproval)?;
-        let mut record = record
+        let mut record = consent
             .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         match record.decision {
@@ -616,7 +616,7 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
-        let mut record = record
+        let mut record = consent
             .lock()
             .map_err(|_| ConsentError::UncertainEffect)?;
         record.decision = Decision::Complete;
