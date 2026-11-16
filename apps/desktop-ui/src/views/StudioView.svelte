@@ -1020,7 +1020,7 @@
   <a href="#studio-evidence"><span>{flowT.evidence}</span><strong>{evidence.length}</strong></a>
   <a href="#studio-execution"><span>{flowT.execution}</span><strong>{anglePromptSource ? flowT.prepared : '—'}</strong></a>
   <a href="#studio-scripts"><span>{flowT.scripts}</span><strong>{record?.drafts?.length ?? 0}</strong></a>
-  <a href="#studio-export"><span>{flowT.export}</span><strong>{draft.trim() ? '✓' : '—'}</strong></a>
+  <a href="#studio-export"><span>{flowT.export}</span><strong>{draft.trim() ? flowT.ready : '—'}</strong></a>
 </nav>
 {#if error}<p role="alert" class="studio-error">{error}</p>{/if}
 {#if !gateway}<p class="studio-warning" role="status">{t.notConnected}</p>{/if}
