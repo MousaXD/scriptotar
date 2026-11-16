@@ -533,3 +533,20 @@ fn generic_reviewer_acceptance_never_certifies_high_stakes_advice() {
         assert!(has(&result, FindingCode::ConsequentialHumanReviewRequired));
     }
 }
+
+#[test]
+fn foreign_review_records_cannot_launder_valid_approval_or_leak_lineage() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    let accepted = review(&ctx, &claim);
+    let mut foreign = accepted.clone();
+    foreign.review_id = "foreign-review".into();
+    foreign.project_id = "other-project".into();
+    foreign.decision = ReviewDecision::Accept;
+    ctx.human_reviews = vec![accepted, foreign];
+    let report = verify_claims(&ctx, &[claim]);
+    assert_eq!(report.claims[0].status, VerificationStatus::Unverified);
+    assert!(has(&report.claims[0], FindingCode::InvalidReviewLineage));
+    assert_eq!(report.review_lineage.len(), 1);
+    assert_eq!(report.review_lineage[0].review_id, "review-1");
+}

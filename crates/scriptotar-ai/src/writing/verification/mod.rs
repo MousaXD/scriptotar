@@ -792,6 +792,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                         | FindingCode::UnassessedCitation
                         | FindingCode::MissingSegmentOrTimestamp
                         | FindingCode::WrongEvidenceModality
+                        | FindingCode::InvalidReviewLineage
                 )
             });
         let status = if blocked {
@@ -840,7 +841,18 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         publication_review_required,
         inventory_complete: false,
         draft_content_bound: ctx.draft_content_bound,
-        review_lineage: ctx.human_reviews.clone(),
+        // Preserve the draft's own historical decisions, but never leak a
+        // foreign project, Study or draft's reviewer data into this report.
+        review_lineage: ctx
+            .human_reviews
+            .iter()
+            .filter(|review| {
+                review.project_id == ctx.project_id
+                    && review.study_id == ctx.study_id
+                    && review.draft_id == ctx.draft_id
+            })
+            .cloned()
+            .collect(),
     }
 }
 
