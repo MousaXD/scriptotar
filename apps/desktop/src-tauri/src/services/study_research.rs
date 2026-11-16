@@ -973,9 +973,7 @@ mod tests {
 
     #[test]
     fn approved_agent_research_persists_effect_and_can_reopen_result() {
-        use scriptotar_agent::{
-            CheckpointStore, Estimate, Limits, Plan, RunState, StepPlan,
-        };
+        use scriptotar_agent::{CheckpointStore, Estimate, Limits, Plan, RunState, StepPlan};
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
         let project;
@@ -1253,7 +1251,10 @@ mod tests {
             .iter()
             .find(|finding| finding.study_source_id == attached_transcript.id)
             .unwrap();
-        assert_eq!(transcript_finding.origin_revision.as_deref(), Some(timestamp));
+        assert_eq!(
+            transcript_finding.origin_revision.as_deref(),
+            Some(timestamp)
+        );
         assert!(!transcript_finding.observations.is_empty());
         assert!(transcript_finding.observations.iter().all(|observation| {
             observation.evidence.study_source_id == attached_transcript.id
