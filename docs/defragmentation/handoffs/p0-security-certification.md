@@ -1,5 +1,13 @@
 # Agent 10 — 2026-11-17 NEW completed exact-head six-gate matrix
 
+## Native installed-app evidence — separate Agent 07 review, 2026-11-17
+
+**NOT TESTED / NO-GO for native graphical acceptance on the final integrated release.** Agent 07 PR [#126](https://github.com/MousaXD/scriptotar/pull/126) latest observed head `ea6160556fcefc38bfb41e5045ed2c5177463c77` has ordinary CI and security hygiene PASS, but [actual installed WebView workflow #43955788990](https://github.com/MousaXD/scriptotar/actions/runs/43955788990) is **IN PROGRESS** at this exact-head snapshot; it must not be marked passed. Prior [failed installed workflow #43897349298](https://github.com/MousaXD/scriptotar/actions/runs/43897349298) shows Linux WebKit accessibility document/Studio control reached but incomplete project journey, and Windows installed WebView2 content `localhost ERR_CONNECTION_REFUSED` rather than working application UI. More recent Agent 07 harness work and the integration's own installed-run CI require final exact-build evidence, screenshot inspection, project/source/Study/draft persistence after restart, and cross-project IPC negative tests. **Native installed-app failures and limitations remain separate from provider authorization verdict**.
+
+---
+
+
+
 **RELEASE DECISION: FAIL / NO-GO. Five of six independent security jobs PASS; the production combined-host authorization job FAIL.** Completed [workflow #43956319850](https://github.com/MousaXD/scriptotar/actions/runs/43956319850). Its job logs report audit merge checkout `f107974c1e3177ac13d42bd77d7ec79240cfc2b8` and exact **integration PR #114 SHA `46cb36efe2ca4e6ec3f9dd51b7b99c2d59804583`**. Agent 00 imported the independent security test sources into this integration head. [Owner notified immediately](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6929355984).
 
 | Independent security boundary | Verdict | Executed command and exact evidence |
