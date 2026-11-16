@@ -15,7 +15,9 @@ use scriptotar_agent::{
     Certainty, ExecutionContext, Plan, PolicyGate, ProbeResult, RuntimeError, StepInput,
     StepOutput, StepPlan, ToolExecutor, ToolFailure, ToolReceipt,
 };
-use scriptotar_core::{ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind};
+use scriptotar_core::{
+    ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind,
+};
 use scriptotar_db::{EffectClaim, EffectStatus, EffectUpdate};
 use scriptotar_research::{
     intelligence::{ObservationTimestamp, TranscriptSegment},
@@ -120,7 +122,9 @@ fn scoped_study(
                 StudySourceKind::ResearchItem | StudySourceKind::Transcript
             )
         {
-            return Err(invalid("research inspection requires a research item or transcript"));
+            return Err(invalid(
+                "research inspection requires a research item or transcript",
+            ));
         }
     }
     services.require_active_project(project)?;
@@ -134,8 +138,9 @@ fn research_row(
     source: Uuid,
     origin: Uuid,
 ) -> RepositoryResult<Option<ResearchItem>> {
-    let row = db.query_row(
-        "SELECT r.creator_id, r.source_url, r.platform, r.title, r.view_count,
+    let row = db
+        .query_row(
+            "SELECT r.creator_id, r.source_url, r.platform, r.title, r.view_count,
                 r.like_count, r.comment_count, r.published_at, r.scanned_at
          FROM study_sources ss
          JOIN content_studies st ON st.id=ss.study_id AND st.project_id=ss.project_id
@@ -144,30 +149,47 @@ fn research_row(
          WHERE ss.project_id=?1 AND ss.study_id=?2 AND ss.id=?3
            AND ss.kind='research_item' AND ss.reference_id=?4
            AND ss.research_id=?4 AND st.archived_at IS NULL AND p.archived_at IS NULL",
-        params![project.to_string(), study.to_string(), source.to_string(), origin.to_string()],
-        |row| {
-            let creator: Option<String> = row.get(0)?;
-            Ok((
-                creator,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-                row.get::<_, Option<i64>>(5)?,
-                row.get::<_, Option<i64>>(6)?,
-                row.get::<_, Option<String>>(7)?,
-                row.get::<_, String>(8)?,
-            ))
-        },
-    )
-    .optional()
-    .map_err(|_| storage())?;
+            params![
+                project.to_string(),
+                study.to_string(),
+                source.to_string(),
+                origin.to_string()
+            ],
+            |row| {
+                let creator: Option<String> = row.get(0)?;
+                Ok((
+                    creator,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|_| storage())?;
     row.map(
-        |(creator, source_url, platform, title, view_count, like_count, comment_count, published_at, scanned_at)| {
+        |(
+            creator,
+            source_url,
+            platform,
+            title,
+            view_count,
+            like_count,
+            comment_count,
+            published_at,
+            scanned_at,
+        )| {
             Ok(ResearchItem {
                 id: origin,
                 project_id: project,
-                creator_id: creator.map(|id| Uuid::parse_str(&id).map_err(|_| storage())).transpose()?,
+                creator_id: creator
+                    .map(|id| Uuid::parse_str(&id).map_err(|_| storage()))
+                    .transpose()?,
                 source_url,
                 platform,
                 title,
@@ -206,8 +228,12 @@ fn transcript_row(
            AND (t.segments_json IS NULL
              OR length(CAST(t.segments_json AS BLOB)) <= ?6)",
         params![
-            project.to_string(), study.to_string(), source.to_string(), origin.to_string(),
-            MAX_TRANSCRIPT_BYTES, MAX_SEGMENTS_JSON_BYTES,
+            project.to_string(),
+            study.to_string(),
+            source.to_string(),
+            origin.to_string(),
+            MAX_TRANSCRIPT_BYTES,
+            MAX_SEGMENTS_JSON_BYTES,
         ],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )
@@ -308,7 +334,9 @@ fn inspect_selected(
     for id in ids {
         let attachment = services.store.get_study_source(project, study, *id)?;
         let Some(reference_id) = attachment.reference_id else {
-            return Err(invalid("research analysis only supports existing research or transcript IDs"));
+            return Err(invalid(
+                "research analysis only supports existing research or transcript IDs",
+            ));
         };
         let kind = match attachment.kind {
             StudySourceKind::ResearchItem => StudyResearchKind::ResearchItem,
@@ -335,7 +363,12 @@ fn inspect_selected(
                     let record = transcript_row(&db, project, study, *id, reference_id)?;
                     match record {
                         Some((text, segments, revision)) => {
-                            let transcript = parse_transcript(reference_id, &text, segments.as_deref(), revision);
+                            let transcript = parse_transcript(
+                                reference_id,
+                                &text,
+                                segments.as_deref(),
+                                revision,
+                            );
                             if transcript.partial {
                                 access = StudyResearchAccess::Partial;
                             }
@@ -368,7 +401,9 @@ fn inspect_selected(
     services.require_active_project(project)?;
     let current = services.store.get_study(project, study)?;
     if current.revision != record.revision || current.archived_at.is_some() {
-        return Err(RepositoryError::Conflict("Study changed during research inspection".into()));
+        return Err(RepositoryError::Conflict(
+            "Study changed during research inspection".into(),
+        ));
     }
     Ok((record.revision, report))
 }
@@ -389,8 +424,11 @@ fn report_id(context: &ExecutionContext) -> Uuid {
         &Uuid::NAMESPACE_URL,
         format!(
             "scriptotar/study-research/v1/{}/{}/{}/{}/{}",
-            context.project_id, context.study_id, context.run_id,
-            context.step_id, context.idempotency_key
+            context.project_id,
+            context.study_id,
+            context.run_id,
+            context.step_id,
+            context.idempotency_key
         )
         .as_bytes(),
     )
@@ -424,8 +462,7 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true).mode(0o700);
         builder.create(directory).map_err(|_| storage())?;
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-            .map_err(|_| storage())?;
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).map_err(|_| storage())?;
     }
     #[cfg(not(unix))]
     fs::create_dir_all(directory).map_err(|_| storage())?;
@@ -434,7 +471,9 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
         return if existing == data {
             Ok(())
         } else {
-            Err(RepositoryError::Conflict("research artifact ID already exists".into()))
+            Err(RepositoryError::Conflict(
+                "research artifact ID already exists".into(),
+            ))
         };
     }
     let temporary = directory.join(format!("{artifact_id}.{}.pending", Uuid::new_v4()));
@@ -502,37 +541,56 @@ fn checked_report(
 ) -> RepositoryResult<ReportEnvelope> {
     services.require_active_project(project)?;
     let saved = load_envelope(services, artifact)?;
-    if saved.project_id != project || saved.study_id != study
-        || saved.report.project_id != project || saved.report.study_id != study
+    if saved.project_id != project
+        || saved.study_id != study
+        || saved.report.project_id != project
+        || saved.report.study_id != study
         || saved.report.sources.len() > MAX_STUDY_RESEARCH_SOURCES
         || !saved.report.source_text_is_untrusted_data
     {
         return Err(not_found());
     }
-    let ids: Vec<Uuid> = saved.report.sources.iter().map(|s| s.study_source_id).collect();
+    let ids: Vec<Uuid> = saved
+        .report
+        .sources
+        .iter()
+        .map(|s| s.study_source_id)
+        .collect();
     let record = scoped_study(services, project, study, &ids)?;
     if record.revision != saved.study_revision {
-        return Err(RepositoryError::Conflict("Study changed since research snapshot".into()));
+        return Err(RepositoryError::Conflict(
+            "Study changed since research snapshot".into(),
+        ));
     }
     let db = read_db(services)?;
     for finding in &saved.report.sources {
-        let source = services.store.get_study_source(project, study, finding.study_source_id)?;
+        let source = services
+            .store
+            .get_study_source(project, study, finding.study_source_id)?;
         if source.reference_id != Some(finding.reference_id)
             || source.locator != finding.locator
-            || (!source.available && matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial))
+            || (!source.available
+                && matches!(
+                    finding.access,
+                    StudyResearchAccess::Available | StudyResearchAccess::Partial
+                ))
         {
             return Err(not_found());
         }
         if let Some(expected) = finding.origin_revision.as_deref() {
             if !source.available
                 || current_origin_revision(&db, project, finding.kind, finding.reference_id)?
-                    .as_deref() != Some(expected)
+                    .as_deref()
+                    != Some(expected)
             {
                 return Err(RepositoryError::Conflict(
                     "source changed or was removed after research analysis".into(),
                 ));
             }
-        } else if matches!(finding.access, StudyResearchAccess::Available | StudyResearchAccess::Partial) {
+        } else if matches!(
+            finding.access,
+            StudyResearchAccess::Available | StudyResearchAccess::Partial
+        ) {
             // An allegedly inspected source must always be tied to a live
             // origin version. Missing version is not evidence of success.
             return Err(not_found());
@@ -555,12 +613,10 @@ pub(super) fn read_study_research_artifact(
     // The user-facing read requires the *committed* ledger receipt. The
     // internal probe path can still inspect a reserved file to reconcile a
     // crash between durable file write and effect settlement.
-    let effect = services.store.get_agent_effect(
-        project,
-        study,
-        &saved.run_id,
-        &saved.idempotency_key,
-    )?;
+    let effect =
+        services
+            .store
+            .get_agent_effect(project, study, &saved.run_id, &saved.idempotency_key)?;
     if !matches!(effect, Some(ref receipt)
         if receipt.status == EffectStatus::Applied
             && receipt.step_id == saved.step_id
@@ -581,7 +637,11 @@ pub(super) struct StudyResearchGate {
 
 impl StudyResearchGate {
     pub(super) fn new(services: AppServices, project: Uuid, study: Uuid) -> Self {
-        Self { services, project, study }
+        Self {
+            services,
+            project,
+            study,
+        }
     }
 }
 
@@ -612,7 +672,12 @@ impl StudyResearchDriver {
         Self { gate }
     }
 
-    fn guarded_input(&self, ctx: &ExecutionContext, input: &StepInput, check_deadline: bool) -> RepositoryResult<Vec<Uuid>> {
+    fn guarded_input(
+        &self,
+        ctx: &ExecutionContext,
+        input: &StepInput,
+        check_deadline: bool,
+    ) -> RepositoryResult<Vec<Uuid>> {
         if ctx.project_id != self.gate.project.to_string()
             || ctx.study_id != self.gate.study.to_string()
             || ctx.estimate.tokens != 0
@@ -623,7 +688,12 @@ impl StudyResearchDriver {
             return Err(invalid("invalid or expired research authorization"));
         }
         let ids = selected_ids(input)?;
-        scoped_study(&self.gate.services, self.gate.project, self.gate.study, &ids)?;
+        scoped_study(
+            &self.gate.services,
+            self.gate.project,
+            self.gate.study,
+            &ids,
+        )?;
         Ok(ids)
     }
 
@@ -633,8 +703,13 @@ impl StudyResearchDriver {
         let current = scriptotar_core::now_rfc3339();
         let analyzed_at = ObservationTimestamp::parse_rfc3339(&current)
             .ok_or_else(|| invalid("unavailable observation clock"))?;
-        let (revision, report) =
-            inspect_selected(&self.gate.services, self.gate.project, self.gate.study, &ids, analyzed_at)?;
+        let (revision, report) = inspect_selected(
+            &self.gate.services,
+            self.gate.project,
+            self.gate.study,
+            &ids,
+            analyzed_at,
+        )?;
         let saved = ReportEnvelope {
             project_id: self.gate.project,
             study_id: self.gate.study,
@@ -650,7 +725,9 @@ impl StudyResearchDriver {
             || start.elapsed() > MAX_TOOL_RUNTIME
             || ctx.deadline_ms <= now_ms()
         {
-            return Err(invalid("research operation exceeded authorized resource limits"));
+            return Err(invalid(
+                "research operation exceeded authorized resource limits",
+            ));
         }
         let id = report_id(ctx);
         write_envelope(&self.gate.services, id, &bytes)?;
@@ -669,34 +746,59 @@ impl StudyResearchDriver {
         if saved.run_id != ctx.run_id
             || saved.step_id != ctx.step_id
             || saved.idempotency_key != ctx.idempotency_key
-            || ids != saved.report.sources.iter().map(|s| s.study_source_id).collect::<Vec<_>>()
+            || ids
+                != saved
+                    .report
+                    .sources
+                    .iter()
+                    .map(|s| s.study_source_id)
+                    .collect::<Vec<_>>()
         {
             return Err(not_found());
         }
         let bytes = fs::metadata(artifact_path(&self.gate.services, id)?)
-            .map_err(|_| not_found())?.len();
+            .map_err(|_| not_found())?
+            .len();
         if bytes > ctx.estimate.max_output_bytes {
             return Err(invalid("persisted report exceeds approved budget"));
         }
         Ok(StepOutput {
-            artifact_id: id.to_string(), tokens: 0, cost_microusd: 0, bytes,
+            artifact_id: id.to_string(),
+            tokens: 0,
+            cost_microusd: 0,
+            bytes,
         })
     }
 }
 
 fn failed() -> ToolFailure {
-    ToolFailure { code: "study_research_denied".into(), retryable: false, certainty: Certainty::NotApplied }
+    ToolFailure {
+        code: "study_research_denied".into(),
+        retryable: false,
+        certainty: Certainty::NotApplied,
+    }
 }
 fn uncertain() -> ToolFailure {
-    ToolFailure { code: "study_research_effect_uncertain".into(), retryable: false, certainty: Certainty::UnknownEffect }
+    ToolFailure {
+        code: "study_research_effect_uncertain".into(),
+        retryable: false,
+        certainty: Certainty::UnknownEffect,
+    }
 }
 
 impl ToolExecutor for StudyResearchDriver {
-    fn execute(&self, ctx: &ExecutionContext, input: &StepInput) -> Result<ToolReceipt, ToolFailure> {
+    fn execute(
+        &self,
+        ctx: &ExecutionContext,
+        input: &StepInput,
+    ) -> Result<ToolReceipt, ToolFailure> {
         self.guarded_input(ctx, input, true).map_err(|_| failed())?;
         match self.gate.services.store.reserve_agent_effect(
-            self.gate.project, self.gate.study,
-            &ctx.run_id, &ctx.step_id, &ctx.idempotency_key,
+            self.gate.project,
+            self.gate.study,
+            &ctx.run_id,
+            &ctx.step_id,
+            &ctx.idempotency_key,
         ) {
             Ok(EffectClaim::Claimed(_)) => {}
             Ok(EffectClaim::Existing(_)) | Err(_) => return Err(uncertain()),
@@ -715,20 +817,41 @@ impl ToolExecutor for StudyResearchDriver {
                 } else {
                     EffectUpdate::NotApplied
                 };
-                if self.gate.services.store.record_agent_effect(
-                    self.gate.project, self.gate.study, &ctx.run_id,
-                    &ctx.idempotency_key, update,
-                ).is_err() {
+                if self
+                    .gate
+                    .services
+                    .store
+                    .record_agent_effect(
+                        self.gate.project,
+                        self.gate.study,
+                        &ctx.run_id,
+                        &ctx.idempotency_key,
+                        update,
+                    )
+                    .is_err()
+                {
                     return Err(uncertain());
                 }
-                return Err(if possibly_written { uncertain() } else { failed() });
+                return Err(if possibly_written {
+                    uncertain()
+                } else {
+                    failed()
+                });
             }
         };
-        self.gate.services.store.record_agent_effect(
-            self.gate.project, self.gate.study, &ctx.run_id,
-            &ctx.idempotency_key,
-            EffectUpdate::Applied { artifact_id: output.artifact_id.clone() },
-        ).map_err(|_| uncertain())?;
+        self.gate
+            .services
+            .store
+            .record_agent_effect(
+                self.gate.project,
+                self.gate.study,
+                &ctx.run_id,
+                &ctx.idempotency_key,
+                EffectUpdate::Applied {
+                    artifact_id: output.artifact_id.clone(),
+                },
+            )
+            .map_err(|_| uncertain())?;
         Ok(ToolReceipt::Applied(output))
     }
 
@@ -738,9 +861,17 @@ impl ToolExecutor for StudyResearchDriver {
         input: &StepInput,
         _pending_effect_id: Option<&str>,
     ) -> Result<ProbeResult, ToolFailure> {
-        let effect = self.gate.services.store.get_agent_effect(
-            self.gate.project, self.gate.study, &ctx.run_id, &ctx.idempotency_key,
-        ).map_err(|_| uncertain())?;
+        let effect = self
+            .gate
+            .services
+            .store
+            .get_agent_effect(
+                self.gate.project,
+                self.gate.study,
+                &ctx.run_id,
+                &ctx.idempotency_key,
+            )
+            .map_err(|_| uncertain())?;
         let Some(effect) = effect else {
             return Ok(ProbeResult::Unknown);
         };
@@ -757,11 +888,19 @@ impl ToolExecutor for StudyResearchDriver {
                         return Ok(ProbeResult::Unknown);
                     }
                 } else {
-                    self.gate.services.store.record_agent_effect(
-                        self.gate.project, self.gate.study, &ctx.run_id,
-                        &ctx.idempotency_key,
-                        EffectUpdate::Applied { artifact_id: output.artifact_id.clone() },
-                    ).map_err(|_| uncertain())?;
+                    self.gate
+                        .services
+                        .store
+                        .record_agent_effect(
+                            self.gate.project,
+                            self.gate.study,
+                            &ctx.run_id,
+                            &ctx.idempotency_key,
+                            EffectUpdate::Applied {
+                                artifact_id: output.artifact_id.clone(),
+                            },
+                        )
+                        .map_err(|_| uncertain())?;
                 }
                 Ok(ProbeResult::Applied(output))
             }
@@ -780,24 +919,33 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let study = services.store.create_study(project, "Study", "").unwrap().id;
+        let study = services
+            .store
+            .create_study(project, "Study", "")
+            .unwrap()
+            .id;
         let other = Uuid::new_v4();
-        let input = StepInput::AnalyzeEvidence { source_ids: vec![other.to_string()] };
+        let input = StepInput::AnalyzeEvidence {
+            source_ids: vec![other.to_string()],
+        };
         assert!(selected_ids(&input).is_ok());
         assert!(scoped_study(&services, project, study, &[other]).is_err());
         assert!(scoped_study(&services, Uuid::new_v4(), study, &[other]).is_err());
-        let manual = services.store.add_study_source(
-            project,
-            study,
-            &StudySourceInput {
-                kind: StudySourceKind::Manual,
-                reference_id: None,
-                locator: Some("pasted note".into()),
-                manual_text: Some("No automatic research on pasted notes".into()),
-                source_revision: None,
-                uncertainty: None,
-            },
-        ).unwrap();
+        let manual = services
+            .store
+            .add_study_source(
+                project,
+                study,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("pasted note".into()),
+                    manual_text: Some("No automatic research on pasted notes".into()),
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
         assert!(scoped_study(&services, project, study, &[manual.id]).is_err());
     }
 
@@ -816,86 +964,107 @@ mod tests {
         {
             let services = AppServices::new(dir.path()).unwrap();
             project = services.active_project_id().unwrap();
-            study = services.store.create_study(project, "Research", "").unwrap().id;
+            study = services
+                .store
+                .create_study(project, "Research", "")
+                .unwrap()
+                .id;
             let research_id = Uuid::new_v4();
-            let recorded = services.store.upsert_research_items(&[ResearchItem {
-                id: research_id,
-                project_id: project,
-                creator_id: None,
-                source_url: "https://www.youtube.com/watch?v=agent03proof".into(),
-                platform: "YouTube".into(),
-                title: Some("Recorded metadata".into()),
-                view_count: Some(0),
-                like_count: None,
-                comment_count: None,
-                published_at: Some("2026-11-10".into()),
-                duration_seconds: None,
-                raw_json: None,
-                scanned_at: "2026-11-15T00:00:00Z".into(),
-            }]).unwrap();
-            let attached = services.store.add_study_source(
-                project,
-                study,
-                &StudySourceInput {
-                    kind: StudySourceKind::ResearchItem,
-                    reference_id: Some(recorded[0].id),
-                    locator: None,
-                    manual_text: None,
-                    source_revision: None,
-                    uncertainty: None,
-                },
-            ).unwrap();
+            let recorded = services
+                .store
+                .upsert_research_items(&[ResearchItem {
+                    id: research_id,
+                    project_id: project,
+                    creator_id: None,
+                    source_url: "https://www.youtube.com/watch?v=agent03proof".into(),
+                    platform: "YouTube".into(),
+                    title: Some("Recorded metadata".into()),
+                    view_count: Some(0),
+                    like_count: None,
+                    comment_count: None,
+                    published_at: Some("2026-11-10".into()),
+                    duration_seconds: None,
+                    raw_json: None,
+                    scanned_at: "2026-11-15T00:00:00Z".into(),
+                }])
+                .unwrap();
+            let attached = services
+                .store
+                .add_study_source(
+                    project,
+                    study,
+                    &StudySourceInput {
+                        kind: StudySourceKind::ResearchItem,
+                        reference_id: Some(recorded[0].id),
+                        locator: None,
+                        manual_text: None,
+                        source_revision: None,
+                        uncertainty: None,
+                    },
+                )
+                .unwrap();
             let gate = StudyResearchGate::new(services.clone(), project, study);
             let mut registry = ToolRegistry::default();
             registry.allow(ToolKind::AnalyzeEvidence);
             let engine = Engine::new(
-                services.store.scoped_agent_checkpoints(project, study).unwrap(),
+                services
+                    .store
+                    .scoped_agent_checkpoints(project, study)
+                    .unwrap(),
                 StudyResearchDriver::new(gate.clone()),
                 gate,
                 registry,
             );
-            let created = engine.create(Plan {
-                id: Uuid::new_v4().to_string(),
-                project_id: project.to_string(),
-                study_id: study.to_string(),
-                steps: vec![StepPlan {
-                    id: "analyze_evidence".into(),
-                    input: StepInput::AnalyzeEvidence {
-                        source_ids: vec![attached.id.to_string()],
+            let created = engine
+                .create(
+                    Plan {
+                        id: Uuid::new_v4().to_string(),
+                        project_id: project.to_string(),
+                        study_id: study.to_string(),
+                        steps: vec![StepPlan {
+                            id: "analyze_evidence".into(),
+                            input: StepInput::AnalyzeEvidence {
+                                source_ids: vec![attached.id.to_string()],
+                            },
+                            estimate: Estimate {
+                                tokens: 0,
+                                cost_microusd: 0,
+                                max_output_bytes: MAX_REPORT_BYTES as u64,
+                                cpu_ms: 5_000,
+                                peak_memory_mib: 128,
+                            },
+                            max_attempts: 1,
+                            requires_approval: true,
+                        }],
+                        limits: Limits {
+                            max_tool_calls: 1,
+                            max_tokens: 0,
+                            max_cost_microusd: 0,
+                            max_elapsed_ms: 300_000,
+                            max_output_bytes: MAX_REPORT_BYTES as u64,
+                            max_cpu_ms: 5_000,
+                            max_peak_memory_mib: 128,
+                        },
                     },
-                    estimate: Estimate {
-                        tokens: 0,
-                        cost_microusd: 0,
-                        max_output_bytes: MAX_REPORT_BYTES as u64,
-                        cpu_ms: 5_000,
-                        peak_memory_mib: 128,
-                    },
-                    max_attempts: 1,
-                    requires_approval: true,
-                }],
-                limits: Limits {
-                    max_tool_calls: 1,
-                    max_tokens: 0,
-                    max_cost_microusd: 0,
-                    max_elapsed_ms: 300_000,
-                    max_output_bytes: MAX_REPORT_BYTES as u64,
-                    max_cpu_ms: 5_000,
-                    max_peak_memory_mib: 128,
-                },
-            }, now_ms()).unwrap();
+                    now_ms(),
+                )
+                .unwrap();
             run_id = created.plan.id.clone();
             let pending = engine.tick(&run_id, now_ms()).unwrap();
             assert_eq!(pending.state, RunState::AwaitingApproval);
-            assert!(services.store.get_agent_effect(
-                project, study, &run_id, &pending.steps[0].idempotency_key,
-            ).unwrap().is_none());
-            let approved = engine.approve(&run_id, "analyze_evidence", now_ms()).unwrap();
+            assert!(services
+                .store
+                .get_agent_effect(project, study, &run_id, &pending.steps[0].idempotency_key,)
+                .unwrap()
+                .is_none());
+            let approved = engine
+                .approve(&run_id, "analyze_evidence", now_ms())
+                .unwrap();
             assert_eq!(approved.steps.len(), 1);
             let completed = engine.tick(&run_id, now_ms()).unwrap();
             assert_eq!(completed.state, RunState::Completed);
-            artifact = Uuid::parse_str(
-                &completed.steps[0].output.as_ref().unwrap().artifact_id,
-            ).unwrap();
+            artifact =
+                Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
             let report = read_study_research_artifact(&services, project, study, artifact).unwrap();
             assert_eq!(report.sources.len(), 1);
             assert_eq!(report.sources[0].study_source_id, attached.id);
@@ -905,13 +1074,29 @@ mod tests {
         let restarted = AppServices::new(dir.path()).unwrap();
         let report = read_study_research_artifact(&restarted, project, study, artifact).unwrap();
         assert_eq!(report.study_id, study);
-        let ledger = restarted.store.get_agent_effect(
-            project, study, &run_id,
-            &restarted.store.scoped_agent_checkpoints(project, study)
-                .unwrap().load(&run_id).unwrap().unwrap().steps[0].idempotency_key,
-        ).unwrap().unwrap();
+        let ledger = restarted
+            .store
+            .get_agent_effect(
+                project,
+                study,
+                &run_id,
+                &restarted
+                    .store
+                    .scoped_agent_checkpoints(project, study)
+                    .unwrap()
+                    .load(&run_id)
+                    .unwrap()
+                    .unwrap()
+                    .steps[0]
+                    .idempotency_key,
+            )
+            .unwrap()
+            .unwrap();
         assert_eq!(ledger.status, EffectStatus::Applied);
-        assert_eq!(ledger.artifact_id.as_deref(), Some(artifact.to_string().as_str()));
+        assert_eq!(
+            ledger.artifact_id.as_deref(),
+            Some(artifact.to_string().as_str())
+        );
         assert!(read_study_research_artifact(&restarted, Uuid::new_v4(), study, artifact).is_err());
     }
 
@@ -926,28 +1111,62 @@ mod tests {
         {
             let services = AppServices::new(dir.path()).unwrap();
             project = services.active_project_id().unwrap();
-            study = services.store.create_study(project, "Study", "").unwrap().id;
+            study = services
+                .store
+                .create_study(project, "Study", "")
+                .unwrap()
+                .id;
             research_id = Uuid::new_v4();
             // The real source is inserted through the existing research repository.
             let item = ResearchItem {
-                id: research_id, project_id: project, creator_id: None,
+                id: research_id,
+                project_id: project,
+                creator_id: None,
                 source_url: "https://www.youtube.com/watch?v=abc123".into(),
-                platform: "YouTube".into(), title: None, view_count: None,
-                like_count: None, comment_count: None, published_at: None,
-                duration_seconds: None, raw_json: None, scanned_at: "2026-11-15T00:00:00Z".into(),
+                platform: "YouTube".into(),
+                title: None,
+                view_count: None,
+                like_count: None,
+                comment_count: None,
+                published_at: None,
+                duration_seconds: None,
+                raw_json: None,
+                scanned_at: "2026-11-15T00:00:00Z".into(),
             };
             use scriptotar_core::ResearchRepository;
             services.store.upsert_research_items(&[item]).unwrap();
-            source = services.store.add_study_source(project, study, &StudySourceInput {
-                kind: StudySourceKind::ResearchItem, reference_id: Some(research_id),
-                locator: None, manual_text: None, source_revision: None, uncertainty: None,
-            }).unwrap().id;
-            let (_, report) = inspect_selected(&services, project, study, &[source], ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap()).unwrap();
+            source = services
+                .store
+                .add_study_source(
+                    project,
+                    study,
+                    &StudySourceInput {
+                        kind: StudySourceKind::ResearchItem,
+                        reference_id: Some(research_id),
+                        locator: None,
+                        manual_text: None,
+                        source_revision: None,
+                        uncertainty: None,
+                    },
+                )
+                .unwrap()
+                .id;
+            let (_, report) = inspect_selected(
+                &services,
+                project,
+                study,
+                &[source],
+                ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap(),
+            )
+            .unwrap();
             let envelope = ReportEnvelope {
-                project_id: project, study_id: study,
+                project_id: project,
+                study_id: study,
                 study_revision: services.store.get_study(project, study).unwrap().revision,
-                run_id: "test-run".into(), step_id: "research".into(),
-                idempotency_key: "key".into(), report,
+                run_id: "test-run".into(),
+                step_id: "research".into(),
+                idempotency_key: "key".into(),
+                report,
             };
             write_envelope(&services, artifact, &serde_json::to_vec(&envelope).unwrap()).unwrap();
         }
@@ -963,13 +1182,21 @@ mod tests {
             "UPDATE research_items SET scanned_at='2026-11-16T08:00:00Z'
              WHERE id=?1 AND project_id=?2",
             params![research_id.to_string(), project.to_string()],
-        ).unwrap();
+        )
+        .unwrap();
         assert!(checked_report(&reopened, project, study, artifact).is_err());
         db.execute(
             "DELETE FROM research_items WHERE id=?1 AND project_id=?2",
             params![research_id.to_string(), project.to_string()],
-        ).unwrap();
-        assert!(!reopened.store.get_study_source(project, study, source).unwrap().available);
+        )
+        .unwrap();
+        assert!(
+            !reopened
+                .store
+                .get_study_source(project, study, source)
+                .unwrap()
+                .available
+        );
         assert!(checked_report(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
         assert!(checked_report(&reopened, project, study, artifact).is_err());
