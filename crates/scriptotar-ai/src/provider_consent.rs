@@ -280,7 +280,7 @@ fn valid_provider_request_id(value: &str) -> bool {
         && value.len() <= 128
         && value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'/' | b':'))
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
@@ -1070,8 +1070,8 @@ mod tests {
             .unwrap();
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
         assert_eq!(
-            fence.receipts.lock().unwrap().as_slice(),
-            &["fixture-request-id"]
+            fence.receipts.lock().unwrap().clone(),
+            vec!["fixture-request-id".to_string()]
         );
         assert!(matches!(
             boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 104),
