@@ -206,6 +206,7 @@ pub enum FindingCode {
     ContradictoryEvidence,
     InsufficientIndependentSources,
     NotIndependentlyReviewed,
+    UnassessedCitation,
     ConsequentialHumanReviewRequired,
     InvalidReviewLineage,
     ReviewRejected,
@@ -373,7 +374,15 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         || ctx.project_id.is_empty()
         || ctx.study_id.is_empty()
         || ctx.draft_id.is_empty();
-    let mut seen = HashSet::new();
+    // Duplicate claim IDs invalidate every occurrence, not just later ones:
+    // the first item must not inherit a review with an ambiguous identity.
+    let mut unique_claim_ids = HashSet::new();
+    let mut duplicate_claim_ids = HashSet::new();
+    for proposal in proposals {
+        if !unique_claim_ids.insert(proposal.id.as_str()) {
+            duplicate_claim_ids.insert(proposal.id.as_str());
+        }
+    }
     let mut results = Vec::new();
     for claim in proposals.iter().take(MAX_CLAIMS) {
         let mut issues = Vec::new();
@@ -390,7 +399,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
             ));
         }
         if claim.id.trim().is_empty()
-            || !seen.insert(claim.id.as_str())
+            || duplicate_claim_ids.contains(claim.id.as_str())
             || claim.statement.trim().is_empty()
             || claim.statement.chars().count() > MAX_TEXT
             || claim.beat_id.trim().is_empty()
@@ -574,6 +583,18 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                 }
                 EvidenceState::Unreviewed | EvidenceState::Reviewed => {}
             }
+            // Every cited excerpt must be adjudicated; two independently
+            // supporting sources cannot launder a third unassessed citation.
+            if evidence.state == EvidenceState::Unreviewed
+                || evidence.relation == EvidenceRelation::Unassessed
+            {
+                issues.push(finding(
+                    FindingCode::UnassessedCitation,
+                    &claim.id,
+                    Some(id),
+                    "This cited excerpt has no authenticated claim-level assessment",
+                ));
+            }
             if evidence.collected_at_epoch.is_none() {
                 issues.push(finding(
                     FindingCode::UnknownFreshness,
@@ -625,6 +646,17 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
             .iter()
             .map(|citation| citation.evidence_id.clone())
             .collect();
+        // A review cannot predate any cited source's actual collection into
+        // the authoritative store, even if its identifiers match later.
+        let newest_collection = approved
+            .iter()
+            .filter_map(|citation| {
+                by_id
+                    .get(citation.evidence_id.as_str())
+                    .and_then(|entry| entry.as_ref())
+                    .and_then(|entry| entry.collected_at_epoch)
+            })
+            .max();
         let relevant: Vec<_> = ctx
             .human_reviews
             .iter()
@@ -632,7 +664,10 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
             .collect();
         let matched_reviews: Vec<_> = relevant
             .iter()
-            .filter(|review| review_matches(review, claim, ctx, &ids))
+            .filter(|review| {
+                review_matches(review, claim, ctx, &ids)
+                    && newest_collection.is_none_or(|date| review.reviewed_at_epoch >= date)
+            })
             .collect();
         if relevant.len() != matched_reviews.len() {
             issues.push(finding(
@@ -700,6 +735,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                     issue.code,
                     FindingCode::OutdatedSource
                         | FindingCode::UnknownFreshness
+                        | FindingCode::UnassessedCitation
                         | FindingCode::MissingSegmentOrTimestamp
                         | FindingCode::WrongEvidenceModality
                 )
