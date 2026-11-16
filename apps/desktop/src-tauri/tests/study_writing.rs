@@ -1133,8 +1133,13 @@ fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
     };
     let ids = sink.commit_three(&batch).unwrap();
     db.update_draft(
-        plan.context.project_id, ids[0], 1, "Saved human edit", "Do not overwrite me",
-    ).unwrap();
+        plan.context.project_id,
+        ids[0],
+        1,
+        "Saved human edit",
+        "Do not overwrite me",
+    )
+    .unwrap();
     // The successful batch advanced Study revision, making the original plan
     // stale. Its immutable receipt is nevertheless safe to READ after restart.
     current.0.borrow_mut().study_revision += 1;
@@ -1160,7 +1165,14 @@ fn canonical_recovery_skips_stale_study_and_paid_provider_after_lost_reply() {
     let mut forged = plan.clone();
     forged.angles_prompt.prompt.push_str(" altered");
     assert!(matches!(
-        generate_three(&forged, &current, &mut gate, &mut provider, &stop, &mut sink),
+        generate_three(
+            &forged,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            &mut sink
+        ),
         Err(WritingWorkflowError::StaleContext)
     ));
     assert_eq!(provider.calls, 0);
