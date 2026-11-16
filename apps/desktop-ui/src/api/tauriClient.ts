@@ -1,6 +1,6 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
 import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
-import type { LocalInspectionRun } from '../studio/agent';
+import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type {
   AiRunDetail,
   ResearchItemDetail,
@@ -94,6 +94,16 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<LocalInspectionRun[]>('list_local_inspections', { projectId, studyId }),
     decideLocalInspection: (projectId, studyId, runId, action) =>
       invoke<LocalInspectionRun>('decide_local_inspection', { projectId, studyId, runId, action }),
+    listStudyResearchSources: (projectId, studyId) =>
+      invoke<StudyResearchSource[]>('list_study_research_sources', { projectId, studyId }),
+    startStudyResearch: (projectId, studyId, sourceIds) =>
+      invoke<StudyResearchRun>('start_study_research', { projectId, studyId, sourceIds }),
+    listStudyResearchRuns: (projectId, studyId) =>
+      invoke<StudyResearchRun[]>('list_study_research_runs', { projectId, studyId }),
+    decideStudyResearch: (projectId, studyId, runId, action) =>
+      invoke<StudyResearchRun>('decide_study_research', { projectId, studyId, runId, action }),
+    readStudyResearchReport: (projectId, studyId, artifactId) =>
+      invoke<StudyResearchReport>('read_study_research_report', { projectId, studyId, artifactId }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

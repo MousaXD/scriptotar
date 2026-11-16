@@ -1,6 +1,6 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
 import type { ContentStudy, DraftSnapshot, StudyEvidence } from '../studio/contract';
-import type { LocalInspectionRun } from '../studio/agent';
+import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type { BackendJob, BootstrapData, Project, McpPermissions, McpGatewayStatus, McpConnectionStatus } from '../types';
 
 export const mockBootstrap: BootstrapData = {
@@ -115,6 +115,10 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     title: string; body: string; revision: number; versions: DraftSnapshot[]; archived: boolean
   }>>();
   const inspectionRuns = new Map<string, LocalInspectionRun>();
+  const studyResearchRuns = new Map<string, StudyResearchRun>();
+  const studyResearchReports = new Map<string, StudyResearchReport>();
+  const researchRevisions = new Map<string, number>();
+  let researchCounter = 0;
   const studyEvidence = new Map<string, StudyEvidence[]>();
   let evidenceCounter = 0;
   let inspectionCounter = 0;
@@ -606,6 +610,109 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       stored.revision += 1;
       inspectionRuns.set(runId, stored);
       return structuredClone(stored);
+    },
+    async listStudyResearchSources(projectId: string, studyId: string): Promise<StudyResearchSource[]> {
+      const study = studyInProject(projectId, studyId);
+      return study.sources.map((source) => ({
+        id: `mock-attached:${studyId}:${source.kind}:${source.id}`,
+        originId: source.id, kind: source.kind === 'research' ? 'research_item' : 'transcript',
+        locator: source.id, available: true, collectedAt: '2026-11-16T00:00:00Z'
+      }));
+    },
+    async startStudyResearch(projectId: string, studyId: string, sourceIds: string[]) {
+      const study = studyInProject(projectId, studyId);
+      if (sourceIds.length < 1 || sourceIds.length > 8 || new Set(sourceIds).size !== sourceIds.length) {
+        throw new Error('Select one to eight distinct Study sources');
+      }
+      const valid = await this.listStudyResearchSources(projectId, studyId);
+      if (!sourceIds.every((id) => valid.some((source) => source.id === id && source.available))) {
+        throw new Error('Research source is not attached to the active Study');
+      }
+      const id = 'mock-study-research-' + ++researchCounter;
+      const created: StudyResearchRun = {
+        schema_version: 1, revision: 1, state: 'awaiting_approval', current_step: 0,
+        plan: {
+          id, project_id: projectId, study_id: studyId,
+          steps: [{ id: 'analyze_evidence', input: { tool: 'analyze_evidence', source_ids: [...sourceIds] },
+            requires_approval: true, estimate: { tokens: 0, cost_microusd: 0 } }]
+        },
+        steps: [{ id: 'analyze_evidence', state: 'pending', approved: false, output: null }],
+        usage: { tool_calls: 0, reserved_cost_microusd: 0 },
+        events: [{ sequence: 1, kind: 'created' }, { sequence: 2, kind: 'awaiting_approval' }]
+      };
+      researchRevisions.set(id, study.revision);
+      studyResearchRuns.set(id, created);
+      return structuredClone(created);
+    },
+    async listStudyResearchRuns(projectId: string, studyId: string) {
+      studyInProject(projectId, studyId);
+      return [...studyResearchRuns.values()]
+        .filter((run) => run.plan.project_id === projectId && run.plan.study_id === studyId)
+        .slice(-25).map((run) => structuredClone(run));
+    },
+    async decideStudyResearch(projectId: string, studyId: string, runId: string, action) {
+      const study = studyInProject(projectId, studyId);
+      const run = studyResearchRuns.get(runId);
+      if (!run || run.plan.project_id !== projectId || run.plan.study_id !== studyId) {
+        throw new Error('Research run not found');
+      }
+      if (action === 'recover') return structuredClone(run);
+      if (action === 'cancel' && !['completed', 'cancelled'].includes(run.state)) {
+        run.state = 'cancelled';
+      } else if (run.state !== 'awaiting_approval') {
+        throw new Error('Research run is not awaiting approval');
+      } else if (action === 'deny') {
+        run.state = 'cancelled';
+        run.events.push({ sequence: run.events.length + 1, kind: 'denied' });
+      } else if (action === 'approve') {
+        const sources = await this.listStudyResearchSources(projectId, studyId);
+        const ids = run.plan.steps[0].input.source_ids;
+        if (study.revision !== researchRevisions.get(runId) ||
+            !ids.every((id) => sources.some((source) => source.id === id && source.available))) {
+          throw new Error('Study sources changed after research approval preview');
+        }
+        const artifactId = 'mock-research-report-' + runId;
+        run.state = 'completed';
+        run.steps[0].approved = true;
+        run.steps[0].state = 'completed';
+        run.steps[0].output = { artifact_id: artifactId, bytes: 0, tokens: 0, cost_microusd: 0 };
+        run.usage.tool_calls = 1;
+        run.events.push({ sequence: run.events.length + 1, kind: 'completed' });
+        studyResearchReports.set(artifactId, {
+          project_id: projectId, study_id: studyId,
+          analyzed_at: '2026-11-16T00:00:00Z',
+          sources: ids.map((id) => {
+            const source = sources.find((item) => item.id === id)!;
+            return {
+              study_source_id: source.id, reference_id: source.originId,
+              kind: source.kind, locator: source.locator, collected_at: source.collectedAt,
+              access: 'available' as const, origin_revision: 'mock:unchanged',
+              metrics: null, observations: [], limitations: ['Mock research does not verify facts']
+            };
+          }),
+          feature_support: [], limitations: ['Mock mode; no independent verification'],
+          source_text_is_untrusted_data: true
+        });
+      } else throw new Error('Unsupported research action');
+      run.revision += 1;
+      studyResearchRuns.set(runId, run);
+      return structuredClone(run);
+    },
+    async readStudyResearchReport(projectId: string, studyId: string, artifactId: string) {
+      const study = studyInProject(projectId, studyId);
+      const report = studyResearchReports.get(artifactId);
+      if (!report || report.project_id !== projectId || report.study_id !== studyId) {
+        throw new Error('Research artifact not found');
+      }
+      const run = [...studyResearchRuns.values()].find((item) =>
+        item.steps[0].output?.artifact_id === artifactId && item.state === 'completed');
+      const sources = await this.listStudyResearchSources(projectId, studyId);
+      if (!run || researchRevisions.get(run.plan.id) !== study.revision ||
+          !report.sources.every((item) => sources.some((source) =>
+            source.id === item.study_source_id && source.originId === item.reference_id && source.available))) {
+        throw new Error('Research source changed; report cannot be reopened');
+      }
+      return structuredClone(report);
     },
     async getAiRun(projectId: string, aiRunId: string) {
       if (active !== projectId) throw new Error('Active project changed');

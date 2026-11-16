@@ -12,8 +12,9 @@ use std::{
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use scriptotar_agent::{
-    Certainty, Engine, ExecutionContext, Plan, PolicyGate, ProbeResult, RuntimeError, StepInput,
-    StepOutput, StepPlan, ToolExecutor, ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
+    Certainty, CheckpointStore, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate,
+    ProbeResult, RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor,
+    ToolFailure, ToolKind, ToolReceipt, ToolRegistry,
 };
 use scriptotar_core::{
     ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind,
@@ -930,6 +931,212 @@ impl ToolExecutor for StudyResearchDriver {
     }
 }
 
+
+const RESEARCH_RUN_DEADLINE_MS: u64 = 300_000;
+
+/// IDs are the canonical Study attachments, not original video/research IDs.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyResearchSource {
+    pub id: String,
+    pub origin_id: String,
+    pub kind: String,
+    pub locator: String,
+    pub available: bool,
+    pub collected_at: String,
+}
+
+fn research_run_error(error: RuntimeError) -> RepositoryError {
+    match error {
+        RuntimeError::Store(scriptotar_agent::StoreError::NotFound) | RuntimeError::NotFound => {
+            RepositoryError::NotFound("research run".into())
+        }
+        RuntimeError::Store(scriptotar_agent::StoreError::Unavailable) => storage(),
+        RuntimeError::Store(scriptotar_agent::StoreError::Conflict)
+        | RuntimeError::Store(scriptotar_agent::StoreError::Exists)
+        | RuntimeError::WrongState
+        | RuntimeError::StepMismatch => RepositoryError::Conflict(
+            "research run changed or is not awaiting that action".into(),
+        ),
+        RuntimeError::PolicyDenied => not_found(),
+        _ => invalid("research run is invalid or unavailable"),
+    }
+}
+
+fn valid_research_run(run: &RunSnapshot, project: Uuid, study: Uuid) -> bool {
+    run.plan.project_id == project.to_string()
+        && run.plan.study_id == study.to_string()
+        && run.plan.steps.len() == 1
+        && run.plan.steps[0].id == "analyze_evidence"
+        && matches!(&run.plan.steps[0].input, StepInput::AnalyzeEvidence { .. })
+        && run.plan.steps[0].requires_approval
+        && run.plan.steps[0].max_attempts == 1
+        && run.plan.steps[0].estimate.tokens == 0
+        && run.plan.steps[0].estimate.cost_microusd == 0
+        && run.plan.limits.max_tokens == 0
+        && run.plan.limits.max_cost_microusd == 0
+}
+
+impl AppServices {
+    pub fn list_study_research_sources(
+        &self,
+        project: Uuid,
+        study: Uuid,
+    ) -> RepositoryResult<Vec<StudyResearchSource>> {
+        scoped_study(self, project, study, &[])?;
+        let sources = self.store.list_study_sources(project, study)?;
+        self.require_active_project(project)?;
+        Ok(sources
+            .into_iter()
+            .filter_map(|source| {
+                if !matches!(
+                    source.kind,
+                    StudySourceKind::ResearchItem | StudySourceKind::Transcript
+                ) {
+                    return None;
+                }
+                Some(StudyResearchSource {
+                    id: source.id.to_string(),
+                    origin_id: source.reference_id?.to_string(),
+                    kind: source.kind.as_str().to_owned(),
+                    locator: source.locator,
+                    available: source.available,
+                    collected_at: source.collected_at,
+                })
+            })
+            .collect())
+    }
+
+    /// Prepares one zero-cost, local AnalyzeEvidence step; no tool executes
+    /// before an explicit approval decision.
+    pub fn start_study_research(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        source_ids: Vec<Uuid>,
+    ) -> RepositoryResult<RunSnapshot> {
+        let input = StepInput::AnalyzeEvidence {
+            source_ids: source_ids.iter().map(ToString::to_string).collect(),
+        };
+        let ids = selected_ids(&input)?;
+        scoped_study(self, project, study, &ids)?;
+        let engine = build_study_research_engine(self, project, study)?;
+        let now = now_ms();
+        let plan = Plan {
+            id: Uuid::new_v4().to_string(),
+            project_id: project.to_string(),
+            study_id: study.to_string(),
+            steps: vec![StepPlan {
+                id: "analyze_evidence".into(),
+                input,
+                estimate: Estimate {
+                    tokens: 0,
+                    cost_microusd: 0,
+                    max_output_bytes: MAX_REPORT_BYTES as u64,
+                    cpu_ms: 5_000,
+                    peak_memory_mib: 128,
+                },
+                max_attempts: 1,
+                requires_approval: true,
+            }],
+            limits: Limits {
+                max_tool_calls: 1,
+                max_tokens: 0,
+                max_cost_microusd: 0,
+                max_elapsed_ms: RESEARCH_RUN_DEADLINE_MS,
+                max_output_bytes: MAX_REPORT_BYTES as u64,
+                max_cpu_ms: 5_000,
+                max_peak_memory_mib: 128,
+            },
+        };
+        let created = engine.create(plan, now).map_err(research_run_error)?;
+        engine.tick(&created.plan.id, now).map_err(research_run_error)
+    }
+
+    pub fn list_study_research_runs(
+        &self,
+        project: Uuid,
+        study: Uuid,
+    ) -> RepositoryResult<Vec<RunSnapshot>> {
+        let engine = build_study_research_engine(self, project, study)?;
+        let mut results = Vec::new();
+        for run_id in engine.store.list_run_ids(100).map_err(|_| storage())? {
+            let run = engine.get(&run_id).map_err(research_run_error)?;
+            if valid_research_run(&run, project, study) {
+                results.push(run);
+                if results.len() == 25 {
+                    break;
+                }
+            }
+        }
+        self.require_active_project(project)?;
+        Ok(results)
+    }
+
+    pub fn decide_study_research(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        action: &str,
+    ) -> RepositoryResult<RunSnapshot> {
+        if !scriptotar_agent::valid_id(run_id) {
+            return Err(invalid("invalid research run ID"));
+        }
+        let engine = build_study_research_engine(self, project, study)?;
+        let original = engine.get(run_id).map_err(research_run_error)?;
+        if !valid_research_run(&original, project, study) {
+            return Err(not_found());
+        }
+        let now = now_ms();
+        let next = match action {
+            "approve" => {
+                let approved = engine
+                    .approve(run_id, "analyze_evidence", now)
+                    .map_err(research_run_error)?;
+                engine.tick(&approved.plan.id, now).map_err(research_run_error)?
+            }
+            "deny" => engine
+                .deny(run_id, "analyze_evidence", now)
+                .map_err(research_run_error)?,
+            "cancel" => engine.cancel(run_id, now).map_err(research_run_error)?,
+            "recover" => {
+                let recovered = engine.recover(run_id, now).map_err(research_run_error)?;
+                if recovered.state == scriptotar_agent::RunState::Blocked
+                    && recovered.steps.first().is_some_and(|step| {
+                        matches!(
+                            step.state,
+                            scriptotar_agent::StepState::Running
+                                | scriptotar_agent::StepState::AwaitingResult
+                        )
+                    })
+                {
+                    engine.reconcile(run_id, now).map_err(research_run_error)?
+                } else {
+                    recovered
+                }
+            }
+            _ => return Err(invalid("unsupported research action")),
+        };
+        if !valid_research_run(&next, project, study) {
+            return Err(not_found());
+        }
+        self.require_active_project(project)?;
+        Ok(next)
+    }
+
+    /// The artifact remains readable only while its applied receipt and
+    /// original attached source revisions are still authoritative.
+    pub fn read_study_research_report(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        artifact: Uuid,
+    ) -> RepositoryResult<StudyResearchReport> {
+        read_study_research_artifact(self, project, study, artifact)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1022,57 +1229,34 @@ mod tests {
                     },
                 )
                 .unwrap();
-            let engine = build_study_research_engine(&services, project, study).unwrap();
-            let created = engine
-                .create(
-                    Plan {
-                        id: Uuid::new_v4().to_string(),
-                        project_id: project.to_string(),
-                        study_id: study.to_string(),
-                        steps: vec![StepPlan {
-                            id: "analyze_evidence".into(),
-                            input: StepInput::AnalyzeEvidence {
-                                source_ids: vec![attached.id.to_string()],
-                            },
-                            estimate: Estimate {
-                                tokens: 0,
-                                cost_microusd: 0,
-                                max_output_bytes: MAX_REPORT_BYTES as u64,
-                                cpu_ms: 5_000,
-                                peak_memory_mib: 128,
-                            },
-                            max_attempts: 1,
-                            requires_approval: true,
-                        }],
-                        limits: Limits {
-                            max_tool_calls: 1,
-                            max_tokens: 0,
-                            max_cost_microusd: 0,
-                            max_elapsed_ms: 300_000,
-                            max_output_bytes: MAX_REPORT_BYTES as u64,
-                            max_cpu_ms: 5_000,
-                            max_peak_memory_mib: 128,
-                        },
-                    },
-                    now_ms(),
-                )
+            let sources = services.list_study_research_sources(project, study).unwrap();
+            assert_eq!(sources.len(), 1);
+            assert_eq!(sources[0].origin_id, recorded[0].id.to_string());
+            assert_eq!(sources[0].id, attached.id.to_string());
+            let pending = services
+                .start_study_research(project, study, vec![attached.id])
                 .unwrap();
-            run_id = created.plan.id.clone();
-            let pending = engine.tick(&run_id, now_ms()).unwrap();
             assert_eq!(pending.state, RunState::AwaitingApproval);
+            run_id = pending.plan.id.clone();
             assert!(services
                 .store
-                .get_agent_effect(project, study, &run_id, &pending.steps[0].idempotency_key,)
+                .get_agent_effect(project, study, &run_id, &pending.steps[0].idempotency_key)
                 .unwrap()
                 .is_none());
-            let approved = engine
-                .approve(&run_id, "analyze_evidence", now_ms())
+            assert_eq!(services.list_study_research_runs(project, study).unwrap().len(), 1);
+            assert!(services
+                .decide_study_research(Uuid::new_v4(), study, &run_id, "approve")
+                .is_err());
+            let completed = services
+                .decide_study_research(project, study, &run_id, "approve")
                 .unwrap();
-            assert_eq!(approved.steps.len(), 1);
-            let completed = engine.tick(&run_id, now_ms()).unwrap();
             assert_eq!(completed.state, RunState::Completed);
-            artifact =
-                Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+            assert!(services
+                .decide_study_research(project, study, &run_id, "approve")
+                .is_err());
+            artifact = Uuid::parse_str(
+                &completed.steps[0].output.as_ref().unwrap().artifact_id
+            ).unwrap();
             let report = read_study_research_artifact(&services, project, study, artifact).unwrap();
             assert_eq!(report.sources.len(), 1);
             assert_eq!(report.sources[0].study_source_id, attached.id);
@@ -1080,8 +1264,10 @@ mod tests {
             assert_eq!(report.sources[0].metrics.as_ref().unwrap().likes, None);
         }
         let restarted = AppServices::new(dir.path()).unwrap();
-        let report = read_study_research_artifact(&restarted, project, study, artifact).unwrap();
+        let report = restarted.read_study_research_report(project, study, artifact).unwrap();
         assert_eq!(report.study_id, study);
+        assert_eq!(restarted.list_study_research_runs(project, study).unwrap().len(), 1);
+        assert!(restarted.read_study_research_report(Uuid::new_v4(), study, artifact).is_err());
         let ledger = restarted
             .store
             .get_agent_effect(
