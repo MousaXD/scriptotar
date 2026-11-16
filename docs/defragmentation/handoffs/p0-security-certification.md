@@ -1,3 +1,76 @@
+# Agent 10 — 2026-11-16 independent executable regression update
+
+**Latest audit work:** independent security CI added on PR #124. **NO-GO: combined production security is NOT TESTED.** This supersedes any earlier "current head" rows below; they are retained as dated historical evidence.
+
+## Refreshed owner heads at this update
+
+| PR | Head observed | Integration state | Agent 10 disposition |
+| --- | --- | --- | --- |
+| #114 — Agent 00 | `88419a813d4deb00978a90b0d8756b47b058842f` | Draft integration, in progress | **NOT TESTED** as a completed combined app |
+| #117 — Agent 04 | `1ffb0fffad71a6fb2980966e1eec106174f543ff` | Separate | Source review present; independent exact-head native gate queued |
+| #118 — Agent 01 | `5853594ca208088cca59776e9a30c9334d89d54f` | Separate | New shared dispatch-scope trait and fail-closed default; native concurrency gate queued |
+| #119 — Agent 02 | `9da21c96a62d7a041b64500841b89dc6dc649703` | **Merged into integration** | Previous v5 break no longer current claimed failure; re-test native v4/v5/v10 now |
+| #120 — Agent 03 | `747b41cd5c2431a146a0f43d5b68c5b98b26a415` | Separate | Not yet combined |
+| #121 — Agent 05 | `d030af8517786d425dfd0ea8b1aa1541a1c84180` | Separate, changing concurrently | New independent canonical SQLite adversarial tests queued |
+| #124 — Agent 10 | `3bf648d90cb89d01cd1eae998474ce2ed07ec1fa` | Independent PR | CI workflow authored/triggered; **no completed new gate result at this snapshot** |
+
+**CI execution link:** https://github.com/MousaXD/scriptotar/actions/workflows/independent-security-regressions.yml
+
+The new dedicated workflow runs five checks from exact GitHub PR refs: #118
+provider races, #119 historical SQLite migrations, #121 canonical three-draft
+transaction, #117 verification, and **#114 combined integration**. The combined
+job exits nonzero if required production feature modules are missing. Exact
+commit hashes print in each job log. The main workspace's `cargo test
+--workspace` omits the nested provider test crate; this separate check must be
+required by Agent 00 and re-run on the final merged integration SHA.
+
+## New independent adversarial coverage
+
+- **Provider authorization + external effect:** existing deterministic
+  post-reservation source change, explicit two-thread revocation at the
+  reservation completion boundary, successful legitimate guarded dispatch
+  where the source write lock cannot be taken during egress, and default
+  missing-scope-lock denial. All use fake provider/ledger, zero external egress.
+  **Source reviewed:** PR #118 now validates context again and provides
+  `ScopeDispatchGuard` plus a required `mark_dispatched_once` CAS. A
+  fail-closed interface alone is not proof that the Tauri host and every source
+  mutator share one real synchronization boundary.
+- **Migration and historical data:** invoke the actual
+  `scriptotar-db` native test suite, including previous v4/v5 fixtures,
+  v10 migration invariants, and project isolation. The old breakage at
+  `dd755bbe` remains **historical**, not evidence that the merged
+  `9da21c96` fails.
+- **Canonical three-draft writing:** compile the production persistence module
+  using Agent 05's own canonical SQLite test fixture and append independent
+  assertions for source-fingerprint revocation before commit, forged lineage,
+  "supported" model assertions downgraded to unverified, duplicate receipts
+  and payload tampering (no fourth draft). These are not mock-only storage
+  assertions. PR #121 remains unmerged and may advance again.
+- **Claim trust:** core verification native tests cover exact source hash,
+  independently reviewed origins, high-stakes claims, stale/foreign reviews and
+  forged citations; independent Python host contract refuses Verified for an
+  unbound draft. The Python contract is not a substitute for end-to-end native
+  permissioned IPC testing.
+
+## Matrix — snapshot before new independent jobs complete
+
+| Security property | Status | Basis |
+| --- | --- | --- |
+| Provider never egresses after revocation linearizes | **NOT TESTED** on final production path | Rust gate now queued; real shared host mutex not integrated |
+| Provider double-claim / dispatch / receipt exactly once | **NOT TESTED** combined | Durable v10 branch merged; new mock/canonical tests queued |
+| Real historical v4/v5 upgrade under v10 | **NOT TESTED** independently on merged code | Native full DB test queued; no new exact-head result yet |
+| Three canonical drafts atomic + duplicate-proof | **NOT TESTED** independently | Newly authored native tests queued, owner fixture exists |
+| Forge source/claim/status cannot promote to verified | **NOT TESTED** independently on combined | Isolated source guard inspected; native core gate queued |
+| Cross-project Tauri/MCP IDOR and secret leakage | **NOT TESTED** end-to-end | Additional host/installed-app suite needed |
+| Unknown pricing defaults deny paid egress | **PASS (source-level design only)** | `NoTrustedPricing` and no production trusted paid catalog; do not count as dynamic proof |
+| Installed Linux/Windows native WebView security | **NOT TESTED** | Agent 07 independent harness belongs to release QA |
+| Final combined integration SHA | **NOT TESTED** | Combined CI gate fails closed until modules integrated and it is rerun |
+
+**Do not treat a queued gate, historical green workflow, isolated feature check,
+or a disabled paid adapter as an executed production security certificate.**
+
+---
+
 # Agent 10 — independent security/adversarial QA handoff
 
 **Audit date:** 2026-11-16; refreshed after concurrent feature-branch updates.  **Disposition: NO-GO for integration/release approval.** This is a draft security review, not a penetration-test certificate. Do not merge or publish based on upstream green CI alone. No feature-owner production files were changed.
