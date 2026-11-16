@@ -335,6 +335,16 @@ fn review_matches(
         && review.claim_id == claim.id
         && review.exact_statement == claim.statement
         && review.reviewed_at_epoch <= ctx.checked_at_epoch
+        // The record cannot attest to evidence that was not yet collected.
+        // A refreshed source needs a new review even if its declared version
+        // string and excerpt are identical to the previous snapshot.
+        && claim.citations.iter().all(|citation| {
+            ctx.evidence
+                .iter()
+                .find(|item| item.evidence_id == citation.evidence_id)
+                .and_then(|item| item.collected_at_epoch)
+                .is_some_and(|collected| collected <= review.reviewed_at_epoch)
+        })
         && exact_id_set(&review.evidence_ids, ids)
         && review.exact_citations.len() == claim.citations.len()
         && claim
