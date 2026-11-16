@@ -71,17 +71,17 @@ try {
     $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable interactive desktop/UIA main window on Windows runner' }
   } else {
     $tree = [System.Windows.Automation.TreeScope]::Descendants
-    $condition = New-Object System.Windows.Automation.PropertyCondition(
+    $condition = [System.Windows.Automation.PropertyCondition]::new(
       [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
       [System.Windows.Automation.ControlType]::Document
     )
     $document = $root.FindFirst($tree, $condition)
-    $buttonCondition = New-Object System.Windows.Automation.AndCondition(
-      (New-Object System.Windows.Automation.PropertyCondition(
+    $buttonCondition = [System.Windows.Automation.AndCondition]::new(
+      [System.Windows.Automation.PropertyCondition]::new(
         [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Button)),
-      (New-Object System.Windows.Automation.PropertyCondition(
-        [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio'))
+        [System.Windows.Automation.ControlType]::Button),
+      [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
     )
     $studioButton = $root.FindFirst($tree, $buttonCondition)
     if (-not $document -or -not $studioButton) {
@@ -93,12 +93,12 @@ try {
       $invoke = $studioButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
       $invoke.Invoke()
       Start-Sleep -Milliseconds 750
-      $headingCondition = New-Object System.Windows.Automation.AndCondition(
-        (New-Object System.Windows.Automation.PropertyCondition(
+      $headingCondition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new(
           [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-          [System.Windows.Automation.ControlType]::Text)),
-        (New-Object System.Windows.Automation.PropertyCondition(
-          [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio'))
+          [System.Windows.Automation.ControlType]::Text),
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
       )
       # WebView2 may publish headings as Text, Header, or Group.
       $heading = $root.FindFirst($tree, $headingCondition)
