@@ -497,6 +497,11 @@ pub fn analyze_study_sources(
             .map_or_else(Vec::new, |transcript| {
                 transcript_observations(&source, transcript, &mut limitations)
             });
+        if source.kind == StudyResearchKind::ResearchItem && source.access.can_inspect() {
+            limitations.push(
+                "Stored research metadata does not include spoken hooks, CTAs, structure, frames or retention. No live platform access was checked.".into(),
+            );
+        }
         if source.access.can_inspect() && metrics.is_none() && observations.is_empty() {
             limitations.push("No attributable material available for analysis.".into());
         }
@@ -606,6 +611,7 @@ mod tests {
         assert_eq!(result.sources[0].study_source_id, r.study_source_id);
         assert_eq!(result.sources[0].origin_revision.as_deref(), Some("2026-11-15T12:00:00Z"));
         assert!(result.feature_support.is_empty());
+        assert!(result.sources[0].limitations.iter().any(|warning| warning.contains("No live platform access")));
     }
     #[test]
     fn cross_project_collision_and_duplicate_selection_are_refused() {
