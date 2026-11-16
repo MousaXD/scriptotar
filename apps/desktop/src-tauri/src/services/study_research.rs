@@ -733,6 +733,120 @@ mod tests {
     }
 
     #[test]
+    fn approved_agent_research_persists_effect_and_can_reopen_result() {
+        use scriptotar_agent::{
+            CheckpointStore, Engine, Estimate, Limits, Plan, RunState, StepPlan, ToolKind,
+            ToolRegistry,
+        };
+        use scriptotar_core::ResearchRepository;
+        let dir = TempDir::new().unwrap();
+        let project;
+        let study;
+        let artifact;
+        let run_id;
+        {
+            let services = AppServices::new(dir.path()).unwrap();
+            project = services.active_project_id().unwrap();
+            study = services.store.create_study(project, "Research", "").unwrap().id;
+            let research_id = Uuid::new_v4();
+            let recorded = services.store.upsert_research_items(&[ResearchItem {
+                id: research_id,
+                project_id: project,
+                creator_id: None,
+                source_url: "https://www.youtube.com/watch?v=agent03proof".into(),
+                platform: "YouTube".into(),
+                title: Some("Recorded metadata".into()),
+                view_count: Some(0),
+                like_count: None,
+                comment_count: None,
+                published_at: Some("2026-11-10".into()),
+                duration_seconds: None,
+                raw_json: None,
+                scanned_at: "2026-11-15T00:00:00Z".into(),
+            }]).unwrap();
+            let attached = services.store.add_study_source(
+                project,
+                study,
+                &StudySourceInput {
+                    kind: StudySourceKind::ResearchItem,
+                    reference_id: Some(recorded[0].id),
+                    locator: None,
+                    manual_text: None,
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            ).unwrap();
+            let gate = StudyResearchGate::new(services.clone(), project, study);
+            let mut registry = ToolRegistry::default();
+            registry.allow(ToolKind::AnalyzeEvidence);
+            let engine = Engine::new(
+                services.store.scoped_agent_checkpoints(project, study).unwrap(),
+                StudyResearchDriver::new(gate.clone()),
+                gate,
+                registry,
+            );
+            let created = engine.create(Plan {
+                id: Uuid::new_v4().to_string(),
+                project_id: project.to_string(),
+                study_id: study.to_string(),
+                steps: vec![StepPlan {
+                    id: "analyze_evidence".into(),
+                    input: StepInput::AnalyzeEvidence {
+                        source_ids: vec![attached.id.to_string()],
+                    },
+                    estimate: Estimate {
+                        tokens: 0,
+                        cost_microusd: 0,
+                        max_output_bytes: MAX_REPORT_BYTES as u64,
+                        cpu_ms: 5_000,
+                        peak_memory_mib: 128,
+                    },
+                    max_attempts: 1,
+                    requires_approval: true,
+                }],
+                limits: Limits {
+                    max_tool_calls: 1,
+                    max_tokens: 0,
+                    max_cost_microusd: 0,
+                    max_elapsed_ms: 300_000,
+                    max_output_bytes: MAX_REPORT_BYTES as u64,
+                    max_cpu_ms: 5_000,
+                    max_peak_memory_mib: 128,
+                },
+            }, now_ms()).unwrap();
+            run_id = created.plan.id.clone();
+            let pending = engine.tick(&run_id, now_ms()).unwrap();
+            assert_eq!(pending.state, RunState::AwaitingApproval);
+            assert!(services.store.get_agent_effect(
+                project, study, &run_id, &pending.steps[0].idempotency_key,
+            ).unwrap().is_none());
+            let approved = engine.approve(&run_id, "analyze_evidence", now_ms()).unwrap();
+            assert_eq!(approved.steps.len(), 1);
+            let completed = engine.tick(&run_id, now_ms()).unwrap();
+            assert_eq!(completed.state, RunState::Completed);
+            artifact = Uuid::parse_str(
+                &completed.steps[0].output.as_ref().unwrap().artifact_id,
+            ).unwrap();
+            let report = read_study_research_artifact(&services, project, study, artifact).unwrap();
+            assert_eq!(report.sources.len(), 1);
+            assert_eq!(report.sources[0].study_source_id, attached.id);
+            assert_eq!(report.sources[0].metrics.as_ref().unwrap().views, Some(0));
+            assert_eq!(report.sources[0].metrics.as_ref().unwrap().likes, None);
+        }
+        let restarted = AppServices::new(dir.path()).unwrap();
+        let report = read_study_research_artifact(&restarted, project, study, artifact).unwrap();
+        assert_eq!(report.study_id, study);
+        let ledger = restarted.store.get_agent_effect(
+            project, study, &run_id,
+            &restarted.store.scoped_agent_checkpoints(project, study)
+                .unwrap().load(&run_id).unwrap().unwrap().steps[0].idempotency_key,
+        ).unwrap().unwrap();
+        assert_eq!(ledger.status, EffectStatus::Applied);
+        assert_eq!(ledger.artifact_id.as_deref(), Some(artifact.to_string().as_str()));
+        assert!(read_study_research_artifact(&restarted, Uuid::new_v4(), study, artifact).is_err());
+    }
+
+    #[test]
     fn report_survives_restart_but_revoked_source_is_not_readable() {
         let dir = TempDir::new().unwrap();
         let project;
