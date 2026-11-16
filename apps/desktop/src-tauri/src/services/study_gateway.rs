@@ -1015,7 +1015,6 @@ impl AppServices {
     }
 }
 
-
 /*
  * Production CurrentStudy loader. This intentionally reuses the same bounded,
  * Study-scoped writing bridge as Copy Prompt; no untrusted DTO, provider call,
@@ -1112,7 +1111,6 @@ mod tests {
             style: "Clear".into(),
         }
     }
-
 
     #[test]
     fn current_writing_context_uses_real_scoped_sources_and_rejects_revocation() {
