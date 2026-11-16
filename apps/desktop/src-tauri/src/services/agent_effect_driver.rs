@@ -15,6 +15,8 @@ pub trait ExternalEffectPolicy: Send + Sync {
 }
 
 pub enum ProviderEvidence {
+    /// Accepted/queued remotely, but NOT completed. Persist ID and probe.
+    Accepted { request_id:String },
     Completed { request_id:Option<String>, receipt_id:String, tokens:u64, cost_microusd:u64 },
     Failed { request_id:Option<String>, receipt_id:String, tokens:u64, cost_microusd:u64 },
     Cancelled { evidence_id:String },
@@ -22,8 +24,9 @@ pub enum ProviderEvidence {
     Uncertain,
 }
 impl ProviderEvidence {
-    fn resolution(&self)->ExternalResolution<'_> {
-        match self {
+    fn resolution(&self)->Option<ExternalResolution<'_>> {
+        Some(match self {
+            Self::Accepted { .. } => return None,
             Self::Completed {request_id,receipt_id,tokens,cost_microusd}=>
                 ExternalResolution::Completed {provider_request_id:request_id.as_deref(),
                     receipt_id,tokens:*tokens,cost_microusd:*cost_microusd},
@@ -33,7 +36,7 @@ impl ProviderEvidence {
             Self::Cancelled {evidence_id}=>ExternalResolution::ProviderCancelled {evidence_id},
             Self::NotExecuted {evidence_id}=>ExternalResolution::VerifiedNotExecuted {evidence_id},
             Self::Uncertain=>ExternalResolution::Uncertain,
-        }
+        })
     }
 }
 
@@ -124,7 +127,15 @@ impl AppServices {
                 ExternalResolution::VerifiedNotExecuted {evidence_id:"local_pre_send_cancelled"});
         }
         let evidence=provider.dispatch_once(ctx,fingerprint,dispatched.attempt,limits);
-        self.store.reconcile_external_effect(key,dispatched.attempt,evidence.resolution())
+        match evidence {
+            ProviderEvidence::Accepted {request_id} =>
+                self.store.record_external_ack(key,dispatched.attempt,&request_id),
+            outcome => self.store.reconcile_external_effect(
+                key,dispatched.attempt,outcome.resolution().ok_or_else(
+                    ||RepositoryError::Storage("unrecognized provider result".into())
+                )?,
+            ),
+        }
     }
 
     /// Query the real provider; never repeat a request as a way of probing.
@@ -139,9 +150,16 @@ impl AppServices {
             return Err(RepositoryError::Conflict("effect is not awaiting reconciliation".into()));
         }
         let evidence=provider.probe(&old);
+        if let ProviderEvidence::Accepted {request_id}=evidence {
+            return self.store.record_external_ack(key,old.attempt,&request_id);
+        }
         if matches!(evidence,ProviderEvidence::Uncertain)
             && old.status==ExternalEffectStatus::Uncertain {return Ok(old);}
-        self.store.reconcile_external_effect(key,old.attempt,evidence.resolution())
+        self.store.reconcile_external_effect(
+            key,old.attempt,evidence.resolution().ok_or_else(
+                ||RepositoryError::Storage("unrecognized provider result".into())
+            )?,
+        )
     }
 
     pub fn stop_external_effect(&self,ctx:&ExecutionContext)->RepositoryResult<ExternalEffect> {
