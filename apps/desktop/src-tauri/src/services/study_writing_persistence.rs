@@ -524,6 +524,31 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
             params![Uuid::new_v4().to_string(), canonical_draft_id.to_string(),
                     next, title, next_body, now],
         ).map_err(error)?;
+        // A revised beat may remove stale evidence, but may not invent new
+        // source content or silently change a source's status.
+        for lineage in &reviewed.lineage {
+            let original_lineage = original
+                .lineage
+                .iter()
+                .find(|item| item.source_id == lineage.source_id)
+                .ok_or(denied("revision forged a source"))?;
+            if !lineage
+                .evidence
+                .iter()
+                .all(|item| original_lineage.evidence.contains(item))
+            {
+                return Err(denied("revision forged evidence content"));
+            }
+        }
+        for finding in &reviewed.review_findings {
+            if !finding
+                .evidence_ids
+                .iter()
+                .all(|id| context.evidence.iter().any(|item| &item.id == id))
+            {
+                return Err(denied("revision invented review evidence"));
+            }
+        }
         let mut saved = reviewed.clone();
         for claim in &mut saved.draft.claims {
             if claim.status == ClaimStatus::Supported {
