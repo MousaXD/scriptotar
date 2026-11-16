@@ -421,6 +421,8 @@ impl ConsentBoundary {
 
     /// There is intentionally no retry entry point. Any transport failure, cancellation
     /// race or receipt-write failure becomes an uncertain paid effect until reconciliation.
+    // The safety boundary keeps each dependency explicit for auditing and test injection.
+    #[allow(clippy::too_many_arguments)]
     pub fn dispatch(
         &self,
         intent: &ProviderIntent,
