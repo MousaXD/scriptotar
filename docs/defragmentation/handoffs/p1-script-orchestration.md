@@ -65,3 +65,34 @@ This chat environment lacks Rust/Cargo and cannot execute these commands locally
 - Export includes shot suggestions, beat evidence IDs, optional human-review findings and quality advisories without presenting any of them as independent fact checking.
 - Two further tests assert zero provider/ledger calls for prompt/run tampering and zero persisted output when a model forges source IDs.
 - Pre-hardening commit `893dc2f64ebaeaed81376b7ce1edf87a2b4763a6` passed Rustfmt, workspace check, Clippy and workspace tests. The new commit requires fresh exact-head CI; do not infer green from that previous commit.
+
+
+## Agent 05 recovery — canonical batch persistence implementation (2026-11-16)
+
+Recovery was performed on the existing PR #121 branch, not from a fresh scaffold. The original `study_writing.rs` orchestration and its 17 offline tests were preserved.
+
+### Newly committed (source pending exact-head CI)
+- `apps/desktop/src-tauri/src/services/study_writing_persistence.rs` contains `CanonicalSqliteCandidateStore`, an actual **IMMEDIATE transaction** writing three rows to canonical `creative_drafts`, three immutable version-1 `draft_versions`, all selected `draft_source_links`, one Study revision compare-and-swap, and an immutable JSON batch receipt. It does not use three sequential single-draft calls.
+- Each stored candidate has a human-editable text export in the canonical body and its structured angles, beats, claims, source locators, research findings, evidence statuses and source bindings in the receipt payload. Model-provided `Supported` claims are conservatively saved as `Unverified`; model review findings always require human review.
+- Run ID is globally unique; an exact repeated batch returns the same three canonical IDs after a lost reply, even when the Study revision advanced or the user subsequently edited a draft. A changed payload or mismatched project/Study cannot replay the receipt. Missing initial versions fail closed; incomplete writes roll back.
+- The sink rereads `CurrentStudy` after obtaining the SQLite writer lock, checks active Study/project/revision and verifies that each exact canonical Study source resolves to its original project-owned reference. **The production CurrentStudy loader must be Agent 00's locked, live `scoped_writing_input_locked` adapter**; fixed/mocked loaders in tests are not production authorization.
+- Added canonical real-DB regression tests (in `tests/study_writing.rs`) for 3 drafts/versions/links, SQLite restart, lost-reply idempotency without discarding manual edits, injected mid-batch rollback, cross-project/changed-run rejection, evidence changes, and withdrawn source origins. The previous fixture contract tests remain.
+- The new adapter is compiled from the Rust integration test via `#[path]`. **Do not claim it is compiled as a production Tauri command yet.**
+
+### Required Agent 00 central migration and host registration
+
+The new module supplies `RECEIPT_MIGRATION`: additive `study_writing_batches` with immutable `run_id`, exact project/Study identity, bounded structured `payload_json`, original three candidate UUIDs and commit timestamp. Tests explicitly install this schema in disposable SQLite test databases. **Production startup does not apply it**; a versioned migration on the canonical `scriptotar-db` ledger must be allocated by Agent 00 alongside Agent 02's migration before registering any command. Do not run ad hoc `CREATE TABLE IF NOT EXISTS` on customer startup.
+
+Agent 00 owns `services.rs`, Tauri `lib.rs` command registration, DTOs, Studio UI and versioned migration numbering. Register both `study_writing` and `study_writing_persistence` only after this schema migration exists, the real source/evidence/brief loader can be reread under SQLite IMMEDIATE, and an active-project lock is held for each final acceptance. Add an installed-app acceptance test: one approved Study with three real source revisions → three selectable editable drafts → restart → manual edit → exact-run reconcile, with EN/AR, source evidence review, and no paid invocation.
+
+### Cross-agent blockers still outstanding
+
+- **Agent 01**: durable provider identity/preview/consent, egress scope, output-token and price caps, revocation.
+- **Agent 02**: actual checkpoint/effect claims and verified response/usage receipts, including unknown-payment recovery; `DurablePermissionBoundary` is still an interface, not wired.
+- **Agent 03**: include only grounded and attributable research observations, never treat engagement comparisons as causal proof.
+- **Agent 04**: independent fact verification; receipt field `Unverified` never becomes verified from matching citation IDs.
+- **Agent 00**: production module registration, real scoped loader, migration coordination and typed three-draft Studio UI. Until all are complete, **no paid dispatch, no release, no merge to main.**
+
+### Exact-head validation
+
+As of writing this addendum, the first canonical test push failed Rustfmt; formatting was applied and re-pushed. Exact-head workflows must be rechecked on the final commit. Tests cannot certify real provider usage or packaged GUI paths without the owner integration. Never count earlier seven green workflows as proof of this new implementation.
