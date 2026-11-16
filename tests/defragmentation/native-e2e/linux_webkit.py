@@ -84,7 +84,7 @@ class AxWebKit:
             seen += 1
             try:
                 states = node.getState()
-                if not states.contains(self.atspi.STATE_VISIBLE):
+                if depth and not states.contains(self.atspi.STATE_VISIBLE):
                     continue
                 yield node
                 if depth < 24:
