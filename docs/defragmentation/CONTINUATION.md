@@ -1,3 +1,13 @@
+# CHECKPOINT — 2026-11-16 Agent 00 begins actual P1 integration (candidate; NOT release ready)
+
+- The integration branch was fast-forwarded from `3009989a3aa73248b6432ba0cd84821c59110993` to Agent 02 PR #119 head `9da21c96a62d7a041b64500841b89dc6dc649703` (25 commits, nine affected files), incorporating the canonical additive SQLite v10 external-effect migration, host-private effect driver and corresponding tests. No main merge or paid provider request is enabled.
+- Exact-head Agent 02 Rust foundation run `43876690200` passed rustfmt, workspace check, Clippy, full workspace tests, historical v5 upgrade and external-effect crash/concurrency regressions. Other workflows and the combined branch need their own exact-head results.
+- Agent 03 PR #120 research source and durable scoped artifact adapter were brought onto the integration branch and privately registered in `services.rs` at `9d3825efa07be78b2e4f80c66e1a79394d746a37`. This compiles the host path for CI but does not expose the user-visible analysis run/read flow or claim it tested.
+- See `P1_INTEGRATION_CONTRACT_20261116.md` for owner-owned provider/effect/Study revision/provenance/writing interface gates. SEC-10-01 pre-egress consent revocation race is unresolved; actual paid dispatch stays disabled. PR #122 remains excluded.
+- Remaining: full combined CI, consent epoch linearization, production research IPC/approval/reopen, Agent 04 verified-source binding, Agent 05 v11 atomic three-draft persistence, Studio UI/mock/API integration, independent adversarial and installed-native-WebView/performance acceptance. Keep PR #114 draft and main unchanged.
+
+---
+
 # CHECKPOINT — 2026-11-15 pasted structured script → isolated candidate (candidate)
 
 - Added a **local-only, two-stage** ScriptDraft review/explicit acceptance flow following the already approved three-angle JSON. The service re-derives the active Study brief/attached sources/observations, requires exact earlier angle and draft prompts and Study revision, and uses Agent 06's strict `parse_angles` and `parse_draft` before any write. Unsupported factual claims are rejected; remaining model claims are prominently marked for independent review. There is NO provider egress, automatic paid call or claim that JSON validation constitutes fact checking.

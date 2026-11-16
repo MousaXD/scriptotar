@@ -1,0 +1,32 @@
+# Agent 00 — P1 shared integration contract (2026-11-16)
+
+**Authority:** owner integration branch; **state:** candidate interface freeze, not release permission. Source of truth remains current Rust/SQLite implementation plus exact-SHA tests. Incompatible agent branch changes must be reconciled deliberately by Agent 00, not merged by overwriting shared files.
+
+## Scope and authorization identities
+
+- All new operations carry real `project_id`, `study_id`, `study_revision`, `run_id`, `step_id` and a single durable idempotency key. The project must remain active; archived or foreign project/Study IDs are not admissible.
+- Canonical input identities are `study_sources.id` and their `reference_id`, source kind, availability, revision/fingerprint, selected segment locators and evidence review state. Never infer identity by title/URL, or trust a caller-supplied draft body merely because its UUID and revision match.
+- The host owns the snapshot of the active project, Study, sources, evidence, prompt and provider terms. Frontend preview and backend dispatch must bind to the same authenticated immutable snapshot. A changed selection, body, prompt, model, budget, pricing revision, source access or evidence state invalidates consent.
+- Project switch, Study edit, evidence change, explicit revocation and outbound request admission must serialize on one host-owned authorization epoch/lock. The actual HTTP send/admission boundary MUST have an enforced linearization point; a second check without the shared lock is insufficient. Do not hold an SQLite write transaction across HTTP I/O. Keep provider execution disabled until this design is implemented and proven by the adversarial revocation test.
+
+## Paid effect, budgeting and receipt
+
+- Canonical effect key: exact tuple (`project_id`, `study_id`, `run_id`, `step_id`, `idempotency_key`). Transport request SHA-256 must cover the actual outbound provider bytes, model, endpoint, generation parameters, source excerpts and relevant system context, not only prompt text.
+- Agent 02's SQLite v10 migration `agent_external_provider_effects` is now part of integration. Reserve once under SQLite IMMEDIATE transaction before network I/O; commit the Dispatched transition before send; never treat an Existing reservation as authorization to send.
+- Timeouts, disconnects, 5xx, lost acknowledgements and crashes after dispatch are uncertain, never automatically retried. Only trusted provider receipt/proven nonexecution can reconcile. A provider 404 alone is not proof. Manual retry needs fresh consent, a separately prepared attempt and bounded attempts.
+- Trusted host-owned model pricing and enforced `max_output_tokens`, input/output byte limits, elapsed time, token/cost ceilings, a real provider request ID and auditable usage receipt are activation prerequisites. Unknown prices and unbounded legacy BYOK provider adapters fail closed. No API keys, raw prompts or outputs in effect receipts.
+- Agent 01 `PaidEffectFence` and Agent 02 `ExternalEffectPolicy/Provider` are separate draft seams; no implicit or unsafe adapter mapping is approved. Owner must compose them under the same atomic scope/fingerprint contract.
+
+## Research, verification and writing
+
+- Agent 03 AnalyzeEvidence is zero-token, zero-cost, bounded to canonical selected Study sources with explicit approval. An artifact can be read only when its scoped v8 ledger effect is Applied, the artifact ID matches and each source is still authorized at its saved revision. Stored observations and creator metrics are not independent fact verification.
+- Agent 04 verification must bind to a canonical immutable source excerpt and actual saved DraftVersion bytes/fingerprint. If the draft is only caller-provided or not transactionally bound, Verified is prohibited and publication review is required. Human creator observation reviews are not independent corroboration.
+- Agent 05 three-candidate persistence requires one SQLite IMMEDIATE transaction: current Study revision CAS, three distinct creative_drafts, three immutable version-1 rows, exact original StudySource links, structured version snapshots and one immutable idempotent batch receipt. Reopening an existing valid receipt is read-only; stale or mismatching content must fail closed. The proposed receipt schema follows v10 and requires its own next additive numbered migration (do not modify historical migration definitions).
+- UI changes require a synchronized `ScriptotarApi`, Tauri handler, TypeScript client, mocks and EN/AR/RTL tests. Do not expose unimplemented paid execution by presenting Copy Prompt or a disabled provider helper as actual automatic generation.
+
+## Integration record and gates
+
+- PR #119 integrated with a fast-forward to `9da21c96a62d7a041b64500841b89dc6dc649703`; its exact-head Rust foundation run 43876690200 passed fmt, workspace check, Clippy and tests, including the supported v5 upgrade and external-effect uncertainty tests. Other checks must be evaluated separately.
+- Agent 03 PR #120 source incorporated into host at `9d3825efa07be78b2e4f80c66e1a79394d746a37` behind a private module registration. This is host compilation/testing candidate only, not user-facing research IPC.
+- PRs #117/#118/#121/#123/#124/#125/#126/#127 are NOT yet integrated. PR #122 is a temporary compilation probe and MUST NOT be merged.
+- Release remains NO-GO until the SEC-10-01 revocation race, exact-source claim binding, next writing migration, trusted transport/receipts and the actual three-script UI journey are proven on one combined exact SHA, including historical migration, independent security, Windows/Linux native WebView and measured native performance.
