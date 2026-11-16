@@ -588,7 +588,10 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
             .unwrap();
     }
     conn.execute_batch(
-        "DROP TABLE evidence_reviews;
+        "DROP TABLE agent_external_attempt_history;
+         DROP TABLE agent_external_effects;
+         DELETE FROM schema_migrations WHERE version=10;
+         DROP TABLE evidence_reviews;
          DELETE FROM schema_migrations WHERE version=9;
          DROP TABLE agent_effects;
          DELETE FROM schema_migrations WHERE version=8;

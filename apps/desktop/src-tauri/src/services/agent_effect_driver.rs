@@ -186,3 +186,147 @@ impl AppServices {
         self.store.prepare_external_retry(key,old.revision)
     }
 }
+
+
+#[cfg(test)]
+mod recovery_driver_tests {
+    use super::*;
+    use scriptotar_agent::{
+        AuditKind, CheckpointStore, Estimate, Limits, Plan, RunSnapshot, RunState,
+        StepInput, StepPlan, StepRecord, StepState, Usage,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
+
+    struct ExplicitlyApprovedMock;
+    impl ExternalEffectPolicy for ExplicitlyApprovedMock {
+        fn authorize(
+            &self, _ctx: &ExecutionContext, _provider: &str, _fingerprint: &str,
+            _limits: ExternalEffectLimits,
+        ) -> RepositoryResult<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct LocalProviderDouble {
+        calls: AtomicUsize,
+        probes: AtomicUsize,
+    }
+    impl ExternalEffectProvider for LocalProviderDouble {
+        fn dispatch_once(
+            &self, _ctx: &ExecutionContext, _fingerprint: &str,
+            _attempt: i64, _limits: ExternalEffectLimits,
+        ) -> ProviderEvidence {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            ProviderEvidence::Accepted { request_id: "mock_provider_71".to_owned() }
+        }
+        fn probe(&self, _effect: &ExternalEffect) -> ProviderEvidence {
+            self.probes.fetch_add(1, Ordering::SeqCst);
+            ProviderEvidence::Completed {
+                request_id: Some("mock_provider_71".to_owned()),
+                receipt_id: "mock_receipt_71".to_owned(),
+                tokens: 25,
+                cost_microusd: 450,
+            }
+        }
+    }
+
+    fn approved_host() -> (TempDir, AppServices, ExecutionContext) {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services.store.create_study(project, "External host fence", "").unwrap().id;
+        let run_id = Uuid::new_v4().to_string();
+        let estimate = Estimate {
+            tokens: 500, cost_microusd: 2500, max_output_bytes: 1000,
+            cpu_ms: 1, peak_memory_mib: 1,
+        };
+        let plan = Plan {
+            id: run_id.clone(),
+            project_id: project.to_string(),
+            study_id: study.to_string(),
+            steps: vec![StepPlan {
+                id: "draft".into(),
+                input: StepInput::DraftScript { brief_id: Uuid::new_v4().to_string() },
+                estimate: estimate.clone(),
+                max_attempts: 3,
+                requires_approval: true,
+            }],
+            limits: Limits {
+                max_tool_calls: 1, max_tokens: 500, max_cost_microusd: 2500,
+                max_elapsed_ms: 60000, max_output_bytes: 1000,
+                max_cpu_ms: 100, max_peak_memory_mib: 4,
+            },
+        };
+        let mut snapshot = RunSnapshot {
+            schema_version: 1, plan, revision: 0, state: RunState::Planned,
+            current_step: 0,
+            steps: vec![StepRecord {
+                id: "draft".into(), state: StepState::Pending, attempts: 0,
+                approved: false, idempotency_key: format!("{run_id}:0:draft"),
+                pending_effect_id: None, output: None, failure_code: None,
+            }],
+            usage: Usage::default(),
+            started_ms: 100, cancel_requested: false, pause_requested: false, events: vec![],
+        };
+        snapshot.event(100, AuditKind::Created);
+        let checkpoints = services.store.scoped_agent_checkpoints(project, study).unwrap();
+        checkpoints.create(snapshot.clone()).unwrap();
+        snapshot.revision = 1;
+        snapshot.state = RunState::Running;
+        snapshot.steps[0].state = StepState::Running;
+        snapshot.steps[0].attempts = 1;
+        snapshot.steps[0].approved = true;
+        snapshot.usage.tool_calls = 1;
+        snapshot.event(101, AuditKind::Dispatched);
+        checkpoints.compare_and_swap(0, snapshot.clone()).unwrap();
+        let ctx = ExecutionContext {
+            run_id,
+            project_id: project.to_string(),
+            study_id: study.to_string(),
+            step_id: "draft".to_owned(),
+            idempotency_key: snapshot.steps[0].idempotency_key.clone(),
+            deadline_ms: 100_000,
+            estimate,
+        };
+        (directory, services, ctx)
+    }
+
+    #[test]
+    fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
+        let (_directory, services, context) = approved_host();
+        let double = LocalProviderDouble::default();
+        let policy = ExplicitlyApprovedMock;
+        let limits = ExternalEffectLimits { tokens: 500, cost_microusd: 2500 };
+        let fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first = services.dispatch_authorized_external_effect(
+            &context, "openai", fingerprint, limits, &policy, &double,
+        ).unwrap();
+        assert_eq!(first.status, ExternalEffectStatus::Dispatched);
+        assert_eq!(first.provider_request_id.as_deref(), Some("mock_provider_71"));
+        assert!(services.dispatch_authorized_external_effect(
+            &context, "openai", fingerprint, limits, &policy, &double,
+        ).is_err());
+        assert_eq!(double.calls.load(Ordering::SeqCst), 1);
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        assert_eq!(
+            services.store.recover_external_effects(project, study, &context.run_id).unwrap(), 1
+        );
+        assert!(services.dispatch_authorized_external_effect(
+            &context, "openai", fingerprint, limits, &policy, &double,
+        ).is_err());
+        assert_eq!(double.calls.load(Ordering::SeqCst), 1);
+        let settled = services.reconcile_external_with_provider(&context, &double).unwrap();
+        assert_eq!(settled.status, ExternalEffectStatus::Completed);
+        assert_eq!(settled.receipt_id.as_deref(), Some("mock_receipt_71"));
+        assert_eq!(settled.actual_cost_microusd, 450);
+        assert_eq!(double.probes.load(Ordering::SeqCst), 1);
+        assert_eq!(double.calls.load(Ordering::SeqCst), 1);
+        let v8 = services.store.get_agent_effect(
+            project, study, &context.run_id, &context.idempotency_key,
+        ).unwrap().unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Applied);
+    }
+}

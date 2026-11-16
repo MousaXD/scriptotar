@@ -78,3 +78,7 @@ Unit tests under agent_effects_external.rs cover: pre-reservation absent state; 
 - Added minimal public DB type exports and candidate additive **v10** `agent_external_provider_effects` after v9, using the existing migration function. The per-request CREATE TABLE bootstrap and missing-table-is-empty fallback were removed. Retained IF NOT EXISTS **inside the versioned migration only** to permit upgrading databases exposed to the old draft bootstrap; malformed tables must still fail closed.
 - New regression tests cover restoring a v9 database to v10 and reopening once, simulated v10 migration collision/rollback without losing v9 projects/studies, and two separately opened SQLite stores racing the dispatch CAS. Native tests must be certified at the exact new HEAD, not the old green SHA.
 - Agent 00 review is still required before integrating shared-file changes, and Agent 01 must freeze canonical provider request SHA, durable scoped approval identity, metering and authentic receipts. This is **compile-time host wiring only**, not product-visible paid execution or release approval.
+
+### CI recovery correction
+- First new-head Actions exposed a rustfmt ordering issue in DB exports and a legacy v5 upgrade fixture that did not strip v10 before downgrading. Both addressed on the next Agent 02 patch; no production feature was removed.
+- The service driver now has an offline AppServices + true scoped checkpoint mock test for single send, restart uncertainty, duplicate dispatch denial and trusted final receipt reconciliation. No network provider is used.
