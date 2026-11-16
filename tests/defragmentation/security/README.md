@@ -1,50 +1,75 @@
-# Independent Scriptotar security regressions — Agent 10
+# Agent 10 — independent security regression execution
 
-**Not a release certification.** The branch is based on integration commit
-`3009989a3aa73248b6432ba0cd84821c59110993`, where the five feature PRs
-are not integrated. Tests for feature PRs are intentionally staged independently.
+**Release status: NO-GO until the combined production integration is tested.**
+Feature PR CI success is not a combined application security certificate.
 
-## Reproduce and run
+## Required GitHub Actions gate
 
-1. Check out **PR #118 SHA** `cdcd07d61f219e5be08052eea6ccddcafcc3c7e9` (also present on earlier `bcb3f3a`)
-   and copy this directory's `Cargo.toml` and `tests/provider_context_race.rs`
-   to `tests/defragmentation/security/` in that checkout. Run:
+[Independent security regressions](https://github.com/MousaXD/scriptotar/actions/workflows/independent-security-regressions.yml)
+runs against the **head of each named PR at checkout time**, never a pinned
+historical success. The log prints the exact audit and feature commit SHAs.
 
-   ```sh
-   cargo test --manifest-path tests/defragmentation/security/Cargo.toml \
-       --test provider_context_race -- --nocapture
-   ```
+| Gate | Real module / native test | Scope |
+| --- | --- | --- |
+| PR #118 — provider | Nested Cargo integration test `provider_context_race.rs` against the *actual* `scriptotar-ai` code | Revocation after reservation, deliberately concurrent scope change before permit, live read-lock/egress ordering, fail-closed missing lock and no provider replay |
+| PR #119 — migration | `cargo test --locked -p scriptotar-db` on real SQLite databases | Historical v4/v5 upgrade preservation, v10 schema/ledger, cross-project and crash recovery |
+| PR #121 — writing | Production-path `study_writing.rs` integration tests plus independent appended tests that call `CanonicalSqliteCandidateStore` | Three-draft atomicity, duplicate receipts, tampered payload, stale source fingerprint, forged provenance, model-supported claim quarantine |
+| PR #117 — verification | `scriptotar-ai` verification unit tests + independent host contract | Source-content hashes, independent origin, high-stakes review, model-claim distrust, project/Study isolation, fail-closed unbound canonical draft |
+| PR #114 — combined | **All four test groups on the exact integration HEAD** | FAIL if a required feature module has not been integrated; no SKIP-as-PASS |
 
-   The fence-rejection control should pass. The stale-project/Study-context race
-   should fail on PR #118: the mock fence revokes context *after* the prior scope
-   validation, yet the mock provider is called. Zero live API calls are made.
+This audit workflow is separate from `ci.yml`; its status must be configured
+as a **required release/integration check** by Agent 00 before final signoff.
+The PR #114 combined gate explicitly refuses to pass with only isolated feature
+branches. Re-run after every final owner integration SHA.
 
-2. Check out **PR #117 SHA** `0847a06cf5af0d2432ad15495a6cd6110079f954`.
-   Copy `test_study_claim_boundary.py` into the same security directory, then run:
+No real paid request, API key, external network egress or public content
+publishing is used by these tests. A successful mock provider alone is not
+evidence that live HTTP adapter hard bounds and billing receipts are correct.
 
-   ```sh
-   python3 -m unittest discover -s tests/defragmentation/security \
-       -p 'test_*.py' -v
-   ```
+## Local execution (against the appropriate feature or combined checkout)
 
-   This contract now **passes by design** on the newer PR #117: the host
-   explicitly sets `draft_content_bound: false` for noncanonical
-   caller-provided draft text, and the verification core refuses Verified
-   status and requires publication review. The historical `9267066`
-   pre-mitigation head is expected to fail this guard.
+On a checkout that contains `crates/scriptotar-ai/src/provider_consent.rs`
+and this independent test directory:
 
-3. On the integration baseline (before #117 is merged), the Python host guard
-   **SKIPS** rather than treating a missing implementation as a pass. The
-   independent Rust harness requires PR #118's module and cannot compile on
-   the unintegrated baseline. Do not mistake a skip for certification.
+```sh
+cargo test --manifest-path tests/defragmentation/security/Cargo.toml \
+  --test provider_context_race -- --nocapture
+```
 
-## Test evidence categories
+For the rest, run against feature PRs or their **registered** combined
+integration:
 
-- **Code-path finding:** provider-consent race remains present at the new #118 head. The Rust test is expected to fail and has **not been executed** by this Agent against a compiled feature checkout. Latest #117 independently added a fail-closed `draft_content_bound` guard; its Python security contract is expected to pass (not executed locally).
-- **CI:** upstream GitHub Actions results are cited in the audit handoff; they
-  do not execute this nested independent Rust harness.
-- **NOT TESTED:** real provider costs, installed Tauri WebView, real credentials,
-  local sandbox escape and platform-specific behaviors.
+```sh
+cargo test --locked -p scriptotar-db
+cargo test --locked -p scriptotar-ai verification
+python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml \
+  --test study_writing --locked -- --nocapture
+```
 
-Agent 00 owns registration of these negative regressions in the integrated
-CI; do not drop failing cases or silently mark them approved.
+The four independent Rust writing tests in
+`canonical_writing_additional_tests.rs` are deliberately appended to Agent
+05's canonical integration fixture by `run_feature_gates.sh`, not independently
+compiled as a free-standing test crate. Calling only `cargo test --test
+study_writing` without that appended file omits these extra tests.
+
+The nested Cargo manifest uses its own test workspace. The normal root
+`cargo test --workspace` **does not include** the provider race regression.
+
+## Limitations / evidence labels
+
+- **PASS** means the GitHub log records a completed passing test on an exact
+  checkout and the tested path is part of the stated module.
+- **FAIL** means a test assertion or compilation gate failed. A missing module
+  in the combined integration fails deliberately rather than counting as a
+  skip.
+- **NOT TESTED** means there is no executed evidence for the required behavior,
+  including native installed WebView, live remote credentials, provider receipt
+  authenticity, sidecar sandbox escape, or release package-specific IPC security.
+- Source code review, historical CI, queued jobs, and tests authored but not
+  executed cannot be represented as PASS.
+- An isolated unit test passing while a paid adapter is disabled is evidence
+  of fail-closed behavior, **not proof of secure production paid egress**.
+
+Owner production code remains outside Agent 10's scope; communicate failures
+to Agents 00, 01, 02, 04 or 05 and keep the PR in NO-GO state.
