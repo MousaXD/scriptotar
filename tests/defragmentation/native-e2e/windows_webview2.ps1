@@ -45,8 +45,18 @@ function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess)
     app_session_id = $appProcess.SessionId
     main_window_handle = [string]$appProcess.MainWindowHandle
     nodes = @()
+    child_windows = @()
   }
   if ($root) {
+    if ($appProcess.MainWindowHandle -ne [IntPtr]::Zero) {
+      foreach ($hwnd in [NativeWebViewWindow]::Children($appProcess.MainWindowHandle)) {
+        $probe.child_windows += @{
+          hwnd = $hwnd.ToInt64()
+          class_name = [NativeWebViewWindow]::ClassName($hwnd)
+          process_id = [NativeWebViewWindow]::ProcessId($hwnd)
+        }
+      }
+    }
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
     $pending = [System.Collections.Generic.Queue[object]]::new()
     $pending.Enqueue(@($root,0))
@@ -86,8 +96,85 @@ function Save-UnverifiedWindow([object]$root, [string]$path) {
     Write-Warning ("Installed shell screenshot capture failed: " + $_.Exception.Message)
   }
 }
-$installDir = Join-Path $env:RUNNER_TEMP ('scriptotar-native-' + $SourceSha.Substring(0,8))
-$dataDir = Join-Path $env:RUNNER_TEMP ('scriptotar-native-data-' + $SourceSha.Substring(0,8))
+
+# UI Automation on a WRY_WEBVIEW host Pane may be an orphaned fragment:
+# WebView2's document provider can live on a nested render-widget HWND.
+# Enumerate ONLY HWND descendants of this installed application's main window.
+# Never search arbitrary desktop windows or accept unrelated browser content.
+Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public static class NativeWebViewWindow {
+    public delegate bool EnumChildProc(IntPtr hwnd, IntPtr data);
+    [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr data);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder buffer, int length);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    public static List<IntPtr> Children(IntPtr parent) {
+        var found = new List<IntPtr>();
+        EnumChildProc callback = (hwnd, data) => { if (found.Count < 200) found.Add(hwnd); return found.Count < 200; };
+        EnumChildWindows(parent, callback, IntPtr.Zero);
+        return found;
+    }
+    public static string ClassName(IntPtr hwnd) {
+        var name = new StringBuilder(256);
+        GetClassName(hwnd, name, name.Capacity);
+        return name.ToString();
+    }
+    public static uint ProcessId(IntPtr hwnd) {
+        uint pid;
+        GetWindowThreadProcessId(hwnd, out pid);
+        return pid;
+    }
+}
+'@
+
+function Find-InstalledDocumentAndStudio([object]$process) {
+  $scope = [System.Windows.Automation.TreeScope]::Descendants
+  $docCondition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Document
+  )
+  $studioCondition = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Button),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
+  )
+  $handles = @($process.MainWindowHandle)
+  $handles += @([NativeWebViewWindow]::Children($process.MainWindowHandle))
+  $foundDocument = $null
+  $foundStudio = $null
+  $providerHandle = $null
+  foreach ($handle in $handles) {
+    if ($handle -eq [IntPtr]::Zero) { continue }
+    try {
+      $candidate = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
+      if (-not $candidate) { continue }
+      # Include the root node, as an orphaned render HWND may itself be a
+      # Document provider, unlike the parent WRY_WEBVIEW Pane.
+      $scopeBoth = [System.Windows.Automation.TreeScope]::Subtree
+      $document = $candidate.FindFirst($scopeBoth, $docCondition)
+      if (-not $document) { continue }
+      $studioButton = $candidate.FindFirst($scopeBoth, $studioCondition)
+      if ($document -and $studioButton) {
+        return @{ document=$document; studio=$studioButton; hwnd=$handle }
+      }
+      $foundDocument = $document
+      $providerHandle = $handle
+    } catch {
+      # UIA providers may disconnect during WebView2 initialization.
+    }
+  }
+  return @{ document=$foundDocument; studio=$foundStudio; hwnd=$providerHandle }
+}
+
+$testTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+$installDir = Join-Path $testTemp ('scriptotar-native-' + $SourceSha.Substring(0,8))
+$dataDir = Join-Path $testTemp ('scriptotar-native-data-' + $SourceSha.Substring(0,8))
 $proc = $null
 try {
   if ($SourceSha -notmatch '^[a-f0-9]{40}$' -or $RunUrl -notmatch '^https://github.com/MousaXD/scriptotar/actions/runs/[1-9][0-9]*$') {
@@ -108,45 +195,59 @@ try {
   Add-Type -AssemblyName System.Drawing
 
   $root = $null
-  for ($i = 0; $i -lt 35; $i++) {
-    Start-Sleep -Seconds 1
+  $probe = $null
+  $readiness = [ordered]@{
+    main_window_seen = $false
+    web_document_seen = $false
+    studio_control_seen = $false
+    poll_count = 0
+    source_process_id = $proc.Id
+    foreground_requested = $false
+    elapsed_seconds = 0
+  }
+  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  # The old probe stopped at the first native shell HWND. On this runner
+  # that frame was white and only contained a WRY_WEBVIEW Pane. Wait for
+  # the actual document and controls, checking nested WebView2 HWNDs.
+  while ($stopwatch.Elapsed.TotalSeconds -lt 90) {
+    Start-Sleep -Seconds 2
+    $readiness.poll_count++
     $proc.Refresh()
     if ($proc.HasExited) { throw "Installed GUI exited $($proc.ExitCode)" }
     if ($proc.MainWindowHandle -eq [IntPtr]::Zero) { continue }
+    $readiness.main_window_seen = $true
     try {
       $root = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
-      if ($root) { break }
-    } catch { }
+      if (-not $root) { continue }
+      $readiness.foreground_requested = [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)
+      $probe = Find-InstalledDocumentAndStudio $proc
+      if ($probe.document) { $readiness.web_document_seen = $true }
+      if ($probe.studio) { $readiness.studio_control_seen = $true }
+      if ($probe.document -and $probe.studio) { break }
+    } catch {
+      $readiness.last_provider_exception = $_.Exception.Message
+    }
   }
+  $stopwatch.Stop()
+  $readiness.elapsed_seconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds,1)
+  $report.readiness = $readiness
   Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
   $report.uia_diagnostics = 'uia-diagnostics.json'
   Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'unverified-window.png')
   if (-not $root) {
-    $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable interactive desktop/UIA main window on Windows runner; see uia-diagnostics.json' }
+    $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable UIA main window for the installed process; see uia-diagnostics.json' }
+  } elseif (-not $probe -or -not $probe.document -or -not $probe.studio) {
+    $cases.installed_webview = @{
+      status='NOT TESTED'
+      reason='After 90s, installed shell had no confirmed WebView2 Document + Studio button; nested HWNDs and readiness logged in uia-diagnostics.json/result.json'
+    }
   } else {
-    $tree = [System.Windows.Automation.TreeScope]::Descendants
-    $condition = [System.Windows.Automation.PropertyCondition]::new(
-      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-      [System.Windows.Automation.ControlType]::Document
-    )
-    $document = $root.FindFirst($tree, $condition)
-    $buttonCondition = [System.Windows.Automation.AndCondition]::new(
-      [System.Windows.Automation.PropertyCondition]::new(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Button),
-      [System.Windows.Automation.PropertyCondition]::new(
-        [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
-    )
-    $studioButton = $root.FindFirst($tree, $buttonCondition)
-    if (-not $document -or -not $studioButton) {
-      $cases.installed_webview = @{
-        status='NOT TESTED'
-        reason='Installed shell present, but WebView2 UIA Document + Studio button not exposed; inspect uia-diagnostics.json and unverified-window.png'
-      }
-    } else {
-      $invoke = $studioButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    try {
+      $invoke = $probe.studio.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
       $invoke.Invoke()
-      Start-Sleep -Milliseconds 750
+      Start-Sleep -Milliseconds 900
+      # Use the SAME WebView2 provider subtree as the discovered button.
+      $scope = [System.Windows.Automation.TreeScope]::Subtree
       $headingCondition = [System.Windows.Automation.AndCondition]::new(
         [System.Windows.Automation.PropertyCondition]::new(
           [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
@@ -154,29 +255,20 @@ try {
         [System.Windows.Automation.PropertyCondition]::new(
           [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
       )
-      # WebView2 may publish headings as Text, Header, or Group.
-      $heading = $root.FindFirst($tree, $headingCondition)
+      $provider = [System.Windows.Automation.AutomationElement]::FromHandle($probe.hwnd)
+      $heading = $provider.FindFirst($scope, $headingCondition)
       if (-not $heading) {
-        $cases.installed_webview = @{ status='FAIL'; reason='Studio button invoked but expected Studio heading not accessible' }
+        $cases.installed_webview = @{ status='FAIL'; reason='Studio control invoked but Studio heading not exposed within the installed document' }
       } else {
         $cases.installed_webview = @{
           status='PASS'
-          reason='Installed NSIS binary exposed a WebView2 UIA document and Studio button was invoked'
+          reason='Installed NSIS WebView2 Document was found under a descendant HWND and Studio invoked via UIA'
         }
         $report.native_ui_probe = 'installed-webview-automation'
-        $bounds = $root.Current.BoundingRectangle
-        if ($bounds.Width -gt 0 -and $bounds.Height -gt 0) {
-          $bitmap = New-Object System.Drawing.Bitmap([int]$bounds.Width,[int]$bounds.Height)
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          try {
-            $graphics.CopyFromScreen(
-              [int]$bounds.X,[int]$bounds.Y,0,0,
-              $bitmap.Size
-            )
-            $bitmap.Save((Join-Path $EvidenceDir 'installed-webview2.png'))
-          } finally { $graphics.Dispose(); $bitmap.Dispose() }
-        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'installed-webview2.png')
       }
+    } catch {
+      $cases.installed_webview = @{ status='FAIL'; reason="Installed GUI action failed: $($_.Exception.Message)" }
     }
   }
 } catch {
