@@ -1,8 +1,9 @@
 //! Read-only, scoped bridge from canonical Study evidence into the verification
 //! engine. No schema, DTO, provider or publication side effects are added.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::DateTime;
+use serde::Deserialize;
 use scriptotar_ai::writing::{
     self,
     verification::{
@@ -14,6 +15,120 @@ use scriptotar_core::{EvidenceCertainty, RepositoryError, RepositoryResult, Stud
 use uuid::Uuid;
 
 use super::AppServices;
+
+#[derive(Debug, Clone, PartialEq, Default)]
+struct HostSourceBinding {
+    /// Cryptographic digest of stored, project-scoped bytes; not the caller's
+    /// source_revision, source fingerprint or provider's proposed citation.
+    content_sha256: Option<String>,
+    segments: Vec<CanonicalTranscriptSegment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct CanonicalTranscriptSegment {
+    /// An ID must exist in the stored segments JSON. Array offsets do not
+    /// become invented segment IDs.
+    id: Option<String>,
+    start: f64,
+    end: f64,
+    text: String,
+}
+
+fn load_host_source_binding(
+    services: &AppServices,
+    project_id: Uuid,
+    study_id: Uuid,
+    source: &scriptotar_core::StudySource,
+) -> RepositoryResult<HostSourceBinding> {
+    let mut binding = HostSourceBinding::default();
+    if !source.available {
+        return Ok(binding);
+    }
+    match source.kind {
+        StudySourceKind::Manual => {
+            if let Some(text) = source.manual_text.as_deref() {
+                binding.content_sha256 =
+                    Some(verification::canonical_source_sha256(&[text.as_bytes()]));
+            }
+        }
+        StudySourceKind::Transcript => {
+            let Some(id) = source.reference_id else {
+                return Ok(binding);
+            };
+            // Require a real, active, project-/Study-scoped transcript join
+            // BEFORE reading the underlying bundle by its globally unique ID.
+            let Ok(byte_length) =
+                services.store.attached_transcript_byte_length(project_id, study_id, id)
+            else {
+                return Ok(binding);
+            };
+            if byte_length > 2_000_000 {
+                return Ok(binding);
+            }
+            let bundle = services.store.get_transcript_bundle(id)?;
+            if bundle.project_id != project_id || bundle.transcript.id != id {
+                return Ok(binding);
+            }
+            let transcript = &bundle.transcript;
+            let segments = transcript.segments_json.as_deref().unwrap_or("");
+            let words = transcript.words_json.as_deref().unwrap_or("");
+            if segments.len() > 2_000_000 || words.len() > 2_000_000 {
+                return Ok(binding);
+            }
+            // Changes to the text OR segment/word evidence invalidate the
+            // complete source content version without trusting an etag.
+            binding.content_sha256 = Some(verification::canonical_source_sha256(&[
+                transcript.text.as_bytes(),
+                segments.as_bytes(),
+                words.as_bytes(),
+            ]));
+            if let Ok(parsed) = serde_json::from_str::<Vec<CanonicalTranscriptSegment>>(segments) {
+                if parsed.len() <= 20_000 {
+                    let mut ids = HashSet::new();
+                    if parsed.iter().all(|seg| {
+                        seg.start.is_finite()
+                            && seg.end.is_finite()
+                            && seg.start >= 0.0
+                            && seg.end >= seg.start
+                            && seg.text.len() <= 8_000
+                            && seg.id.as_deref().is_some_and(|id| {
+                                !id.is_empty() && ids.insert(id.to_owned())
+                            })
+                    }) {
+                        binding.segments = parsed;
+                    }
+                }
+            }
+        }
+        // Metadata, AI output and stored media locators are not independently
+        // attested primary document content.
+        _ => {}
+    }
+    Ok(binding)
+}
+
+fn verified_transcript_segment(
+    evidence: &scriptotar_core::EvidenceReference,
+    binding: &HostSourceBinding,
+) -> Option<String> {
+    let id = evidence.input.locator.strip_prefix("segment:")?;
+    let seconds = evidence.input.timestamp_seconds?;
+    if !seconds.is_finite() || seconds < 0.0 {
+        return None;
+    }
+    binding
+        .segments
+        .iter()
+        .find(|segment| {
+            segment.id.as_deref() == Some(id)
+                && seconds >= segment.start
+                && seconds <= segment.end
+                // Creator-entered observations are not verbatim evidence.
+                // Only an exact match to stored segment text gets an ID.
+                && evidence.input.claim == segment.text
+        })
+        .and_then(|segment| segment.id.clone())
+}
 
 fn collected_epoch(value: &str) -> Option<u64> {
     DateTime::parse_from_rfc3339(value)
@@ -27,6 +142,7 @@ fn collected_epoch(value: &str) -> Option<u64> {
 fn from_study_evidence(
     evidence: &scriptotar_core::EvidenceReference,
     source: &scriptotar_core::StudySource,
+    binding: &HostSourceBinding,
 ) -> ResolvedEvidence {
     let kind = match source.kind {
         StudySourceKind::Transcript => SourceKind::SocialTranscript,
@@ -57,14 +173,17 @@ fn from_study_evidence(
         source_id: source.id.to_string(),
         project_id: evidence.project_id.to_string(),
         study_id: evidence.study_id.to_string(),
-        // This is only a declared revision, not a verified content digest.
-        // A missing revision deliberately cannot pass strict verification.
-        source_version: source.source_revision.clone(),
+        // Derived from canonical stored bytes, NEVER source.source_revision.
+        source_version: binding.content_sha256.clone(),
         locator: ExactLocator {
             locator: evidence.input.locator.clone(),
-            // User-entered locator strings are NOT authenticated transcript
-            // segment IDs. Future segment adapter must cross-check actual JSON.
-            segment_id: None,
+            // Only a real segment ID, exact quote and bounded timestamp
+            // matched against stored transcript JSON can populate this.
+            segment_id: if kind == SourceKind::SocialTranscript {
+                verified_transcript_segment(evidence, binding)
+            } else {
+                None
+            },
             timestamp_millis,
             modality,
         },
@@ -132,21 +251,39 @@ impl AppServices {
         let sources = self.store.list_study_sources(project_id, study_id)?;
         let references = self.store.list_evidence_references(project_id, study_id)?;
         let source_map: HashMap<Uuid, _> = sources.iter().map(|src| (src.id, src)).collect();
+        let mut source_bindings = HashMap::new();
+        for source in &sources {
+            source_bindings.insert(
+                source.id,
+                load_host_source_binding(self, project_id, study_id, source)?,
+            );
+        }
         let mut resolved = Vec::new();
         for evidence in &references {
             let source = source_map
                 .get(&evidence.input.study_source_id)
                 .ok_or_else(|| RepositoryError::Storage("orphan Study evidence source".into()))?;
-            resolved.push(from_study_evidence(evidence, source));
+            let binding = source_bindings
+                .get(&source.id)
+                .ok_or_else(|| RepositoryError::Storage("missing source content binding".into()))?;
+            resolved.push(from_study_evidence(evidence, source, binding));
         }
         let fresh_study = self.store.get_study(project_id, study_id)?;
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
         let fresh_references = self.store.list_evidence_references(project_id, study_id)?;
         let final_draft = self.store.get_draft(project_id, draft_id)?;
+        let mut fresh_bindings = HashMap::new();
+        for source in &fresh_sources {
+            fresh_bindings.insert(
+                source.id,
+                load_host_source_binding(self, project_id, study_id, source)?,
+            );
+        }
         if fresh_study.revision != expected_study_revision
             || final_draft != saved_draft
             || fresh_sources != sources
             || fresh_references != references
+            || fresh_bindings != source_bindings
         {
             return Err(RepositoryError::Conflict(
                 "Study/evidence changed during verification; retry with a fresh snapshot".into(),
@@ -162,6 +299,10 @@ impl AppServices {
             evidence: resolved,
             // No authenticated independent review table exists in v9.
             human_reviews: Vec::new(),
+            // The saved CreativeDraft body is currently free-form text, not
+            // an immutable typed ScriptDraft/claim manifest. Matching only a
+            // valid draft ID/revision must NEVER enable a Verified result.
+            draft_content_bound: false,
         };
         // Resolve only declared FactualClaim IDs against real Study evidence.
         // Unknown IDs are deliberately retained as invalid citations so the
@@ -247,7 +388,7 @@ mod tests {
             },
             created_at: "2026-11-16T00:00:00Z".into(),
         };
-        let mapped = from_study_evidence(&evidence, &source);
+        let mapped = from_study_evidence(&evidence, &source, &HostSourceBinding::default());
         assert_eq!(mapped.state, EvidenceState::Unreviewed);
         assert_eq!(mapped.relation, EvidenceRelation::Unassessed);
         assert!(mapped.independent_origin.is_none());
@@ -309,6 +450,7 @@ mod tests {
             .unwrap();
         assert!(report.publication_review_required);
         assert!(!report.inventory_complete);
+        assert!(!report.draft_content_bound);
         assert!(report
             .claims
             .iter()
@@ -354,5 +496,60 @@ mod tests {
                 &candidate,
             )
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod authenticity_tests {
+    use super::*;
+    use scriptotar_core::{EvidenceCertainty, EvidenceInput, EvidenceReference};
+
+    fn observation(locator: &str, timestamp_seconds: f64, claim: &str) -> EvidenceReference {
+        EvidenceReference {
+            id: Uuid::new_v4(),
+            project_id: Uuid::new_v4(),
+            study_id: Uuid::new_v4(),
+            input: EvidenceInput {
+                study_source_id: Uuid::new_v4(),
+                claim: claim.into(),
+                locator: locator.into(),
+                timestamp_seconds: Some(timestamp_seconds),
+                certainty: EvidenceCertainty::Corroborated,
+                uncertainty_note: None,
+            },
+            created_at: "2026-11-16T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn exact_stored_segment_id_time_and_quote_are_all_required() {
+        let binding = HostSourceBinding {
+            content_sha256: Some(verification::canonical_source_sha256(&[b"transcript"])),
+            segments: vec![CanonicalTranscriptSegment {
+                id: Some("real-17".into()),
+                start: 10.0,
+                end: 13.0,
+                text: "The speaker said this".into(),
+            }],
+        };
+        assert_eq!(
+            verified_transcript_segment(
+                &observation("segment:real-17", 12.5, "The speaker said this"),
+                &binding
+            ),
+            Some("real-17".into())
+        );
+        assert!(verified_transcript_segment(
+            &observation("segment:real-17", 14.0, "The speaker said this"),
+            &binding
+        ).is_none());
+        assert!(verified_transcript_segment(
+            &observation("segment:real-17", 12.5, "Altered words"),
+            &binding
+        ).is_none());
+        assert!(verified_transcript_segment(
+            &observation("segment:invented", 12.5, "The speaker said this"),
+            &binding
+        ).is_none());
     }
 }

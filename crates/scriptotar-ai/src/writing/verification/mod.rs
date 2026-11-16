@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::{ClaimStatus, ScriptDraft};
 
@@ -14,6 +15,29 @@ const MAX_CLAIMS: usize = 128;
 const MAX_EVIDENCE: usize = 256;
 const MAX_CITATIONS: usize = 16;
 const MAX_TEXT: usize = 8_000;
+
+/// SHA-256 over length-delimited canonical bytes loaded by the host, never
+/// over model-supplied content versions. This proves local snapshot equality,
+/// not external authorship, accuracy, permission or independent corroboration.
+pub fn canonical_source_sha256(parts: &[&[u8]]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"scriptotar/source-content/v1\0");
+    for part in parts {
+        digest.update((part.len() as u64).to_be_bytes());
+        digest.update(part);
+    }
+    format!("sha256:{:x}", digest.finalize())
+}
+
+fn is_canonical_source_hash(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -168,6 +192,9 @@ pub struct VerificationContext {
     pub evidence: Vec<ResolvedEvidence>,
     /// Must be loaded from authenticated review storage, never the model.
     pub human_reviews: Vec<VerifiedReview>,
+    /// Host-only authority: typed claim manifest equals the canonical saved
+    /// draft body. Legacy free-text Studio drafts cannot claim this binding.
+    pub draft_content_bound: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -185,6 +212,7 @@ pub enum VerificationStatus {
 #[serde(rename_all = "snake_case")]
 pub enum FindingCode {
     InvalidClaim,
+    DraftContentNotBound,
     UnannotatedText,
     UnsupportedStatement,
     ModelPromotionAttempt,
@@ -230,6 +258,9 @@ pub struct ClaimResult {
     pub status: VerificationStatus,
     pub exact_citations: Vec<Citation>,
     pub findings: Vec<Finding>,
+    /// Qualified review is mandatory for consequential claims; this is not
+    /// satisfied by the current generic human decision record.
+    pub qualified_human_review_required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -244,6 +275,7 @@ pub struct VerificationReport {
     /// There is no independently attested complete claim inventory in the
     /// current data model. Individual Verified claims do not clear a script.
     pub inventory_complete: bool,
+    pub draft_content_bound: bool,
     /// Never discard past decision records when saving a new draft version.
     /// The host must durably persist each revision's report/attestation history.
     pub review_lineage: Vec<VerifiedReview>,
@@ -389,6 +421,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         let mut blocked = invalid_batch;
         let mut contradicted = false;
         let mut supporting_origins = HashSet::new();
+        let mut supporting_hashes = HashSet::new();
         let mut approved = Vec::new();
         if invalid_batch {
             issues.push(finding(
@@ -410,6 +443,14 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                 &claim.id,
                 None,
                 "Invalid or repeated claim identity/text",
+            ));
+        }
+        if !ctx.draft_content_bound {
+            issues.push(finding(
+                FindingCode::DraftContentNotBound,
+                &claim.id,
+                None,
+                "Typed claims are not bound to the canonical saved draft body",
             ));
         }
         if claim.model_claims_verified {
@@ -480,7 +521,11 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                 ));
                 continue;
             }
-            if evidence.source_version.as_deref().is_none_or(str::is_empty) {
+            if evidence
+                .source_version
+                .as_deref()
+                .is_none_or(|version| !is_canonical_source_hash(version))
+            {
                 blocked = true;
                 issues.push(finding(
                     FindingCode::UnversionedSource,
@@ -638,6 +683,10 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                     .filter(|id| !id.trim().is_empty())
                 {
                     supporting_origins.insert(origin.to_owned());
+                    // An exact-content mirror cannot serve as a second source.
+                    if let Some(version) = evidence.source_version.as_deref() {
+                        supporting_hashes.insert(version.to_owned());
+                    }
                 }
             }
             approved.push(citation.clone());
@@ -692,12 +741,14 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                 "An independent human review rejected this claim",
             ));
         }
-        if !human_accepted && claim.consequence != Consequence::Ordinary {
+        // Current generic reviewer records have no independently authenticated
+        // reviewer qualification, so no high-stakes fact is certifiable.
+        if claim.consequence != Consequence::Ordinary {
             issues.push(finding(
                 FindingCode::ConsequentialHumanReviewRequired,
                 &claim.id,
                 None,
-                "Consequential claims require independent human review",
+                "Consequential claims require authenticated qualified human review",
             ));
         }
         if !human_accepted {
@@ -708,12 +759,12 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
                 "No current, authenticated, independent human review",
             ));
         }
-        if supporting_origins.len() < 2 {
+        if supporting_origins.len() < 2 || supporting_hashes.len() < 2 {
             issues.push(finding(
                 FindingCode::InsufficientIndependentSources,
                 &claim.id,
                 None,
-                "Fewer than two independently owned, reviewed document sources support the claim",
+                "Fewer than two independent reviewed document origins and content snapshots",
             ));
         }
         if claim.kind == ClaimKind::UnsupportedStatement {
@@ -727,8 +778,11 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         let verified = !blocked
             && !contradicted
             && claim.kind == ClaimKind::Fact
+            && ctx.draft_content_bound
+            && claim.consequence == Consequence::Ordinary
             && human_accepted
             && supporting_origins.len() >= 2
+            && supporting_hashes.len() >= 2
             && ids.len() == claim.citations.len()
             && !issues.iter().any(|issue| {
                 matches!(
@@ -769,6 +823,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
             status,
             exact_citations: approved,
             findings: issues,
+            qualified_human_review_required: claim.consequence != Consequence::Ordinary,
         });
     }
     // No source-backed, reviewer-certified exhaustiveness record exists for
@@ -784,6 +839,7 @@ pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> 
         claims: results,
         publication_review_required,
         inventory_complete: false,
+        draft_content_bound: ctx.draft_content_bound,
         review_lineage: ctx.human_reviews.clone(),
     }
 }

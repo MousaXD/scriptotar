@@ -43,3 +43,21 @@
 - Source-identity and quote snapshots in \`VerifiedReview.exact_citations\` must be copied and authenticated by trusted host code; only serialization is implemented for these authority-bearing types. Never deserialize them directly from a model reply.
 
 **Ownership decision:** PR #117 remains draft; no schema/DTO migration, merge or release authorization.
+
+## 2026-11-16 recovery — canonical source-content binding hardening
+
+Baseline PR commit `9267066ce3576431b666c6c8cb0f20ba8eaad228` was verified green on **seven** workflows. This new continuation commit requires its **own** exact-head checks and is not production/release approved.
+
+- A domain-separated, length-delimited SHA-256 now binds a *host-read* canonical local source snapshot; the read-only adapter no longer treats the caller-supplied `StudySource.source_revision` or identity fingerprint as an authenticated content hash. Manual notes are hashed from persisted text but remain manual notes, not independent factual documents.
+- An attached transcript's project/Study join, stored text, segments JSON and words JSON contribute to its snapshot digest. The adapter re-reads these bytes and declines to report a coherent result if they change during its advisory verification pass. Oversized/unavailable/foreign origin data has no certified digest.
+- Actual transcript segment IDs are emitted only if stored segment JSON contains a unique ID and the user's exact `segment:<id>` locator, time within source bounds, and verbatim claim text all match. Existing files without segment IDs or observations not matching the transcript remain unverified; neither array positions nor platform metadata are fabricated as IDs.
+- The verifier rejects malformed `sha256:` content versions and refuses to treat identical mirrored content hashes as two independent corroborating document snapshots. This still does not prove editorial/source ownership independence; Agent 00 must authenticate provenance rather than accept publisher names from an LLM.
+- `VerificationContext.draft_content_bound`, `VerificationReport.draft_content_bound` and `FindingCode::DraftContentNotBound` make the typed draft-body binding a hard requirement for individual `Verified`. The current Studio adapter sets this to **false** because it receives a caller-supplied structured draft against a stored free-text body. Agent 00 must implement a transactionally bound, authenticated typed manifest or exact saved-draft snapshot before enabling it.
+- Every consequential legal/financial/health claim is denied a `Verified` verdict even with generic accepted reviews. `ClaimResult.qualified_human_review_required` tells Agent 05's revision flow and Agent 06's citation UI when separately qualified human sign-off is still needed. Generic decision records cannot substitute for qualified review.
+- The new tests exercise digest validation, mirrored content, unbound draft manifests, high-stakes acceptance refusal, and exact transcript locator/time/quote matching. An algorithmic test of source matches is not independently verified external fact checking.
+
+### Remaining blocking Agent 00 contract
+
+Approve **new append-only, authenticated** review storage with immutable reviewer identity/qualifications, source-content hash, trusted source-origin identity, exact quote/location/segment, exact claim text and draft-body/manifest digest, decision/revoke timestamps, Study/draft revisions and atomic snapshot/CAS. Do not reuse the SQLite v9 observation review as fact verification. In the absence of this ledger, `human_reviews=[]`, `draft_content_bound=false`, `inventory_complete=false` and `publication_review_required=true` are intentional.
+
+Agent 05 should consume per-claim status/findings and force revisions of unsupported claims; Agent 06 must display exact evidence and uncertainty without any provider-generated verification badge. No central registration modifications, main merge, release, provider egress, or production publication authorization are approved here.

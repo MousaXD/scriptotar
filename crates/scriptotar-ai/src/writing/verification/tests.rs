@@ -15,7 +15,7 @@ fn source(id: &str, origin: &str) -> ResolvedEvidence {
         source_id: format!("study-source-{id}"),
         project_id: "project-a".into(),
         study_id: "study-a".into(),
-        source_version: Some("sha256:version1".into()),
+        source_version: Some(canonical_source_sha256(&[format!("Verified excerpt for {id}").as_bytes()])),
         locator: locator(Modality::DocumentText),
         excerpt: format!("Verified excerpt for {id}"),
         kind: SourceKind::IndependentDocument,
@@ -59,6 +59,7 @@ fn scope(evidence: Vec<ResolvedEvidence>) -> VerificationContext {
         checked_at_epoch: 200,
         evidence,
         human_reviews: vec![],
+        draft_content_bound: true,
     }
 }
 
@@ -369,7 +370,7 @@ fn old_review_cannot_verify_a_new_source_version_even_with_updated_citations() {
     );
     // Underlying evidence identities remain unchanged, but the second content
     // version and quotation have changed since the reviewer saw them.
-    ctx.evidence[1].source_version = Some("sha256:version2".into());
+    ctx.evidence[1].source_version = Some(canonical_source_sha256(&[b"Updated source excerpt"]));
     ctx.evidence[1].excerpt = "Updated source excerpt".into();
     let updated = fact(&ctx.evidence);
     let result = evaluated(&ctx, &updated);
@@ -464,4 +465,65 @@ fn human_review_preceding_evidence_collection_cannot_certify_a_fact() {
     let result = evaluated(&ctx, &claim);
     assert_eq!(result.status, VerificationStatus::Unverified);
     assert!(has(&result, FindingCode::InvalidReviewLineage));
+}
+
+#[test]
+fn source_hash_is_length_delimited_and_requires_valid_sha256_encoding() {
+    assert_ne!(
+        canonical_source_sha256(&[b"a", b"bc"]),
+        canonical_source_sha256(&[b"ab", b"c"])
+    );
+    assert_eq!(canonical_source_sha256(&[b"same"]), canonical_source_sha256(&[b"same"]));
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    ctx.evidence[0].source_version = Some("sha256:model-supplied-version".into());
+    let result = evaluated(&ctx, &claim);
+    assert_eq!(result.status, VerificationStatus::Blocked);
+    assert!(has(&result, FindingCode::UnversionedSource));
+}
+
+#[test]
+fn mirrored_source_bytes_cannot_manufacture_independent_corroboration() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    ctx.evidence[1].source_version = ctx.evidence[0].source_version.clone();
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    let result = evaluated(&ctx, &claim);
+    assert_eq!(result.status, VerificationStatus::Unverified);
+    assert!(has(&result, FindingCode::InsufficientIndependentSources));
+}
+
+#[test]
+fn caller_supplied_claims_without_saved_draft_binding_never_verify() {
+    let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+    let claim = fact(&ctx.evidence);
+    ctx.human_reviews.push(review(&ctx, &claim));
+    assert_eq!(evaluated(&ctx, &claim).status, VerificationStatus::Verified);
+    ctx.draft_content_bound = false;
+    let report = verify_claims(&ctx, &[claim]);
+    assert!(!report.draft_content_bound);
+    assert!(!report.inventory_complete);
+    assert!(report.publication_review_required);
+    assert_eq!(report.claims[0].status, VerificationStatus::Unverified);
+    assert!(has(&report.claims[0], FindingCode::DraftContentNotBound));
+}
+
+#[test]
+fn generic_reviewer_acceptance_never_certifies_high_stakes_advice() {
+    for consequence in [
+        Consequence::Legal,
+        Consequence::Financial,
+        Consequence::Health,
+        Consequence::OtherHighStakes,
+    ] {
+        let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
+        let mut claim = fact(&ctx.evidence);
+        claim.consequence = consequence;
+        ctx.human_reviews.push(review(&ctx, &claim));
+        let result = evaluated(&ctx, &claim);
+        assert_eq!(result.status, VerificationStatus::Unverified);
+        assert!(result.qualified_human_review_required);
+        assert!(has(&result, FindingCode::ConsequentialHumanReviewRequired));
+    }
 }
