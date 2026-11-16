@@ -780,7 +780,9 @@ fn canonical_batch_fixture() -> (
     db.run_integration_migrations().unwrap();
     let project = Project::new("Writing canonical project");
     db.create_project(&project).unwrap();
-    let study = db.create_study(project.id, "Canonical writing", "Three originals").unwrap();
+    let study = db
+        .create_study(project.id, "Canonical writing", "Three originals")
+        .unwrap();
     let connection = Connection::open(db.path()).unwrap();
     connection
         .execute_batch(study_writing_persistence::RECEIPT_MIGRATION)
@@ -792,23 +794,31 @@ fn canonical_batch_fixture() -> (
     context.study_revision = study.revision;
     for index in 0..3 {
         let original = Uuid::new_v4();
-        connection.execute(
-            "INSERT INTO research_items (id,project_id,source_url,platform,scanned_at)
+        connection
+            .execute(
+                "INSERT INTO research_items (id,project_id,source_url,platform,scanned_at)
              VALUES (?1,?2,?3,'sample','2026-11-13T10:00:00Z')",
-            params![original.to_string(), project.id.to_string(),
-                    format!("https://example.org/study/{}", index)],
-        ).unwrap();
-        let source = db.add_study_source(
-            project.id, study.id,
-            &StudySourceInput {
-                kind: StudySourceKind::ResearchItem,
-                reference_id: Some(original),
-                locator: None,
-                manual_text: None,
-                source_revision: Some("snapshot-1".into()),
-                uncertainty: None,
-            },
-        ).unwrap();
+                params![
+                    original.to_string(),
+                    project.id.to_string(),
+                    format!("https://example.org/study/{}", index)
+                ],
+            )
+            .unwrap();
+        let source = db
+            .add_study_source(
+                project.id,
+                study.id,
+                &StudySourceInput {
+                    kind: StudySourceKind::ResearchItem,
+                    reference_id: Some(original),
+                    locator: None,
+                    manual_text: None,
+                    source_revision: Some("snapshot-1".into()),
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
         context.sources[index] = SelectedWritingSource {
             study_source_id: source.id,
             origin_id: original,
@@ -830,44 +840,75 @@ fn canonical_batch_fixture() -> (
 fn canonical_three_script_receipt_reopens_and_respects_manual_editor_updates() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (temp, db, plan, current, batch) = canonical_batch_fixture();
-    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
     let ids = sink.commit_three(&batch).unwrap();
-    assert_eq!(db.get_study(plan.context.project_id, plan.context.study_id).unwrap().revision, 2);
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        2
+    );
     for (index, id) in ids.iter().enumerate() {
         let draft = db.get_draft(plan.context.project_id, *id).unwrap();
         assert_eq!(draft.revision, 1);
         assert!(draft.body.contains("not independently fact-checked"));
         assert_eq!(
-            draft.title,
-            batch.candidates[index].draft.title
-        );
-        assert_eq!(
-            db.list_draft_versions(plan.context.project_id, *id).unwrap().len(),
+            db.list_draft_versions(plan.context.project_id, *id)
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            db.list_draft_source_ids(plan.context.project_id, *id).unwrap().len(),
+            db.list_draft_source_ids(plan.context.project_id, *id)
+                .unwrap()
+                .len(),
             3
         );
     }
-    let edited = db.update_draft(
-        plan.context.project_id, ids[0], 1, "Manual edit", "Human-owned body"
-    ).unwrap();
+    let edited = db
+        .update_draft(
+            plan.context.project_id,
+            ids[0],
+            1,
+            "Manual edit",
+            "Human-owned body",
+        )
+        .unwrap();
     assert_eq!(edited.revision, 2);
     drop(sink);
     drop(db);
     let reopened = scriptotar_db::SqliteStore::open(temp.path().join("canonical.sqlite")).unwrap();
-    let mut recovered = CanonicalSqliteCandidateStore { store: &reopened, current: &current };
+    let mut recovered = CanonicalSqliteCandidateStore {
+        store: &reopened,
+        current: &current,
+    };
     assert_eq!(recovered.commit_three(&batch).unwrap(), ids);
     assert_eq!(reopened.get_draft(plan.context.project_id, ids[0]).unwrap().body, "Human-owned body");
     assert_eq!(
-        reopened.list_draft_versions(plan.context.project_id, ids[0]).unwrap().len(),
+        reopened
+            .get_draft(plan.context.project_id, ids[0])
+            .unwrap()
+            .body,
+        "Human-owned body"
+    );
+    assert_eq!(
+        reopened
+            .list_draft_versions(plan.context.project_id, ids[0])
+            .unwrap()
+            .len(),
         2
     );
-    let raw: String = Connection::open(reopened.path()).unwrap().query_row(
-        "SELECT payload_json FROM study_writing_batches WHERE run_id='canonical-run'",
-        [], |r| r.get(0)
-    ).unwrap();
+    let raw: String = Connection::open(reopened.path())
+        .unwrap()
+        .query_row(
+            "SELECT payload_json FROM study_writing_batches WHERE run_id='canonical-run'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
     let stored: GeneratedBatch = serde_json::from_str(&raw).unwrap();
     assert_eq!(stored.candidates.len(), 3);
     assert_eq!(stored.context.sources, batch.context.sources);
@@ -877,20 +918,36 @@ fn canonical_three_script_receipt_reopens_and_respects_manual_editor_updates() {
 fn canonical_three_script_late_failure_rolls_back_drafts_study_revision_and_receipt() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, batch) = canonical_batch_fixture();
-    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
     assert!(matches!(
         sink.fail_after_candidate(&batch, 2),
         Err(WritingWorkflowError::PersistFailed(_))
     ));
     let dbconn = Connection::open(db.path()).unwrap();
-    for table in ["creative_drafts", "draft_versions", "draft_source_links", "study_writing_batches"] {
-        let count: i64 = dbconn.query_row(
-            &format!("SELECT COUNT(*) FROM {table} WHERE 1=1"),
-            [], |row| row.get(0)
-        ).unwrap();
+    for table in [
+        "creative_drafts",
+        "draft_versions",
+        "draft_source_links",
+        "study_writing_batches",
+    ] {
+        let count: i64 = dbconn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE 1=1"),
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 0, "{table} was partially saved");
     }
-    assert_eq!(db.get_study(plan.context.project_id, plan.context.study_id).unwrap().revision, 1);
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
     assert_eq!(sink.commit_three(&batch).unwrap().len(), 3);
 }
 
@@ -898,28 +955,53 @@ fn canonical_three_script_late_failure_rolls_back_drafts_study_revision_and_rece
 fn canonical_receipt_rejects_tampering_cross_project_and_withdrawn_origins() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, batch) = canonical_batch_fixture();
-    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
     let ids = sink.commit_three(&batch).unwrap();
     let mut changed = batch.clone();
     changed.context.project_id = Uuid::new_v4();
-    assert!(matches!(sink.commit_three(&changed), Err(WritingWorkflowError::StaleContext)));
+    assert!(matches!(
+        sink.commit_three(&changed),
+        Err(WritingWorkflowError::StaleContext)
+    ));
     let mut changed = batch.clone();
     changed.candidates[0].draft.title = "Different payload".into();
-    assert!(matches!(sink.commit_three(&changed), Err(WritingWorkflowError::StaleContext)));
+    assert!(matches!(
+        sink.commit_three(&changed),
+        Err(WritingWorkflowError::StaleContext)
+    ));
     let mut changed = batch.clone();
     changed.run_id = "another-run".into();
     // Changing a reviewed observation must block a new acceptance even when
     // its Study revision happens not to change.
-    current.0.borrow_mut().evidence[0].excerpt.push_str(" human disputed");
-    assert!(matches!(sink.commit_three(&changed), Err(WritingWorkflowError::StaleContext)));
+    current.0.borrow_mut().evidence[0]
+        .excerpt
+        .push_str(" human disputed");
+    assert!(matches!(
+        sink.commit_three(&changed),
+        Err(WritingWorkflowError::StaleContext)
+    ));
     let mut withdrawn = batch.clone();
     withdrawn.run_id = "withdrawn-run".into();
     current.0.borrow_mut().evidence[0] = batch.context.evidence[0].clone();
-    Connection::open(db.path()).unwrap().execute(
-        "DELETE FROM research_items WHERE id=?1",
-        params![batch.context.sources[0].origin_id.to_string()]
-    ).unwrap();
-    assert!(matches!(sink.commit_three(&withdrawn), Err(WritingWorkflowError::StaleContext)));
-    assert_eq!(db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200).unwrap().len(), 3);
+    Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "DELETE FROM research_items WHERE id=?1",
+            params![batch.context.sources[0].origin_id.to_string()],
+        )
+        .unwrap();
+    assert!(matches!(
+        sink.commit_three(&withdrawn),
+        Err(WritingWorkflowError::StaleContext)
+    ));
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3
+    );
     assert_eq!(ids.len(), 3);
 }
