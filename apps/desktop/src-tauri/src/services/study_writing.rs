@@ -47,6 +47,11 @@ pub struct SelectedWritingSource {
     pub study_source_id: Uuid,
     /// UUID of the project-owned original transcript/research item.
     pub origin_id: Uuid,
+    /// Immutable canonical source identity, not a model-provided locator.
+    pub fingerprint: String,
+    /// Source revision captured by the Study's authoritative source row.
+    pub source_revision: Option<String>,
+    pub collected_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -94,6 +99,9 @@ impl StudyWritingContext {
                         origin_id: source.reference_id.ok_or(
                             WritingWorkflowError::InvalidContext("unresolved source origin"),
                         )?,
+                        fingerprint: source.fingerprint.clone(),
+                        source_revision: source.source_revision.clone(),
+                        collected_at: source.collected_at.clone(),
                     })
                 })
                 .collect::<WriteResult<Vec<_>>>()?;
@@ -127,6 +135,11 @@ impl StudyWritingContext {
         for source in &self.sources {
             if source.study_source_id.is_nil()
                 || source.origin_id.is_nil()
+                || source.fingerprint.trim().is_empty()
+                || source.fingerprint.len() > 1000
+                || source.collected_at.trim().is_empty()
+                || source.collected_at.len() > 1000
+                || source.source_revision.as_ref().is_some_and(|value| value.len() > 1000)
                 || !attached.insert(source.study_source_id)
                 || !origins.insert(source.origin_id)
             {
