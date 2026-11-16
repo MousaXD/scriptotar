@@ -3,7 +3,6 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::DateTime;
-use serde::Deserialize;
 use scriptotar_ai::writing::{
     self,
     verification::{
@@ -12,6 +11,7 @@ use scriptotar_ai::writing::{
     },
 };
 use scriptotar_core::{EvidenceCertainty, RepositoryError, RepositoryResult, StudySourceKind};
+use serde::Deserialize;
 use uuid::Uuid;
 
 use super::AppServices;
@@ -57,8 +57,9 @@ fn load_host_source_binding(
             };
             // Require a real, active, project-/Study-scoped transcript join
             // BEFORE reading the underlying bundle by its globally unique ID.
-            let Ok(byte_length) =
-                services.store.attached_transcript_byte_length(project_id, study_id, id)
+            let Ok(byte_length) = services
+                .store
+                .attached_transcript_byte_length(project_id, study_id, id)
             else {
                 return Ok(binding);
             };
@@ -91,9 +92,10 @@ fn load_host_source_binding(
                             && seg.start >= 0.0
                             && seg.end >= seg.start
                             && seg.text.len() <= 8_000
-                            && seg.id.as_deref().is_some_and(|id| {
-                                !id.is_empty() && ids.insert(id.to_owned())
-                            })
+                            && seg
+                                .id
+                                .as_deref()
+                                .is_some_and(|id| !id.is_empty() && ids.insert(id.to_owned()))
                     }) {
                         binding.segments = parsed;
                     }
@@ -542,14 +544,17 @@ mod authenticity_tests {
         assert!(verified_transcript_segment(
             &observation("segment:real-17", 14.0, "The speaker said this"),
             &binding
-        ).is_none());
+        )
+        .is_none());
         assert!(verified_transcript_segment(
             &observation("segment:real-17", 12.5, "Altered words"),
             &binding
-        ).is_none());
+        )
+        .is_none());
         assert!(verified_transcript_segment(
             &observation("segment:invented", 12.5, "The speaker said this"),
             &binding
-        ).is_none());
+        )
+        .is_none());
     }
 }

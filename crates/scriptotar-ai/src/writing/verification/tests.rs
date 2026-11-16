@@ -15,7 +15,10 @@ fn source(id: &str, origin: &str) -> ResolvedEvidence {
         source_id: format!("study-source-{id}"),
         project_id: "project-a".into(),
         study_id: "study-a".into(),
-        source_version: Some(canonical_source_sha256(&[format!("Verified excerpt for {id}").as_bytes()])),
+        source_version: Some(canonical_source_sha256(&[format!(
+            "Verified excerpt for {id}"
+        )
+        .as_bytes()])),
         locator: locator(Modality::DocumentText),
         excerpt: format!("Verified excerpt for {id}"),
         kind: SourceKind::IndependentDocument,
@@ -473,7 +476,10 @@ fn source_hash_is_length_delimited_and_requires_valid_sha256_encoding() {
         canonical_source_sha256(&[b"a", b"bc"]),
         canonical_source_sha256(&[b"ab", b"c"])
     );
-    assert_eq!(canonical_source_sha256(&[b"same"]), canonical_source_sha256(&[b"same"]));
+    assert_eq!(
+        canonical_source_sha256(&[b"same"]),
+        canonical_source_sha256(&[b"same"])
+    );
     let mut ctx = scope(vec![source("a", "publisher-a"), source("b", "publisher-b")]);
     let claim = fact(&ctx.evidence);
     ctx.human_reviews.push(review(&ctx, &claim));
