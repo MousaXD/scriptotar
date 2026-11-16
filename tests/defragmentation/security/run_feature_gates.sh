@@ -85,7 +85,10 @@ case "$gate:$pr" in
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
     cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
     # Assert production wiring, not merely that feature files exist on disk.
-    (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v)
+    # Collect the structural authorization failure without skipping Rust host,
+    # database and canonical-v11 tests. The final gate MUST stay nonzero.
+    combined_host_static_status=0
+    (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v) || combined_host_static_status=$?
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     (
@@ -99,6 +102,10 @@ case "$gate:$pr" in
       python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
       cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture
     )
+    if [ "$combined_host_static_status" -ne 0 ]; then
+      echo "FAIL: combined host authorization remains a release blocker (exit $combined_host_static_status)" >&2
+      exit "$combined_host_static_status"
+    fi
     ;;
   *)
     echo "ERROR: unsupported PR/gate mapping: $gate:$pr" >&2
