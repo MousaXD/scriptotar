@@ -1017,7 +1017,10 @@ fn canonical_receipt_rejects_tampering_cross_project_and_withdrawn_origins() {
 fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versions() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, batch) = canonical_batch_fixture();
-    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
     let ids = sink.commit_three(&batch).unwrap();
     let mut latest = plan.context.clone();
     latest.study_revision += 1; // consumed by the three-candidate acceptance
@@ -1027,39 +1030,63 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
     let response = json!({
         "beat_id": "hook",
         "replacement_narration": "A revised, independently written new opening"
-    }).to_string();
+    })
+    .to_string();
     let revised = apply_reviewed_beat_revision(
-        original, &latest, &response, "hook", "Revise only the opening",
-        &before, false
-    ).unwrap();
+        original,
+        &latest,
+        &response,
+        "hook",
+        "Revise only the opening",
+        &before,
+        false,
+    )
+    .unwrap();
     let next = study_writing::VersionedCandidateStore::save_revision(
-        &mut sink, &latest, ids[0], 1, &before, "hook", &revised
-    ).unwrap();
+        &mut sink, &latest, ids[0], 1, &before, "hook", &revised,
+    )
+    .unwrap();
     assert_eq!(next, 2);
     let current_draft = db.get_draft(latest.project_id, ids[0]).unwrap();
     assert_eq!(current_draft.revision, 2);
-    assert!(current_draft.body.contains("A revised, independently written new opening"));
-    assert!(current_draft.body.contains(&original.draft.beats[1].narration));
+    assert!(current_draft
+        .body
+        .contains("A revised, independently written new opening"));
+    assert!(current_draft
+        .body
+        .contains(&original.draft.beats[1].narration));
     let versions = db.list_draft_versions(latest.project_id, ids[0]).unwrap();
     assert_eq!(versions.len(), 2);
-    assert!(versions.iter().any(|v| v.version == 1 && v.body.contains(&before)));
-    assert!(versions.iter().any(|v| v.version == 2 &&
-        v.body.contains("A revised, independently written new opening")));
+    assert!(versions
+        .iter()
+        .any(|v| v.version == 1 && v.body.contains(&before)));
+    assert!(versions.iter().any(|v| v.version == 2
+        && v.body
+            .contains("A revised, independently written new opening")));
     assert!(matches!(
         study_writing::VersionedCandidateStore::save_revision(
             &mut sink, &latest, ids[0], 1, &before, "hook", &revised
         ),
         Err(WritingWorkflowError::StaleContext)
     ));
-    db.update_draft(latest.project_id, ids[0], 2, "Hand-edited title", "New human authored body")
-        .unwrap();
+    db.update_draft(
+        latest.project_id,
+        ids[0],
+        2,
+        "Hand-edited title",
+        "New human authored body",
+    )
+    .unwrap();
     assert!(matches!(
         study_writing::VersionedCandidateStore::save_revision(
             &mut sink, &latest, ids[0], 3, &before, "hook", &revised
         ),
         Err(WritingWorkflowError::StaleContext)
     ));
-    assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().body, "New human authored body");
+    assert_eq!(
+        db.get_draft(latest.project_id, ids[0]).unwrap().body,
+        "New human authored body"
+    );
 }
 
 
@@ -1069,7 +1096,10 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
     batch.candidates[0].lineage[0].evidence[0].excerpt =
         "Falsified transcript content masquerading as a real source".into();
-    let mut sink = CanonicalSqliteCandidateStore { store: &db, current: &current };
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
     assert!(matches!(
         sink.commit_three(&batch),
         Err(WritingWorkflowError::InvalidContext(_))
@@ -1078,7 +1108,12 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
         .unwrap()
         .is_empty());
-    assert_eq!(db.get_study(plan.context.project_id, plan.context.study_id).unwrap().revision, 1);
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
 }
 
 
