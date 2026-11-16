@@ -50,7 +50,7 @@ fn from_study_evidence(
         EvidenceState::Unreviewed
     };
     let timestamp_millis = evidence.input.timestamp_seconds.and_then(|seconds| {
-        (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0) as u64)
+        (seconds.is_finite() && seconds >= 0.0).then_some((seconds * 1000.0) as u64)
     });
     ResolvedEvidence {
         evidence_id: evidence.id.to_string(),
