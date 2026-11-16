@@ -711,7 +711,14 @@ fn canonical_gateway_adapter_reuses_real_source_rows_and_rejects_cross_project()
         input.clone(),
     )
     .unwrap();
-    assert_eq!(reconstructed, scoped);
+    // The gateway must use canonical row fingerprints/revisions, not the
+    // synthetic values supplied by the test's preliminary context.
+    let mut expected = scoped.clone();
+    for (selection, source) in expected.sources.iter_mut().zip(sources.iter()) {
+        selection.fingerprint = source.fingerprint.clone();
+        selection.source_revision = source.source_revision.clone();
+    }
+    assert_eq!(reconstructed, expected);
     assert!(matches!(
         StudyWritingContext::from_scoped_study(
             Uuid::new_v4(),
@@ -893,7 +900,6 @@ fn canonical_three_script_receipt_reopens_and_respects_manual_editor_updates() {
         )
         .unwrap();
     assert_eq!(edited.revision, 2);
-    drop(sink);
     drop(db);
     let reopened = scriptotar_db::SqliteStore::open(temp.path().join("canonical.sqlite")).unwrap();
     let mut recovered = CanonicalSqliteCandidateStore {
