@@ -150,8 +150,8 @@ impl AppServices {
             return Err(RepositoryError::Conflict("effect is not awaiting reconciliation".into()));
         }
         let evidence=provider.probe(&old);
-        if let ProviderEvidence::Accepted {request_id}=evidence {
-            return self.store.record_external_ack(key,old.attempt,&request_id);
+        if let ProviderEvidence::Accepted {ref request_id}=evidence {
+            return self.store.record_external_ack(key,old.attempt,request_id);
         }
         if matches!(evidence,ProviderEvidence::Uncertain)
             && old.status==ExternalEffectStatus::Uncertain {return Ok(old);}
