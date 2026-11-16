@@ -42,6 +42,9 @@ fn context() -> StudyWritingContext {
             .map(|(study_source_id, origin_id)| SelectedWritingSource {
                 study_source_id: *study_source_id,
                 origin_id: *origin_id,
+                fingerprint: format!("fixture-source:{study_source_id}"),
+                source_revision: Some("fixture-revision-1".into()),
+                collected_at: "2026-11-01T10:00:00Z".into(),
             })
             .collect(),
         brief: CreativeBrief {
@@ -822,6 +825,9 @@ fn canonical_batch_fixture() -> (
         context.sources[index] = SelectedWritingSource {
             study_source_id: source.id,
             origin_id: original,
+            fingerprint: source.fingerprint.clone(),
+            source_revision: source.source_revision.clone(),
+            collected_at: source.collected_at.clone(),
         };
         context.evidence[index].locator.source_id = original.to_string();
     }
