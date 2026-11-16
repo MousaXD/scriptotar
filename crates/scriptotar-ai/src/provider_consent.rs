@@ -457,13 +457,17 @@ impl ConsentBoundary {
             record.decision = Decision::Denied;
             return Err(ConsentError::Expired);
         }
+        // Reject any mutation of the approved request *before* looking up its
+        // provider/model in the trusted catalog. An unknown price for a
+        // substituted model must never mask the changed-context denial.
+        if record.intent != *intent {
+            return Err(ConsentError::ChangedContext);
+        }
         validate_context(&record.intent.scope, authority)?;
         let trusted_price = pricing
-            .ceiling(&intent.provider)
+            .ceiling(&record.intent.provider)
             .ok_or(ConsentError::UnknownPricing)?;
-        if record.intent != *intent
-            || record.preview.fingerprint != hash_intent(intent, &Some(trusted_price.clone()))
-        {
+        if record.preview.fingerprint != hash_intent(&record.intent, &Some(trusted_price.clone())) {
             return Err(ConsentError::ChangedContext);
         }
         let expected_ceiling = record
@@ -503,17 +507,14 @@ impl ConsentBoundary {
         let mut usage = generated.usage;
         // USD accounting is owned by this trusted policy, never by a provider
         // adapter's estimated/request-supplied cost field.
-        usage.cost_microusd = match reserved_cost(
-            usage.input_tokens,
-            usage.output_tokens,
-            &trusted_price,
-        ) {
-            Some(cost) => cost,
-            None => {
-                fence.mark_uncertain(&effect_id);
-                return Err(ConsentError::UncertainEffect);
-            }
-        };
+        usage.cost_microusd =
+            match reserved_cost(usage.input_tokens, usage.output_tokens, &trusted_price) {
+                Some(cost) => cost,
+                None => {
+                    fence.mark_uncertain(&effect_id);
+                    return Err(ConsentError::UncertainEffect);
+                }
+            };
         generated.usage = usage;
         if usage.input_tokens
             > u64::try_from(intent.prompt.len())
@@ -712,46 +713,48 @@ mod tests {
         let (boundary, intent, authority) = approved();
         let runner = Runner::default();
         let fence = Fence::default();
-        for changed in [
-            ProviderIntent {
+        for (case, changed) in [
+            ("prompt", ProviderIntent {
                 prompt: "changed".into(),
                 ..intent.clone()
-            },
-            ProviderIntent {
+            }),
+            ("model", ProviderIntent {
                 provider: ProviderConfig {
                     model: "other".into(),
                     ..intent.provider.clone()
                 },
                 ..intent.clone()
-            },
-            ProviderIntent {
+            }),
+            ("evidence", ProviderIntent {
                 scope: StudyScope {
                     material_digest: "b".repeat(64),
                     ..intent.scope.clone()
                 },
                 ..intent.clone()
-            },
-            ProviderIntent {
+            }),
+            ("sources", ProviderIntent {
                 scope: StudyScope {
                     selected_source_ids: vec!["source-2".into()],
                     ..intent.scope.clone()
                 },
                 ..intent.clone()
-            },
-            ProviderIntent {
+            }),
+            ("budget", ProviderIntent {
                 limits: RunBudget {
                     max_cost_microusd: 2_000,
                     ..intent.limits
                 },
                 ..intent.clone()
-            },
+            }),
         ] {
-            assert!(matches!(
-                boundary.dispatch(&changed, &authority, &Prices, &fence, &runner, "key", 102),
-                Err(ConsentError::ChangedContext)
-            ));
+            let result = boundary.dispatch(&changed, &authority, &Prices, &fence, &runner, "key", 102);
+            assert!(
+                matches!(result, Err(ConsentError::ChangedContext)),
+                "{case} mutation must be rejected before any provider effect: {result:?}"
+            );
         }
         assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+        assert!(fence.claims.lock().unwrap().is_empty());
     }
 
     #[test]
