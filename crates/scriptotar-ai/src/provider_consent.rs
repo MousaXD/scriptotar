@@ -1086,6 +1086,238 @@ mod tests {
         assert_eq!(response.usage.cost_microusd, 7);
     }
 
+
+    struct LockedAuthority(Mutex<StudyScope>);
+
+    struct LockedScopeGuard<'a>(std::sync::MutexGuard<'a, StudyScope>);
+    impl ScopeDispatchGuard for LockedScopeGuard<'_> {
+        fn scope(&self) -> &StudyScope {
+            &self.0
+        }
+    }
+
+    impl ScopeAuthority for LockedAuthority {
+        fn current_scope(
+            &self,
+            project_id: &str,
+            study_id: &str,
+        ) -> Result<StudyScope, ConsentError> {
+            let current = self
+                .0
+                .lock()
+                .map_err(|_| ConsentError::EffectFenceUnavailable)?;
+            if current.project_id != project_id || current.study_id != study_id {
+                return Err(ConsentError::WrongProjectOrStudy);
+            }
+            Ok(current.clone())
+        }
+
+        fn lock_dispatch_scope(
+            &self,
+            _scope: &StudyScope,
+        ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+            let guard = self
+                .0
+                .lock()
+                .map_err(|_| ConsentError::EffectFenceUnavailable)?;
+            Ok(Box::new(LockedScopeGuard(guard)))
+        }
+    }
+
+    #[test]
+    fn revocation_while_reservation_is_paused_never_starts_provider_send() {
+        use std::sync::mpsc;
+
+        struct PausedFence {
+            reached: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            uncertain: AtomicUsize,
+            dispatched: AtomicUsize,
+        }
+        impl PaidEffectFence for PausedFence {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.reached.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+                self.dispatched.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {
+                self.uncertain.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let (intent, _) = fixture();
+        let authority = LockedAuthority(Mutex::new(intent.scope.clone()));
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let (reached_tx, reached_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let fence = PausedFence {
+            reached: reached_tx,
+            resume: Mutex::new(resume_rx),
+            uncertain: AtomicUsize::new(0),
+            dispatched: AtomicUsize::new(0),
+        };
+        let provider = Runner::default();
+
+        std::thread::scope(|scope| {
+            let attempt = scope.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 102)
+            });
+            reached_rx.recv().unwrap();
+            authority.0.lock().unwrap().material_digest = "b".repeat(64);
+            resume_tx.send(()).unwrap();
+            assert!(matches!(
+                attempt.join().unwrap(),
+                Err(ConsentError::ChangedContext)
+            ));
+        });
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.dispatched.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn dispatch_guard_is_held_through_actual_provider_invocation() {
+        use std::sync::{mpsc, TryLockError};
+
+        struct PausedProvider {
+            reached: mpsc::SyncSender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            calls: AtomicUsize,
+        }
+        impl BoundedProvider for PausedProvider {
+            fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
+                true
+            }
+            fn generate_once(
+                &self,
+                _: &ProviderConfig,
+                _: &str,
+                _: &AiRequest,
+                _: u64,
+                _: u64,
+            ) -> Result<MeteredReply, ConsentError> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.reached.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                Ok(MeteredReply {
+                    text: "complete".into(),
+                    usage: ActualUsage {
+                        input_tokens: 9,
+                        output_tokens: 30,
+                        tool_calls: 1,
+                        elapsed_ms: 100,
+                        cost_microusd: 0,
+                    },
+                })
+            }
+        }
+
+        let (intent, _) = fixture();
+        let authority = LockedAuthority(Mutex::new(intent.scope.clone()));
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let (reached_tx, reached_rx) = mpsc::sync_channel(0);
+        let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+        let runner = PausedProvider {
+            reached: reached_tx,
+            resume: Mutex::new(resume_rx),
+            calls: AtomicUsize::new(0),
+        };
+        let fence = Fence::default();
+        std::thread::scope(|scope| {
+            let attempt = scope.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102)
+            });
+            reached_rx.recv().unwrap();
+            // A project switch, source removal or Study edit must acquire this
+            // exact mutex. They cannot linearize while egress is in flight.
+            assert!(matches!(authority.0.try_lock(), Err(TryLockError::WouldBlock)));
+            resume_tx.send(()).unwrap();
+            assert!(attempt.join().unwrap().is_ok());
+        });
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn ungated_authority_or_missing_dispatch_cas_fails_closed() {
+        struct UngatedAuthority(StudyScope);
+        impl ScopeAuthority for UngatedAuthority {
+            fn current_scope(
+                &self,
+                project_id: &str,
+                study_id: &str,
+            ) -> Result<StudyScope, ConsentError> {
+                if project_id != self.0.project_id || study_id != self.0.study_id {
+                    return Err(ConsentError::WrongProjectOrStudy);
+                }
+                Ok(self.0.clone())
+            }
+        }
+
+        struct ReserveOnlyFence;
+        impl PaidEffectFence for ReserveOnlyFence {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn settle(&self, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {}
+        }
+
+        let (intent, _) = fixture();
+        let authority = UngatedAuthority(intent.scope.clone());
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let runner = Runner::default();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102),
+            Err(ConsentError::UncertainEffect)
+        ));
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(fence.uncertain.load(Ordering::SeqCst), 1);
+
+        let (boundary, intent, authority) = approved();
+        assert!(matches!(
+            boundary.dispatch(
+                &intent,
+                &authority,
+                &Prices,
+                &ReserveOnlyFence,
+                &runner,
+                "key",
+                103
+            ),
+            Err(ConsentError::UncertainEffect)
+        ));
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+    }
+
     #[test]
     fn no_approval_reconstruction_after_process_restart() {
         let (boundary, intent, authority) = approved();
