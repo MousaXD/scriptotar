@@ -46,5 +46,29 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('return 0 if report["verdict"] == "PASS" else 1', runner)
 
 
+    def test_web_document_rejects_shell_only_tree(self):
+        class FakeNode:
+            def __init__(self, role):
+                self.role = role
+
+            def getRoleName(self):
+                return self.role
+
+        ax = object.__new__(native.AxWebKit)
+        ax.nodes = lambda: iter([FakeNode("application"), FakeNode("frame"),
+                                 FakeNode("scroll pane")])
+        self.assertFalse(ax.web_document(), "A native shell is not a web document")
+        ax.nodes = lambda: iter([FakeNode("scroll pane"), FakeNode("document web")])
+        self.assertTrue(ax.web_document())
+
+    def test_document_alone_cannot_satisfy_startup(self):
+        import inspect
+        source = inspect.getsource(native.Session.start)
+        self.assertIn('web_document()', source)
+        self.assertIn('available("Studio", "button")', source)
+        self.assertIn('available("Studio", "link")', source)
+
+
+
 if __name__ == "__main__":
     unittest.main()
