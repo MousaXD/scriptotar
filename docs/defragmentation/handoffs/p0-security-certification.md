@@ -1,3 +1,45 @@
+# Agent 10 — 2026-11-17 final combined-security recovery, live status
+
+**Decision: FAIL / NO-GO for the complete production host.** Five isolated/combined-v11 gates pass; the production authorization gate fails. **Do not enable paid dispatch, merge for release, publish, or treat a disabled transport as production egress approval.** This entry supersedes older historical snapshots preserved below.
+
+## Refreshed exact-head inventory
+
+| PR/owner | Head verified at this review | Status |
+| --- | --- | --- |
+| #114 Agent 00 integration | `e65e08e732de21dd29725438afc7712be3deb799` | DRAFT; full combined host **FAIL** |
+| #118 Agent 01 provider consent | `d6d738ec84ac6eff1aae26edbd79e44995f2e82b` | Independent **PASS** feature-only |
+| #119 Agent 02 durable external effects | `9da21c96a62d7a041b64500841b89dc6dc649703` | **PASS** native DB suite, already merged into integration |
+| #121 Agent 05 canonical writing | `467023db81985cc5af45bb6f28d93f2fd3fbd7af` | Independent **PASS** feature-only |
+| #124 Agent 10 tests | `e15351ebb3fc343255ab0ce069e496d48d673e0e` was last completed audit source; new independent Rust test additions committed at `7d6c769dad1718cd9ea05e5b588cc3e4290e7199` | New tests **NOT TESTED** until a new exact-head CI run finishes |
+
+## Completed independent matrix: [six-job run 43898983956](https://github.com/MousaXD/scriptotar/actions/runs/43898983956)
+
+The failed combined job logs printed audit merge checkout `03f44fc7f85b84671a7fcbbd3fbdee36db833adc`, target integration `e65e08e732de21dd29725438afc7712be3deb799`. **These are CI-executed SHAs, not a claim that later audit commits passed.**
+
+| Evidence boundary | Verdict | Exact executed command / qualification |
+| --- | --- | --- |
+| Provider consent, revocation and independent 6-race suite | **PASS**, feature #118 `d6d738ec` | `cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture`; `cargo test --locked -p scriptotar-ai provider_consent`. Mock/isolated only, no authenticated paid HTTP |
+| Durable migration / v4-v5-v10 / v11 schema | **PASS**, feature #119 and integration #114 | `cargo test --locked -p scriptotar-db`; DB source is real SQLite |
+| Canonical writing, 3 separate editable drafts, duplicate acceptance same receipt and IDs, tampered input rejection, foreign Study denial, transactional rollback, immutable revision/restart | **PASS** feature #121 and **PASS integrated v11** #114 | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture` with independent `canonical_writing_additional_tests.rs` and `canonical_v11_integrity_tests.rs` in `combined-v11:114`; 35 integrated writing tests |
+| Independent claim/source authenticity | **PASS** feature #117 | `python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v`; `cargo test --locked -p scriptotar-ai verification`. No combined installed-app verified factual corroboration |
+| **Production host authoritative `ScopeDispatchGuard` + `PaidEffectFence` CAS** | **FAIL** integration #114 | `bash audit/tests/defragmentation/security/run_feature_gates.sh combined 114`. Two failed Python tests: `test_actual_host_implements_shared_scope_guard_and_authority` — `no real host ScopeDispatchGuard implementation (mock/default denial is not integration)`; `test_actual_host_has_durable_paid_claim_and_pre_send_cas_adapter` — `host has no PaidEffectFence implementation bridging consent to v10 ledger` |
+| Real shared synchronization for project switches, source/brief/evidence/transcript edits, cancellation and revocation during outbound HTTP | **NOT TESTED / no approved host implementation** | Consent source `crates/scriptotar-ai/src/provider_consent.rs` requires `lock_dispatch_scope`, but `AppServices` only implements `current_scope`; no verified same lock across all mutations |
+| Actual outbound serialized body, approved model/prompt/budgets, unknown-price refusal and authentic provider usage receipts | **NOT TESTED as real host transport** | Host `services/provider_consent.rs` uses `NoTrustedPricing`, `DisabledPaidEffectFence`, `ExistingAiServiceAdapter`; safe disabled egress, not a live bounded-transport certificate. New capture/mutation mock tests committed after this run are pending |
+| Uncertain-effect replay across crash/timeouts and strict one-winner final pre-send CAS | **PASS DB/isolated effects only; NOT TESTED host dispatch** | `mark_external_dispatched` exists in v10 DB and host `agent_effect_driver.rs`, but is not connected to `ProviderConsent::PaidEffectFence` at the actual host |
+| Installed Linux WebKitGTK and Windows WebView2 UI/IPC, logs/secrets and release package | **NOT TESTED / not certified at exact integration SHA** | Separate Agent 07 installed-app QA evidence required; no user data or paid keys used in this security audit |
+
+## Additional ordinary-CI failure (separate from P0 authorization)
+
+[CI run 43898984028](https://github.com/MousaXD/scriptotar/actions/runs/43898984028), job `133410134634`, on security PR source `e15351e` fails `cargo test -p scriptotar-orchestrator --test progress_persistence`: `crates/scriptotar-orchestrator/tests/progress_persistence.rs:51:5: transcribing progress was not durably observable` (`sidecar_progress_is_persisted_before_completion`). The test file is **byte-identical** on PR #124 and integration `e65e08e`, including the 300 × 10ms polling loop; its fixture `fixture_sidecar.py` holds the transient 50% transcribing state for only 150ms. Scheduling or SQLite observation timing is one hypothesis, **not yet a proven cause**. A GitHub Actions rerun of the failed job was requested to assess reproducibility. **Do not disable the test, increase tolerances without evidence, or conflate this CI defect with the combined host authorization finding.** Agent 00/orchestrator owner to investigate with durable event ordering and job transitions.
+
+## New independent tests (pending fresh exact-head execution)
+
+`provider_context_race.rs` now additionally checks exact approved provider/model/prompt/output limit/deadline propagation to the bounded provider interface; rejects mutated model, prompt and budgets before reservation; deterministically cancels a paused reservation; and asserts a concurrent same-run dispatch has only one pre-send CAS winner. These are **mock provider/fence security contract tests**. They do **not** prove the exact serialized HTTP body or the DB-backed host implementation. Keep both combined gates as release blockers until Agent 00 supplies that proof.
+
+**Owner notification:** [Agent 10 posted exact reproduction to PR #114](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6928990118). Agent 00 owns host production wiring; do not modify main or independently merge the feature branches. Require both `combined:114` and `combined-v11:114` **PASS on the same future integration SHA**, plus Agent 07 native acceptance and trusted provider transport/receipt proof before changing this NO-GO.
+
+---
+
 # Agent 10 — final exact-head six-job independent security report, 2026-11-16
 
 **Security disposition: NO-GO. Five of six independent jobs PASS, final combined-host job FAIL.** This report is tied to the completed [run #43897845121](https://github.com/MousaXD/scriptotar/actions/runs/43897845121), which printed independent audit checkout SHA `8fa3effc7def65dac6dd1908f245196aa271f345` (from audit source PR #124 `b1d723ab6ac6d0a00e76071142d6df2a269871e8`). Subsequent audit/report-only commits are not automatically certified.
