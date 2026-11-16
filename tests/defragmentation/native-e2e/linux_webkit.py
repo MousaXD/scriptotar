@@ -495,6 +495,27 @@ def exercise(args, report: dict, root: Path):
         status(report, "light_dark_visual", "NOT TESTED",
                "Native visual appearance requires independent screenshot inspection; app offers dark/system")
     finally:
+        # Preserve the first genuine *interaction* failure while the installed
+        # app is still on the exact failing screen. A boot screenshot alone
+        # cannot explain project/forms/Studio selector failures.
+        first_failed_case = next(
+            (name for name, value in report["cases"].items()
+             if value["status"] == "FAIL"), None
+        )
+        if first_failed_case and session.proc is not None:
+            report["first_failed_case"] = first_failed_case
+            report["failure_screenshot"] = session.screenshot(
+                "failed-" + first_failed_case
+            )
+            if session.ax:
+                try:
+                    (root / "a11y-diagnostics.json").write_text(
+                        json.dumps(session.ax.diagnostics(), indent=2,
+                                   ensure_ascii=False) + "\n", encoding="utf-8"
+                    )
+                    report["failure_accessibility_tree"] = "a11y-diagnostics.json"
+                except Exception as exc:
+                    report["failure_probe_error"] = f"{type(exc).__name__}: {exc}"
         if session.proc is not None:
             try:
                 session.stop()
