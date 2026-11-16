@@ -350,13 +350,14 @@ impl SqliteStore {
         let mut db=database(self)?;
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
         let old=checked(&tx,key)?;
-        if old.attempt!=attempt
-            || !matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain) {
-            return Err(conflict("acknowledgement is not for an active dispatched attempt"));
-        }
+        if old.attempt!=attempt { return Err(conflict("stale provider acknowledgement")); }
+        // Identical delayed callbacks are harmless even after a final receipt.
         if let Some(id)=old.provider_request_id.as_deref() {
             if id==request_id { return Ok(old); }
             return Err(conflict("conflicting provider request ID"));
+        }
+        if !matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain) {
+            return Err(conflict("acknowledgement is not for an active dispatched attempt"));
         }
         let updated=tx.execute(
             "UPDATE agent_external_effects SET provider_request_id=?1,
@@ -814,6 +815,8 @@ mod tests {
             tokens:25,cost_microusd:400,
         }).unwrap();
         assert_eq!(settled.provider_request_id.as_deref(),Some("provider_req_71"));
+        assert_eq!(reopened.record_external_ack(key,1,"provider_req_71").unwrap(),settled);
+        assert!(reopened.record_external_ack(key,1,"conflicting_late_id").is_err());
         assert_eq!(reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
             provider_request_id:None,receipt_id:"receipt_77",
             tokens:25,cost_microusd:400,
