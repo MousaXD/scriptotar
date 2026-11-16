@@ -1,18 +1,19 @@
-"""Fail-closed structural gate for the *real* Tauri host checkout.
+"""Fail closed for an unregistered Tauri consent/effect host.
 
-This does not certify the locking protocol by itself: native adversarial tests
-and a final exact-head installed-app review are separately mandatory.
+Structural checks are necessary but are not independent proof that all project,
+Study and source mutations acquire the same lock during network egress.
 """
 import pathlib
 import re
 import unittest
 
-HOST = pathlib.Path(__file__).resolve().parents[3] / "apps/desktop/src-tauri/src"
-AI_LIB = pathlib.Path(__file__).resolve().parents[3] / "crates/scriptotar-ai/src/lib.rs"
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+HOST = ROOT / "apps/desktop/src-tauri/src"
+AI_LIB = ROOT / "crates/scriptotar-ai/src/lib.rs"
 
 
 def executable_rust(source: str) -> str:
-    """Ignore ordinary comments so a TODO cannot satisfy a release check."""
+    # Ordinary comments must not satisfy a production wiring assertion.
     source = re.sub(r"/\*[\s\S]*?\*/", "", source)
     return re.sub(r"(?m)^\s*//[^\n]*$", "", source)
 
@@ -22,37 +23,52 @@ class CombinedHostWiringSecurity(unittest.TestCase):
     def setUpClass(cls):
         cls.services = executable_rust((HOST / "services.rs").read_text())
         cls.ai_lib = executable_rust(AI_LIB.read_text())
-        cls.host_sources = {
-            p: executable_rust(p.read_text())
-            for p in HOST.rglob("*.rs")
-        }
-        cls.production = "\n".join(cls.host_sources.values())
+        cls.production = "\n".join(
+            executable_rust(path.read_text())
+            for path in HOST.rglob("*.rs")
+        )
+
+    @staticmethod
+    def require(pattern: str, content: str, message: str) -> None:
+        # Never include full application source in a failing assertion's logs.
+        if re.search(pattern, content) is None:
+            raise AssertionError(message)
 
     def test_provider_policy_is_exported_and_included_by_real_service_graph(self):
-        self.assertRegex(self.ai_lib, r"\bpub\s+mod\s+provider_consent\s*;")
-        self.assertRegex(
-            self.services, r"\bprovider_consent\b",
-            "provider module is not referenced by central AppServices: an isolated "
-            "crate test is NOT a production Tauri integration certificate",
+        self.require(
+            r"\bpub\s+mod\s+provider_consent\s*;",
+            self.ai_lib,
+            "provider policy is not exported by the compiled AI crate",
+        )
+        self.require(
+            r"\bprovider_consent\b",
+            self.services,
+            "provider policy missing from central AppServices compilation graph",
         )
 
     def test_actual_host_implements_shared_scope_guard_and_authority(self):
         for trait in ("ScopeAuthority", "ScopeDispatchGuard"):
-            self.assertRegex(
-                self.production,
+            self.require(
                 r"\bimpl(?:\s*<[^>]+>)?\s+" + trait + r"\s+for\b",
-                f"no real host implementation of {trait}; default-deny mock is insufficient",
+                self.production,
+                f"no real host {trait} implementation (mock/default denial is not integration)",
             )
-        self.assertIn("lock_dispatch_scope", self.production)
-        self.assertIn("now_ms", self.production)
+        for method in ("lock_dispatch_scope", "now_ms"):
+            self.assertTrue(
+                method in self.production,
+                f"host has no authoritative dispatch-scope method {method}",
+            )
 
     def test_actual_host_has_durable_paid_claim_and_pre_send_cas_adapter(self):
-        self.assertRegex(
-            self.production,
+        self.require(
             r"\bimpl(?:\s*<[^>]+>)?\s+PaidEffectFence\s+for\b",
-            "v10 effect driver alone does not implement the consent-to-effect seam",
+            self.production,
+            "host has no PaidEffectFence implementation bridging consent to v10 ledger",
         )
-        self.assertIn("mark_dispatched_once", self.production)
+        self.assertTrue(
+            "mark_dispatched_once" in self.production,
+            "host has no pre-egress DISPATCHED compare-and-swap adapter",
+        )
 
 
 if __name__ == "__main__":
