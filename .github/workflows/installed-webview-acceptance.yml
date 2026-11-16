@@ -45,7 +45,7 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             libgtk-3-dev libssl-dev libdbus-1-dev pkg-config patchelf \
             xauth xvfb dbus-x11 at-spi2-core python3-pyatspi \
-            python3-gi xdotool scrot zenity
+            python3-gi xdotool scrot zenity openbox
           cargo install tauri-cli --version 2.11.2 --locked
           python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
           python -m pip check
@@ -103,14 +103,21 @@ jobs:
           head -n 3 /proc/meminfo >> native-evidence/linux/host.txt
       - name: Exercise installed WebKitGTK accessibility and real UI
         run: |
-          xvfb-run -a -s '-screen 0 1440x900x24' dbus-run-session -- \
-            env NO_AT_BRIDGE=0 GTK_A11Y=1 \
-            /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
-              --executable "$APP_BIN" \
-              --package native-evidence/linux/installed.deb \
-              --source-sha "$EXACT_SHA" \
-              --run-url "$EXACT_RUN" \
-              --output native-evidence/linux
+          # A real window manager is needed for actual Alt+F4 graphical quit
+          # and focus, not merely Xvfb screenshot/process smoke.
+          xvfb-run -a -s '-screen 0 1440x900x24' dbus-run-session -- bash -c '
+            openbox --sm-disable > native-evidence/linux/openbox.log 2>&1 &
+            wm_pid=$!
+            trap "kill $wm_pid 2>/dev/null || true" EXIT
+            sleep 1
+            env NO_AT_BRIDGE=0 GTK_A11Y=1 GTK_MODULES=atk-bridge \
+              /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
+                --executable "$APP_BIN" \
+                --package native-evidence/linux/installed.deb \
+                --source-sha "$EXACT_SHA" \
+                --run-url "$EXACT_RUN" \
+                --output native-evidence/linux
+          '
       - name: Remove installed test package
         if: always()
         run: |
@@ -133,6 +140,7 @@ jobs:
             native-evidence/linux/result.json
             native-evidence/linux/a11y-diagnostics.json
             native-evidence/linux/desktop.log
+            native-evidence/linux/openbox.log
             native-evidence/linux/SHA256SUMS.txt
             native-evidence/linux/host.txt
             native-evidence/linux/*.png
