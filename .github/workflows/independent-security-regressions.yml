@@ -46,7 +46,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Tauri native build dependencies for writing integration test
-        if: matrix.gate == 'writing'
+        if: matrix.gate == 'writing' || matrix.gate == 'combined'
         run: bash target/scripts/install_tauri_deps.sh
       - name: Exact-head independent regression execution
         shell: bash
