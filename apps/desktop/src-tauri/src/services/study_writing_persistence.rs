@@ -107,8 +107,9 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
         {
             return Err(WritingWorkflowError::StaleContext);
         }
-        let original: GeneratedBatch = serde_json::from_str(&stored)
-            .map_err(|_| WritingWorkflowError::PersistFailed("corrupt saved writing batch".into()))?;
+        let original: GeneratedBatch = serde_json::from_str(&stored).map_err(|_| {
+            WritingWorkflowError::PersistFailed("corrupt saved writing batch".into())
+        })?;
         if original.run_id != plan.run_id
             || original.context != plan.context
             || original.candidates.len() != 3
@@ -501,7 +502,8 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
             return Err(denied("invalid targeted revision"));
         }
         let mut db = Connection::open(self.store.path()).map_err(error)?;
-        db.pragma_update(None, "foreign_keys", true).map_err(error)?;
+        db.pragma_update(None, "foreign_keys", true)
+            .map_err(error)?;
         db.busy_timeout(Duration::from_secs(5)).map_err(error)?;
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
