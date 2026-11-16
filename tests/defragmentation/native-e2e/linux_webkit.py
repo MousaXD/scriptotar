@@ -26,7 +26,8 @@ CASES = (
     "edit_save_duplicate_candidate", "quit_relaunch_persistence",
     "wrong_project_ui_isolation", "wrong_project_ipc_denial",
     "multi_source_transcript", "source_revocation",
-    "error_recovery", "keyboard_custom_controls", "arabic_rtl",
+    "error_recovery", "keyboard_custom_controls", "arabic_locale_control",
+    "theme_mode_control", "arabic_rtl",
     "light_dark_visual", "windows_webview2",
 )
 
@@ -355,6 +356,28 @@ def exercise(args, report: dict, root: Path):
             session.screenshot("reopened")
             return "Installed process closed and restarted; Study body and renamed candidate restored"
         checked(report, "quit_relaunch_persistence", persist)
+
+        def arabic():
+            a = session.ax
+            a.choose("Interface language", "ع")
+            a.heading("الاستوديو")
+            session.screenshot("arabic-locale")
+            a.choose("لغة الواجهة", "EN")
+            a.heading("Studio")
+            return "Native WebKit switched to Arabic UI and back through the real custom language control"
+        checked(report, "arabic_locale_control", arabic)
+
+        def theme():
+            a = session.ax
+            a.click("Settings", "button")
+            a.choose("Theme", "System")
+            a.click("Save changes", "button")
+            session.screenshot("system-theme")
+            a.choose("Theme", "Dark")
+            a.click("Save changes", "button")
+            session.screenshot("dark-theme")
+            return "System and dark modes selected and saved by installed GUI (not a visual judgment)"
+        checked(report, "theme_mode_control", theme)
 
         # This run deliberately has no fabricated downloads or media transcripts.
         # The following steps require source fixtures and dedicated adversarial UI inputs.
