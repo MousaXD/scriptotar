@@ -139,7 +139,10 @@ impl StudyWritingContext {
                 || source.fingerprint.len() > 1000
                 || source.collected_at.trim().is_empty()
                 || source.collected_at.len() > 1000
-                || source.source_revision.as_ref().is_some_and(|value| value.len() > 1000)
+                || source
+                    .source_revision
+                    .as_ref()
+                    .is_some_and(|value| value.len() > 1000)
                 || !attached.insert(source.study_source_id)
                 || !origins.insert(source.origin_id)
             {
