@@ -18,10 +18,10 @@
 - `copy_angles_prompt` works completely offline; preparing it does not construct a provider or require a credential.
 - `generate_three`: four typed model tasks (1 angle proposal + 3 independent scripts); consent/reservation boundary invoked BEFORE every model call; durable recorded-result reuse only for exact step/prompt; uncertain provider failures/reconciliation required, no retries. Revalidate full Study context after each result, not just the Study revision.
 - Strict `parse_angles`/`parse_draft`, similar-angle and duplicate-script rejection, source/angle/claim/beat lineage, audit findings and exact locator export. Outputs retain structured `ScriptDraft` and `EvidenceRef`, not only rendered prose.
-- `ApprovedAiAdapter` uses the existing `AiService` but cannot be called from Tauri in this branch: there is deliberately **no central command registration or approved production effect-gate binding**.
+- No paid provider adapter is included. Agent 01's review found that existing `AiService` does not have hard output-token limits or verified usage receipts; its previous legacy adapter was removed from this branch to prevent accidental paid execution. There is deliberately **no central command registration or approved production effect-gate binding**.
 - Optional per-candidate model review (always suggestions needing human review), targeted revision proposal and `apply_reviewed_beat_revision`; the latter checks old narration, refuses manual-edit replacement unless explicitly allowed, keeps untouched beats, clears revised stale citations, and recomputes the advisory audit.
 - An explicit `AtomicCandidateStore::commit_three` contract requires all three candidate IDs/versions/source links and an idempotent receipt in ONE atomic transaction; `VersionedCandidateStore` contract requires CAS and immutable versions for edited revisions.
-- `apps/desktop/src-tauri/tests/study_writing.rs`: 14 offline controlled tests with a transaction-backed SQLite fixture sink, including persisted test batches across SQLite reopen, duplicate execution without rebilling, denial, uncertain paid effect, malformed output, cancellation, stale evidence, fake citations, angle/script duplication, source/project refusal, atomic rollback, original manual text protection, Arabic and human-review findings.
+- `apps/desktop/src-tauri/tests/study_writing.rs`: 17 offline controlled tests with a transaction-backed SQLite fixture sink, including persisted test batches across SQLite reopen, duplicate execution without rebilling, denial, uncertain paid effect, malformed output, cancellation, stale evidence, fake citations, angle/script duplication, source/project refusal, atomic rollback, original manual text protection, Arabic and human-review findings.
 
 ## Critical remaining wiring — NOT silently enabled
 
@@ -39,7 +39,7 @@
 
 `AtomicCandidateStore` is intentionally NOT implemented using the current one-at-a-time `SqliteStore::create_reviewed_study_draft`, because this would violate all-or-nothing and exact-once batch requirements. The transaction-backed fixture proves the semantics but uses **test-only tables**, NOT the user's canonical Studio tables. This agent does not own Agent 00's schema/API or Agent 02's effect ledger.
 
-`StudyWritingContext::validate` checks referential shape, not authentication: the caller must construct it only after loading project-scoped canonical data. `FixedStudy` exists as an offline fixture helper, not as a live project authorization source. `ApprovedAiAdapter` alone is not permission. No paid generation route is registered by this PR.
+`StudyWritingContext::validate` checks referential shape, not authentication: the caller must construct it only after loading project-scoped canonical data. `FixedStudy` exists as an offline fixture helper, not as a live project authorization source. Existing legacy `AiService` is not an approved writing provider. No paid generation route is registered by this PR.
 
 ## Verification
 
@@ -57,3 +57,11 @@ This chat environment lacks Rust/Cargo and cannot execute these commands locally
 ## Release verdict
 
 **P1 PARTIAL / integration contract awaiting Agent 00 + Agents 01/02/04. Not ready for production execution or merge to main.** Keep issue #116 and integration PR #114 open/draft until atomic canonical save, full permission/effect wiring and independent QA are complete.
+
+## 2026-11-16 hardening continuation
+
+- A forged serialized GenerationPlan (changed three-angle prompt or invalid run ID) now fails **before** approval/effect reservation/provider access. Each step recomputes the exact typed prompt from the canonical context.
+- Removed the legacy unbounded AiService provider wrapper: paid execution still needs Agent 01's hard-bounded model transport and Agent 02's durable actual usage/response receipts. The WritingTextProvider trait is implemented only by controlled test providers in this PR.
+- Export includes shot suggestions, beat evidence IDs, optional human-review findings and quality advisories without presenting any of them as independent fact checking.
+- Two further tests assert zero provider/ledger calls for prompt/run tampering and zero persisted output when a model forges source IDs.
+- Pre-hardening commit `893dc2f64ebaeaed81376b7ce1edf87a2b4763a6` passed Rustfmt, workspace check, Clippy and workspace tests. The new commit requires fresh exact-head CI; do not infer green from that previous commit.

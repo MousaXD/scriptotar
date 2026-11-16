@@ -13,7 +13,7 @@ use scriptotar_ai::{
         EvidenceRef, EvidenceStatus, ResearchFinding, ReviewFinding, ScriptDraft, WritingInput,
         WritingTask,
     },
-    AiProvider, AiRequest, AiResponse, AiService, ProviderConfig,
+    AiRequest, AiResponse,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -267,21 +267,10 @@ pub trait WritingTextProvider {
     fn generate(&mut self, request: &AiRequest) -> Result<AiResponse, ()>;
 }
 
-/// Reuses the existing audited provider adapter, not a new HTTP stack.
-/// MUST ONLY be constructed behind the approved durable permission boundary.
-/// No credential/configuration is saved by this adapter.
-pub struct ApprovedAiAdapter<'a, P: AiProvider> {
-    pub service: &'a AiService<P>,
-    pub config: &'a ProviderConfig,
-    pub ephemeral_key: &'a str,
-}
-impl<P: AiProvider> WritingTextProvider for ApprovedAiAdapter<'_, P> {
-    fn generate(&mut self, request: &AiRequest) -> Result<AiResponse, ()> {
-        self.service
-            .generate(self.config, self.ephemeral_key, request)
-            .map_err(|_| ())
-    }
-}
+// No legacy AiService transport adapter is exposed here. Existing provider
+// adapters lack trusted hard output-token caps and verified usage receipts.
+// Agent 01's bounded transport and Agent 02's durable effect fence must be
+// implemented and approved before wiring a paid WritingTextProvider.
 
 pub trait StopSignal {
     fn cancelled(&self) -> bool;
@@ -330,6 +319,22 @@ pub fn copy_angles_prompt(plan: &GenerationPlan) -> &str {
 }
 
 fn check_current<C: CurrentStudy>(loader: &C, plan: &GenerationPlan) -> WriteResult<()> {
+    // A forged or stale prompt must NEVER be sent just because IDs match.
+    if plan.run_id.is_empty()
+        || plan.run_id.len() > 128
+        || !plan
+            .run_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+    {
+        return Err(WritingWorkflowError::InvalidContext("run ID"));
+    }
+    plan.context.validate()?;
+    let expected = writing::prepare_writing_request(&plan.context.angle_input()?)
+        .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    if plan.angles_prompt != expected {
+        return Err(WritingWorkflowError::StaleContext);
+    }
     let latest = loader.load(plan.context.project_id, plan.context.study_id)?;
     latest.validate()?;
     if latest != plan.context {
@@ -650,6 +655,20 @@ pub fn export_candidate(candidate: &GeneratedCandidate) -> String {
         if let Some(on_screen) = &beat.on_screen_text {
             text.push_str(&format!("On screen: {on_screen}\n\n"));
         }
+        for shot in &beat.shots {
+            text.push_str(&format!(
+                "Shot suggestion: {} ({}) | evidence: {}\n",
+                shot.visual,
+                shot.purpose,
+                shot.evidence_ids.join(", ")
+            ));
+        }
+        if !beat.evidence_ids.is_empty() {
+            text.push_str(&format!(
+                "Beat source references (not fact-checked): {}\n",
+                beat.evidence_ids.join(", ")
+            ));
+        }
     }
     if let Some(cta) = &candidate.draft.cta {
         text.push_str(&format!("CTA: {cta}\n\n"));
@@ -674,6 +693,23 @@ pub fn export_candidate(candidate: &GeneratedCandidate) -> String {
             text.push_str(&format!("- {} | Study source {} | original {} | time {:?} | section {:?} | URL {:?} | status {:?}\n",
                 evidence.id, source.source_id, loc.source_id, loc.timestamp_seconds,
                 loc.document_section, loc.canonical_url, evidence.status));
+        }
+    }
+    if !candidate.review_findings.is_empty() {
+        text.push_str("\n## Model review suggestions (human review required)\n");
+        for finding in &candidate.review_findings {
+            text.push_str(&format!(
+                "- {} | {} | evidence: {}\n",
+                finding.concern,
+                finding.recommendation,
+                finding.evidence_ids.join(", ")
+            ));
+        }
+    }
+    if !candidate.audit.advisories.is_empty() {
+        text.push_str("\n## Writing quality advisories (not factual verification)\n");
+        for advisory in &candidate.audit.advisories {
+            text.push_str(&format!("- {:?}: {}\n", advisory.level, advisory.description));
         }
     }
     text
