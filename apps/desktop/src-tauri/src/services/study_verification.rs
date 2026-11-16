@@ -255,4 +255,104 @@ mod tests {
         assert!(mapped.locator.segment_id.is_none());
         assert_eq!(mapped.locator.timestamp_millis, Some(2500));
     }
+
+    #[test]
+    fn sqlite_adapter_rejects_foreign_study_and_stale_draft_revision() {
+        use crate::dto::UiStudioBrief;
+        use scriptotar_ai::writing::{BeatRole, ScriptBeat, ScriptDraft};
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let services = AppServices::new(tmp.path()).unwrap();
+        let project_id = services.active_project_id().unwrap();
+        let brief = UiStudioBrief {
+            title: "Verification Study".into(),
+            goal: "Verify statements".into(),
+            audience: "Writers".into(),
+            platform: "Web".into(),
+            language: "en".into(),
+            duration: "30".into(),
+            style: "Precise".into(),
+        };
+        let first = services
+            .create_studio_study(project_id, brief.clone())
+            .unwrap();
+        let first_id = Uuid::parse_str(&first.id).unwrap();
+        let draft_revision = u64::try_from(first.draft_revision.unwrap()).unwrap();
+        let candidate = ScriptDraft {
+            id: first.draft_id.unwrap(),
+            angle_id: "a".into(),
+            title: "Draft".into(),
+            language: "en".into(),
+            beats: vec![ScriptBeat {
+                id: "beat-1".into(),
+                role: BeatRole::Hook,
+                narration: "Unreviewed observation".into(),
+                on_screen_text: None,
+                shots: vec![],
+                evidence_ids: vec![],
+                manually_edited: false,
+            }],
+            cta: None,
+            caption: None,
+            claims: vec![],
+        };
+
+        let report = services
+            .verify_studio_claims_read_only(
+                project_id,
+                first_id,
+                first.revision,
+                draft_revision,
+                &candidate,
+            )
+            .unwrap();
+        assert!(report.publication_review_required);
+        assert!(!report.inventory_complete);
+        assert!(report.claims.iter().all(|claim| {
+            claim.status != verification::VerificationStatus::Verified
+        }));
+
+        // Matching a real project and draft ID is not enough: the Study itself
+        // must be the same and the revisions must still be current.
+        let other = services.create_studio_study(project_id, brief).unwrap();
+        let other_id = Uuid::parse_str(&other.id).unwrap();
+        assert!(services
+            .verify_studio_claims_read_only(
+                project_id,
+                other_id,
+                other.revision,
+                draft_revision,
+                &candidate,
+            )
+            .is_err());
+        assert!(services
+            .verify_studio_claims_read_only(
+                project_id,
+                first_id,
+                first.revision + 1,
+                draft_revision,
+                &candidate,
+            )
+            .is_err());
+        assert!(services
+            .verify_studio_claims_read_only(
+                project_id,
+                first_id,
+                first.revision,
+                draft_revision + 1,
+                &candidate,
+            )
+            .is_err());
+        assert!(services
+            .verify_studio_claims_read_only(
+                Uuid::new_v4(),
+                first_id,
+                first.revision,
+                draft_revision,
+                &candidate,
+            )
+            .is_err());
+    }
+
 }
