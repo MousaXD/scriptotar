@@ -1119,6 +1119,8 @@ mod tests {
     ) -> RunSnapshot {
         let mut second = original.clone();
         second.plan.id = Uuid::new_v4().to_string();
+        second.plan.project_id = project.to_string();
+        second.plan.study_id = study.to_string();
         second.steps[0].idempotency_key = format!("{}:0:draft", second.plan.id);
         second.revision = 0;
         second.state = RunState::Planned;
@@ -1268,7 +1270,7 @@ mod tests {
         reserve(&db, &peer, project, study);
         drop(db);
         let path = dir.path().join("external.sqlite3");
-        // Construct a valid legacy v11 file with duplicate provider acknowledgements.
+        // Construct a valid legacy v11 file with duplicate final receipt IDs.
         // Only the v12 infrastructure is removed; historical v10/v11 migrations stay intact.
         let connection = rusqlite::Connection::open(&path).unwrap();
         connection.execute_batch(
@@ -1285,7 +1287,7 @@ mod tests {
             peer.steps[0].idempotency_key.as_str(),
         ] {
             connection.execute(
-                "UPDATE agent_external_effects SET provider_request_id='historical_duplicate_12'
+                "UPDATE agent_external_effects SET receipt_id='historical_duplicate_12'
                  WHERE idempotency_key=?1",
                 params![key],
             ).unwrap();
@@ -1295,7 +1297,7 @@ mod tests {
         let connection = rusqlite::Connection::open(&path).unwrap();
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
         let preserved: i64 = connection.query_row(
-            "SELECT COUNT(*) FROM agent_external_effects WHERE provider_request_id='historical_duplicate_12'",
+            "SELECT COUNT(*) FROM agent_external_effects WHERE receipt_id='historical_duplicate_12'",
             [], |row| row.get(0),
         ).unwrap();
         assert_eq!(version, 11);
@@ -1305,6 +1307,60 @@ mod tests {
             [], |row| row.get(0),
         ).unwrap();
         assert_eq!(no_partial_table, 0);
+    }
+
+
+    #[test]
+    fn provider_receipt_unique_across_projects_even_after_restart() {
+        let (dir, db, project, study, first) = setup();
+        let foreign = Project::new("Other billing project");
+        db.create_project(&foreign).unwrap();
+        let other_study = db.create_study(foreign.id, "Other Study", "").unwrap().id;
+        let peer = second_approved_run(&db, &first, foreign.id, other_study);
+        let a = identity(&first, project, study);
+        let b = identity(&peer, foreign.id, other_study);
+        let ar = reserve(&db, &first, project, study);
+        let br = reserve(&db, &peer, foreign.id, other_study);
+        db.mark_external_dispatched(a, ar.revision, 1).unwrap();
+        db.mark_external_dispatched(b, br.revision, 1).unwrap();
+        db.reconcile_external_effect(a, 1, ExternalResolution::Completed {
+            provider_request_id: Some("cross_project_response_12"),
+            receipt_id: "cross_project_response_12",
+            tokens: 100, cost_microusd: 250,
+        }).unwrap();
+        drop(db);
+        let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert!(reopened.reconcile_external_effect(b, 1, ExternalResolution::Completed {
+            provider_request_id: Some("cross_project_response_12"),
+            receipt_id: "cross_project_response_12",
+            tokens: 100, cost_microusd: 250,
+        }).is_err());
+        assert_eq!(
+            reopened.get_external_effect(b).unwrap().unwrap().status,
+            ExternalEffectStatus::Dispatched
+        );
+    }
+
+    #[test]
+    fn raw_sqlite_ack_assignment_cannot_bypass_provider_identity_owner() {
+        let (dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        reserve(&db, &first, project, study);
+        reserve(&db, &peer, project, study);
+        let connection = rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        connection.execute(
+            "UPDATE agent_external_effects SET provider_request_id='raw_identity_12'
+             WHERE idempotency_key=?1",
+            params![first.steps[0].idempotency_key],
+        ).unwrap();
+        let conflict = connection.execute(
+            "UPDATE agent_external_effects SET provider_request_id='raw_identity_12'
+             WHERE idempotency_key=?1",
+            params![peer.steps[0].idempotency_key],
+        );
+        assert!(conflict.is_err(), "raw SQL must be subject to the same durable identity fence");
+        let second = db.get_external_effect(identity(&peer, project, study)).unwrap().unwrap();
+        assert!(second.provider_request_id.is_none());
     }
 
 }
