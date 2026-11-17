@@ -1559,9 +1559,9 @@ mod tests {
         // Creating a Study may already create a manual candidate. The atomic
         // batch must add exactly its own three drafts without deleting it.
         assert!(chosen.drafts.len() >= 3);
-        assert!(stored.iter().all(|id| {
-            chosen.drafts.iter().any(|draft| draft.id == id.to_string())
-        }));
+        assert!(stored
+            .iter()
+            .all(|id| { chosen.drafts.iter().any(|draft| draft.id == id.to_string()) }));
         let edited_body = format!(
             "{}\\n\\nReviewer manual edit: preserve this wording after restart.",
             chosen.draft
