@@ -88,3 +88,7 @@ Npm Tauri 2.11.2 rejects `tauri build --bundles nsis -- --locked`. Validate `car
 ## Installed Linux option role and actual project database
 
 Exact native run 44091975817 created and displayed both project dashboards, then failed when a displayed project option was found in AT-SPI as role `list item` rather than `option`. Choose by exact accessible name and the observed role; continue requiring the real switch and active dashboard. Independently read the installed app's own `SCRIPTOTAR_DATA_DIR/scriptotar.sqlite3` in SQLite read-only mode to verify both project rows exist before marking `canonical_project_persistence` PASS. Unit tests for the probe or selectors **are not** native acceptance.
+
+## Windows Cargo.lock ordering-only rewrite on the actual NSIS build
+
+Exact run 44091975817 built the true NSIS production installer, but the workflow's Git byte-diff detected only `scriptotar-agent` being reordered within the `scriptotar-desktop` package dependency list. Windows Cargo 1.97 normalizes order. Do not weaken reproducibility by ignoring arbitrary `Cargo.lock` differences: canonicalize parsed TOML to stable JSON and compare SHA-256 before and after the production `tauri build --bundles nsis`, with `cargo metadata --locked` pre/post. A real checksum/version/graph change still fails. Installed WebView2 requires its own later exact-commit run and UIA proof.

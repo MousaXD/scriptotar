@@ -61,6 +61,16 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ax.nodes = lambda: iter([FakeNode("scroll pane"), FakeNode("document web")])
         self.assertTrue(ax.web_document())
 
+    def test_windows_production_build_preserves_semantic_cargo_lock(self):
+        # Workflow contract only: does not establish installed Windows UI PASS.
+        workflow = (Path(__file__).resolve().parents[3] /
+                    ".github/workflows/installed-webview-acceptance.yml").read_text()
+        self.assertIn("tauri build --bundles nsis", workflow)
+        self.assertNotIn("tauri build --bundles nsis -- --locked", workflow)
+        self.assertIn("tomllib.loads", workflow)
+        self.assertIn("$lockBefore -ne $lockAfter", workflow)
+        self.assertIn("cargo metadata --locked", workflow)
+
     def test_webkit_option_uses_observed_list_item_role(self):
         # Contract only: actual installed GUI interaction is a separate gate.
         calls = []

@@ -211,16 +211,36 @@ jobs:
           # package a devUrl binary that tries http://localhost:5173. The
           # installed WebView2 then displays ERR_CONNECTION_REFUSED instead of
           # embedded frontend assets. Let Tauri set the production build mode.
-          # The npm Tauri CLI rejects trailing '-- --locked'. Validate Cargo's
-          # exact lockfile before and after Tauri's own production release build.
+          # The JS Tauri CLI does not accept cargo's '-- --locked'. Check
+          # Cargo's resolved lock graph before/after its own production build.
+          # On Windows Cargo 1.97 can reorder package.dependencies in Cargo.lock
+          # (same IDs/versions/checksums), so raw byte diff is not a legitimate
+          # dependency drift signal. This canonical TOML hash remains strict:
+          # any real package, source, checksum or dependency change fails.
+          $lockPath = (Resolve-Path '../../Cargo.lock').Path
+          $fingerprinter = Join-Path $env:RUNNER_TEMP 'scriptotar_lock_fingerprint.py'
+          @'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+          import tomllib
+          lock = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          payload = json.dumps(lock, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+          print(hashlib.sha256(payload).hexdigest())
+          '@ | Set-Content -Encoding utf8 $fingerprinter
           cargo metadata --locked --no-deps --format-version 1 | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock is not reproducible' }
+          $lockBefore = python $fingerprinter $lockPath
+          if ($LASTEXITCODE -ne 0 -or -not $lockBefore) { throw 'Could not fingerprint exact Cargo.lock before build' }
           tauri build --bundles nsis
           if ($LASTEXITCODE -ne 0) { throw 'Production NSIS Tauri build failed' }
           cargo metadata --locked --no-deps --format-version 1 | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock changed during Tauri build' }
-          git -C ../.. diff --exit-code -- Cargo.lock apps/desktop/Cargo.lock
-          if ($LASTEXITCODE -ne 0) { throw 'Release build changed a tracked lockfile' }
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock cannot be resolved after build' }
+          $lockAfter = python $fingerprinter $lockPath
+          if ($LASTEXITCODE -ne 0 -or $lockBefore -ne $lockAfter) {
+            throw 'NSIS release build changed the resolved Cargo.lock dependency graph'
+          }
       - name: Stage installer and machine evidence
         shell: pwsh
         run: |
