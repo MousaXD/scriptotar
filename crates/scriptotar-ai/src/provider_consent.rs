@@ -463,21 +463,30 @@ impl ConsentBoundary {
         wire_sha256: &str,
     ) -> Result<ConsentPreview, ConsentError> {
         if wire_sha256.len() != 64
-            || !wire_sha256.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+            || !wire_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
             return Err(ConsentError::InvalidRequest);
         }
-        let consent = self.records.lock()
+        let consent = self
+            .records
+            .lock()
             .map_err(|_| ConsentError::EffectFenceUnavailable)?
-            .get(run_id).cloned().ok_or(ConsentError::NoApproval)?;
-        let mut record = consent.lock().map_err(|_| ConsentError::EffectFenceUnavailable)?;
+            .get(run_id)
+            .cloned()
+            .ok_or(ConsentError::NoApproval)?;
+        let mut record = consent
+            .lock()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         if record.decision != Decision::Pending || record.sealed_wire_sha256.is_some() {
             return Err(ConsentError::AlreadyUsed);
         }
         if record.preview.fingerprint != expected_fingerprint {
             return Err(ConsentError::ChangedContext);
         }
-        record.preview.fingerprint = sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
+        record.preview.fingerprint =
+            sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
         record.sealed_wire_sha256 = Some(wire_sha256.to_owned());
         Ok(record.preview.clone())
     }
@@ -591,11 +600,17 @@ impl ConsentBoundary {
             return Err(ConsentError::ChangedContext);
         }
         if let Some(expected_wire) = record.sealed_wire_sha256.as_deref() {
-            if runner.prepared_request_sha256(
-                &intent.provider,
-                &AiRequest { prompt: intent.prompt.clone() },
-                intent.max_output_tokens,
-            ).as_deref() != Some(expected_wire) {
+            if runner
+                .prepared_request_sha256(
+                    &intent.provider,
+                    &AiRequest {
+                        prompt: intent.prompt.clone(),
+                    },
+                    intent.max_output_tokens,
+                )
+                .as_deref()
+                != Some(expected_wire)
+            {
                 return Err(ConsentError::ChangedContext);
             }
         }
@@ -605,7 +620,8 @@ impl ConsentBoundary {
             .ok_or(ConsentError::UnknownPricing)?;
         let mut expected_fingerprint = hash_intent(&record.intent, &Some(trusted_price.clone()));
         if let Some(wire_sha256) = record.sealed_wire_sha256.as_deref() {
-            expected_fingerprint = sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
+            expected_fingerprint =
+                sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
         }
         if record.preview.fingerprint != expected_fingerprint {
             return Err(ConsentError::ChangedContext);
@@ -697,13 +713,21 @@ impl ConsentBoundary {
         record.decision = Decision::Uncertain;
         if scope_guard.scope() != &record.intent.scope
             || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
-            || record.sealed_wire_sha256.as_deref().is_some_and(|expected| {
-                runner.prepared_request_sha256(
-                    &intent.provider,
-                    &AiRequest { prompt: intent.prompt.clone() },
-                    intent.max_output_tokens,
-                ).as_deref() != Some(expected)
-            })
+            || record
+                .sealed_wire_sha256
+                .as_deref()
+                .is_some_and(|expected| {
+                    runner
+                        .prepared_request_sha256(
+                            &intent.provider,
+                            &AiRequest {
+                                prompt: intent.prompt.clone(),
+                            },
+                            intent.max_output_tokens,
+                        )
+                        .as_deref()
+                        != Some(expected)
+                })
         {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::ChangedContext);
