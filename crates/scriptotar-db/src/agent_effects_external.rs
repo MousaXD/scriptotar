@@ -1379,4 +1379,72 @@ mod tests {
         assert!(second.provider_request_id.is_none());
     }
 
+
+    #[test]
+    fn openai_response_identity_cannot_cross_ack_and_receipt_roles() {
+        let (_dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        let a = identity(&first, project, study);
+        let b = identity(&peer, project, study);
+        let ar = reserve(&db, &first, project, study);
+        let br = reserve(&db, &peer, project, study);
+        db.mark_external_dispatched(a, ar.revision, 1).unwrap();
+        db.mark_external_dispatched(b, br.revision, 1).unwrap();
+        db.record_external_ack(a, 1, "resp_shared_between_roles_12").unwrap();
+        // The first effect owns the real response ID already. The second effect
+        // must not claim that response under the other column's role.
+        assert!(db.reconcile_external_effect(b, 1, ExternalResolution::Completed {
+            provider_request_id: Some("resp_unrelated_request_12"),
+            receipt_id: "resp_shared_between_roles_12",
+            tokens: 100, cost_microusd: 250,
+        }).is_err());
+        let second = db.get_external_effect(b).unwrap().unwrap();
+        assert_eq!(second.status, ExternalEffectStatus::Dispatched);
+        assert!(second.provider_request_id.is_none());
+        assert!(second.receipt_id.is_none());
+    }
+
+    #[test]
+    fn valid_legacy_same_effect_ack_and_receipt_id_backfills_once() {
+        let (dir, db, project, study, first) = setup();
+        let key = identity(&first, project, study);
+        let r = reserve(&db, &first, project, study);
+        db.mark_external_dispatched(key, r.revision, 1).unwrap();
+        let original = db.reconcile_external_effect(key, 1, ExternalResolution::Completed {
+            provider_request_id: Some("resp_same_role_identity_12"),
+            receipt_id: "resp_same_role_identity_12",
+            tokens: 100, cost_microusd: 250,
+        }).unwrap();
+        let path = dir.path().join("external.sqlite3");
+        drop(db);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER external_provider_identity_on_insert;
+             DROP TRIGGER external_provider_identity_on_update;
+             DROP INDEX idx_external_provider_request_unique;
+             DROP INDEX idx_external_provider_receipt_unique;
+             DROP TABLE agent_external_provider_identities;
+             DELETE FROM schema_migrations WHERE version=12;
+             PRAGMA user_version=11;",
+        ).unwrap();
+        drop(conn);
+        let upgraded = SqliteStore::open(&path).unwrap();
+        assert_eq!(upgraded.schema_version().unwrap(), crate::LATEST_SCHEMA_VERSION);
+        assert_eq!(upgraded.get_external_effect(key).unwrap().unwrap(), original);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let claims: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_external_provider_identities
+             WHERE provider='openai' AND identity='resp_same_role_identity_12'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(claims, 1);
+        drop(conn);
+        // Reopening the same effect's authenticated final receipt is idempotent.
+        assert_eq!(upgraded.reconcile_external_effect(key, 1, ExternalResolution::Completed {
+            provider_request_id: Some("resp_same_role_identity_12"),
+            receipt_id: "resp_same_role_identity_12",
+            tokens: 100, cost_microusd: 250,
+        }).unwrap(), original);
+    }
+
 }
