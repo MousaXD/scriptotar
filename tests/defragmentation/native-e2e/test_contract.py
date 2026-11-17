@@ -523,6 +523,41 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('ax.read_text("Script draft") != body', source)
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
+    def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
+        # The installed RTL screenshot shows a top-bar locale combo adjacent
+        # to the project chooser, while Studio Settings is not mounted.
+        class Rect:
+            def __init__(self, y):
+                self.y, self.width, self.height = y, 90, 40
+
+        class Node:
+            def __init__(self, name, role, y):
+                self.name, self.role, self.y = name, role, y
+
+            def getRoleName(self):
+                return self.role
+
+            def queryComponent(self):
+                return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
+
+        project = Node("PROJECT", "combo box", 77)
+        locale = Node("لغة الواجهة", "combo box", 81)
+        script_language = Node("لغة النص", "combo box", 620)
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
+        ax.find = lambda label, role: project
+        ax.nodes = lambda: iter([project, locale, script_language])
+        self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+        ax.nodes = lambda: iter([project, script_language])
+        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
+            ax.global_locale_control()
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
+        self.assertLess(source.index('def arabic():'), source.index('def theme():'))
+        self.assertNotIn('a.choose("Interface language"', source)
+
     def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
         # Actual restored screenshot at run #44150090373 was scrolled above
         # the script candidate editor. A real UIA ScrollItemPattern is allowed,
@@ -532,6 +567,15 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "function Type-InstalledEdit(", 1)[0]
         self.assertIn("[System.Windows.Automation.ScrollItemPattern]::Pattern", click)
         self.assertIn("$scrollItem.ScrollIntoView()", click)
+        # Native WebView2 can expose ScrollItemPattern while refusing to
+        # move an offscreen element. Use the visible workflow link and still
+        # require actual candidate selection plus canonical immutable proof.
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            source,
+        )
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", source)
+        self.assertIn("reopened-scripts-navigation.png", source)
         self.assertIn("$owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)", click)
         self.assertIn("-not $candidate.Current.IsOffscreen", click)
         self.assertIn("No visible, enabled, bounded UIA control", click)
