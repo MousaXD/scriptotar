@@ -675,9 +675,7 @@ mod tests {
             AuditKind, CheckpointStore, Estimate, ExecutionContext, Limits, Plan, RunSnapshot,
             RunState, StepInput, StepPlan, StepRecord, StepState, Usage,
         };
-        use scriptotar_ai::provider_consent::{
-            MeteredReply, PriceCeiling, TrustedPricing,
-        };
+        use scriptotar_ai::provider_consent::{MeteredReply, PriceCeiling, TrustedPricing};
         use scriptotar_core::{StudySourceInput, StudySourceKind};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -756,23 +754,29 @@ mod tests {
             )
             .unwrap();
         let study_id = Uuid::parse_str(&study.id).unwrap();
-        services.store.add_study_source(
-            project,
-            study_id,
-            &StudySourceInput {
-                kind: StudySourceKind::Manual,
-                reference_id: None,
-                locator: Some("Controlled fixture".into()),
-                manual_text: Some("One original creative observation".into()),
-                source_revision: None,
-                uncertainty: None,
-            },
-        ).unwrap();
+        services
+            .store
+            .add_study_source(
+                project,
+                study_id,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("Controlled fixture".into()),
+                    manual_text: Some("One original creative observation".into()),
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
         let scope = services
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
         assert_eq!(scope.selected_source_ids.len(), 1);
-        let prompt = services.prepare_studio_angle_prompt(project, study_id).unwrap().prompt;
+        let prompt = services
+            .prepare_studio_angle_prompt(project, study_id)
+            .unwrap()
+            .prompt;
         let run_id = Uuid::new_v4().to_string();
         let estimate = Estimate {
             tokens: 50_000,
@@ -828,7 +832,10 @@ mod tests {
             events: Vec::new(),
         };
         checkpoint.event(current_ms(), AuditKind::Created);
-        let checkpoints = services.store.scoped_agent_checkpoints(project, study_id).unwrap();
+        let checkpoints = services
+            .store
+            .scoped_agent_checkpoints(project, study_id)
+            .unwrap();
         checkpoints.create(checkpoint.clone()).unwrap();
         checkpoint.revision = 1;
         checkpoint.state = RunState::Running;
@@ -872,54 +879,110 @@ mod tests {
             .prepare(intent.clone(), &services, &prices, current_ms())
             .unwrap();
         assert!(preview.worst_case_cost_microusd.is_some());
-        assert!(services.dispatch_provider_angle_consent_sealed(
-            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
-        ).is_err());
+        assert!(services
+            .dispatch_provider_angle_consent_sealed(
+                &boundary,
+                &intent,
+                &preview,
+                &context,
+                &prices,
+                &transport,
+                "test-only"
+            )
+            .is_err());
         assert_eq!(transport.0.load(Ordering::SeqCst), 0);
-        boundary.decide(&run_id, &preview.fingerprint, true, &services, current_ms()).unwrap();
-        let reply = services.dispatch_provider_angle_consent_sealed(
-            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
-        ).unwrap();
+        boundary
+            .decide(&run_id, &preview.fingerprint, true, &services, current_ms())
+            .unwrap();
+        let reply = services
+            .dispatch_provider_angle_consent_sealed(
+                &boundary,
+                &intent,
+                &preview,
+                &context,
+                &prices,
+                &transport,
+                "test-only",
+            )
+            .unwrap();
         assert_eq!(reply.provider_request_id, "controlled_receipt_1");
         assert_eq!(transport.0.load(Ordering::SeqCst), 1);
 
-        let effect = services.store.get_external_effect(ExternalEffectKey {
-            project,
-            study: study_id,
-            run_id: &run_id,
-            step_id: "draft",
-            idempotency_key: &idem,
-        }).unwrap().unwrap();
-        let exact_bytes = transport.serialize_exact_request(
-            &intent.provider,
-            &scriptotar_ai::AiRequest { prompt: intent.prompt.clone() },
-            intent.max_output_tokens,
-        ).unwrap();
+        let effect = services
+            .store
+            .get_external_effect(ExternalEffectKey {
+                project,
+                study: study_id,
+                run_id: &run_id,
+                step_id: "draft",
+                idempotency_key: &idem,
+            })
+            .unwrap()
+            .unwrap();
+        let exact_bytes = transport
+            .serialize_exact_request(
+                &intent.provider,
+                &scriptotar_ai::AiRequest {
+                    prompt: intent.prompt.clone(),
+                },
+                intent.max_output_tokens,
+            )
+            .unwrap();
         assert_eq!(effect.fingerprint, sha256_hex(&exact_bytes));
         assert_eq!(effect.status, ExternalEffectStatus::Completed);
         assert_eq!(effect.attempt, 1);
-        assert_eq!(effect.provider_request_id.as_deref(), Some("controlled_receipt_1"));
-        assert!(services.dispatch_provider_angle_consent_sealed(
-            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
-        ).is_err());
+        assert_eq!(
+            effect.provider_request_id.as_deref(),
+            Some("controlled_receipt_1")
+        );
+        assert!(services
+            .dispatch_provider_angle_consent_sealed(
+                &boundary,
+                &intent,
+                &preview,
+                &context,
+                &prices,
+                &transport,
+                "test-only"
+            )
+            .is_err());
         // A fresh in-memory approval must not replay a completed durable claim.
         let restarted_consent = ConsentBoundary::default();
         let same_preview = restarted_consent
-            .prepare(intent.clone(), &services, &prices, current_ms()).unwrap();
-        restarted_consent.decide(
-            &run_id, &same_preview.fingerprint, true, &services, current_ms()
-        ).unwrap();
-        assert!(services.dispatch_provider_angle_consent_sealed(
-            &restarted_consent, &intent, &same_preview, &context, &prices, &transport, "test-only"
-        ).is_err());
+            .prepare(intent.clone(), &services, &prices, current_ms())
+            .unwrap();
+        restarted_consent
+            .decide(
+                &run_id,
+                &same_preview.fingerprint,
+                true,
+                &services,
+                current_ms(),
+            )
+            .unwrap();
+        assert!(services
+            .dispatch_provider_angle_consent_sealed(
+                &restarted_consent,
+                &intent,
+                &same_preview,
+                &context,
+                &prices,
+                &transport,
+                "test-only"
+            )
+            .is_err());
         assert_eq!(transport.0.load(Ordering::SeqCst), 1);
-        let persisted = services.store.get_external_effect(ExternalEffectKey {
-            project,
-            study: study_id,
-            run_id: &run_id,
-            step_id: "draft",
-            idempotency_key: &idem,
-        }).unwrap().unwrap();
+        let persisted = services
+            .store
+            .get_external_effect(ExternalEffectKey {
+                project,
+                study: study_id,
+                run_id: &run_id,
+                step_id: "draft",
+                idempotency_key: &idem,
+            })
+            .unwrap()
+            .unwrap();
         assert_eq!(persisted.status, ExternalEffectStatus::Completed);
     }
 
