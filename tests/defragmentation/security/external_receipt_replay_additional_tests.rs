@@ -370,7 +370,7 @@ fn independent_v10_provider_scoped_identities_do_not_block_distinct_providers() 
     let other_key = identity(&other, project, study);
     let first = reserve(&db, &run, project, study);
     let other_reserved = db
-        .reserve_external_effect(other_key, fp(), "other_provider", limits())
+        .reserve_external_effect(other_key, fp(), "anthropic", limits())
         .unwrap();
     let ExternalReservation::Fresh(other_first) = other_reserved else {
         panic!("independent provider must receive a fresh effect");
@@ -449,11 +449,17 @@ fn independent_v12_provider_case_alias_cannot_double_credit() {
     let first = reserve(&db, &run, project, study);
     // The production API presently accepts any bounded provider string.
     // "OpenAI" and "openai" are not two separate billing authorities.
-    let alias = db
-        .reserve_external_effect(peer_key, fp(), "OpenAI", limits())
-        .unwrap();
-    let ExternalReservation::Fresh(peer_first) = alias else {
-        panic!("distinct approved run must have its own reservation");
+    let alias = db.reserve_external_effect(peer_key, fp(), "OpenAI", limits());
+    let peer_first = match alias {
+        // Rejecting a noncanonical provider spelling is also a valid safe outcome.
+        Err(_) => {
+            assert!(db.get_external_effect(peer_key).unwrap().is_none());
+            return;
+        }
+        Ok(ExternalReservation::Fresh(value)) => value,
+        Ok(ExternalReservation::Existing(_)) => {
+            panic!("different approved run must never reuse an old reservation");
+        }
     };
     db.mark_external_dispatched(first_key, first.revision, 1).unwrap();
     db.mark_external_dispatched(peer_key, peer_first.revision, 1).unwrap();
