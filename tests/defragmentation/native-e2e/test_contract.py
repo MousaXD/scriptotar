@@ -645,7 +645,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
             proc.wait.return_value = -11
             with mock.patch.object(native, "command", side_effect=installed_command):
                 with self.assertRaisesRegex(
-                    native.NativeFailure, "graphical shutdown exited abnormally"
+                    native.NativeFailure, r"Installed native graphical shutdown crashed: -11 \(SIGSEGV\)"
                 ):
                     session.stop()
             import json
