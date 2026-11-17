@@ -369,10 +369,25 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   if ($index -lt 0 -or $labels.Count -gt 30) {
     throw "Could not establish exact UIA option order for $name; seen=$($labels -join ',')"
   }
-  # Focus the actual native listbox that owns key handlers instead of
-  # guessing which control received focus after a pointer click. This must
-  # remain bound to the installed WebView2 render HWND.
-  $list = Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List) 5
+  # Focus the ACTUAL popup that owns the matched UIA list-item option.
+  # The installed WebView2 project ComboBox is named 'PROJECT' but its
+  # popup List is named 'Project' (run #44114536688). Their labels are
+  # not required to match: selecting by ComboBox name and guessing the
+  # popup List name caused a false GUI interaction failure.
+  # An ancestor relationship to this exact native option is required.
+  $ancestor = $option
+  $list = $null
+  for ($depth=0; $depth -lt 12; $depth++) {
+    $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+    if (-not $ancestor) { break }
+    if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::List) {
+      $list = $ancestor
+      break
+    }
+  }
+  if (-not $list) {
+    throw "Native WebView2 option '$name' is not owned by an accessible popup List"
+  }
   $list.SetFocus()
   Start-Sleep -Milliseconds 200
   [System.Windows.Forms.SendKeys]::SendWait('{HOME}')

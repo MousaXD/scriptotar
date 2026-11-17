@@ -154,6 +154,19 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('"xdotool", "mousemove", str(x), str(y)', source)
         self.assertNotIn('"mousemove", "--sync"', source)
 
+    def test_windows_popup_focus_uses_actual_option_owner_not_combobox_name(self):
+        # Real installed UIA in #44114536688: ComboBox 'PROJECT',
+        # but popup List 'Project'. An exact-name popup lookup incorrectly
+        # failed despite existing project B and all three real ListItems.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        choose = script.split("function Choose-InstalledOption(", 1)[1].split(
+            "function Wait-InstalledComboValue(", 1
+        )[0]
+        self.assertIn("TreeWalker]::ControlViewWalker.GetParent($ancestor)", choose)
+        self.assertIn("ControlType]::List", choose)
+        self.assertIn("$list.SetFocus()", choose)
+        self.assertNotIn("Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List)", choose)
+
     def test_windows_candidate_switch_requires_rendered_selected_label(self):
         # A candidate copy has identical body text. A pass requires the
         # selected label inside the combobox plus the closed listbox, rather
