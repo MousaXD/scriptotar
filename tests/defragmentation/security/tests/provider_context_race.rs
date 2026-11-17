@@ -495,11 +495,13 @@ fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
                 if result.is_ok() {
                     successes.fetch_add(1, Ordering::SeqCst);
                 } else {
-                    // Preserve the strict assertion, but make unexpected
-                    // fail-closed variants reproducible without logging keys,
-                    // prompts, response bodies or user data.
+                    // A successful pre-send CAS marks the run Uncertain until
+                    // the authenticated receipt settles. A duplicate racing
+                    // during that interval can see UncertainEffect; after
+                    // settlement it sees AlreadyUsed. Both are reject-only.
+                    // Preserve the one-winner CAS/send/receipt assertions below.
                     assert!(
-                        matches!(&result, Err(ConsentError::AlreadyUsed)),
+                        matches!(&result, Err(ConsentError::AlreadyUsed | ConsentError::UncertainEffect)),
                         "losing concurrent claim returned {:?}; sends={}, reservations={}, dispatch_CAS={}, receipts={}",
                         result.as_ref().err(),
                         provider.0.load(Ordering::SeqCst),
