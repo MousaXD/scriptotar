@@ -501,7 +501,7 @@ fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
                     // AlreadyUsed or UncertainEffect; both forbid another send.
                     assert!(
                         matches!(result, Err(ConsentError::AlreadyUsed | ConsentError::UncertainEffect)),
-                        "duplicate dispatch returned an unexpected result: {result:?}"
+                        "duplicate dispatch returned an unexpected status"
                     );
                 }
             });
