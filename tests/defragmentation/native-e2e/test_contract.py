@@ -524,31 +524,40 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
-        # The installed RTL screenshot shows a top-bar locale combo adjacent
-        # to the project chooser, while Studio Settings is not mounted.
+        # AppShell provides translated exact labels; native AT-SPI must find
+        # either without relying on a separately localized project selector.
         class Rect:
-            def __init__(self, y):
-                self.y, self.width, self.height = y, 90, 40
+            def __init__(self, y, width=90, height=40):
+                self.x, self.y, self.width, self.height = 20, y, width, height
 
         class Node:
-            def __init__(self, name, role, y):
-                self.name, self.role, self.y = name, role, y
+            def __init__(self, name, role, y, width=90, height=40):
+                self.name, self.role = name, role
+                self.rect = Rect(y, width, height)
 
             def getRoleName(self):
                 return self.role
 
             def queryComponent(self):
-                return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
+                return SimpleNamespace(getExtents=lambda _coord: self.rect)
 
-        project = Node("PROJECT", "combo box", 77)
-        locale = Node("لغة الواجهة", "combo box", 81)
+        project = Node("المشروع", "combo box", 77)
+        locale_ar = Node("لغة الواجهة", "combo box", 81)
+        locale_en = Node("Interface language", "combo box", 81)
         script_language = Node("لغة النص", "combo box", 620)
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
-        ax.find = lambda label, role: project
-        ax.nodes = lambda: iter([project, locale, script_language])
+        ax.nodes = lambda: iter([project, locale_ar, script_language])
         self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+        ax.nodes = lambda: iter([Node("Project", "combo box", 77), locale_en])
+        self.assertEqual(ax.global_locale_control(), "Interface language")
         ax.nodes = lambda: iter([project, script_language])
+        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
+            ax.global_locale_control()
+        ax.nodes = lambda: iter([project, locale_ar, locale_en])
+        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
+            ax.global_locale_control()
+        ax.nodes = lambda: iter([project, Node("لغة الواجهة", "combo box", 81, width=0)])
         with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
             ax.global_locale_control()
         import inspect
