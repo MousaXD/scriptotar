@@ -473,11 +473,55 @@ class NativeEvidenceContractTests(unittest.TestCase):
             ax.heading("NativeQA-abc-A", timeout=0.01)
 
     def test_document_alone_cannot_satisfy_startup(self):
-        import inspect
-        source = inspect.getsource(native.Session.start)
-        self.assertIn('web_document()', source)
-        self.assertIn('available("Studio", "button")', source)
-        self.assertIn('available("Studio", "link")', source)
+        # Exercise Session.start's actual fail-closed gate, not an obsolete
+        # English source-code literal. This is a mocked *contract* test only;
+        # installed WebKitGTK acceptance is separately required in CI.
+        def startup(document, controls, expected_studio="Studio"):
+            observed = []
+            ax = SimpleNamespace(
+                web_document=lambda: document,
+                available=lambda name, role: (
+                    observed.append((name, role)) or (name, role) in controls
+                ),
+                diagnostics=lambda: {"desktop_apps": [], "x11_windows": []},
+            )
+            proc = SimpleNamespace(pid=34567, poll=lambda: None)
+            with tempfile.TemporaryDirectory() as tmp:
+                session = native.Session(
+                    SimpleNamespace(executable="/synthetic/not-executed"), Path(tmp)
+                )
+                session.screenshot = lambda _name: None
+                with mock.patch.object(native.subprocess, "Popen", return_value=proc), \
+                     mock.patch.object(native, "AxWebKit", return_value=ax), \
+                     mock.patch.object(native.time, "monotonic",
+                                       side_effect=[0.0, 0.0, 36.0]), \
+                     mock.patch.object(native.time, "sleep"):
+                    try:
+                        session.start(expected_studio=expected_studio)
+                    except native.NativeUnavailable:
+                        return False, observed
+                    return True, observed
+
+        # A document without the requested native rail button/link must fail.
+        passed, calls = startup(True, set())
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("Studio", "button"), ("Studio", "link")])
+
+        # A matching control without a real WebKit document must also fail.
+        passed, calls = startup(False, {("Studio", "button")})
+        self.assertFalse(passed)
+        self.assertEqual(calls, [])
+
+        # The persisted Arabic locale must reject an English-only control.
+        passed, calls = startup(True, {("Studio", "button")}, "الاستوديو")
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("الاستوديو", "button"), ("الاستوديو", "link")])
+
+        # Either accessible role is valid, but only with a real document.
+        for language, role in (("Studio", "button"), ("الاستوديو", "link")):
+            passed, calls = startup(True, {(language, role)}, language)
+            self.assertTrue(passed)
+            self.assertIn((language, role), calls)
 
 
 
