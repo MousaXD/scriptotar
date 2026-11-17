@@ -322,16 +322,19 @@ function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
   Click-InstalledControl $hwnd 'PROJECT' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
   $option = Find-ExactInstalledControl $hwnd $name $null 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
-  if ($actualRole -ne 'ControlType.ListItem') {
-    throw "Project option has unexpected UIA role $actualRole (expected real list item)"
+  if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
+    throw "Project option has unexpected UIA role $actualRole (expected native list item/button)"
   }
   $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  $optionType = if ($actualRole -eq 'ControlType.ListItem') {
+    [System.Windows.Automation.ControlType]::ListItem
+  } else { [System.Windows.Automation.ControlType]::Button }
   $condition = [System.Windows.Automation.PropertyCondition]::new(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::ListItem)
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $optionType)
   $allOptions = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
   $rect = $option.Current.BoundingRectangle
   $ordered = @($allOptions | Where-Object {
+    ($_.Current.Name -eq 'Inbox' -or $_.Current.Name -like 'NativeQA-*') -and
     $_.Current.BoundingRectangle.Width -gt 2 -and
     $_.Current.BoundingRectangle.Height -gt 2 -and
     [Math]::Abs($_.Current.BoundingRectangle.X - $rect.X) -lt 20
