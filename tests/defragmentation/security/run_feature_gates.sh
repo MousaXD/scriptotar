@@ -120,12 +120,19 @@ PY
       # caps, exact serialized body and one-use authenticated response proof.
       # This is local/no-network; it is NOT proof of billable HTTP integration.
       cargo test --locked -p scriptotar-ai provider_openai_wire
-      cargo test --locked -p scriptotar-db
+      # A newly surfaced cross-run receipt replay may be a security FAIL.
+      # Preserve host, verification, and canonical-writing evidence anyway.
+      db_security_status=0
+      cargo test --locked -p scriptotar-db || db_security_status=$?
       # Compile/test the actual Tauri host, not only path-included feature modules.
       cargo test --locked -p scriptotar-desktop --lib
       cargo test --locked -p scriptotar-ai verification
       python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
       cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture
+      if [ "$db_security_status" -ne 0 ]; then
+        echo "FAIL: independent v10 database/receipt replay gate (exit $db_security_status)" >&2
+        exit "$db_security_status"
+      fi
     )
     if [ "$combined_host_static_status" -ne 0 ]; then
       echo "FAIL: combined host authorization remains a release blocker (exit $combined_host_static_status)" >&2
