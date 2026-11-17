@@ -84,6 +84,7 @@ case "$gate:$pr" in
     mkdir -p target/tests/defragmentation/security/tests
     cp audit/tests/defragmentation/security/Cargo.toml target/tests/defragmentation/security/Cargo.toml
     cp audit/tests/defragmentation/security/tests/provider_context_race.rs target/tests/defragmentation/security/tests/
+    cp audit/tests/defragmentation/security/tests/provider_wire_boundary.rs target/tests/defragmentation/security/tests/
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
     cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
     # Assert production wiring, not merely that feature files exist on disk.
@@ -96,6 +97,9 @@ case "$gate:$pr" in
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
+      # Network is forbidden: independent public wire API assertions all pass
+      # an already-expired deadline and use a placeholder key.
+      cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_wire_boundary -- --nocapture
       cargo test --locked -p scriptotar-ai provider_consent
       # Exercise the REAL compiled HTTPS wire parser, fixed endpoint, hard output
       # caps, exact serialized body and one-use authenticated response proof.
