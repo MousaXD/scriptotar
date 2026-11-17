@@ -59,9 +59,10 @@ impl OpenAiResponsesWire {
         config.provider == ProviderKind::OpenAi
             && config.base_url.is_none()
             && (1..=128).contains(&config.model.len())
-            && config.model.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':')
-            })
+            && config
+                .model
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
     }
 
     fn body(
@@ -101,11 +102,14 @@ impl OpenAiResponsesWire {
         if body.get("status").and_then(Value::as_str) != Some("completed") {
             return Err(ConsentError::UncertainEffect);
         }
-        let id = body.get("id").and_then(Value::as_str).ok_or(ConsentError::UncertainEffect)?;
+        let id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or(ConsentError::UncertainEffect)?;
         if !(1..=128).contains(&id.len())
-            || !id.bytes().all(|b| {
-                b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b':')
-            })
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b':'))
         {
             return Err(ConsentError::UncertainEffect);
         }
@@ -125,7 +129,10 @@ impl OpenAiResponsesWire {
         if input.checked_add(output) != Some(total) {
             return Err(ConsentError::UncertainEffect);
         }
-        let events = body.get("output").and_then(Value::as_array).ok_or(ConsentError::UncertainEffect)?;
+        let events = body
+            .get("output")
+            .and_then(Value::as_array)
+            .ok_or(ConsentError::UncertainEffect)?;
         if events.is_empty() {
             return Err(ConsentError::UncertainEffect);
         }
@@ -149,7 +156,10 @@ impl OpenAiResponsesWire {
                 if part.get("type").and_then(Value::as_str) != Some("output_text") {
                     return Err(ConsentError::UncertainEffect);
                 }
-                let segment = part.get("text").and_then(Value::as_str).ok_or(ConsentError::UncertainEffect)?;
+                let segment = part
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .ok_or(ConsentError::UncertainEffect)?;
                 if segment.len() > MAX_RESPONSE_BYTES as usize - text.len() {
                     return Err(ConsentError::UncertainEffect);
                 }
@@ -184,7 +194,8 @@ impl OpenAiResponsesWire {
             reply.usage.tool_calls,
             reply.usage.elapsed_ms,
             reply.usage.cost_microusd,
-        )).ok()?;
+        ))
+        .ok()?;
         Some(sha256_hex(&bytes))
     }
 
@@ -230,23 +241,33 @@ impl CertifiedWireTransport for OpenAiResponsesWire {
         }
         // Never reserialize an altered instruction body or use a custom
         // endpoint. This is a validation copy; the original slice is sent.
-        let parsed: Value = serde_json::from_slice(exact_bytes)
-            .map_err(|_| ConsentError::ChangedContext)?;
-        let prompt = parsed.get("input").and_then(Value::as_str)
+        let parsed: Value =
+            serde_json::from_slice(exact_bytes).map_err(|_| ConsentError::ChangedContext)?;
+        let prompt = parsed
+            .get("input")
+            .and_then(Value::as_str)
             .ok_or(ConsentError::ChangedContext)?;
-        if Self::body(config, &AiRequest { prompt: prompt.to_owned() }, max_output_tokens)?
-            != exact_bytes
+        if Self::body(
+            config,
+            &AiRequest {
+                prompt: prompt.to_owned(),
+            },
+            max_output_tokens,
+        )? != exact_bytes
         {
             return Err(ConsentError::ChangedContext);
         }
-        let remaining = deadline_ms.checked_sub(Self::now_ms()?)
+        let remaining = deadline_ms
+            .checked_sub(Self::now_ms()?)
             .ok_or(ConsentError::Expired)?;
         if remaining == 0 {
             return Err(ConsentError::Expired);
         }
         let deadline = Duration::from_millis(remaining.min(MAX_ELAPSED_MS));
         let started = Instant::now();
-        let response = self.client.post(OPENAI_RESPONSES_URL)
+        let response = self
+            .client
+            .post(OPENAI_RESPONSES_URL)
             .bearer_auth(api_key)
             .header(CONTENT_TYPE, "application/json")
             .header(ACCEPT, "application/json")
@@ -255,7 +276,9 @@ impl CertifiedWireTransport for OpenAiResponsesWire {
             .send()
             .map_err(|_| ConsentError::UncertainEffect)?;
         if response.status().as_u16() != 200
-            || response.content_length().is_some_and(|len| len > MAX_RESPONSE_BYTES)
+            || response
+                .content_length()
+                .is_some_and(|len| len > MAX_RESPONSE_BYTES)
         {
             return Err(ConsentError::UncertainEffect);
         }
@@ -267,14 +290,16 @@ impl CertifiedWireTransport for OpenAiResponsesWire {
         if bytes.len() > MAX_RESPONSE_BYTES as usize {
             return Err(ConsentError::UncertainEffect);
         }
-        let elapsed = u64::try_from(started.elapsed().as_millis())
-            .unwrap_or(u64::MAX);
+        let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         if elapsed > remaining {
             return Err(ConsentError::Expired);
         }
         let reply = Self::decode_response(&bytes, elapsed)?;
         let proof = Self::receipt_proof(config, &reply).ok_or(ConsentError::UncertainEffect)?;
-        let mut authenticated = self.authenticated.lock().map_err(|_| ConsentError::UncertainEffect)?;
+        let mut authenticated = self
+            .authenticated
+            .lock()
+            .map_err(|_| ConsentError::UncertainEffect)?;
         if authenticated.len() >= MAX_RECEIPTS || !authenticated.insert(proof) {
             return Err(ConsentError::UncertainEffect);
         }
@@ -317,16 +342,23 @@ mod tests {
                 "output_tokens": 6,
                 "total_tokens": 17
             }
-        })).unwrap()
+        }))
+        .unwrap()
     }
 
     #[test]
     fn immutable_bounded_wire_body_has_explicit_model_and_output_limit() {
         let provider = OpenAiResponsesWire::new().unwrap();
         let config = model();
-        let input = AiRequest { prompt: "Source-bound original brief".into() };
-        let first = provider.serialize_exact_request(&config, &input, 128).unwrap();
-        let second = provider.serialize_exact_request(&config, &input, 128).unwrap();
+        let input = AiRequest {
+            prompt: "Source-bound original brief".into(),
+        };
+        let first = provider
+            .serialize_exact_request(&config, &input, 128)
+            .unwrap();
+        let second = provider
+            .serialize_exact_request(&config, &input, 128)
+            .unwrap();
         assert_eq!(first, second);
         let value: Value = serde_json::from_slice(&first).unwrap();
         assert_eq!(value["max_output_tokens"], 128);
@@ -334,18 +366,34 @@ mod tests {
         assert_eq!(value["tools"], json!([]));
         assert_eq!(value["model"], "test-model");
         assert_eq!(value["input"], input.prompt);
-        assert!(provider.serialize_exact_request(&config, &input, 0).is_err());
-        assert!(provider.serialize_exact_request(&config, &input, 8193).is_err());
-        assert!(provider.serialize_exact_request(&ProviderConfig {
-            provider: ProviderKind::OpenAi,
-            model: "test-model".into(),
-            base_url: Some("https://other.example/v1".into()),
-        }, &input, 128).is_err());
-        assert!(provider.serialize_exact_request(&ProviderConfig {
-            provider: ProviderKind::OpenAiCompatible,
-            model: "test-model".into(),
-            base_url: Some("https://somewhere.example".into()),
-        }, &input, 128).is_err());
+        assert!(provider
+            .serialize_exact_request(&config, &input, 0)
+            .is_err());
+        assert!(provider
+            .serialize_exact_request(&config, &input, 8193)
+            .is_err());
+        assert!(provider
+            .serialize_exact_request(
+                &ProviderConfig {
+                    provider: ProviderKind::OpenAi,
+                    model: "test-model".into(),
+                    base_url: Some("https://other.example/v1".into()),
+                },
+                &input,
+                128
+            )
+            .is_err());
+        assert!(provider
+            .serialize_exact_request(
+                &ProviderConfig {
+                    provider: ProviderKind::OpenAiCompatible,
+                    model: "test-model".into(),
+                    base_url: Some("https://somewhere.example".into()),
+                },
+                &input,
+                128
+            )
+            .is_err());
     }
 
     #[test]
@@ -365,16 +413,27 @@ mod tests {
         ] {
             let before = value[bad.0].clone();
             value[bad.0] = bad.1;
-            assert!(OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err());
+            assert!(
+                OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35)
+                    .is_err()
+            );
             value[bad.0] = before;
         }
         value["usage"]["total_tokens"] = json!(16);
-        assert!(OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err());
+        assert!(
+            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err()
+        );
         value["usage"]["total_tokens"] = json!(17);
         value["output"][0]["type"] = json!("function_call");
-        assert!(OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err());
+        assert!(
+            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err()
+        );
         assert!(OpenAiResponsesWire::decode_response(&completed(), MAX_ELAPSED_MS + 1).is_err());
-        assert!(OpenAiResponsesWire::decode_response(&vec![b'x'; MAX_RESPONSE_BYTES as usize + 1], 1).is_err());
+        assert!(OpenAiResponsesWire::decode_response(
+            &vec![b'x'; MAX_RESPONSE_BYTES as usize + 1],
+            1
+        )
+        .is_err());
     }
 
     #[test]
