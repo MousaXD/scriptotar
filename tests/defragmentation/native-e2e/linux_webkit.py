@@ -414,38 +414,35 @@ class AxWebKit:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def global_locale_control(self) -> str:
-        """Discover the real top-bar language combo via AT-SPI geometry.
+        """Find the genuine visible Studio toolbar locale combobox by native role.
 
-        The Arabic shell can retain an English aria-label for this control.
-        Never guess that the localized Settings combobox is mounted on Studio,
-        and never infer success from a bare language badge.
+        AppShell renders the exact accessible label "Interface language" or
+        "لغة الواجهة"; project selector labels also change across locales,
+        so a hardcoded English PROJECT anchor breaks Arabic -> English restore.
+        Require one real PID-owned AT-SPI combo with positive bounds, never
+        infer success from the language badge or a screenshot.
         """
-        project = self.find("PROJECT", "combo")
-        try:
-            project_bounds = project.queryComponent().getExtents(
-                getattr(self.atspi, "DESKTOP_COORDS", 0)
-            )
-        except Exception as exc:
-            raise NativeFailure(f"Cannot locate native project toolbar: {exc}") from exc
+        names = {"Interface language", "لغة الواجهة"}
         matches = []
         for node in self.nodes():
             try:
-                if node is project or "combo" not in node.getRoleName().lower():
+                if "combo" not in node.getRoleName().lower():
                     continue
                 name = (node.name or "").strip()
+                if name not in names:
+                    continue
                 bounds = node.queryComponent().getExtents(
                     getattr(self.atspi, "DESKTOP_COORDS", 0)
                 )
-                if (name and name != "PROJECT" and bounds.width >= 15
-                        and bounds.height >= 15
-                        and abs(bounds.y - project_bounds.y) <= 36):
+                if (bounds.width >= 15 and bounds.height >= 15
+                        and bounds.x >= 0 and bounds.y >= 0):
                     matches.append(name)
             except Exception:
                 continue
         if len(matches) != 1:
             raise NativeFailure(
-                f"Expected exactly one native toolbar language combo next to "
-                f"project selector; observed {matches!r}"
+                f"Expected exactly one visible native Studio toolbar language "
+                f"combobox; observed {matches!r}"
             )
         return matches[0]
 
