@@ -916,6 +916,93 @@ async fn review_study_evidence(
     .await
 }
 
+/// Preview the authoritative Study prompt and exact sealed OpenAI wire.
+/// Preview does not approve spending and cannot perform network I/O.
+#[tauri::command]
+async fn prepare_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    model: String,
+    max_output_tokens: u64,
+    limits: scriptotar_ai::provider_consent::RunBudget,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_ai::provider_consent::ConsentPreview, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .preview_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                model,
+                max_output_tokens,
+                limits,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// A fingerprint alone is not authority: price must also be verified by the
+/// trusted host and the Study/source snapshot must remain unchanged.
+#[tauri::command]
+async fn decide_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    approve: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .decide_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                &fingerprint,
+                approve,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Actual sealed host dispatch entrypoint. It delegates to the durable v12
+/// provider fence and genuine OpenAI Responses transport, but is intentionally
+/// unavailable for live egress until pricing and end-to-end certification.
+#[tauri::command]
+async fn execute_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    request_time_api_key: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .execute_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                &fingerprint,
+                &request_time_api_key,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
 /// A read-only plan. Nothing executes before explicit approval.
 #[tauri::command]
 async fn start_local_inspection(
@@ -1514,6 +1601,9 @@ pub fn run() {
             list_study_evidence,
             add_study_evidence,
             review_study_evidence,
+            prepare_provider_consent_sealed,
+            decide_provider_consent_sealed,
+            execute_provider_consent_sealed,
             start_local_inspection,
             list_local_inspections,
             decide_local_inspection,
