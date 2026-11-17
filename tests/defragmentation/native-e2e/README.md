@@ -96,3 +96,5 @@ Exact run 44091975817 built the true NSIS production installer, but the workflow
 The lockfile fingerprint is a standalone, regression-tested `cargo_lock_fingerprint.py`. TOML dictionary key sorting is insufficient: it must normalize `[[package]].dependencies` order, while retaining all identities, versions and checksums. The workflow hashes the full normalized parsed lockfile, not just package count or dependency names.
 
 The Linux workflow runs unit/contract tests with pinned Python **3.12** because Cargo.lock fingerprinting uses stdlib `tomllib`. The real AT-SPI WebKit acceptance still executes `/usr/bin/python3` with `python3-pyatspi`; test interpreter separation never substitutes mocked UI for installed GUI.
+
+Run #44095877399 showed Linux project B remained active after a generic AT-SPI list-item action for A. The option activation now uses the actual option's PID-owned AT-SPI rectangle and X11 pointer event, with exact-name matching and subsequent strict A/B dashboard checks. Windows independently rendered the genuine installed Studio via WebView2 UIA; deeper Windows cases remain NOT TESTED.

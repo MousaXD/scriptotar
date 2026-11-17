@@ -259,11 +259,33 @@ class AxWebKit:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def choose(self, label: str, option: str) -> None:
-        # Captured WebKitGTK 4.1 AT-SPI tree exposes role=option
-        # Svelte buttons as role='list item' under the native popup.
-        # Require an exact accessible option name, never choose by index.
+        """Activate exact-name, PID-owned WebKit option using its AT-SPI bounds.
+
+        Prior AT-SPI list-item action/focus+Return closed the popup without
+        switching B to A (run #44095877399). Use a real pointer click on
+        the accessible option; caller must still prove the new dashboard.
+        """
         self.click(label, "combo")
-        self.click(option, "list item")
+        node = self.find(option, "list item", timeout=5)
+        try:
+            bounds = node.queryComponent().getExtents(
+                getattr(self.atspi, "DESKTOP_COORDS", 0)
+            )
+            if bounds.width < 2 or bounds.height < 2:
+                raise NativeFailure(f"AT-SPI option has no clickable bounds: {option!r}")
+            x = int(bounds.x + bounds.width / 2)
+            y = int(bounds.y + bounds.height / 2)
+            if x < 0 or y < 0:
+                raise NativeFailure(f"Invalid option coordinates for {option!r}: {(x, y)}")
+            command("xdotool", "mousemove", "--sync", str(x), str(y))
+            command("xdotool", "click", "--clearmodifiers", "1")
+            time.sleep(0.8)
+        except NativeFailure:
+            raise
+        except Exception as exc:
+            raise NativeFailure(
+                f"Cannot pointer-activate native AT-SPI option {option!r}: {exc}"
+            ) from exc
 
     def heading(self, text: str, timeout: float = 12) -> None:
         """Require an exact semantic heading in the installed WebKit AT-SPI tree.
@@ -492,9 +514,13 @@ def exercise(args, report: dict, root: Path):
             ):
                 raise NativeFailure("Canonical project database assertion failed")
             ax.choose("PROJECT", name_a)
-            ax.heading(name_a)
+            ax.heading(name_a, timeout=25)
+            ax.find("New project", "button", timeout=4)
+            session.screenshot("project-switch-to-A")
             ax.choose("PROJECT", name_b)
-            ax.heading(name_b)
+            ax.heading(name_b, timeout=25)
+            ax.find("New project", "button", timeout=4)
+            session.screenshot("project-switch-to-B")
             session.screenshot("projects")
             return "Created and activated two real projects, then switched both directions via custom selector"
         if not checked(report, "create_switch_projects", projects):
@@ -550,7 +576,7 @@ def exercise(args, report: dict, root: Path):
             session.stop()
             session.start()
             a = session.ax
-            a.choose("Project", name_a)
+            a.choose("PROJECT", name_a)
             a.click("Studio", "button")
             a.choose("Open study", study)
             text = a.read_text("Script draft")

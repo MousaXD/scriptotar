@@ -3,6 +3,8 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 import cargo_lock_fingerprint as lockproof
 import linux_webkit as native
@@ -91,15 +93,47 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("$lockBefore -ne $lockAfter", workflow)
         self.assertIn("cargo metadata --locked", workflow)
 
-    def test_webkit_option_uses_observed_list_item_role(self):
-        # Contract only: actual installed GUI interaction is a separate gate.
+    def test_webkit_option_uses_exact_native_component_bounds(self):
+        # Contract only: installed GUI result is independently checked.
         calls = []
+        bounds = SimpleNamespace(x=100, y=250, width=120, height=36)
+        node = SimpleNamespace(
+            queryComponent=lambda: SimpleNamespace(getExtents=lambda _kind: bounds)
+        )
         ax = object.__new__(native.AxWebKit)
-        ax.click = lambda name, role=None: calls.append((name, role))
-        ax.choose("PROJECT", "NativeQA-sample-A")
-        self.assertEqual(calls, [
-            ("PROJECT", "combo"), ("NativeQA-sample-A", "list item")
+        ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
+        ax.click = lambda name, role=None: calls.append(("control", name, role))
+        ax.find = lambda name, role=None, timeout=12: (
+            calls.append(("option", name, role)) or node
+        )
+        with mock.patch.object(native, "command",
+                               side_effect=lambda *cmd: calls.append(tuple(cmd))):
+            with mock.patch.object(native.time, "sleep"):
+                ax.choose("PROJECT", "NativeQA-sample-A")
+        self.assertEqual(calls[:2], [
+            ("control", "PROJECT", "combo"),
+            ("option", "NativeQA-sample-A", "list item")
         ])
+        self.assertIn(
+            ("xdotool", "mousemove", "--sync", "160", "268"), calls
+        )
+        self.assertIn(
+            ("xdotool", "click", "--clearmodifiers", "1"), calls
+        )
+
+    def test_webkit_option_rejects_zero_size_bounds(self):
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
+        ax.click = lambda *args: None
+        ax.find = lambda *args, **kwargs: SimpleNamespace(
+            queryComponent=lambda: SimpleNamespace(
+                getExtents=lambda _kind: SimpleNamespace(
+                    x=0, y=0, width=0, height=40
+                )
+            )
+        )
+        with self.assertRaises(native.NativeFailure):
+            ax.choose("PROJECT", "NativeQA-sample-A")
 
     def test_canonical_project_probe_reads_real_sqlite_without_writing(self):
         import sqlite3
