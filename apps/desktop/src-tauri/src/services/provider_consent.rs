@@ -983,9 +983,17 @@ mod tests {
         // Approval hashes the sealed request; a different serialized buffer
         // must be denied *before* reservation, CAS or provider execution.
         transport.corrupt_wire.store(true, Ordering::SeqCst);
-        assert!(services.dispatch_provider_angle_consent_sealed(
-            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
-        ).is_err());
+        assert!(services
+            .dispatch_provider_angle_consent_sealed(
+                &boundary,
+                &intent,
+                &preview,
+                &context,
+                &prices,
+                &transport,
+                "test-only"
+            )
+            .is_err());
         assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
         transport.corrupt_wire.store(false, Ordering::SeqCst);
         let reply = services
