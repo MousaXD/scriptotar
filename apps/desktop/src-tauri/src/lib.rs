@@ -962,13 +962,7 @@ async fn decide_provider_consent_sealed(
     let services = state.inner().clone();
     on_blocking_worker(move || {
         services
-            .decide_openai_provider_consent(
-                project,
-                study,
-                &run_id,
-                &fingerprint,
-                approve,
-            )
+            .decide_openai_provider_consent(project, study, &run_id, &fingerprint, approve)
             .map_err(command_error)
     })
     .await
