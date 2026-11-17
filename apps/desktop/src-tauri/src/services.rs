@@ -859,6 +859,19 @@ impl AppServices {
     }
 }
 
+/// Every in-process research origin mutation must pass the *same* mutex as
+/// ScopeDispatchGuard, including automatic watchlist and manual scans. Never
+/// hold it while yt-dlp or other network collection is running.
+fn with_research_origin_gate<T>(
+    scope_gate: &Arc<Mutex<Uuid>>,
+    mutation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = scope_gate
+        .lock()
+        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+    mutation()
+}
+
 fn scan_and_persist_research(
     store: &SqliteStore,
     command: &YtDlpCommand,
@@ -879,12 +892,7 @@ fn scan_and_persist_research(
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
     let canonical_url = validated.as_url().to_string();
-    let creator = {
-        // This direct SqliteStore writer previously bypassed the same
-        // process-wide guard that protects canonical Study consent snapshots.
-        let _scope_guard = scope_gate
-            .lock()
-            .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+    let creator = with_research_origin_gate(scope_gate, || {
         store
             .upsert_creator(&Creator {
                 id: Uuid::new_v4(),
@@ -894,8 +902,8 @@ fn scan_and_persist_research(
                 display_name: Some(profile_label(validated.as_url())),
                 created_at: now_rfc3339(),
             })
-            .map_err(|error| error.to_string())?
-    };
+            .map_err(|error| error.to_string())
+    })?;
     let provider = YtDlpProvider::new(command.clone())
         .with_cookie_browser(cookie_browser)
         .map_err(|error| error.to_string())?;
@@ -905,17 +913,16 @@ fn scan_and_persist_research(
     // Run network collection with no lock, then serialize the actual research
     // origin mutations with Studio edits, consent revocation and the final
     // pre-send CAS. No SQLite write transaction spans network I/O.
-    let _scope_guard = scope_gate
-        .lock()
-        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
-    let persisted = store
-        .upsert_research_items(&items)
-        .map_err(|error| error.to_string())?;
-    let scanned_at = now_rfc3339();
-    store
-        .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
-        .map_err(|error| error.to_string())?;
-    Ok(persisted.len())
+    with_research_origin_gate(scope_gate, || {
+        let persisted = store
+            .upsert_research_items(&items)
+            .map_err(|error| error.to_string())?;
+        let scanned_at = now_rfc3339();
+        store
+            .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
+            .map_err(|error| error.to_string())?;
+        Ok(persisted.len())
+    })
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
@@ -1698,7 +1705,34 @@ mod tests {
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
 
-    fn prompt_input(task: &str) -> AiPromptInput {
+    #[test]
+    fn background_research_origin_writer_respects_host_authorization_gate() {
+        // The controlled writer performs no network activity; it tests the
+        // shared lock that both creator scans and paid scope guards use.
+        let gate = Arc::new(Mutex::new(Uuid::new_v4()));
+        let held_by_dispatch = gate.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+        let writer_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            with_research_origin_gate(&writer_gate, || {
+                written_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            written_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+    }
+
+        fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
             mode: "byok".to_owned(),
             provider: "OpenAI".to_owned(),
