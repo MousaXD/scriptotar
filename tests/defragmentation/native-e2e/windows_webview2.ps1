@@ -369,10 +369,12 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   if ($index -lt 0 -or $labels.Count -gt 30) {
     throw "Could not establish exact UIA option order for $name; seen=$($labels -join ',')"
   }
-  # The Svelte custom Select moves focus to its listbox after opening and
-  # handles Home/ArrowDown/Enter. Use keyboard events on that real popup,
-  # with the option index grounded in UIA items, never a guessed position.
-  Start-Sleep -Milliseconds 400
+  # Focus the actual native listbox that owns key handlers instead of
+  # guessing which control received focus after a pointer click. This must
+  # remain bound to the installed WebView2 render HWND.
+  $list = Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List) 5
+  $list.SetFocus()
+  Start-Sleep -Milliseconds 200
   [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
   for ($i = 0; $i -lt $index; $i++) {
     [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
@@ -382,6 +384,51 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
 function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
   Choose-InstalledOption $hwnd 'PROJECT' $name
   Wait-InstalledDashboard $hwnd $name
+}
+function Wait-InstalledComboValue([IntPtr]$hwnd, [string]$label, [string]$expected) {
+  # Merely reading the script body cannot prove native candidate switching:
+  # a cloned candidate can have the identical text. Inspect the rendered
+  # selected label INSIDE the actual installed combobox's screen bounds.
+  # A popup option is outside that rectangle and does not count as selected.
+  $textMatch = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty, $expected),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text))
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    try {
+      $combo = Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) 2
+      $bounds = $combo.Current.BoundingRectangle
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $matches = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textMatch)
+      $selected = $false
+      foreach ($text in $matches) {
+        $rect = $text.Current.BoundingRectangle
+        $cx = $rect.X + ($rect.Width / 2)
+        $cy = $rect.Y + ($rect.Height / 2)
+        if ($rect.Width -gt 2 -and $rect.Height -gt 2 -and
+            $cx -ge $bounds.X -and $cx -le ($bounds.X + $bounds.Width) -and
+            $cy -ge $bounds.Y -and $cy -le ($bounds.Y + $bounds.Height)) {
+          $selected = $true
+          break
+        }
+      }
+      # A still-open popup must not count as a completed selection.
+      $listCondition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, $label),
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+          [System.Windows.Automation.ControlType]::List))
+      $stillOpen = [bool]$root.FindFirst(
+        [System.Windows.Automation.TreeScope]::Subtree, $listCondition)
+      if ($selected -and -not $stillOpen) { return }
+    } catch { }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed native combobox '$label' did not select and close on '$expected'"
 }
 function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
   $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
@@ -674,10 +721,12 @@ try {
         Click-InstalledControl $providerHwnd 'Save name' ([System.Windows.Automation.ControlType]::Button)
         # Force two real native candidate switches, not a reselect/no-op.
         Choose-InstalledOption $providerHwnd 'Script candidates' $studyTitle
+        Wait-InstalledComboValue $providerHwnd 'Script candidates' $studyTitle
         if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
           throw 'Switching to original native candidate changed saved draft body'
         }
         Choose-InstalledOption $providerHwnd 'Script candidates' $copyTitle
+        Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle
         if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
           throw 'Renamed native candidate did not preserve duplicated draft body'
         }
@@ -734,6 +783,7 @@ try {
           throw 'Original Study draft was not restored after true installed GUI restart'
         }
         Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle
+        Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle
         if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
           throw 'Renamed draft body was not restored from canonical Study after restart'
         }

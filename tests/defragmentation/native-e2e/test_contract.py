@@ -130,6 +130,20 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('"xdotool", "mousemove", str(x), str(y)', source)
         self.assertNotIn('"mousemove", "--sync"', source)
 
+    def test_windows_candidate_switch_requires_rendered_selected_label(self):
+        # A candidate copy has identical body text. A pass requires the
+        # selected label inside the combobox plus the closed listbox, rather
+        # than accidentally counting a visible popup option as selected.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Wait-InstalledComboValue", script)
+        self.assertIn("ControlType]::Text", script)
+        self.assertIn("$cx -ge $bounds.X", script)
+        self.assertIn("$cy -ge $bounds.Y", script)
+        self.assertIn("if ($selected -and -not $stillOpen) { return }", script)
+        self.assertIn("Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
+        self.assertIn("$list.SetFocus()", script)
+
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
