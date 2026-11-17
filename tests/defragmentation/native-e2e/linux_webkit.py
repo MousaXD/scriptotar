@@ -654,23 +654,41 @@ class Session:
                 # synchronization, then independently observe the active X11
                 # window before sending the real Alt+F4. Never send a key to
                 # an unverified different application.
-                target = titled[0]
-                focus = command("xdotool", "windowactivate", target, check=False)
-                if focus.returncode != 0:
-                    raise NativeFailure(f"Window manager could not request Scriptotar activation {target}")
-                focused = False
-                until = time.monotonic() + 4
-                while time.monotonic() < until:
-                    active = command("xdotool", "getactivewindow", check=False)
-                    if active.returncode == 0 and active.stdout.strip() == target:
-                        focused = True
+                # An installed WebKitGTK process can own more than one visible
+                # titled X11 window. Openbox may keep another process-owned
+                # window active when the first requested XID cannot activate.
+                # Never relax the ownership/name/visibility checks above.
+                focused_target = None
+                last_active = None
+                for target in titled[:8]:
+                    focus = command("xdotool", "windowactivate", target, check=False)
+                    if focus.returncode != 0:
+                        continue
+                    deadline = time.monotonic() + 4
+                    while time.monotonic() < deadline:
+                        active = command("xdotool", "getactivewindow", check=False)
+                        if active.returncode == 0:
+                            last_active = active.stdout.strip()
+                            if last_active in titled:
+                                focused_target = last_active
+                                break
+                        time.sleep(0.2)
+                    if focused_target is not None:
                         break
-                    time.sleep(0.2)
-                if not focused:
+                if focused_target is None:
                     raise NativeFailure(
-                        f"Installed Scriptotar window {target} never became the active "
-                        "native X11 window; refusing Alt+F4"
+                        "No visible PID-owned Scriptotar X11 window became active "
+                        f"(candidates={titled}, last_active={last_active}); refusing Alt+F4"
                     )
+                # Re-check immediately before the global shortcut. A focus
+                # switch to an unrelated application must never receive Alt+F4.
+                active = command("xdotool", "getactivewindow", check=False)
+                if active.returncode != 0 or active.stdout.strip() != focused_target:
+                    raise NativeFailure(
+                        "Native X11 focus changed after Scriptotar activation; "
+                        "refusing Alt+F4"
+                    )
+                target = focused_target
                 key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
                 if key.returncode != 0:
                     raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
