@@ -928,20 +928,45 @@ def exercise(args, report: dict, root: Path):
             return
 
         def arabic():
+            # Separate a genuine Arabic/relaunch failure from an attempted
+            # English restoration. The latter must never mask the former.
             a = session.ax
+            phase = "select_arabic"
+            original_error = None
+            restore_error = None
+            trace = {
+                "steps": [], "source_sha": args.source_sha,
+                "run_url": args.run_url,
+            }
+
+            def reached(step):
+                nonlocal phase
+                phase = step
+                trace["steps"].append(step)
+
             try:
                 a.choose(a.global_locale_control(), "ع")
-                # Require actual translated navigation and the semantic
-                # Arabic page heading on the installed WebKit document.
+                reached("arabic_selected")
+                # Observe actual native translated navigation and page heading.
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
                 session.screenshot("arabic-locale")
+                reached("arabic_studio_observed")
 
-                # An application restart proves the UI locale is not merely
-                # temporary component state. A real GUI Alt+F4 and new PID are
-                # mandatory; the boot gate itself expects Arabic controls.
+                # Real Alt+F4, then a new PID; do not write settings or
+                # replace graphical actions with a process restart shortcut.
+                old_pid = session.proc.pid
+                reached("graphical_arabic_quit")
                 session.stop()
+                reached("arabic_process_exited_graphically")
                 session.start(expected_studio="الاستوديو")
+                trace["old_pid"] = old_pid
+                trace["new_pid"] = session.proc.pid
+                if old_pid == session.proc.pid:
+                    raise NativeFailure(
+                        "Arabic restart reused the previous installed PID"
+                    )
+                reached("arabic_relaunch_native_document")
                 a = session.ax
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
@@ -950,20 +975,50 @@ def exercise(args, report: dict, root: Path):
                         "Arabic persisted-relaunch shell still exposes English Studio navigation"
                     )
                 session.screenshot("arabic-reopened")
+                reached("arabic_heading_after_relaunch")
+            except Exception as exc:
+                original_error = exc
+                trace["original_error"] = f"{type(exc).__name__}: {exc}"
+                trace["failed_phase"] = phase
+                raise
             finally:
-                # The global toolbar is present on Studio in both languages.
-                # Discover its native control beside the project selector;
-                # Settings may not be mounted, and aria-label is not necessarily
-                # translated. This is a GUI action, never a persisted-value edit.
-                a = session.ax
-                if a is None or session.proc is None or session.proc.poll() is not None:
-                    raise NativeFailure(
+                proc = session.proc
+                trace["restore_attempted_with_live_process"] = (
+                    proc is not None and proc.poll() is None
+                )
+                trace["process_pid_at_restore"] = proc.pid if proc else None
+                trace["process_returncode_at_restore"] = (
+                    proc.returncode if proc else None
+                )
+                if proc is None or proc.poll() is not None:
+                    restore_error = NativeFailure(
                         "Installed process unavailable during graphical English restoration"
                     )
-                a.choose(a.global_locale_control(), "EN")
-            # The installed shell AND the Studio component must restore to
-            # English, not just a topbar EN marker. Mixed-locale content is a
-            # product regression, and this scenario must remain FAIL.
+                else:
+                    try:
+                        a = session.ax
+                        a.choose(a.global_locale_control(), "EN")
+                        trace["english_gui_selector_restored"] = True
+                    except Exception as exc:
+                        restore_error = exc
+                if restore_error:
+                    trace["restoration_error"] = (
+                        f"{type(restore_error).__name__}: {restore_error}"
+                    )
+                trace["last_completed_phase"] = phase
+                (root / "arabic-transition.json").write_text(
+                    json.dumps(trace, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                # Preserve the original (often a stopped process or SIGSEGV)
+                # rather than replacing it with a less useful cleanup error.
+                if original_error is None and restore_error is not None:
+                    raise NativeFailure(
+                        "Arabic GUI restoration failed: " + str(restore_error)
+                    ) from restore_error
+
+            # Both native shell and page heading must return to English.
+            reached("verify_english_studio")
             a = session.ax
             a.find("Studio", "button", timeout=8)
             a.heading("Studio", timeout=12)
@@ -972,6 +1027,12 @@ def exercise(args, report: dict, root: Path):
                     "Arabic Studio heading remains mounted after restoring English"
                 )
             session.screenshot("english-restored")
+            trace["english_heading_restored"] = True
+            trace["last_completed_phase"] = "english_heading_verified"
+            (root / "arabic-transition.json").write_text(
+                json.dumps(trace, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
             return (
                 "Real Arabic nav and semantic heading, native graphical relaunch "
                 "with retained Arabic locale, and complete English restoration"
@@ -1100,6 +1161,11 @@ def main() -> int:
                 (root / "process-exit.json").read_bytes()
             )
             report["native_process_exit_evidence"] = "process-exit.json"
+        if (root / "arabic-transition.json").exists():
+            (args.output / "arabic-transition.json").write_bytes(
+                (root / "arabic-transition.json").read_bytes()
+            )
+            report["native_arabic_transition_evidence"] = "arabic-transition.json"
         if (root / "a11y-diagnostics.json").exists():
             (args.output / "a11y-diagnostics.json").write_bytes(
                 (root / "a11y-diagnostics.json").read_bytes()
