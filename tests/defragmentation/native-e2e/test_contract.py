@@ -184,6 +184,31 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledPopupClosed $hwnd $name", script)
         self.assertNotIn("$list.SetFocus()", script)
 
+    def test_webkit_theme_selected_state_is_required_not_click_only(self):
+        # The real Settings selector uses aria-selected; unsupported or
+        # unselected AT-SPI state must never be reported as theme persistence.
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(STATE_SELECTED=42)
+        actions = []
+        ax.click = lambda name, role: actions.append(("click", name, role))
+        ax.available = lambda *_args: False
+        option = SimpleNamespace(getState=lambda: SimpleNamespace(
+            contains=lambda state: state == 42
+        ))
+        ax.find = lambda *_args, **_kwargs: option
+        with mock.patch.object(native, "command", side_effect=lambda *args: actions.append(args)), \
+             mock.patch.object(native.time, "sleep"):
+            ax.assert_selected_option("Theme", "Dark")
+        self.assertIn(("click", "Theme", "combo"), actions)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "Escape"), actions)
+        ax.find = lambda *_args, **_kwargs: SimpleNamespace(
+            getState=lambda: SimpleNamespace(contains=lambda _state: False)
+        )
+        with mock.patch.object(native, "command", return_value=None), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaises(native.NativeFailure):
+                ax.assert_selected_option("Theme", "Dark")
+
     def test_webkit_arabic_restart_is_native_and_english_restore_fail_closed(self):
         # The installed Arabic screenshot in #44118342637 shows real RTL,
         # and the later English shell still retained an Arabic Studio heading.

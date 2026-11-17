@@ -466,6 +466,35 @@ class AxWebKit:
             )
 
 
+    def assert_selected_option(self, label: str, option: str) -> None:
+        """Verify an installed custom Select's actual native selected state.
+
+        A screenshot or a click alone cannot prove persisted theme settings.
+        The Svelte option has aria-selected; require AT-SPI STATE_SELECTED after
+        reopening the real popup, then send Escape as a real user would.
+        """
+        self.click(label, "combo")
+        try:
+            node = self.find(option, "list item", timeout=5)
+            try:
+                selected = node.getState().contains(self.atspi.STATE_SELECTED)
+            except Exception as exc:
+                raise NativeUnavailable(
+                    f"AT-SPI cannot expose selected state for {label!r}/{option!r}: {exc}"
+                ) from exc
+            if not selected:
+                raise NativeFailure(
+                    f"Installed native selector {label!r} does not select {option!r}"
+                )
+        finally:
+            command("xdotool", "key", "--clearmodifiers", "Escape")
+            time.sleep(0.3)
+        if self.available(label, "comment"):
+            raise NativeFailure(
+                f"Installed native selector {label!r} remained expanded after Escape"
+            )
+
+
 class Session:
     def __init__(self, args, root: Path):
         self.args = args
@@ -755,6 +784,34 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "keyboard_custom_controls", keyboard):
             return
 
+        def theme():
+            a = session.ax
+            a.click("Settings", "button")
+            # This build exposes System and Dark; there is no explicit Light
+            # option. System cannot be called Light without observed OS state.
+            a.choose("Theme", "System")
+            a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "System")
+            session.screenshot("system-theme")
+            a.choose("Theme", "Dark")
+            a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "Dark")
+            session.screenshot("dark-theme")
+            session.stop()
+            session.start()
+            a = session.ax
+            a.click("Settings", "button")
+            a.assert_selected_option("Theme", "Dark")
+            session.screenshot("dark-theme-reopened")
+            return (
+                "Real Settings System/Dark selection, saved changes, installed "
+                "graphical restart and restored Theme control; screenshot evidence "
+                "requires independent visual inspection"
+            )
+        # Keep this independent of the Arabic restoration regression: test
+        # theme while the installed shell is still in a known English context.
+        checked(report, "theme_mode_control", theme)
+
         def arabic():
             a = session.ax
             try:
@@ -809,18 +866,6 @@ def exercise(args, report: dict, root: Path):
             )
         if not checked(report, "arabic_locale_control", arabic):
             return
-
-        def theme():
-            a = session.ax
-            a.click("Settings", "button")
-            a.choose("Theme", "System")
-            a.click("Save changes", "button")
-            session.screenshot("system-theme")
-            a.choose("Theme", "Dark")
-            a.click("Save changes", "button")
-            session.screenshot("dark-theme")
-            return "System and dark modes selected and saved by installed GUI (not a visual judgment)"
-        checked(report, "theme_mode_control", theme)
 
         # This run deliberately has no fabricated downloads or media transcripts.
         # The following steps require source fixtures and dedicated adversarial UI inputs.
