@@ -738,7 +738,7 @@ mod tests {
         };
         use scriptotar_ai::provider_consent::{MeteredReply, PriceCeiling, TrustedPricing};
         use scriptotar_core::{StudySourceInput, StudySourceKind};
-        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
         struct ControlledPrices;
         impl TrustedPricing for ControlledPrices {
@@ -750,7 +750,10 @@ mod tests {
                 })
             }
         }
-        struct ControlledTransport(AtomicUsize);
+        struct ControlledTransport {
+            calls: AtomicUsize,
+            corrupt_wire: AtomicBool,
+        }
         impl CertifiedWireTransport for ControlledTransport {
             fn supports_hard_bounds(&self, _config: &ProviderConfig) -> bool {
                 true
@@ -761,8 +764,12 @@ mod tests {
                 request: &scriptotar_ai::AiRequest,
                 max_output_tokens: u64,
             ) -> Result<Vec<u8>, ConsentError> {
-                serde_json::to_vec(&(config, &request.prompt, max_output_tokens))
-                    .map_err(|_| ConsentError::InvalidRequest)
+                let mut bytes = serde_json::to_vec(&(config, &request.prompt, max_output_tokens))
+                    .map_err(|_| ConsentError::InvalidRequest)?;
+                if self.corrupt_wire.load(Ordering::SeqCst) {
+                    bytes.extend_from_slice(b"changed-after-approval");
+                }
+                Ok(bytes)
             }
             fn send_prepared_once(
                 &self,
@@ -775,7 +782,7 @@ mod tests {
                 if bytes.is_empty() {
                     return Err(ConsentError::InvalidRequest);
                 }
-                self.0.fetch_add(1, Ordering::SeqCst);
+                self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(MeteredReply {
                     text: "controlled, no-network output".into(),
                     provider_request_id: "controlled_receipt_1".into(),
@@ -935,7 +942,10 @@ mod tests {
         };
         let boundary = ConsentBoundary::default();
         let prices = ControlledPrices;
-        let transport = ControlledTransport(AtomicUsize::new(0));
+        let transport = ControlledTransport {
+            calls: AtomicUsize::new(0),
+            corrupt_wire: AtomicBool::new(false),
+        };
         let (sealed_intent, preview) = services
             .prepare_provider_angle_consent_sealed(
                 &boundary,
@@ -962,10 +972,18 @@ mod tests {
                 "test-only"
             )
             .is_err());
-        assert_eq!(transport.0.load(Ordering::SeqCst), 0);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
         boundary
             .decide(&run_id, &preview.fingerprint, true, &services, current_ms())
             .unwrap();
+        // Approval hashes the sealed request; a different serialized buffer
+        // must be denied *before* reservation, CAS or provider execution.
+        transport.corrupt_wire.store(true, Ordering::SeqCst);
+        assert!(services.dispatch_provider_angle_consent_sealed(
+            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
+        ).is_err());
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 0);
+        transport.corrupt_wire.store(false, Ordering::SeqCst);
         let reply = services
             .dispatch_provider_angle_consent_sealed(
                 &boundary,
@@ -978,7 +996,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(reply.provider_request_id, "controlled_receipt_1");
-        assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
 
         let effect = services
             .store
@@ -1054,7 +1072,7 @@ mod tests {
                 "test-only"
             )
             .is_err());
-        assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+        assert_eq!(transport.calls.load(Ordering::SeqCst), 1);
         let persisted = services
             .store
             .get_external_effect(ExternalEffectKey {
