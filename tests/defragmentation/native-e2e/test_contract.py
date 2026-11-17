@@ -221,6 +221,24 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("windows-theme-dark-reopened.png", script)
         self.assertIn("$cases.theme_mode_control = @{", script)
 
+    def test_windows_arabic_persisted_relaunch_and_english_restore_fail_closed(self):
+        # Native UIA evidence, not a simulated DOM locale toggle. Studio
+        # main-content heading must follow locale, not just the topbar label.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Find-InstalledDocumentAndStudio([object]$process, [string]$studioName='Studio')", source)
+        self.assertIn("function Wait-InstalledStudioPageText(", source)
+        self.assertIn("if ($cases.theme_mode_control.status -eq 'PASS')", source)
+        self.assertIn("Choose-InstalledOption $themeHwnd 'Interface language' 'ع'", source)
+        self.assertIn("Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'", source)
+        self.assertIn("Find-InstalledDocumentAndStudio $proc 'الاستوديو'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'", source)
+        self.assertIn("Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'Studio'", source)
+        self.assertIn("Arabic Studio text still visibly mounted after English restoration", source)
+        self.assertIn("$cases.arabic_locale_control = @{", source)
+        self.assertIn("windows-arabic-reopened.png", source)
+        self.assertIn("windows-english-restored.png", source)
+
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
         # The real Settings selector uses aria-selected; unsupported or
         # unselected AT-SPI state must never be reported as theme persistence.
