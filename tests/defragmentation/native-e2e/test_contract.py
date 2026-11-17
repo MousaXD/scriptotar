@@ -378,6 +378,27 @@ class NativeEvidenceContractTests(unittest.TestCase):
         )
         proc.terminate.assert_not_called()
 
+        # A SIGSEGV on real Alt+F4 must never be accepted as normal quit.
+        # Preserve the signal for independent installed-run diagnostics.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session.root = Path(temp_dir)
+            session.proc = proc
+            proc.wait.return_value = -11
+            with mock.patch.object(native, "command", side_effect=installed_command):
+                with self.assertRaisesRegex(
+                    native.NativeFailure, "graphical shutdown exited abnormally"
+                ):
+                    session.stop()
+            import json
+            crash = json.loads((Path(temp_dir) / "process-exit.json").read_text())
+            self.assertEqual(crash["pid"], 1234)
+            self.assertEqual(crash["returncode"], -11)
+            self.assertEqual(crash["signal"], "SIGSEGV")
+            self.assertEqual(
+                crash["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+        proc.wait.return_value = 0
+
         session.proc = proc
         seen.clear()
         def unfocused_command(*argv, **_kwargs):
