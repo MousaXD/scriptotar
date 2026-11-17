@@ -1609,6 +1609,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(batches, 1);
+        let receipts = services.list_studio_writing_batches(project, study).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].run_id, "controlled-four-step");
+        assert_eq!(
+            receipts[0].draft_ids,
+            std::array::from_fn(|index| stored[index].to_string())
+        );
+        assert!(services
+            .list_studio_writing_batches(Uuid::new_v4(), study)
+            .is_err());
         for id in stored {
             let versions: i64 = conn
                 .query_row(
@@ -1686,6 +1696,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(recovered, stored);
+        let after_restart = reopened.list_studio_writing_batches(project, study).unwrap();
+        assert_eq!(after_restart.len(), 1);
+        assert_eq!(after_restart[0].draft_ids, receipts[0].draft_ids);
         assert_eq!(no_approval.steps, 0);
         assert_eq!(no_provider.calls, 0);
         let manual = reopened
