@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 $caseNames = @(
-  'installed_webview', 'create_switch_projects', 'create_study',
+  'installed_webview', 'create_switch_projects', 'canonical_project_persistence', 'create_study',
   'edit_save_duplicate_candidate', 'quit_relaunch_persistence',
   'wrong_project_ui_isolation', 'wrong_project_ipc_denial',
   'multi_source_transcript', 'source_revocation', 'error_recovery',
@@ -161,6 +161,15 @@ public static class NativeWebViewWindow {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder buffer, int length);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    public static void NativeClick(int x, int y) {
+        if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position pointer at UIA option");
+        System.Threading.Thread.Sleep(120);
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); // MOUSEEVENTF_LEFTDOWN
+        System.Threading.Thread.Sleep(65);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); // MOUSEEVENTF_LEFTUP
+    }
     public static List<IntPtr> Children(IntPtr parent) {
         var found = new List<IntPtr>();
         EnumChildProc callback = (hwnd, data) => { if (found.Count < 200) found.Add(hwnd); return found.Count < 200; };
@@ -222,6 +231,271 @@ function Find-InstalledDocumentAndStudio([object]$process) {
   return @{ document=$foundDocument; studio=$foundStudio; hwnd=$providerHandle }
 }
 
+# The following helpers operate ONLY on the installed app's trusted WebView2
+# render HWND; they never search another app's desktop UI.
+function Find-ExactInstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [int]$timeoutSec=12) {
+  $scope = [System.Windows.Automation.TreeScope]::Subtree
+  $exact = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+  $condition = if ($kind) {
+    [System.Windows.Automation.AndCondition]::new(
+      $exact,
+      [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $kind))
+  } else { $exact }
+  $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
+  do {
+    try {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $element = $root.FindFirst($scope, $condition)
+      if ($element) { return $element }
+    } catch { }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed WebView2 control missing: $name (role $kind)"
+}
+function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [switch]$pointer) {
+  $element = Find-ExactInstalledControl $hwnd $name $kind
+  if (-not $pointer) {
+    try {
+      $invoke = $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      $invoke.Invoke()
+      Start-Sleep -Milliseconds 550
+      return
+    } catch {
+      # Chrome maps aria-option/list item without a usable InvokePattern.
+      # A native geometry pointer action is required for such controls.
+    }
+  }
+  $point = $element.GetClickablePoint()
+  if ([Double]::IsNaN($point.X) -or [Double]::IsNaN($point.Y)) {
+    throw "Invalid UIA pointer coordinates for installed control $name"
+  }
+  [NativeWebViewWindow]::NativeClick([int][Math]::Round($point.X), [int][Math]::Round($point.Y))
+  Start-Sleep -Milliseconds 650
+}
+function Type-InstalledEdit([IntPtr]$hwnd, [string]$name, [string]$value) {
+  $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  $element.SetFocus()
+  # Keyboard dispatch triggers the real Svelte input listeners. UIA SetValue
+  # alone can replace a DOM value without emitting input events.
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  [System.Windows.Forms.SendKeys]::SendWait($value)
+  Start-Sleep -Milliseconds 650
+  $actual = $element.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+  if ($actual -ne $value) {
+    throw "Installed Edit control '$name' did not receive actual user text"
+  }
+}
+function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
+  # In the captured WebView2 tree the current project is twice exposed as
+  # Text (combobox selected value + actual visible dashboard h1). Requiring
+  # both and the New project button prevents mere chooser options from PASS.
+  $nameCond = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty, $name),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text))
+  $deadline = [DateTime]::UtcNow.AddSeconds(18)
+  do {
+    try {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $items = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $nameCond)
+      if ($items.Count -ge 2) {
+        $newProject = $root.FindFirst([System.Windows.Automation.TreeScope]::Subtree,
+          [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::NameProperty, 'New project'),
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Button)))
+        if ($newProject) { return }
+      }
+    } catch { }
+    Start-Sleep -Milliseconds 400
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed dashboard failed to activate project $name"
+}
+function Find-InstalledPopupOption([IntPtr]$hwnd, [string]$name, [int]$timeoutSec=7) {
+  # A selected Study is also exposed as a normal Text node in "Open study".
+  # Match the REAL open popup's option role, not the first equal-name Text
+  # anywhere in the current installed document.
+  $matchName = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+  $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
+  do {
+    try {
+      $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $matches = $provider.FindAll(
+        [System.Windows.Automation.TreeScope]::Subtree, $matchName)
+      foreach ($element in $matches) {
+        $role = $element.Current.ControlType.ProgrammaticName
+        $rect = $element.Current.BoundingRectangle
+        if ($role -in @('ControlType.ListItem', 'ControlType.Button') -and
+            $rect.Width -gt 2 -and $rect.Height -gt 2) {
+          return $element
+        }
+      }
+    } catch { }
+    Start-Sleep -Milliseconds 250
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed popup option not found with actionable UIA role: $name"
+}
+function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
+  Click-InstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+  $option = Find-InstalledPopupOption $hwnd $name 7
+  $actualRole = $option.Current.ControlType.ProgrammaticName
+  if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
+    throw "Project option has unexpected UIA role $actualRole (expected native list item/button)"
+  }
+  $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  $optionType = if ($actualRole -eq 'ControlType.ListItem') {
+    [System.Windows.Automation.ControlType]::ListItem
+  } else { [System.Windows.Automation.ControlType]::Button }
+  $condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $optionType)
+  $allOptions = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
+  $rect = $option.Current.BoundingRectangle
+  $ordered = @($allOptions | Where-Object {
+    ($_.Current.Name -eq 'Inbox' -or $_.Current.Name -like 'NativeQA-*') -and
+    $_.Current.BoundingRectangle.Width -gt 2 -and
+    $_.Current.BoundingRectangle.Height -gt 2 -and
+    [Math]::Abs($_.Current.BoundingRectangle.X - $rect.X) -lt 20
+  } | Sort-Object { $_.Current.BoundingRectangle.Y })
+  $labels = @($ordered | ForEach-Object { [string]$_.Current.Name })
+  $index = [Array]::IndexOf($labels, $name)
+  if ($index -lt 0 -or $labels.Count -gt 30) {
+    throw "Could not establish exact UIA option order for $name; seen=$($labels -join ',')"
+  }
+  # Focus the ACTUAL popup that owns the matched UIA list-item option.
+  # The installed WebView2 project ComboBox is named 'PROJECT' but its
+  # popup List is named 'Project' (run #44114536688). Their labels are
+  # not required to match: selecting by ComboBox name and guessing the
+  # popup List name caused a false GUI interaction failure.
+  # An ancestor relationship to this exact native option is required.
+  $ancestor = $option
+  $list = $null
+  for ($depth=0; $depth -lt 12; $depth++) {
+    $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+    if (-not $ancestor) { break }
+    if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::List) {
+      $list = $ancestor
+      break
+    }
+  }
+  if (-not $list) {
+    throw "Native WebView2 option '$name' is not owned by an accessible popup List"
+  }
+  $list.SetFocus()
+  Start-Sleep -Milliseconds 200
+  [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
+  for ($i = 0; $i -lt $index; $i++) {
+    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+  }
+  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+}
+function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
+  Choose-InstalledOption $hwnd 'PROJECT' $name
+  Wait-InstalledDashboard $hwnd $name
+}
+function Wait-InstalledComboValue([IntPtr]$hwnd, [string]$label, [string]$expected) {
+  # Merely reading the script body cannot prove native candidate switching:
+  # a cloned candidate can have the identical text. Inspect the rendered
+  # selected label INSIDE the actual installed combobox's screen bounds.
+  # A popup option is outside that rectangle and does not count as selected.
+  $textMatch = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty, $expected),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text))
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    try {
+      $combo = Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) 2
+      $bounds = $combo.Current.BoundingRectangle
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $matches = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textMatch)
+      $selected = $false
+      foreach ($text in $matches) {
+        $rect = $text.Current.BoundingRectangle
+        $cx = $rect.X + ($rect.Width / 2)
+        $cy = $rect.Y + ($rect.Height / 2)
+        if ($rect.Width -gt 2 -and $rect.Height -gt 2 -and
+            $cx -ge $bounds.X -and $cx -le ($bounds.X + $bounds.Width) -and
+            $cy -ge $bounds.Y -and $cy -le ($bounds.Y + $bounds.Height)) {
+          $selected = $true
+          break
+        }
+      }
+      # A still-open popup must not count as a completed selection.
+      $listCondition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, $label),
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+          [System.Windows.Automation.ControlType]::List))
+      $stillOpen = [bool]$root.FindFirst(
+        [System.Windows.Automation.TreeScope]::Subtree, $listCondition)
+      if ($selected -and -not $stillOpen) { return }
+    } catch { }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed native combobox '$label' did not select and close on '$expected'"
+}
+function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
+  $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  return [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+}
+function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
+  # Windows CI has Python 3.12, and this imports only standard library code.
+  # The canonical probe opens installed app SQLite in mode=ro and never
+  # changes user state, shortcuts project selection or fabricates GUI PASS.
+  $qaRoot = (Resolve-Path 'tests/defragmentation/native-e2e').Path
+  $probe = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from linux_webkit import (
+    verify_canonical_projects,
+    verify_canonical_saved_draft,
+    verify_canonical_reopened_candidates,
+)
+kind, root, a, b, c, copy = sys.argv[2:8]
+if kind == "projects":
+    print(verify_canonical_projects(Path(root), (a, b)))
+elif kind == "draft":
+    print(verify_canonical_saved_draft(Path(root), a, b, c))
+elif kind == "candidates":
+    print(verify_canonical_reopened_candidates(Path(root), a, b, c, copy))
+else:
+    raise ValueError("Unsupported canonical installed DB probe")
+'@
+  $result = & python -c $probe $qaRoot $kind $dataDir $first $second $third $fourth 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "Installed canonical SQLite $kind probe failed: $($result | Out-String)"
+  }
+  return [string]($result | Out-String).Trim()
+}
+function Wait-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
+  # The real UI can complete an auto-save shortly after a native key event.
+  # Poll the authoritative SQLite snapshot instead of racing an inaccessible
+  # status label or interpreting a temporarily disabled save button as failure.
+  $lastError = 'Not checked'
+  for ($attempt=0; $attempt -lt 24; $attempt++) {
+    try {
+      return Verify-InstalledCanonicalDb $kind $first $second $third $fourth
+    } catch {
+      $lastError = $_.Exception.Message
+      Start-Sleep -Milliseconds 350
+    }
+  }
+  throw "Installed canonical SQLite $kind never reached the expected state: $lastError"
+}
+
 $testTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
 $installDir = Join-Path $testTemp ('scriptotar-native-' + $SourceSha.Substring(0,8))
 $dataDir = Join-Path $testTemp ('scriptotar-native-data-' + $SourceSha.Substring(0,8))
@@ -243,6 +517,7 @@ try {
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
   Add-Type -AssemblyName System.Drawing
+  Add-Type -AssemblyName System.Windows.Forms
 
   $root = $null
   $probe = $null
@@ -250,6 +525,7 @@ try {
     main_window_seen = $false
     web_document_seen = $false
     studio_control_seen = $false
+    dev_server_error_seen = $false
     poll_count = 0
     source_process_id = $proc.Id
     foreground_requested = $false
@@ -271,7 +547,31 @@ try {
       if (-not $root) { continue }
       $readiness.foreground_requested = [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)
       $probe = Find-InstalledDocumentAndStudio $proc
-      if ($probe.document) { $readiness.web_document_seen = $true }
+      # Exact previously captured installed browser failure uses this app-
+      # owned UIA pane name even if Document does not expose the error text.
+      $networkErrorPane = $root.FindFirst(
+        [System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty,
+          'localhost - Network error - Web content'))
+      if ($networkErrorPane) {
+        $readiness.dev_server_error_seen = $true
+        break
+      }
+      if ($probe.document) {
+        $readiness.web_document_seen = $true
+        # A WebView2 Document can be the built-in browser network-error
+        # document. Fail early instead of polling 90s and misreporting a
+        # missing UIA provider when the installed binary points at devUrl.
+        $connectionRefused = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'ERR_CONNECTION_REFUSED'
+        )
+        if ($probe.document.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree, $connectionRefused)) {
+          $readiness.dev_server_error_seen = $true
+          break
+        }
+      }
       if ($probe.studio) { $readiness.studio_control_seen = $true }
       if ($probe.document -and $probe.studio) { break }
     } catch {
@@ -295,9 +595,32 @@ try {
   if (-not $root) {
     $cases.installed_webview = @{ status='NOT TESTED'; reason='No usable UIA main window for the installed process; see uia-diagnostics.json' }
   } elseif (-not $probe -or -not $probe.document -or -not $probe.studio) {
-    $cases.installed_webview = @{
-      status='NOT TESTED'
-      reason='After 90s, installed shell had no confirmed WebView2 Document + Studio button; nested HWNDs and readiness logged in uia-diagnostics.json/result.json'
+    # When a genuine WebView2 document exposes the dev server error page,
+    # this is a failed installed product/installer, not missing UIA support.
+    $hasDevServerError = $false
+    if ($probe -and $probe.document) {
+      try {
+        $networkError = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'ERR_CONNECTION_REFUSED'
+        )
+        $hasDevServerError = [bool]$probe.document.FindFirst(
+          [System.Windows.Automation.TreeScope]::Subtree, $networkError
+        )
+      } catch {
+        $report['network_error_probe_warning'] = $_.Exception.Message
+      }
+    }
+    if ($readiness.dev_server_error_seen -or $hasDevServerError) {
+      $cases.installed_webview = @{
+        status='FAIL'
+        reason='Installed NSIS binary rendered localhost ERR_CONNECTION_REFUSED instead of embedded Scriptotar UI. Check production Tauri build mode; do not classify the browser error page as app UI.'
+      }
+      $report['browser_network_error'] = 'ERR_CONNECTION_REFUSED'
+    } else {
+      $cases.installed_webview = @{
+        status='NOT TESTED'
+        reason='After 90s, installed shell had no confirmed Scriptotar WebView2 Document + Studio button; inspect child HWNDs, readiness and native screenshot'
+      }
     }
   } else {
     try {
@@ -327,6 +650,180 @@ try {
       }
     } catch {
       $cases.installed_webview = @{ status='FAIL'; reason="Installed GUI action failed: $($_.Exception.Message)" }
+    }
+  }
+  if ($cases.installed_webview.status -eq 'PASS') {
+    $providerHwnd = [IntPtr]$probe.hwnd
+    $tag = 'NativeQA-' + $SourceSha.Substring(0,8)
+    $first = $tag + '-A'
+    $second = $tag + '-B'
+    try {
+      Click-InstalledControl $providerHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+      Wait-InstalledDashboard $providerHwnd 'Inbox'
+      foreach ($name in @($first, $second)) {
+        Click-InstalledControl $providerHwnd 'New project' ([System.Windows.Automation.ControlType]::Button)
+        Type-InstalledEdit $providerHwnd 'Project name' $name
+        Click-InstalledControl $providerHwnd 'Create project' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledDashboard $providerHwnd $name
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir "created-$name.png")
+      }
+      Choose-InstalledProject $providerHwnd $first
+      Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'switched-to-A.png')
+      Choose-InstalledProject $providerHwnd $second
+      Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'switched-to-B.png')
+      $cases.create_switch_projects = @{
+        status='PASS'
+        reason='Two actual installed GUI project creates and A/B switches through project UIA, with visible dashboard checks'
+      }
+    } catch {
+      $cases.create_switch_projects = @{
+        status='FAIL'
+        reason="Installed WebView2 project interaction: $($_.Exception.Message)"
+      }
+      Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'failed-create_switch_projects.png')
+      Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+    }
+    if ($cases.create_switch_projects.status -eq 'PASS') {
+      try {
+        $projectProof = Wait-InstalledCanonicalDb 'projects' $first $second 'unused'
+        $cases.canonical_project_persistence = @{
+          status='PASS'
+          reason=$projectProof
+        }
+      } catch {
+        $cases.canonical_project_persistence = @{
+          status='FAIL'
+          reason="Installed Windows canonical project persistence: $($_.Exception.Message)"
+        }
+      }
+    }
+    if ($cases.create_switch_projects.status -eq 'PASS' -and
+        $cases.canonical_project_persistence.status -eq 'PASS') {
+      try {
+        Choose-InstalledProject $providerHwnd $first
+        Click-InstalledControl $providerHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $providerHwnd 'Study name' ([System.Windows.Automation.ControlType]::Edit) | Out-Null
+        $studyTitle = $tag + '-Study'
+        Type-InstalledEdit $providerHwnd 'Study name' $studyTitle
+        Click-InstalledControl $providerHwnd 'Create study' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'created-study.png')
+        $cases.create_study = @{
+          status='PASS'
+          reason='Study created through installed WebView2 UIA input, button and candidate controls'
+        }
+      } catch {
+        $cases.create_study = @{
+          status='FAIL'
+          reason="Installed WebView2 Study interaction: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'failed-create_study.png')
+        Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
+
+    if ($cases.create_study.status -eq 'PASS') {
+      try {
+        $draftBody = 'Original installed WebView2 user-edit candidate ' + $tag
+        Type-InstalledEdit $providerHwnd 'Script draft' $draftBody
+        $saveButton = Find-ExactInstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+        # The editor also auto-saves after 900ms; avoid failing when native UI
+        # has already saved and disabled the manual button. Database proof is
+        # mandatory in either case.
+        if ($saveButton.Current.IsEnabled) {
+          Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+        }
+        $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        Click-InstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button) | Out-Null
+        Click-InstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button)
+        $copyTitle = $tag + '-copy'
+        Type-InstalledEdit $providerHwnd 'Script candidate name' $copyTitle
+        Click-InstalledControl $providerHwnd 'Save name' ([System.Windows.Automation.ControlType]::Button)
+        # Force two real native candidate switches, not a reselect/no-op.
+        Choose-InstalledOption $providerHwnd 'Script candidates' $studyTitle
+        Wait-InstalledComboValue $providerHwnd 'Script candidates' $studyTitle
+        if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
+          throw 'Switching to original native candidate changed saved draft body'
+        }
+        Choose-InstalledOption $providerHwnd 'Script candidates' $copyTitle
+        Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle
+        if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
+          throw 'Renamed native candidate did not preserve duplicated draft body'
+        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'draft-duplicated-renamed.png')
+        $cases.edit_save_duplicate_candidate = @{
+          status='PASS'
+          reason="Real UIA edit/save, canonical SQLite ($savedProof), duplicate/rename and two candidate-selector switches"
+        }
+      } catch {
+        $cases.edit_save_duplicate_candidate = @{
+          status='FAIL'
+          reason="Installed WebView2 draft/candidate interaction: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'failed-edit_save_duplicate_candidate.png')
+        Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
+
+    if ($cases.edit_save_duplicate_candidate.status -eq 'PASS') {
+      try {
+        # Native Alt+F4 targets only the installed app main HWND; a forced
+        # Stop-Process would not prove graphical shutdown or flush behavior.
+        if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
+          throw 'Cannot focus installed WebView2 window for native Alt+F4'
+        }
+        Start-Sleep -Milliseconds 250
+        [System.Windows.Forms.SendKeys]::SendWait('%{F4}')
+        if (-not $proc.WaitForExit(12000)) {
+          throw 'Installed Windows app did not exit from graphical Alt+F4'
+        }
+        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $probeRestored = $null
+        $deadline = [DateTime]::UtcNow.AddSeconds(45)
+        do {
+          $proc.Refresh()
+          if ($proc.HasExited) { throw 'Installed app exited during native relaunch' }
+          if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+            $probeRestored = Find-InstalledDocumentAndStudio $proc
+            if ($probeRestored.document -and $probeRestored.studio) { break }
+          }
+          Start-Sleep -Milliseconds 550
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not $probeRestored -or -not $probeRestored.document -or -not $probeRestored.studio) {
+          throw 'Relaunched installed WebView2 has no native Document and Studio control'
+        }
+        $restoredHwnd = [IntPtr]$probeRestored.hwnd
+        Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledDashboard $restoredHwnd $first
+        Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+        Find-ExactInstalledControl $restoredHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Original Study draft was not restored after true installed GUI restart'
+        }
+        Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle
+        Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Renamed draft body was not restored from canonical Study after restart'
+        }
+        $restoreProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'reopened-candidate.png')
+        $cases.quit_relaunch_persistence = @{
+          status='PASS'
+          reason="Native installed WebView2 Alt+F4, process relaunch, saved project, original/copy candidate and DB restoration ($restoreProof)"
+        }
+      } catch {
+        $cases.quit_relaunch_persistence = @{
+          status='FAIL'
+          reason="Windows graphical quit/relaunch: $($_.Exception.Message)"
+        }
+        if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-quit_relaunch_persistence.png')
+          Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+        }
+      }
     }
   }
 } catch {
