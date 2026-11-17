@@ -414,38 +414,49 @@ class AxWebKit:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def global_locale_control(self) -> str:
-        """Discover the real top-bar language combo via AT-SPI geometry.
+        """Find the real toolbar language selector by its native options.
 
-        The Arabic shell can retain an English aria-label for this control.
-        Never guess that the localized Settings combobox is mounted on Studio,
-        and never infer success from a bare language badge.
+        Neither PROJECT nor Interface language is guaranteed to retain an
+        English accessible name after switching locale. Inspect only bounded
+        top-bar comboboxes and require both UI options through real AT-SPI.
+        Opening + Escape must not change the selected language or project.
         """
-        project = self.find("PROJECT", "combo")
-        try:
-            project_bounds = project.queryComponent().getExtents(
-                getattr(self.atspi, "DESKTOP_COORDS", 0)
-            )
-        except Exception as exc:
-            raise NativeFailure(f"Cannot locate native project toolbar: {exc}") from exc
-        matches = []
+        candidates = []
         for node in self.nodes():
             try:
-                if node is project or "combo" not in node.getRoleName().lower():
+                if "combo" not in node.getRoleName().lower():
                     continue
-                name = (node.name or "").strip()
-                bounds = node.queryComponent().getExtents(
+                label = (node.name or "").strip()
+                rect = node.queryComponent().getExtents(
                     getattr(self.atspi, "DESKTOP_COORDS", 0)
                 )
-                if (name and name != "PROJECT" and bounds.width >= 15
-                        and bounds.height >= 15
-                        and abs(bounds.y - project_bounds.y) <= 36):
-                    matches.append(name)
+                # Installed Xvfb/Openbox top bar: content controls occur
+                # substantially below y=190. Never infer from text/DOM.
+                if (label and 30 <= rect.y <= 190
+                        and rect.width >= 20 and rect.height >= 15):
+                    candidates.append(label)
             except Exception:
                 continue
+        observed = []
+        matches = []
+        for label in dict.fromkeys(candidates):
+            try:
+                self.click(label, "combo")
+                has_en = self.available("EN", "list item")
+                has_ar = self.available("ع", "list item")
+                observed.append((label, has_en, has_ar))
+                if has_en and has_ar:
+                    matches.append(label)
+            except (NativeFailure, NativeUnavailable) as exc:
+                observed.append((label, type(exc).__name__))
+            finally:
+                # ESC only closes a native popup; it never selects a value.
+                command("xdotool", "key", "--clearmodifiers", "Escape")
+                time.sleep(0.2)
         if len(matches) != 1:
             raise NativeFailure(
-                f"Expected exactly one native toolbar language combo next to "
-                f"project selector; observed {matches!r}"
+                "Expected exactly one native top-bar language combo with both "
+                f"EN/ع options, observed {observed!r}"
             )
         return matches[0]
 
