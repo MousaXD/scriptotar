@@ -4,6 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+import cargo_lock_fingerprint as lockproof
 import linux_webkit as native
 
 
@@ -61,13 +62,32 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ax.nodes = lambda: iter([FakeNode("scroll pane"), FakeNode("document web")])
         self.assertTrue(ax.web_document())
 
+    def test_cargo_fingerprint_ignores_only_dependency_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "Cargo.lock"
+            lock.write_text(
+                'version = 4\n[[package]]\nname = "scriptotar-desktop"\n'
+                'version = "1.4.1"\ndependencies = ["scriptotar-agent", "keyring"]\n'
+            )
+            first = lockproof.semantic_sha256(lock)
+            lock.write_text(
+                'version = 4\n[[package]]\nname = "scriptotar-desktop"\n'
+                'version = "1.4.1"\ndependencies = ["keyring", "scriptotar-agent"]\n'
+            )
+            self.assertEqual(first, lockproof.semantic_sha256(lock))
+            lock.write_text(
+                'version = 4\n[[package]]\nname = "scriptotar-desktop"\n'
+                'version = "1.4.1"\ndependencies = ["keyring", "other-package"]\n'
+            )
+            self.assertNotEqual(first, lockproof.semantic_sha256(lock))
+
     def test_windows_production_build_preserves_semantic_cargo_lock(self):
         # Workflow contract only: does not establish installed Windows UI PASS.
         workflow = (Path(__file__).resolve().parents[3] /
                     ".github/workflows/installed-webview-acceptance.yml").read_text()
         self.assertIn("tauri build --bundles nsis", workflow)
         self.assertNotIn("tauri build --bundles nsis -- --locked", workflow)
-        self.assertIn("tomllib.loads", workflow)
+        self.assertIn("cargo_lock_fingerprint.py", workflow)
         self.assertIn("$lockBefore -ne $lockAfter", workflow)
         self.assertIn("cargo metadata --locked", workflow)
 

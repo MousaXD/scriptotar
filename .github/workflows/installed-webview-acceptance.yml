@@ -218,17 +218,7 @@ jobs:
           # dependency drift signal. This canonical TOML hash remains strict:
           # any real package, source, checksum or dependency change fails.
           $lockPath = (Resolve-Path '../../Cargo.lock').Path
-          $fingerprinter = Join-Path $env:RUNNER_TEMP 'scriptotar_lock_fingerprint.py'
-          @'
-          import hashlib
-          import json
-          import pathlib
-          import sys
-          import tomllib
-          lock = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-          payload = json.dumps(lock, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-          print(hashlib.sha256(payload).hexdigest())
-          '@ | Set-Content -Encoding utf8 $fingerprinter
+          $fingerprinter = (Resolve-Path '../../tests/defragmentation/native-e2e/cargo_lock_fingerprint.py').Path
           cargo metadata --locked --no-deps --format-version 1 | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock is not reproducible' }
           $lockBefore = python $fingerprinter $lockPath
