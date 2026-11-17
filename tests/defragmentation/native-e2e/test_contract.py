@@ -425,13 +425,13 @@ class NativeEvidenceContractTests(unittest.TestCase):
         def run(*argv, **_kwargs):
             calls.append(argv)
             if argv[1] == "search":
-                return SimpleNamespace(returncode=0, stdout="111\\n222\\n")
+                return SimpleNamespace(returncode=0, stdout="111\n222\n")
             if argv[1] == "getwindowname":
                 return SimpleNamespace(returncode=0, stdout="Scriptotar")
             if argv[1] == "windowactivate" and argv[2] == "111":
                 return SimpleNamespace(returncode=1, stdout="")
             if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="222\\n")
+                return SimpleNamespace(returncode=0, stdout="222\n")
             return SimpleNamespace(returncode=0, stdout="")
 
         with mock.patch.object(native, "command", side_effect=run):
@@ -454,17 +454,17 @@ class NativeEvidenceContractTests(unittest.TestCase):
             nonlocal active_calls
             seen.append(argv)
             if argv[1] == "search":
-                return SimpleNamespace(returncode=0, stdout="111\\n")
+                return SimpleNamespace(returncode=0, stdout="111\n")
             if argv[1] == "getwindowname":
                 return SimpleNamespace(returncode=0, stdout="Scriptotar")
             if argv[1] == "getactivewindow":
                 active_calls += 1
                 window = "111" if active_calls == 1 else "999"
-                return SimpleNamespace(returncode=0, stdout=window + "\\n")
+                return SimpleNamespace(returncode=0, stdout=window + "\n")
             return SimpleNamespace(returncode=0, stdout="")
 
         with mock.patch.object(native, "command", side_effect=run):
-            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\\+F4"):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
                 session.stop()
         self.assertGreaterEqual(active_calls, 2)
         self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
