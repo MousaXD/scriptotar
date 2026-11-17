@@ -350,31 +350,10 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
     throw "Project option has unexpected UIA role $actualRole (expected native list item/button)"
   }
-  $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
-  $optionType = if ($actualRole -eq 'ControlType.ListItem') {
-    [System.Windows.Automation.ControlType]::ListItem
-  } else { [System.Windows.Automation.ControlType]::Button }
-  $condition = [System.Windows.Automation.PropertyCondition]::new(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $optionType)
-  $allOptions = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
-  $rect = $option.Current.BoundingRectangle
-  $ordered = @($allOptions | Where-Object {
-    ($_.Current.Name -eq 'Inbox' -or $_.Current.Name -like 'NativeQA-*') -and
-    $_.Current.BoundingRectangle.Width -gt 2 -and
-    $_.Current.BoundingRectangle.Height -gt 2 -and
-    [Math]::Abs($_.Current.BoundingRectangle.X - $rect.X) -lt 20
-  } | Sort-Object { $_.Current.BoundingRectangle.Y })
-  $labels = @($ordered | ForEach-Object { [string]$_.Current.Name })
-  $index = [Array]::IndexOf($labels, $name)
-  if ($index -lt 0 -or $labels.Count -gt 30) {
-    throw "Could not establish exact UIA option order for $name; seen=$($labels -join ',')"
-  }
-  # Focus the ACTUAL popup that owns the matched UIA list-item option.
-  # The installed WebView2 project ComboBox is named 'PROJECT' but its
-  # popup List is named 'Project' (run #44114536688). Their labels are
-  # not required to match: selecting by ComboBox name and guessing the
-  # popup List name caused a false GUI interaction failure.
-  # An ancestor relationship to this exact native option is required.
+  # The installed popup exposes an actual UIA List / ListItem; its List does
+  # NOT support SetFocus on Windows WebView2 (run #44118342637). Use the
+  # accessible option's verified screen rectangle for a real pointer click.
+  # UIA SetValue or a synthetic DOM change would not exercise Svelte input.
   $ancestor = $option
   $list = $null
   for ($depth=0; $depth -lt 12; $depth++) {
@@ -388,13 +367,49 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   if (-not $list) {
     throw "Native WebView2 option '$name' is not owned by an accessible popup List"
   }
-  $list.SetFocus()
-  Start-Sleep -Milliseconds 200
-  [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
-  for ($i = 0; $i -lt $index; $i++) {
-    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+  $rect = $option.Current.BoundingRectangle
+  $listRect = $list.Current.BoundingRectangle
+  if ($rect.Width -le 2 -or $rect.Height -le 2 -or
+      $listRect.Width -le 2 -or $listRect.Height -le 2) {
+    throw "Native WebView2 option '$name' or owner List has no actionable screen rectangle"
   }
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  $cx = $rect.X + ($rect.Width / 2)
+  $cy = $rect.Y + ($rect.Height / 2)
+  if ($cx -lt $listRect.X -or $cx -gt ($listRect.X + $listRect.Width) -or
+      $cy -lt $listRect.Y -or $cy -gt ($listRect.Y + $listRect.Height)) {
+    throw "Native WebView2 option '$name' lies outside its accessible popup List"
+  }
+  [NativeWebViewWindow]::NativeClick([int][Math]::Round($cx), [int][Math]::Round($cy))
+  Wait-InstalledPopupClosed $hwnd $name
+
+}
+function Wait-InstalledPopupClosed([IntPtr]$hwnd, [string]$name) {
+  # This is an independent rendered-state assertion, not a simulated selection.
+  # A still-visible matching popup option must fail even when the previously
+  # selected dashboard already displays the same project name.
+  $deadline = [DateTime]::UtcNow.AddSeconds(10)
+  do {
+    try {
+      $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $match = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+      $matches = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $match)
+      $popupVisible = $false
+      foreach ($element in $matches) {
+        if ($element.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { continue }
+        $rect = $element.Current.BoundingRectangle
+        if ($rect.Width -gt 2 -and $rect.Height -gt 2) {
+          $popupVisible = $true
+          break
+        }
+      }
+      if (-not $popupVisible) { return }
+    } catch {
+      # A disconnected provider cannot count as proof of a closed popup.
+    }
+    Start-Sleep -Milliseconds 300
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed native popup option '$name' remained visible after pointer selection"
 }
 function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
   Choose-InstalledOption $hwnd 'PROJECT' $name
