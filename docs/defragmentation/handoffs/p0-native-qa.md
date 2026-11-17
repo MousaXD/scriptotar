@@ -1,5 +1,18 @@
 # Agent 07 — P0 native installed WebView QA handoff
 
+## 2026-11-18 — label-independent RTL native probe and Linux SIGSEGV forensics (source only)
+
+**QA source:** `1801b91667d1250877269f64db5dc94f4fc32f35`; **NO exact-head installed acceptance run** verified. PR #126 remains DRAFT and release NO-GO. Agent 00 integration is independently advancing, so do not copy integration runs to this QA SHA.
+
+Since the previous handoff at `75cd26e`, the Linux Arabic locale discovery no longer assumes the toolbar project control is accessible as `PROJECT` after localization. It inspects only bounded top-bar native AT-SPI ComboBoxes, opens each via the real UI, requires both actual `EN` and `ع` option nodes on exactly one selector, and closes each dropdown with Escape. Absence or ambiguity remains FAIL. The companion contract test uses Arabic names and a lower-page script-language selector to ensure this is not a fake positional locale choice.
+
+The Linux startup SIGSEGV path now preserves `process-exit.json` including return code, POSIX signal, PID, expected Studio locale, kernel `core_pattern`, RLIMIT_CORE, coredumpctl/gdb availability and optional bounded `coredumpctl info` output. This captures what the runner really exposes; it never retries a crashed process or changes application data. The Unix-only `resource` import is guarded so Windows can still import the shared SQLite verification helpers.
+
+**Known last installed observation:** [#44159845627](https://github.com/MousaXD/scriptotar/actions/runs/44159845627), **integration** `a5aa2430`, remains Linux native SIGSEGV and Windows offscreen persisted candidate ComboBox. These changed QA sources have not been installed-tested. All previously unreached negative/source/three-script gates stay NOT TESTED.
+
+**Required next action:** dispatch `Independent Installed WebView Acceptance` against this QA branch; verify its exact SHA and collect full Linux/Windows artifacts. A source-only contract cannot certify a live WebKitGTK/WebView2, a SIGSEGV root cause or final release.
+
+
 ## 2026-11-18 — integration native evidence and QA-only recovery (NO-GO)
 
 **Latest completed installed run:** [#44159845627](https://github.com/MousaXD/scriptotar/actions/runs/44159845627), **exact integration source** `a5aa2430dec24661a78409bf845964089e4145ea`. Both native jobs **FAIL**. This is NOT a run of the QA recovery commits below.
