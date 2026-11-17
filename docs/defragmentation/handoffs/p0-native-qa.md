@@ -1,5 +1,37 @@
 # Agent 07 — P0 native installed WebView QA handoff
 
+## 2026-11-18 — completed real installed QA run #44176673624 and next targeted recovery
+
+**Exact installed QA source:** `db273940983f29a1a9e55ca46ea1e48ac13c3024`; [real installed native workflow #44176673624](https://github.com/MousaXD/scriptotar/actions/runs/44176673624). General CI and security hygiene **PASS** on this source. Both installed jobs finished with non-green verdicts; this is not an all-green release.
+
+| Actual native case | Windows WebView2 | Linux WebKitGTK |
+|---|---|---|
+| Installed real WebView accessibility | PASS | PASS |
+| GUI projects and switching | PASS | PASS |
+| Canonical project persistence | PASS | PASS |
+| GUI Study created | PASS | PASS |
+| Draft saved, duplicated, renamed, selected | PASS | PASS |
+| Genuine graphical quit/relaunch with immutable candidate proof | PASS | PASS |
+| Wrong-project graphical UI isolation | PASS | PASS |
+| Native custom keyboard Escape | PASS | PASS |
+| Arabic native locale and bilingual restoration | PASS | FAIL — original cause not reported |
+| Native System/Dark settings after restart | PASS | NOT TESTED |
+| Forged cross-project IPC, real source/transcript, revocation, negative recovery, visual RTL, manual Light/Dark inspection | NOT TESTED | NOT TESTED |
+
+**Windows:** 10 PASS / 0 FAIL / 6 NOT TESTED. Its installed process-relaunch and real UIA candidate persistence regression from #44159845627 is now genuinely resolved on QA source. Artifact `14372655287` (`native-webview2-review-db273940...`), `result.json` SHA-256 `756760cef7e6231111c6ae031c2072efb69a86318c95dae4dfacc406c2539c6d`; reopened candidate screenshot SHA-256 `4c7b6f8f09de352ca2a3cacbc2dd24ce19290e0cc2ea9465632df686b1830e76`. NSIS SHA-256 `b77ee402c5e89b8508ce59315bc610c5716db6a89eb2b9f9d04c7c6f0294ccef`; executable `7c1ee07e334a9925e182c6e7d58e2e814cf9c214dfea193bd68cc38e7ddf9225`. A **NOT TESTED** case still prevents installed workflow PASS and release.
+
+**Linux:** 8 PASS / 1 FAIL / 7 NOT TESTED. It reaches a **real Arabic Studio screen** (screenshot `arabic-locale.png` SHA-256 `b3ec24a787e3c98c7526263ae168059ca61c25b7a0f7f1c3c4399ce2da7156ae`). The scenario returns only `NativeFailure: Installed process unavailable during graphical English restoration`. The prior runner's `finally` *overwrites the first failure* after a failed stop/relaunch; this record alone does **NOT establish SIGSEGV** or distinguish xdotool/Alt+F4, installed process failure, or accessibility failure. No `process-exit.json` was present in this run and `desktop.log` was empty. Artifact `14370298806`; `result.json` SHA-256 `c0c7daa2805c434e9882f9d7e48d7849a8d5cc8e9dfca73c4e014355288756fd`. Deb SHA-256 `36de348ebdff397be5c239109c6193159d1ce482fce4de4af02856cad44c445d`; executable `d92b75f0b6aa4b3e80f6c62ad31fc808a2fe4c13c72dfbd16beab71e4ff17de6`.
+
+**Independent integration comparison:** [#44176696340](https://github.com/MousaXD/scriptotar/actions/runs/44176696340), source `c37a09920e4c4e1113817c96abab866d6c6f8062`, reproduces the same Linux Arabic unavailable-process failure (8 PASS). Windows integration reaches the original Study and its visible `Scripts 2` link after project A→B→A, but immediate UIA draft text differs; screenshot `failed-wrong_project_ui_isolation.png` SHA-256 `8eccb03610d7134f35d7431e8a122bc5bf74d48482aeab7354b986b2b272856c`. This is *not proof of data loss*; the QA source passed the same isolation test independently.
+
+**Narrow QA follow-up already pushed:** 
+- Linux: preserve the *first* Arabic stop/relaunch exception instead of masking it in English restoration. Export `arabic-transition.json` with exact phase, PID, original error, restoration outcome, and actual UI actions. Detect and record negative return code during real graphical Alt+F4 as an installed process crash. Do not retry into a false PASS.
+- Windows: follow the real `Scripts 2` workflow hyperlink after A→B→A and wait a bounded 12 seconds for **exact** native `Script draft` ValuePattern text. Recheck authoritative immutable SQLite; neither screenshot nor database-only results constitute GUI PASS.
+- Source-only regression contracts exercise SIGSEGV path and assert exact native UIA read semantics.
+
+**Remaining release gate:** independent **installed** Linux Arabic relaunch/English restoration and Theme; all previously NOT TESTED cases require real fixtures/probes. PR #126 stays DRAFT; Agent 00 owns any actual production process crash. No production files were touched by Agent 07.
+
+
 ## 2026-11-18 — label-independent RTL native probe and Linux SIGSEGV forensics (source only)
 
 **QA source:** `1801b91667d1250877269f64db5dc94f4fc32f35`; **NO exact-head installed acceptance run** verified. PR #126 remains DRAFT and release NO-GO. Agent 00 integration is independently advancing, so do not copy integration runs to this QA SHA.
