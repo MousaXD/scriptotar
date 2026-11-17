@@ -1,3 +1,13 @@
+# Agent 10 — new owner exact SHA `19e798b` source inspection (2026-11-17)
+
+**Updated integration head:** `19e798b54acc429621727e49ff520254db2d8882` (two source commits after the last **completed** security run at `9b249e2`). **Security/release remains NO-GO; paid egress OFF.** [New independent run #44093194240](https://github.com/MousaXD/scriptotar/actions/runs/44093194240) was **QUEUED** at review; [native #44093194425](https://github.com/MousaXD/scriptotar/actions/runs/44093194425) **IN PROGRESS**. The completed 5-PASS/1-FAIL matrix at the preceding SHA is preserved immediately below, not transferred to this new SHA.
+
+Agent 00's new `prepare_provider_angle_consent_sealed` now constructs a preview with the **actual serialized wire SHA-256 included before user approval** via `ConsentBoundary::bind_exact_wire_request`; the policy's `dispatch` verifies `runner.prepared_request_sha256` against the approved sealed digest both before reservation and again under the locked pre-send admission scope. `SealedWireProvider` returns the matching SHA of the immutable buffer and sends those bytes. The controlled host test was updated to exercise sealed preparation and approval. This is a positive source-level correction to the exact-HTTP-bytes approval boundary, but **fresh exact-head CI is not yet certified**.
+
+**Unresolved:** `prepare_provider_angle_consent_sealed` and `dispatch_provider_angle_consent_sealed` remain internal Rust methods, not registered user-reachable Tauri commands; no production HTTP `CertifiedWireTransport`, trusted provider price catalogue or authenticated receipt is registered. The prior audit at `9b249e2` still has a concurrent loser error-variant regression (test `concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner`), and the new independent diagnostic from PR #124 remains to be imported. Real crash/reopen and multi-writer source synchronization are not proven. Do not certify on source review or controlled host unit tests alone.
+
+---
+
 # Agent 10 — COMPLETED exact-head independent CI at `9b249e2`, 2026-11-17
 
 **RELEASE NO-GO: [independent security run #44092349962](https://github.com/MousaXD/scriptotar/actions/runs/44092349962) completed with 5 of 6 jobs PASS, 1 FAIL.** Exact target = Agent 00 #114 `9b249e2ba3dbab17113388039f2e854eafbc686b`, audit checkout `b68711bf7268f62c26fc53c25514fac38430423c` (integrated audit tests). This **supersedes the earlier 46cb36e production-constructor failure**: the new controlled sealed host test **executed and passed**, but no production HTTP/Tauri path was certified.
