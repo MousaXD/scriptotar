@@ -524,8 +524,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
-        # The installed RTL screenshot shows a top-bar locale combo adjacent
-        # to the project chooser, while Studio Settings is not mounted.
+        # Native Arabic accessibility may expose localized project and language
+        # names. Read actual EN/ع options in the top bar, close each popup
+        # with Escape and never select project/script language by position alone.
         class Rect:
             def __init__(self, y):
                 self.y, self.width, self.height = y, 90, 40
@@ -540,19 +541,38 @@ class NativeEvidenceContractTests(unittest.TestCase):
             def queryComponent(self):
                 return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
 
-        project = Node("PROJECT", "combo box", 77)
+        project = Node("المشروع", "combo box", 77)
         locale = Node("لغة الواجهة", "combo box", 81)
         script_language = Node("لغة النص", "combo box", 620)
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
-        ax.find = lambda label, role: project
         ax.nodes = lambda: iter([project, locale, script_language])
-        self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
-        ax.nodes = lambda: iter([project, script_language])
-        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
-            ax.global_locale_control()
+        active = [None]
+        clicked = []
+        def native_click(label, role):
+            self.assertEqual(role, "combo")
+            active[0] = label
+            clicked.append(label)
+        ax.click = native_click
+        ax.available = lambda name, role: (
+            role == "list item" and name in ("EN", "ع")
+            and active[0] == "لغة الواجهة"
+        )
+        with mock.patch.object(native, "command") as commands, \
+             mock.patch.object(native.time, "sleep"):
+            self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+            self.assertEqual(clicked, ["المشروع", "لغة الواجهة"])
+            self.assertEqual(commands.call_count, 2)
+            ax.nodes = lambda: iter([project, script_language])
+            with self.assertRaisesRegex(native.NativeFailure, "both EN/ع"):
+                ax.global_locale_control()
+
         import inspect
+        helper = inspect.getsource(native.AxWebKit.global_locale_control)
         source = inspect.getsource(native.exercise)
+        self.assertNotIn('self.find("PROJECT"', helper)
+        self.assertIn('self.available("EN", "list item")', helper)
+        self.assertIn('self.available("ع", "list item")', helper)
         self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
         self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
         self.assertLess(source.index('def arabic():'), source.index('def theme():'))
