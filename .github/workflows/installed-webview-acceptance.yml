@@ -211,7 +211,16 @@ jobs:
           # package a devUrl binary that tries http://localhost:5173. The
           # installed WebView2 then displays ERR_CONNECTION_REFUSED instead of
           # embedded frontend assets. Let Tauri set the production build mode.
-          tauri build --bundles nsis -- --locked
+          # The npm Tauri CLI rejects trailing '-- --locked'. Validate Cargo's
+          # exact lockfile before and after Tauri's own production release build.
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock is not reproducible' }
+          tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Production NSIS Tauri build failed' }
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock changed during Tauri build' }
+          git -C ../.. diff --exit-code -- Cargo.lock apps/desktop/Cargo.lock
+          if ($LASTEXITCODE -ne 0) { throw 'Release build changed a tracked lockfile' }
       - name: Stage installer and machine evidence
         shell: pwsh
         run: |

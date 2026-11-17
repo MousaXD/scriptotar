@@ -272,6 +272,17 @@ try {
       if (-not $root) { continue }
       $readiness.foreground_requested = [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)
       $probe = Find-InstalledDocumentAndStudio $proc
+      # Exact previously captured installed browser failure uses this app-
+      # owned UIA pane name even if Document does not expose the error text.
+      $networkErrorPane = $root.FindFirst(
+        [System.Windows.Automation.TreeScope]::Subtree,
+        [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty,
+          'localhost - Network error - Web content'))
+      if ($networkErrorPane) {
+        $readiness.dev_server_error_seen = $true
+        break
+      }
       if ($probe.document) {
         $readiness.web_document_seen = $true
         # A WebView2 Document can be the built-in browser network-error

@@ -78,3 +78,9 @@ If the WebView2 provider remains absent, inspect descendant HWND class names and
 ## Evidence authenticity and review
 
 Keep screenshots and exact run artifacts; the JSON is a **machine-generated claim**, not independent human visual approval. A native PASS also requires a matching source commit, installed binary provenance, reviewed screenshots, verified source fixtures, accessibility audit, and release owner signoff. Issue #100 and #116 remain release blockers; Agent 00 owns merging. No release flags are changed here.
+
+## 2026-11-17 evidence-based fixes
+
+The actual installed Linux dashboard renders its h1 as AT-SPI `document frame` and the topbar project selector as `PROJECT`. Match only exact-name semantic heading/document frame roles and also require the real dashboard New project button; a chooser option alone is insufficient. Pending new native-run proof, project persistence and downstream cases are NOT TESTED.
+
+Npm Tauri 2.11.2 rejects `tauri build --bundles nsis -- --locked`. Validate `cargo metadata --locked` before/after the genuine production `tauri build --bundles nsis`, and assert no tracked lockfile diff. Do not return to bare `cargo build --release` + bundle: integrated run 43956319863 showed a localhost error page. Classify the exact app-owned browser error UIA pane as FAIL.

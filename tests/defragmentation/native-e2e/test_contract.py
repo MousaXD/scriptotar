@@ -61,6 +61,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ax.nodes = lambda: iter([FakeNode("scroll pane"), FakeNode("document web")])
         self.assertTrue(ax.web_document())
 
+    def test_webkit_heading_requires_semantic_role_not_arbitrary_button(self):
+        # Exact installed QA AT-SPI tree maps dashboard h1 to document frame.
+        class FakeNode:
+            def __init__(self, name, role):
+                self.name, self.role = name, role
+
+            def getRoleName(self):
+                return self.role
+
+        ax = object.__new__(native.AxWebKit)
+        ax.nodes = lambda: iter([
+            FakeNode("NativeQA-abc-A", "push button"),
+            FakeNode("NativeQA-abc-A", "document frame"),
+        ])
+        ax.heading("NativeQA-abc-A", timeout=0.3)
+        ax.nodes = lambda: iter([FakeNode("NativeQA-abc-A", "push button")])
+        with self.assertRaises(native.NativeFailure):
+            ax.heading("NativeQA-abc-A", timeout=0.01)
+
     def test_document_alone_cannot_satisfy_startup(self):
         import inspect
         source = inspect.getsource(native.Session.start)

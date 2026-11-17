@@ -233,8 +233,35 @@ class AxWebKit:
         self.click(label, "combo")
         self.click(option, "option")
 
-    def heading(self, text: str) -> None:
-        self.find(text, "heading")
+    def heading(self, text: str, timeout: float = 12) -> None:
+        """Require an exact semantic heading in the installed WebKit AT-SPI tree.
+
+        WebKitGTK 4.1 maps actual dashboard h1 to 'document frame'. Never
+        accept a similarly named button or arbitrary static label.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                for node in self.nodes():
+                    try:
+                        if ((node.name or "").strip() == text and
+                                node.getRoleName().lower() in ("heading", "document frame")):
+                            return
+                    except Exception:
+                        continue
+            except NativeUnavailable:
+                pass
+            time.sleep(0.4)
+        raise NativeFailure(
+            f"AT-SPI semantic page heading not found (heading/document frame): {text!r}"
+        )
+
+    def heading_available(self, text: str) -> bool:
+        try:
+            self.heading(text, timeout=1)
+            return True
+        except (NativeFailure, NativeUnavailable):
+            return False
 
     def escape_custom_select(self, label: str) -> None:
         self.click(label, "combo")
@@ -390,7 +417,7 @@ def exercise(args, report: dict, root: Path):
             deadline = time.monotonic() + 45
             initial_mode = None
             while time.monotonic() < deadline:
-                if ax.available("Create your first project", "heading"):
+                if ax.heading_available("Create your first project"):
                     initial_mode = "first_project"
                     break
                 if ax.available("New project", "button"):
@@ -410,7 +437,8 @@ def exercise(args, report: dict, root: Path):
                 # A real dashboard h1 is required. Seeing only an option in
                 # the project chooser would not prove that creation activated it.
                 try:
-                    ax.find(name, "heading", timeout=25)
+                    ax.heading(name, timeout=25)
+                    ax.find("New project", "button", timeout=4)
                 except NativeFailure as exc:
                     screenshot = session.screenshot(f"project-{index + 1}-failure")
                     diagnostics = ax.diagnostics()
@@ -422,13 +450,13 @@ def exercise(args, report: dict, root: Path):
                         encoding="utf-8",
                     )
                     raise NativeFailure(
-                        f"Create project returned to native UI without dashboard heading "
+                        f"Create project did not expose an active dashboard heading and action "
                         f"{name!r}; screenshot={screenshot}, see a11y-diagnostics.json"
                     ) from exc
                 session.screenshot(f"project-{index + 1}-created")
-            ax.choose("Project", name_a)
+            ax.choose("PROJECT", name_a)
             ax.heading(name_a)
-            ax.choose("Project", name_b)
+            ax.choose("PROJECT", name_b)
             ax.heading(name_b)
             session.screenshot("projects")
             return "Created and activated two real projects, then switched both directions via custom selector"
@@ -436,7 +464,7 @@ def exercise(args, report: dict, root: Path):
             return
 
         def new_study():
-            ax.choose("Project", name_a)
+            ax.choose("PROJECT", name_a)
             ax.click("Studio", "button")
             ax.heading("Studio")
             ax.type_into("Study name", study)
@@ -464,12 +492,12 @@ def exercise(args, report: dict, root: Path):
             return
 
         def isolation():
-            ax.choose("Project", name_b)
+            ax.choose("PROJECT", name_b)
             ax.click("Studio", "button")
             ax.heading("Studio")
             if ax.available(study):
                 raise NativeFailure("Foreign project's Study name visible in second project's Studio")
-            ax.choose("Project", name_a)
+            ax.choose("PROJECT", name_a)
             ax.heading("Studio")
             return "Foreign Study absent in second project's native Studio (UI only; not forged IPC)"
         checked(report, "wrong_project_ui_isolation", isolation)
