@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import platform
 import re
-import resource
 import shutil
 import signal
 import sqlite3
@@ -24,6 +23,11 @@ import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
+
+try:
+    import resource  # Unix-only; Windows probe imports shared read-only SQLite helpers.
+except ImportError:
+    resource = None
 
 
 CASES = (
@@ -62,11 +66,14 @@ def native_crash_context(pid: int) -> dict:
         ).strip()
     except (OSError, UnicodeError) as exc:
         details["core_pattern_error"] = type(exc).__name__
-    try:
-        soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
-        details["core_limit_bytes"] = {"soft": soft, "hard": hard}
-    except (OSError, ValueError) as exc:
-        details["core_limit_error"] = type(exc).__name__
+    if resource is not None:
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+            details["core_limit_bytes"] = {"soft": soft, "hard": hard}
+        except (OSError, ValueError) as exc:
+            details["core_limit_error"] = type(exc).__name__
+    else:
+        details["core_limit_error"] = "UnavailableOnThisPlatform"
     coredumpctl = shutil.which("coredumpctl")
     details["coredumpctl_available"] = bool(coredumpctl)
     details["gdb_available"] = bool(shutil.which("gdb"))
