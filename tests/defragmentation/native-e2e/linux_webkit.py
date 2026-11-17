@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import resource
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -45,6 +47,40 @@ def sha256(path: Path) -> str:
 
 def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
+
+
+def native_crash_context(pid: int) -> dict:
+    """Read bounded Linux crash metadata after a real installed-process exit.
+
+    Never retries the app, injects a signal, changes SQLite or turns a
+    crashed installed WebView into PASS. A missing coredump is evidence too.
+    """
+    details = {"pid": pid}
+    try:
+        details["core_pattern"] = Path("/proc/sys/kernel/core_pattern").read_text(
+            encoding="utf-8"
+        ).strip()
+    except (OSError, UnicodeError) as exc:
+        details["core_pattern_error"] = type(exc).__name__
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        details["core_limit_bytes"] = {"soft": soft, "hard": hard}
+    except (OSError, ValueError) as exc:
+        details["core_limit_error"] = type(exc).__name__
+    coredumpctl = shutil.which("coredumpctl")
+    details["coredumpctl_available"] = bool(coredumpctl)
+    details["gdb_available"] = bool(shutil.which("gdb"))
+    if coredumpctl:
+        try:
+            probe = subprocess.run(
+                [coredumpctl, "--no-pager", "info", str(pid)],
+                capture_output=True, text=True, timeout=12, check=False,
+            )
+            details["coredumpctl_returncode"] = probe.returncode
+            details["coredumpctl_tail"] = (probe.stdout + probe.stderr)[-12000:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            details["coredumpctl_error"] = type(exc).__name__
+    return details
 
 
 def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -> str:
@@ -607,6 +643,8 @@ class Session:
                     "signal": signal_name,
                     "startup_expected_studio": expected_studio,
                     "stage": "installed native application startup after launch/relaunch",
+                    "native_crash_context": native_crash_context(self.proc.pid)
+                    if exit_code < 0 else None,
                 }
                 (self.root / "process-exit.json").write_text(
                     json.dumps(crash, indent=2) + "\n", encoding="utf-8"
