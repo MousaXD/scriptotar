@@ -177,85 +177,110 @@ CREATE TRIGGER IF NOT EXISTS external_effects_terminal_guard
 "#)
 }
 
-/// v12: each provider-issued response identity belongs to one durable effect
-/// across BOTH ACK/request and receipt roles. OpenAI Responses IDs can occupy
-/// both columns for the SAME effect; another effect may claim neither role.
-/// Backfill groups that legitimate same-effect overlap before INSERT so a
-/// different effect's historical collision aborts the migration atomically.
+/// v12: bind one provider-issued response ID to one *effect attempt* across both
+/// acknowledgement and receipt roles. The same authenticated response ID may
+/// appear in both columns of a single attempt; no other effect or attempt may
+/// claim that identity. This extends v10 without altering historical migrations.
+///
+/// v11 retry rows lost the previous attempt's provider-request ID when the
+/// current fields were cleared. Since these old identities cannot be recovered
+/// from the v11 attempt-history table, refuse their migration, preserving all
+/// data so a trusted reconciliation tool can be designed separately. No paid
+/// dispatch is permitted through a fabricated or silently migrated tombstone.
 pub(crate) fn migration_provider_identities(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    let legacy_retry: Option<String> = tx.query_row(
+        "SELECT idempotency_key FROM agent_external_effects WHERE attempt > 1 LIMIT 1",
+        [],
+        |row| row.get(0),
+    ).optional()?;
+    if legacy_retry.is_some() {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_CONSTRAINT),
+            Some("v12 migration refused: historical retry has unrecoverable prior provider identity; database unchanged".into()),
+        ));
+    }
     tx.execute_batch(
         r#"
 CREATE TABLE agent_external_provider_identities (
     provider TEXT NOT NULL COLLATE NOCASE CHECK(length(provider) BETWEEN 1 AND 64),
     identity TEXT NOT NULL CHECK(length(identity) BETWEEN 1 AND 128),
     idempotency_key TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
     claimed_at TEXT NOT NULL,
     PRIMARY KEY(provider, identity)
 );
-INSERT INTO agent_external_provider_identities(provider, identity, idempotency_key, claimed_at)
-    SELECT provider, identity, idempotency_key, MAX(claimed_at)
+INSERT INTO agent_external_provider_identities(provider, identity, idempotency_key, attempt, claimed_at)
+    SELECT provider, identity, idempotency_key, attempt, MAX(claimed_at)
     FROM (
-        SELECT provider, provider_request_id AS identity, idempotency_key, updated_at AS claimed_at
+        SELECT provider, provider_request_id AS identity, idempotency_key, attempt,
+               updated_at AS claimed_at
         FROM agent_external_effects WHERE provider_request_id IS NOT NULL
         UNION ALL
-        SELECT provider, receipt_id AS identity, idempotency_key, updated_at AS claimed_at
+        SELECT provider, receipt_id AS identity, idempotency_key, attempt,
+               updated_at AS claimed_at
         FROM agent_external_effects WHERE receipt_id IS NOT NULL
     )
-    GROUP BY provider COLLATE NOCASE, identity, idempotency_key;
+    GROUP BY provider COLLATE NOCASE, identity, idempotency_key, attempt;
 CREATE UNIQUE INDEX idx_external_provider_request_unique
     ON agent_external_effects(provider COLLATE NOCASE, provider_request_id)
     WHERE provider_request_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_external_provider_receipt_unique
     ON agent_external_effects(provider COLLATE NOCASE, receipt_id)
     WHERE receipt_id IS NOT NULL;
--- Keep identity claims even after the effect is deleted or a proven-nonexecution
--- retry clears the attempt's IDs. They are permanent anti-replay tombstones.
+-- The table is an append-only anti-replay tombstone, not an editable cache.
+-- Dropping the owning effect and retrying cannot release an identity claim.
+CREATE TRIGGER external_provider_identity_claims_immutable_update
+    BEFORE UPDATE ON agent_external_provider_identities
+    BEGIN SELECT RAISE(ABORT,'provider identity claim immutable'); END;
+CREATE TRIGGER external_provider_identity_claims_immutable_delete
+    BEFORE DELETE ON agent_external_provider_identities
+    BEGIN SELECT RAISE(ABORT,'provider identity claim immutable'); END;
 CREATE TRIGGER external_provider_identity_on_insert
 AFTER INSERT ON agent_external_effects
 BEGIN
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, claimed_at)
-        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.updated_at
+        (provider, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.provider_request_id IS NOT NULL;
     SELECT CASE WHEN NEW.provider_request_id IS NOT NULL
         AND NOT EXISTS (
             SELECT 1 FROM agent_external_provider_identities
             WHERE provider=NEW.provider AND identity=NEW.provider_request_id
-              AND idempotency_key=NEW.idempotency_key)
+              AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider acknowledgement identity already claimed') END;
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, claimed_at)
-        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.updated_at
+        (provider, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.receipt_id IS NOT NULL;
     SELECT CASE WHEN NEW.receipt_id IS NOT NULL
         AND NOT EXISTS (
             SELECT 1 FROM agent_external_provider_identities
             WHERE provider=NEW.provider AND identity=NEW.receipt_id
-              AND idempotency_key=NEW.idempotency_key)
+              AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider receipt identity already claimed') END;
 END;
 CREATE TRIGGER external_provider_identity_on_update
 AFTER UPDATE OF provider_request_id, receipt_id ON agent_external_effects
 BEGIN
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, claimed_at)
-        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.updated_at
+        (provider, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.provider_request_id IS NOT NULL;
     SELECT CASE WHEN NEW.provider_request_id IS NOT NULL
         AND NOT EXISTS (
             SELECT 1 FROM agent_external_provider_identities
             WHERE provider=NEW.provider AND identity=NEW.provider_request_id
-              AND idempotency_key=NEW.idempotency_key)
+              AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider acknowledgement identity already claimed') END;
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, claimed_at)
-        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.updated_at
+        (provider, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.receipt_id IS NOT NULL;
     SELECT CASE WHEN NEW.receipt_id IS NOT NULL
         AND NOT EXISTS (
             SELECT 1 FROM agent_external_provider_identities
             WHERE provider=NEW.provider AND identity=NEW.receipt_id
-              AND idempotency_key=NEW.idempotency_key)
+              AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider receipt identity already claimed') END;
 END;
 "#,
