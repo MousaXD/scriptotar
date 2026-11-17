@@ -399,6 +399,19 @@ pub struct UiStudioStudy {
     pub archived_drafts: Vec<UiStudioDraftSummary>,
 }
 
+/// Read-only immutable v11 batch receipt metadata. Never expose source
+/// excerpts, raw provider responses, credentials or client-provided provenance.
+/// The three IDs correspond to exactly one canonical atomic insertion.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioWritingBatch {
+    pub run_id: String,
+    pub project_id: String,
+    pub study_id: String,
+    pub draft_ids: [String; 3],
+    pub committed_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiStudioStudySummary {
