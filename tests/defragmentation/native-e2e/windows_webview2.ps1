@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = 'Stop'
 New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
 $caseNames = @(
-  'installed_webview', 'create_switch_projects', 'create_study',
+  'installed_webview', 'create_switch_projects', 'canonical_project_persistence', 'create_study',
   'edit_save_duplicate_candidate', 'quit_relaunch_persistence',
   'wrong_project_ui_isolation', 'wrong_project_ipc_denial',
   'multi_source_transcript', 'source_revocation', 'error_recovery',
@@ -318,8 +318,8 @@ function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
   } while ([DateTime]::UtcNow -lt $deadline)
   throw "Installed dashboard failed to activate project $name"
 }
-function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
-  Click-InstalledControl $hwnd 'PROJECT' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
+  Click-InstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) -pointer
   $option = Find-ExactInstalledControl $hwnd $name $null 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
   if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
@@ -353,7 +353,39 @@ function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
     [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
   }
   [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+}
+function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
+  Choose-InstalledOption $hwnd 'PROJECT' $name
   Wait-InstalledDashboard $hwnd $name
+}
+function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
+  $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  return [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+}
+function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third) {
+  # Windows CI has Python 3.12, and this imports only standard library code.
+  # The canonical probe opens installed app SQLite in mode=ro and never
+  # changes user state, shortcuts project selection or fabricates GUI PASS.
+  $qaRoot = (Resolve-Path 'tests/defragmentation/native-e2e').Path
+  $probe = @'
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from linux_webkit import verify_canonical_projects, verify_canonical_saved_draft
+kind, root, a, b, c = sys.argv[2:7]
+if kind == "projects":
+    print(verify_canonical_projects(Path(root), (a, b)))
+elif kind == "draft":
+    print(verify_canonical_saved_draft(Path(root), a, b, c))
+else:
+    raise ValueError("Unsupported canonical installed DB probe")
+'@
+  $result = & python -c $probe $qaRoot $kind $dataDir $first $second $third 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "Installed canonical SQLite $kind probe failed: $($result | Out-String)"
+  }
+  return [string]($result | Out-String).Trim()
 }
 
 $testTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
@@ -545,10 +577,26 @@ try {
     }
     if ($cases.create_switch_projects.status -eq 'PASS') {
       try {
+        $projectProof = Verify-InstalledCanonicalDb 'projects' $first $second 'unused'
+        $cases.canonical_project_persistence = @{
+          status='PASS'
+          reason=$projectProof
+        }
+      } catch {
+        $cases.canonical_project_persistence = @{
+          status='FAIL'
+          reason="Installed Windows canonical project persistence: $($_.Exception.Message)"
+        }
+      }
+    }
+    if ($cases.create_switch_projects.status -eq 'PASS' -and
+        $cases.canonical_project_persistence.status -eq 'PASS') {
+      try {
         Choose-InstalledProject $providerHwnd $first
         Click-InstalledControl $providerHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $providerHwnd 'Study name' ([System.Windows.Automation.ControlType]::Edit) | Out-Null
-        Type-InstalledEdit $providerHwnd 'Study name' ($tag + '-Study')
+        $studyTitle = $tag + '-Study'
+        Type-InstalledEdit $providerHwnd 'Study name' $studyTitle
         Click-InstalledControl $providerHwnd 'Create study' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
         Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'created-study.png')
@@ -562,6 +610,42 @@ try {
           reason="Installed WebView2 Study interaction: $($_.Exception.Message)"
         }
         Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'failed-create_study.png')
+        Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
+
+    if ($cases.create_study.status -eq 'PASS') {
+      try {
+        $draftBody = 'Original installed WebView2 user-edit candidate ' + $tag
+        Type-InstalledEdit $providerHwnd 'Script draft' $draftBody
+        Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+        $savedProof = Verify-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        Click-InstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button) | Out-Null
+        Click-InstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button)
+        $copyTitle = $tag + '-copy'
+        Type-InstalledEdit $providerHwnd 'Script candidate name' $copyTitle
+        Click-InstalledControl $providerHwnd 'Save name' ([System.Windows.Automation.ControlType]::Button)
+        # Force two real native candidate switches, not a reselect/no-op.
+        Choose-InstalledOption $providerHwnd 'Script candidates' $studyTitle
+        if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
+          throw 'Switching to original native candidate changed saved draft body'
+        }
+        Choose-InstalledOption $providerHwnd 'Script candidates' $copyTitle
+        if ((Read-InstalledEdit $providerHwnd 'Script draft') -ne $draftBody) {
+          throw 'Renamed native candidate did not preserve duplicated draft body'
+        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'draft-duplicated-renamed.png')
+        $cases.edit_save_duplicate_candidate = @{
+          status='PASS'
+          reason="Real UIA edit/save, canonical SQLite ($savedProof), duplicate/rename and two candidate-selector switches"
+        }
+      } catch {
+        $cases.edit_save_duplicate_candidate = @{
+          status='FAIL'
+          reason="Installed WebView2 draft/candidate interaction: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow $root (Join-Path $EvidenceDir 'failed-edit_save_duplicate_candidate.png')
         Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }

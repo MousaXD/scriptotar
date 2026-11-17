@@ -73,6 +73,53 @@ def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -
     return "Two distinct nonarchived real project rows persisted in installed application SQLite"
 
 
+
+def verify_canonical_saved_draft(
+    data_dir: Path, project_name: str, study_name: str, expected_body: str
+) -> str:
+    """Read only canonical Study/draft/version rows after installed GUI save."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing after Study save: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as connection:
+            rows = connection.execute(
+                """
+                SELECT d.id, d.revision, d.body, v.version, v.body
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                  JOIN draft_versions v ON v.draft_id=d.id
+                       AND v.version=(SELECT MAX(latest.version) FROM draft_versions latest
+                                      WHERE latest.draft_id=d.id)
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                """,
+                (project_name, study_name),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Cannot read real persisted Study draft and version: {exc}") from exc
+    if len(rows) != 1:
+        raise NativeFailure(
+            f"Expected one active draft in Study {study_name!r} before duplication; "
+            f"found {len(rows)}"
+        )
+    draft_id, revision, body, saved_version, saved_body = rows[0]
+    try:
+        uuid.UUID(draft_id)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Persisted draft has invalid canonical ID") from exc
+    if revision < 2 or saved_version < 2 or body != expected_body or saved_body != expected_body:
+        raise NativeFailure(
+            "Saved GUI draft did not persist the exact expected body in both canonical "
+            f"creative_drafts and latest immutable draft_versions (revision={revision}, "
+            f"version={saved_version}, expected_len={len(expected_body)}, "
+            f"persisted_len={len(body) if body is not None else None})"
+        )
+    return f"Canonical SQLite stores exact GUI draft body and immutable version {saved_version}"
+
+
 class NativeUnavailable(RuntimeError):
     """Instrumentation missing: NOT TESTED, never PASS."""
 
@@ -277,7 +324,9 @@ class AxWebKit:
             raise NativeFailure(f"Cannot input into field {name!r}: {exc}") from exc
 
     def read_text(self, name: str) -> str:
-        node = self.find(name)
+        # The semantic section heading and textarea can share this name.
+        # Read the editable AT-SPI node, never the similarly named h2.
+        node = self.edit_field(name)
         try:
             return node.queryText().getText(0, -1)
         except Exception as exc:
@@ -566,7 +615,7 @@ def exercise(args, report: dict, root: Path):
         def drafts():
             ax.type_into("Script draft", body)
             ax.click("Save changes", "button")
-            ax.find("Saved in this study")
+            verify_canonical_saved_draft(root / "data", name_a, study, body)
             ax.click("Duplicate current script", "button")
             ax.find("Rename script", "button")
             ax.click("Rename script", "button")

@@ -168,6 +168,74 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(native.NativeFailure):
             ax.edit_field("Study name", timeout=0.01)
 
+
+    def test_real_canonical_saved_draft_body_and_version_are_required(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "scriptotar.sqlite3"
+            with sqlite3.connect(db) as con:
+                con.executescript("""
+                    CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT, archived_at TEXT);
+                    CREATE TABLE content_studies(
+                        id TEXT PRIMARY KEY, project_id TEXT, title TEXT, archived_at TEXT);
+                    CREATE TABLE creative_drafts(
+                        id TEXT PRIMARY KEY, project_id TEXT, study_id TEXT,
+                        revision INTEGER, body TEXT, archived_at TEXT);
+                    CREATE TABLE draft_versions(
+                        id TEXT PRIMARY KEY, draft_id TEXT, version INTEGER, body TEXT);
+                """)
+                con.execute("INSERT INTO projects VALUES ('project-A','QA-A',NULL)")
+                con.execute("INSERT INTO content_studies VALUES ('study-A','project-A','QA-Study',NULL)")
+                con.execute(
+                    "INSERT INTO creative_drafts VALUES (?,?,?,?,?,NULL)",
+                    ("11111111-1111-4111-8111-111111111111", "project-A", "study-A",
+                     2, "Original GUI saved body"),
+                )
+                con.execute(
+                    "INSERT INTO draft_versions VALUES (?,?,?,?)",
+                    ("v1", "11111111-1111-4111-8111-111111111111", 1, ""),
+                )
+                con.execute(
+                    "INSERT INTO draft_versions VALUES (?,?,?,?)",
+                    ("v2", "11111111-1111-4111-8111-111111111111",
+                     2, "Original GUI saved body"),
+                )
+            detail = native.verify_canonical_saved_draft(
+                Path(tmp), "QA-A", "QA-Study", "Original GUI saved body"
+            )
+            self.assertIn("immutable version 2", detail)
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_saved_draft(
+                    Path(tmp), "QA-A", "QA-Study", "Unsaved different body"
+                )
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_saved_draft(
+                    Path(tmp), "Foreign", "QA-Study", "Original GUI saved body"
+                )
+            with sqlite3.connect(db) as con:
+                con.execute(
+                    "UPDATE draft_versions SET body='Different version' WHERE id='v2'"
+                )
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_saved_draft(
+                    Path(tmp), "QA-A", "QA-Study", "Original GUI saved body"
+                )
+
+    def test_webkit_reads_editable_draft_not_same_named_heading(self):
+        class FakeNode:
+            def __init__(self, name, role, content=""):
+                self.name, self.role, self.content = name, role, content
+            def getRoleName(self):
+                return self.role
+            def queryText(self):
+                return SimpleNamespace(getText=lambda _start, _end: self.content)
+
+        heading = FakeNode("Script draft", "document frame", "heading only")
+        editor = FakeNode("Script draft", "embedded", "Persistent script")
+        ax = object.__new__(native.AxWebKit)
+        ax.nodes = lambda: iter([heading, editor])
+        self.assertEqual(ax.read_text("Script draft"), "Persistent script")
+
     def test_webkit_heading_requires_semantic_role_not_arbitrary_button(self):
         # Exact installed QA AT-SPI tree maps dashboard h1 to document frame.
         class FakeNode:
