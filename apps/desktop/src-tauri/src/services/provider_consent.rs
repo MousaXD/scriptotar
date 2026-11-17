@@ -723,7 +723,6 @@ impl AppServices {
     }
 }
 
-
 /// Per-application consent state. Approval is never reconstructed from SQLite or
 /// from a client-supplied fingerprint after a restart. This state has no secrets.
 #[derive(Default)]
@@ -756,8 +755,8 @@ impl AppServices {
     ) -> RepositoryResult<ConsentPreview> {
         Uuid::parse_str(run_id)
             .map_err(|_| RepositoryError::Validation("invalid provider run id".into()))?;
-        let transport = super::provider_openai_wire::HostOpenAiResponsesWire::new()
-            .map_err(consent_error)?;
+        let transport =
+            super::provider_openai_wire::HostOpenAiResponsesWire::new().map_err(consent_error)?;
         let provider = ProviderConfig {
             provider: scriptotar_ai::ProviderKind::OpenAi,
             model,
@@ -796,7 +795,8 @@ impl AppServices {
         fingerprint: &str,
         approve: bool,
     ) -> RepositoryResult<()> {
-        let (intent, preview) = self.lookup_provider_consent(project, study, run_id, fingerprint)?;
+        let (intent, preview) =
+            self.lookup_provider_consent(project, study, run_id, fingerprint)?;
         // No public callback can approve a changed model, scope or sealed hash.
         if intent.scope.project_id != project.to_string()
             || intent.scope.study_id != study.to_string()
@@ -850,7 +850,8 @@ impl AppServices {
         fingerprint: &str,
         request_time_api_key: &str,
     ) -> RepositoryResult<String> {
-        let (intent, preview) = self.lookup_provider_consent(project, study, run_id, fingerprint)?;
+        let (intent, preview) =
+            self.lookup_provider_consent(project, study, run_id, fingerprint)?;
         if !certified_paid_egress_enabled() {
             return Err(RepositoryError::Validation(
                 "Paid provider execution is disabled pending independent certification".into(),
@@ -897,8 +898,8 @@ impl AppServices {
             deadline_ms: preview.expires_at_ms,
             estimate: plan_step.estimate,
         };
-        let transport = super::provider_openai_wire::HostOpenAiResponsesWire::new()
-            .map_err(consent_error)?;
+        let transport =
+            super::provider_openai_wire::HostOpenAiResponsesWire::new().map_err(consent_error)?;
         let reply = self.dispatch_provider_angle_consent_sealed(
             &self.provider_session.boundary,
             &intent,
