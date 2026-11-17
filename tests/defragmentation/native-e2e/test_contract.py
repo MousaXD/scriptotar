@@ -414,6 +414,63 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
         proc.terminate.assert_called()
 
+    def test_linux_graphical_quit_accepts_only_verified_second_pid_window(self):
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.proc = proc
+        calls = []
+
+        def run(*argv, **_kwargs):
+            calls.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="111\\n222\\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "windowactivate" and argv[2] == "111":
+                return SimpleNamespace(returncode=1, stdout="")
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="222\\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=run):
+            session.stop()
+        self.assertIn(("xdotool", "windowactivate", "111"), calls)
+        self.assertIn(("xdotool", "windowactivate", "222"), calls)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), calls)
+        self.assertNotIn(("xdotool", "windowactivate", "--sync", "222"), calls)
+        proc.terminate.assert_not_called()
+
+    def test_linux_graphical_quit_denies_foreign_focus_change_before_alt_f4(self):
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        session.proc = proc
+        seen = []
+        active_calls = 0
+
+        def run(*argv, **_kwargs):
+            nonlocal active_calls
+            seen.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="111\\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "getactivewindow":
+                active_calls += 1
+                window = "111" if active_calls == 1 else "999"
+                return SimpleNamespace(returncode=0, stdout=window + "\\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=run):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\\+F4"):
+                session.stop()
+        self.assertGreaterEqual(active_calls, 2)
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        proc.terminate.assert_called()
+        self.assertIsNone(session.proc)
+
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
