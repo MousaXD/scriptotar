@@ -189,7 +189,7 @@ public static class NativeWebViewWindow {
 }
 '@
 
-function Find-InstalledDocumentAndStudio([object]$process) {
+function Find-InstalledDocumentAndStudio([object]$process, [string]$studioName='Studio') {
   $scope = [System.Windows.Automation.TreeScope]::Descendants
   $docCondition = [System.Windows.Automation.PropertyCondition]::new(
     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
@@ -200,7 +200,7 @@ function Find-InstalledDocumentAndStudio([object]$process) {
       [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
       [System.Windows.Automation.ControlType]::Button),
     [System.Windows.Automation.PropertyCondition]::new(
-      [System.Windows.Automation.AutomationElement]::NameProperty, 'Studio')
+      [System.Windows.Automation.AutomationElement]::NameProperty, $studioName)
   )
   $handles = @($process.MainWindowHandle)
   $handles += @([NativeWebViewWindow]::Children($process.MainWindowHandle) |
@@ -233,6 +233,39 @@ function Find-InstalledDocumentAndStudio([object]$process) {
 
 # The following helpers operate ONLY on the installed app's trusted WebView2
 # render HWND; they never search another app's desktop UI.
+function Wait-InstalledStudioPageText([IntPtr]$hwnd, [string]$expected) {
+  # Chrome WebView2 maps the content h1 as visible Text; the compact nav
+  # exposes its rail control as a Button. Require actual main-document text,
+  # not just a translated rail control or a language-picker label.
+  $matchesName = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty, $expected),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text))
+  $deadline = [DateTime]::UtcNow.AddSeconds(12)
+  do {
+    try {
+      $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      if ($root) {
+        $rootRect = $root.Current.BoundingRectangle
+        $textNodes = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $matchesName)
+        foreach ($element in $textNodes) {
+          $rect = $element.Current.BoundingRectangle
+          if ($rect.Width -gt 20 -and $rect.Height -gt 10 -and
+              $rect.X -gt ($rootRect.X + 80) -and
+              -not $element.Current.IsOffscreen) {
+            return
+          }
+        }
+      }
+    } catch {
+      # Provider disconnected during a route/locale re-render; retry.
+    }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed WebView2 Studio main content text missing: '$expected'"
+}
 function Find-ExactInstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [int]$timeoutSec=12) {
   $scope = [System.Windows.Automation.TreeScope]::Subtree
   $exact = [System.Windows.Automation.PropertyCondition]::new(
@@ -981,6 +1014,79 @@ try {
         }
         if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-theme_mode_control.png')
+          Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+        }
+      }
+    }
+    if ($cases.theme_mode_control.status -eq 'PASS') {
+      try {
+        # Use the installed shell's real language combobox. Switching only a
+        # topbar EN/ع marker without the Studio content heading never passes.
+        Choose-InstalledOption $themeHwnd 'Interface language' 'ع'
+        Wait-InstalledComboValue $themeHwnd 'لغة الواجهة' 'ع'
+        Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-locale.png')
+
+        # Genuinely quit and relaunch with saved Arabic locale. The native
+        # document/rail gate must now seek Arabic rather than English.
+        if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
+          throw 'Cannot activate installed WebView2 window for Arabic persistence restart'
+        }
+        Start-Sleep -Milliseconds 250
+        [System.Windows.Forms.SendKeys]::SendWait('%{F4}')
+        if (-not $proc.WaitForExit(12000)) {
+          throw 'Installed app did not quit through Alt+F4 while Arabic'
+        }
+        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $arabicProbe = $null
+        $arabicDeadline = [DateTime]::UtcNow.AddSeconds(45)
+        do {
+          $proc.Refresh()
+          if ($proc.HasExited) { throw 'Installed app exited during Arabic persisted relaunch' }
+          if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+            $arabicProbe = Find-InstalledDocumentAndStudio $proc 'الاستوديو'
+            if ($arabicProbe.document -and $arabicProbe.studio) { break }
+          }
+          Start-Sleep -Milliseconds 550
+        } while ([DateTime]::UtcNow -lt $arabicDeadline)
+        if (-not $arabicProbe -or -not $arabicProbe.document -or -not $arabicProbe.studio) {
+          throw 'Installed WebView2 did not restore Arabic Studio rail and native Document'
+        }
+        $arabicHwnd = [IntPtr]$arabicProbe.hwnd
+        Click-InstalledControl $arabicHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-reopened.png')
+
+        Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'
+        Wait-InstalledComboValue $arabicHwnd 'Interface language' 'EN'
+        Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'Studio'
+        # The main content must no longer expose a visible Arabic title.
+        $arabicHeading = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, 'الاستوديو')
+        $uiRoot = [System.Windows.Automation.AutomationElement]::FromHandle($arabicHwnd)
+        foreach ($element in $uiRoot.FindAll([System.Windows.Automation.TreeScope]::Subtree, $arabicHeading)) {
+          $rect = $element.Current.BoundingRectangle
+          if ($element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Text -and
+              $rect.Width -gt 20 -and $rect.Height -gt 10 -and
+              -not $element.Current.IsOffscreen) {
+            throw 'Arabic Studio text still visibly mounted after English restoration'
+          }
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-english-restored.png')
+        $cases.arabic_locale_control = @{
+          status='PASS'
+          reason='Installed WebView2 Arabic native Studio, graphical Arabic relaunch, English shell and Studio main content restoration; screenshots do not alone certify full RTL'
+        }
+      } catch {
+        $cases.arabic_locale_control = @{
+          status='FAIL'
+          reason="Windows native Arabic/English installed locale journey: $($_.Exception.Message)"
+        }
+        if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-arabic_locale_control.png')
           Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
         }
       }
