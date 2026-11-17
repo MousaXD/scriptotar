@@ -1472,4 +1472,103 @@ mod tests {
         }).unwrap(), original);
     }
 
+
+    #[test]
+    fn v12_identity_claims_are_immutable_under_raw_sqlite() {
+        let (dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        db.record_external_ack(key, 1, "claimed_forever_12").unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        for attempted_sql in [
+            "DELETE FROM agent_external_provider_identities WHERE identity='claimed_forever_12'",
+            "UPDATE agent_external_provider_identities SET idempotency_key='stolen' WHERE identity='claimed_forever_12'",
+            "UPDATE agent_external_provider_identities SET attempt=3 WHERE identity='claimed_forever_12'",
+        ] {
+            assert!(conn.execute_batch(attempted_sql).is_err(), "v12 tombstone was mutable");
+        }
+        let (owner, attempt): (String, i64) = conn.query_row(
+            "SELECT idempotency_key, attempt FROM agent_external_provider_identities
+             WHERE provider='openai' AND identity='claimed_forever_12'",
+            [], |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(owner, key.idempotency_key);
+        assert_eq!(attempt, 1);
+    }
+
+    #[test]
+    fn v12_same_effect_cannot_reuse_old_ack_as_new_attempt_receipt() {
+        let (_dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        db.record_external_ack(key, 1, "attempt_one_ack_12").unwrap();
+        let proof = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "attempt_one_proof_12",
+            },
+        ).unwrap();
+        let retry = db.prepare_external_retry(key, proof.revision).unwrap();
+        db.mark_external_dispatched(key, retry.revision, 2).unwrap();
+        assert!(db.record_external_ack(key, 2, "attempt_one_ack_12").is_err());
+        assert!(db.reconcile_external_effect(key, 2, ExternalResolution::Completed {
+            provider_request_id: Some("fresh_attempt_two_request_12"),
+            receipt_id: "attempt_one_ack_12",
+            tokens: 35, cost_microusd: 110,
+        }).is_err());
+        let unchanged = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(unchanged.attempt, 2);
+        assert_eq!(unchanged.status, ExternalEffectStatus::Dispatched);
+        assert!(unchanged.provider_request_id.is_none());
+        assert!(unchanged.receipt_id.is_none());
+    }
+
+    #[test]
+    fn v12_legacy_v11_retry_with_lost_ack_fails_upgrade_atomically() {
+        let (dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        db.record_external_ack(key, 1, "legacy_ack_erased_by_retry_12").unwrap();
+        let proof = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "legacy_nonexecution_proof_12",
+            },
+        ).unwrap();
+        let retry = db.prepare_external_retry(key, proof.revision).unwrap();
+        assert_eq!(retry.attempt, 2);
+        assert!(retry.provider_request_id.is_none());
+        let path = dir.path().join("external.sqlite3");
+        drop(db);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "DROP TRIGGER external_provider_identity_on_insert;
+             DROP TRIGGER external_provider_identity_on_update;
+             DROP INDEX idx_external_provider_request_unique;
+             DROP INDEX idx_external_provider_receipt_unique;
+             DROP TABLE agent_external_provider_identities;
+             DELETE FROM schema_migrations WHERE version = 12;
+             PRAGMA user_version = 11;",
+        ).unwrap();
+        drop(conn);
+        assert!(SqliteStore::open(&path).is_err(),
+            "v11 retry with unprovable previous identity must not be dispatchable");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let (attempt, status, ack): (i64, String, Option<String>) = conn.query_row(
+            "SELECT attempt, status, provider_request_id FROM agent_external_effects
+             WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!((attempt, status.as_str(), ack), (2, "reserved", None));
+        let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        assert_eq!(version, 11);
+        let v12_rows: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM schema_migrations WHERE version=12",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(v12_rows, 0);
+    }
+
 }
