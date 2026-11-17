@@ -358,11 +358,11 @@ class NativeEvidenceContractTests(unittest.TestCase):
         def installed_command(*argv, **_kwargs):
             seen.append(argv)
             if argv[1] == "search":
-                return SimpleNamespace(returncode=0, stdout="4196049\\n")
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
             if argv[1] == "getwindowname":
                 return SimpleNamespace(returncode=0, stdout="Scriptotar")
             if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="4196049\\n")
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
             return SimpleNamespace(returncode=0, stdout="")
 
         with mock.patch.object(native, "command", side_effect=installed_command):
@@ -382,11 +382,13 @@ class NativeEvidenceContractTests(unittest.TestCase):
         seen.clear()
         def unfocused_command(*argv, **_kwargs):
             if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="999999\\n")
+                return SimpleNamespace(returncode=0, stdout="999999\n")
             return installed_command(*argv, **_kwargs)
-        with mock.patch.object(native, "command", side_effect=unfocused_command), \\
-             mock.patch.object(native.time, "monotonic", side_effect=[0, 5]):
-            with self.assertRaisesRegex(native.NativeFailure, "refusing Alt\\+F4"):
+        with (
+            mock.patch.object(native, "command", side_effect=unfocused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5]),
+        ):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
                 session.stop()
         self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
         proc.terminate.assert_called()
