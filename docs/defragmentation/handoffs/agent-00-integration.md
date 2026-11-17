@@ -1,5 +1,30 @@
 # Agent 00 integration — Scriptotar defragmentation
 
+## 2026-11-17 recovery addendum — precise Agent 00 checkpoint (DRAFT / NO-GO)
+
+**Repository:** `MousaXD/scriptotar`; branch `integration/scriptotar-defragmentation-agent00-20261113`; integration PR [#114](https://github.com/MousaXD/scriptotar/pull/114). **Reviewed code checkpoint:** `4310a8f0d36c089b55076be22dadfa11539b3532`; subsequent documentation commits will require their own exact-head checks.
+
+### Changes pushed
+
+1. `f950c25bae1ef22d37fd219f983aed4e95bea69f`: replaced exactly two stale uppercase *positive* provider fixtures in `agent_effect_driver.rs` to match the canonical lowercase production guard. Preserve negative alias rejection, one-winner, forged ID, and no-replay tests. Full new SHA CI pending; do not assume green.
+2. `4310a8f0d36c089b55076be22dadfa11539b3532`: merged Agent 02 PR #128 into integration only, exact audited source `23f4e2727dde322c3ab7da8bb2a20f6c88d078bc`. Additive v12 global provider identity/tombstone registry, transaction rollback, same-attempt ACK/receipt reconciliation and conservative legacy retry refusal. Agent 10's dedicated [v12 security job](https://github.com/MousaXD/scriptotar/actions/runs/44135782313) PASS; full combined certification pending.
+3. Created [#129](https://github.com/MousaXD/scriptotar/issues/129) for eight high-severity npm audit dependency findings involving `picomatch@4.0.7` and Vite/Vitest/Svelte transitive tree; no forced/unreviewed dependency upgrade or suppression.
+4. [Agent 07 PR #126](https://github.com/MousaXD/scriptotar/pull/126#issuecomment-6957357271) and [Agent 10 PR #124](https://github.com/MousaXD/scriptotar/pull/124#issuecomment-6957358188) were given exact SHA, evidence and ownership, with independent validation requested. [Agent 00 PR #114 checkpoint](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6957359254) posted.
+
+### Known release gates — report only exact SHA results
+
+| Area | Verified evidence / status | Next action |
+| --- | --- | --- |
+| Rust/CI/MCP | `136c6df` failed because two positive fixtures used forbidden uppercase provider alias; fixture change committed `f950c25`; **new CI pending** | Confirm targeted test, Rust foundation, CI and MCP E2E at current head |
+| v12 provider IDs | Agent 10 dedicated DB v12 tests **PASS** at exact Agent 02 `23f4e272` | Confirm combined migration and independent host tests at current integration |
+| Supply chain | `npm audit --audit-level=high` **FAIL** at `136c6df`, `picomatch@4.0.7` high (eight findings); no confirmed patched upstream as of review | Review upstream fix, lockfile integrity, Svelte/Vite/Vitest compatibility, full audit |
+| Public paid AI | **FAIL / NOT COMPLETE**: private sealed OpenAI controlled transport path exists but no public approved production IPC, trusted live costs, durable user journey | Keep paid execution disabled; implement/certify public authorized path, cancellation/restart/no double-charge, original three-draft public UX |
+| Windows installed native | Real projects/Study/draft edits **PASS** at `136c6df`; `GetClickablePoint()` relaunch **FAIL** | Agent 07 fix UIA native relaunch; repeat real Windows installed acceptance |
+| Linux installed native | English-only source assertion **FAIL** at `136c6df` before installed app run | Agent 07 locale-aware contract then real Linux/Arabic/restart QA |
+| Final release | **NO-GO**: exact-head full workflows and three-script Studio journey unverified | Do not merge main/tag/publish/enable paid without owner approval |
+
+**Main remains untouched. Paid execution stays OFF.** This handoff does not certify future check results.
+
 **Date:** 2026-11-13  
 **Owner:** Agent 00 integration/release gate  
 **Repository:** https://github.com/MousaXD/scriptotar  
