@@ -39,7 +39,6 @@ fn sealed_wire_allows_only_canonical_bytes_before_deadline() {
         ("\"store\":false", "\"store\":true"),
         ("\"tools\":[]", "\"tools\":[\"web_search\"]"),
         ("\"max_output_tokens\":42", "\"max_output_tokens\":43"),
-        ("Canonical Study source context", "Injected or stale source context"),
     ] {
         assert!(expected.contains(old), "expected canonical JSON field absent");
         let altered = expected.replacen(old, replacement, 1);
@@ -54,9 +53,22 @@ fn sealed_wire_allows_only_canonical_bytes_before_deadline() {
                 ),
                 Err(ConsentError::ChangedContext)
             ),
-            "mutated sealed request was not rejected before network admission"
+            "changed fixed wire field was not rejected before network admission: {old}"
         );
     }
+    // The transport accepts arbitrary request.input text IF it is internally
+    // canonical. The higher-level sealed ConsentBoundary MUST compare its
+    // approved SHA-256 before the v10 pre-send CAS. Treating this as a
+    // transport-level prompt authorization check would be a false guarantee.
+    let different_prompt = expected.replacen(
+        "Canonical Study source context", "Another valid but unapproved prompt", 1,
+    );
+    assert!(matches!(
+        transport.send_prepared_once(
+            &config(), "fixture-key-never-sent", different_prompt.as_bytes(), 42, 0,
+        ),
+        Err(ConsentError::Expired)
+    ));
     let mut whitespace_changed = exact.clone();
     whitespace_changed.push(b' ');
     assert!(matches!(
