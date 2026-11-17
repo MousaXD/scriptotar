@@ -1,4 +1,4 @@
-import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
+import type { AiPromptInput, ResearchQuery, ScriptotarApi, ProviderConsentPreview } from './client';
 import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput, StudyWritingBatch } from '../studio/contract';
 import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type {
@@ -89,6 +89,18 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<StudyEvidence>('review_study_evidence', {
         projectId, studyId, evidenceId, expectedCertainty: input.expectedCertainty,
         action: input.action, note: input.note
+      }),
+    prepareProviderConsentSealed: (projectId, studyId, runId, model, maxOutputTokens, limits) =>
+      invoke<ProviderConsentPreview>('prepare_provider_consent_sealed', {
+        projectId, studyId, runId, model, maxOutputTokens, limits
+      }),
+    decideProviderConsentSealed: (projectId, studyId, runId, fingerprint, approve) =>
+      invoke<void>('decide_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, approve
+      }),
+    executeProviderConsentSealed: (projectId, studyId, runId, fingerprint, requestTimeApiKey) =>
+      invoke<string>('execute_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, requestTimeApiKey
       }),
     startLocalInspection: (projectId, studyId, transcriptId) =>
       invoke<LocalInspectionRun>('start_local_inspection', { projectId, studyId, transcriptId }),

@@ -38,6 +38,33 @@ export interface AiPromptInput {
   apiKey?: string;
 }
 
+/** Host-authored request ceiling; all numbers use nonnegative integer units. */
+export interface ProviderRunBudget {
+  max_tokens: number;
+  max_tool_calls: number;
+  max_elapsed_ms: number;
+  max_cost_microusd: number;
+}
+
+/** This preview is informational only; approval is blocked until trusted pricing exists. */
+export interface ProviderConsentPreview {
+  run_id: string;
+  fingerprint: string;
+  provider: string;
+  model: string;
+  destination: string;
+  prompt: string;
+  selected_source_ids: string[];
+  estimated_input_tokens: number;
+  reserved_input_tokens: number;
+  max_output_tokens: number;
+  max_total_tokens: number;
+  worst_case_cost_microusd: number | null;
+  limits: ProviderRunBudget;
+  expires_at_ms: number;
+  egress_disclosure: string;
+}
+
 export interface ScriptotarApi {
   backendHealth(): Promise<{schema_version: number}>;
   bootstrap(): Promise<BootstrapData>;
@@ -69,6 +96,12 @@ export interface ScriptotarApi {
   listStudyEvidence(projectId: string, studyId: string): Promise<StudyEvidence[]>;
   addStudyEvidence(projectId: string, studyId: string, input: StudyEvidenceInput): Promise<StudyEvidence>;
   reviewStudyEvidence(projectId: string, studyId: string, evidenceId: string, input: StudyEvidenceReviewInput): Promise<StudyEvidence>;
+  prepareProviderConsentSealed(projectId: string, studyId: string, runId: string,
+    model: string, maxOutputTokens: number, limits: ProviderRunBudget): Promise<ProviderConsentPreview>;
+  decideProviderConsentSealed(projectId: string, studyId: string, runId: string,
+    fingerprint: string, approve: boolean): Promise<void>;
+  executeProviderConsentSealed(projectId: string, studyId: string, runId: string,
+    fingerprint: string, requestTimeApiKey: string): Promise<string>;
   startLocalInspection(projectId: string, studyId: string, transcriptId: string): Promise<LocalInspectionRun>;
   listLocalInspections(projectId: string, studyId: string): Promise<LocalInspectionRun[]>;
   decideLocalInspection(projectId: string, studyId: string, runId: string, action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<LocalInspectionRun>;
