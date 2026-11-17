@@ -523,6 +523,28 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('ax.read_text("Script draft") != body', source)
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
+    def test_linux_sigsegv_forensics_keep_native_failure_and_no_db_writes(self):
+        # An exit code -11 must preserve core/journal availability and remain
+        # FAIL; coredumpctl is optional on GitHub's actual hosted runner.
+        import inspect
+        probe = inspect.getsource(native.native_crash_context)
+        start = inspect.getsource(native.Session.start)
+        main = inspect.getsource(native.main)
+        self.assertIn("resource.RLIMIT_CORE", probe)
+        self.assertIn('shutil.which("coredumpctl")', probe)
+        self.assertIn('["coredumpctl_tail"]', probe)
+        self.assertIn('signal.Signals(-exit_code)', start)
+        self.assertIn('native_crash_context(self.proc.pid)', start)
+        self.assertIn('raise NativeFailure(', start)
+        self.assertIn('root / "process-exit.json"', main)
+        self.assertNotIn("UPDATE creative_drafts", probe)
+        self.assertNotIn("INSERT INTO", probe)
+        with mock.patch.object(native.shutil, "which", return_value=None):
+            details = native.native_crash_context(1234)
+        self.assertEqual(details["pid"], 1234)
+        self.assertFalse(details["coredumpctl_available"])
+        self.assertFalse(details["gdb_available"])
+
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
         # Native Arabic accessibility may expose localized project and language
         # names. Read actual EN/ع options in the top bar, close each popup
