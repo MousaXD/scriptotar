@@ -27,6 +27,8 @@ jobs:
         include:
           - { gate: provider, pr: 118 }
           - { gate: migration, pr: 119 }
+          # Verify proposed v12 receipt repair against the entire independent red suite.
+          - { gate: receipt-v12, pr: 128 }
           - { gate: writing, pr: 121 }
           - { gate: verification, pr: 117 }
           # Integrated v11 checks should execute even while paid egress is disabled.
