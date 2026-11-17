@@ -919,6 +919,104 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn public_provider_preview_is_sealed_but_cannot_approve_or_send_without_trusted_pricing() {
+        use scriptotar_core::{StudySourceInput, StudySourceKind};
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "No billable preview".into(),
+                    goal: "Compare three creative directions".into(),
+                    audience: "Creators".into(),
+                    platform: "Reels".into(),
+                    language: "English".into(),
+                    style: "Clear".into(),
+                    duration: "30".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        services
+            .store
+            .add_study_source(
+                project,
+                study_id,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("Authoritative local fixture".into()),
+                    manual_text: Some("Source-grounded factual notes".into()),
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        let run_id = Uuid::new_v4().to_string();
+        let preview = services
+            .preview_openai_provider_consent(
+                project,
+                study_id,
+                &run_id,
+                "gpt-4o-mini".into(),
+                128,
+                RunBudget {
+                    max_tokens: 50_000,
+                    max_tool_calls: 1,
+                    max_elapsed_ms: 30_000,
+                    max_cost_microusd: 20_000,
+                },
+            )
+            .unwrap();
+        assert_eq!(preview.run_id, run_id);
+        assert_eq!(preview.fingerprint.len(), 64);
+        assert!(preview.prompt.contains("Source-grounded factual notes"));
+        assert_eq!(preview.worst_case_cost_microusd, None);
+        assert!(services
+            .decide_openai_provider_consent(
+                project,
+                study_id,
+                &run_id,
+                &preview.fingerprint,
+                true,
+            )
+            .is_err());
+        assert!(services
+            .execute_openai_provider_consent(
+                project,
+                study_id,
+                &run_id,
+                &preview.fingerprint,
+                "fake-test-key",
+            )
+            .is_err());
+        assert!(services
+            .decide_openai_provider_consent(
+                Uuid::new_v4(),
+                study_id,
+                &run_id,
+                &preview.fingerprint,
+                false,
+            )
+            .is_err());
+        drop(services);
+        let restarted = AppServices::new(directory.path()).unwrap();
+        assert!(restarted
+            .execute_openai_provider_consent(
+                project,
+                study_id,
+                &run_id,
+                &preview.fingerprint,
+                "fake-test-key",
+            )
+            .is_err());
+        // No live egress, no persisted credentials or resurrected approval.
+    }
+
+    #[test]
     fn production_openai_wire_can_only_prepare_bounded_sealed_bytes_without_egress() {
         use scriptotar_ai::{provider_openai_wire::OpenAiResponsesWire, AiRequest, ProviderKind};
 
