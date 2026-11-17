@@ -666,6 +666,263 @@ mod tests {
         ));
     }
 
+    /// Executes actual AppServices -> ConsentBoundary -> v10 reservation/CAS
+    /// -> controlled presealed transport -> bounded receipt. This is a real
+    /// host path test, not a policy-only or structural smoke test.
+    #[test]
+    fn sealed_host_dispatch_reaches_v10_once_and_never_replays() {
+        use scriptotar_agent::{
+            AuditKind, CheckpointStore, Estimate, ExecutionContext, Limits, Plan, RunSnapshot,
+            RunState, StepInput, StepPlan, StepRecord, StepState, Usage,
+        };
+        use scriptotar_ai::provider_consent::{
+            MeteredReply, PriceCeiling, TrustedPricing,
+        };
+        use scriptotar_core::{StudySourceInput, StudySourceKind};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct ControlledPrices;
+        impl TrustedPricing for ControlledPrices {
+            fn ceiling(&self, _config: &ProviderConfig) -> Option<PriceCeiling> {
+                Some(PriceCeiling {
+                    input_microusd_per_million: 1_000,
+                    output_microusd_per_million: 1_000,
+                    catalog_revision: "controlled-v1".into(),
+                })
+            }
+        }
+        struct ControlledTransport(AtomicUsize);
+        impl CertifiedWireTransport for ControlledTransport {
+            fn supports_hard_bounds(&self, _config: &ProviderConfig) -> bool {
+                true
+            }
+            fn serialize_exact_request(
+                &self,
+                config: &ProviderConfig,
+                request: &scriptotar_ai::AiRequest,
+                max_output_tokens: u64,
+            ) -> Result<Vec<u8>, ConsentError> {
+                serde_json::to_vec(&(config, &request.prompt, max_output_tokens))
+                    .map_err(|_| ConsentError::InvalidRequest)
+            }
+            fn send_prepared_once(
+                &self,
+                _config: &ProviderConfig,
+                _api_key: &str,
+                bytes: &[u8],
+                _max_output_tokens: u64,
+                _deadline_ms: u64,
+            ) -> Result<MeteredReply, ConsentError> {
+                if bytes.is_empty() {
+                    return Err(ConsentError::InvalidRequest);
+                }
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(MeteredReply {
+                    text: "controlled, no-network output".into(),
+                    provider_request_id: "controlled_receipt_1".into(),
+                    usage: ActualUsage {
+                        input_tokens: 10,
+                        output_tokens: 6,
+                        tool_calls: 1,
+                        elapsed_ms: 5,
+                        cost_microusd: 0,
+                    },
+                })
+            }
+            fn authenticates_receipt(
+                &self,
+                _config: &ProviderConfig,
+                reply: &MeteredReply,
+            ) -> bool {
+                reply.provider_request_id == "controlled_receipt_1"
+            }
+        }
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "Controlled host admission".into(),
+                    goal: "Prepare three original scripts".into(),
+                    audience: "Creators".into(),
+                    platform: "Reels".into(),
+                    language: "English".into(),
+                    style: "Clear".into(),
+                    duration: "30".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        services.store.add_study_source(
+            project,
+            study_id,
+            &StudySourceInput {
+                kind: StudySourceKind::Manual,
+                reference_id: None,
+                locator: Some("Controlled fixture".into()),
+                manual_text: Some("One original creative observation".into()),
+                source_revision: None,
+                uncertainty: None,
+            },
+        ).unwrap();
+        let scope = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        assert_eq!(scope.selected_source_ids.len(), 1);
+        let prompt = services.prepare_studio_angle_prompt(project, study_id).unwrap().prompt;
+        let run_id = Uuid::new_v4().to_string();
+        let estimate = Estimate {
+            tokens: 50_000,
+            cost_microusd: 20_000,
+            max_output_bytes: 1024,
+            cpu_ms: 1,
+            peak_memory_mib: 1,
+        };
+        let plan = Plan {
+            id: run_id.clone(),
+            project_id: project.to_string(),
+            study_id: study_id.to_string(),
+            steps: vec![StepPlan {
+                id: "draft".into(),
+                input: StepInput::DraftScript {
+                    brief_id: study_id.to_string(),
+                },
+                estimate,
+                max_attempts: 1,
+                requires_approval: true,
+            }],
+            limits: Limits {
+                max_tool_calls: 1,
+                max_tokens: 50_000,
+                max_cost_microusd: 20_000,
+                max_elapsed_ms: 30_000,
+                max_output_bytes: 1024,
+                max_cpu_ms: 100,
+                max_peak_memory_mib: 4,
+            },
+        };
+        let idem = format!("{run_id}:0:draft");
+        let mut checkpoint = RunSnapshot {
+            schema_version: 1,
+            plan,
+            revision: 0,
+            state: RunState::Planned,
+            current_step: 0,
+            steps: vec![StepRecord {
+                id: "draft".into(),
+                state: StepState::Pending,
+                attempts: 0,
+                approved: false,
+                idempotency_key: idem.clone(),
+                pending_effect_id: None,
+                output: None,
+                failure_code: None,
+            }],
+            usage: Usage::default(),
+            started_ms: current_ms(),
+            cancel_requested: false,
+            pause_requested: false,
+            events: Vec::new(),
+        };
+        checkpoint.event(current_ms(), AuditKind::Created);
+        let checkpoints = services.store.scoped_agent_checkpoints(project, study_id).unwrap();
+        checkpoints.create(checkpoint.clone()).unwrap();
+        checkpoint.revision = 1;
+        checkpoint.state = RunState::Running;
+        checkpoint.steps[0].state = StepState::Running;
+        checkpoint.steps[0].attempts = 1;
+        checkpoint.steps[0].approved = true;
+        checkpoint.usage.tool_calls = 1;
+        checkpoint.event(current_ms(), AuditKind::Dispatched);
+        checkpoints.compare_and_swap(0, checkpoint).unwrap();
+
+        let context = ExecutionContext {
+            run_id: run_id.clone(),
+            project_id: project.to_string(),
+            study_id: study_id.to_string(),
+            step_id: "draft".into(),
+            idempotency_key: idem.clone(),
+            deadline_ms: current_ms() + 30_000,
+            estimate,
+        };
+        let intent = ProviderIntent {
+            run_id: run_id.clone(),
+            scope,
+            provider: ProviderConfig {
+                provider: scriptotar_ai::ProviderKind::OpenAi,
+                model: "gpt-4o-mini".into(),
+                base_url: None,
+            },
+            prompt,
+            max_output_tokens: 64,
+            limits: RunBudget {
+                max_tokens: 50_000,
+                max_tool_calls: 1,
+                max_elapsed_ms: 30_000,
+                max_cost_microusd: 20_000,
+            },
+        };
+        let boundary = ConsentBoundary::default();
+        let prices = ControlledPrices;
+        let transport = ControlledTransport(AtomicUsize::new(0));
+        let preview = boundary
+            .prepare(intent.clone(), &services, &prices, current_ms())
+            .unwrap();
+        assert!(preview.worst_case_cost_microusd.is_some());
+        assert!(services.dispatch_provider_angle_consent_sealed(
+            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
+        ).is_err());
+        assert_eq!(transport.0.load(Ordering::SeqCst), 0);
+        boundary.decide(&run_id, &preview.fingerprint, true, &services, current_ms()).unwrap();
+        let reply = services.dispatch_provider_angle_consent_sealed(
+            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
+        ).unwrap();
+        assert_eq!(reply.provider_request_id, "controlled_receipt_1");
+        assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+
+        let effect = services.store.get_external_effect(ExternalEffectKey {
+            project,
+            study: study_id,
+            run_id: &run_id,
+            step_id: "draft",
+            idempotency_key: &idem,
+        }).unwrap().unwrap();
+        let exact_bytes = transport.serialize_exact_request(
+            &intent.provider,
+            &scriptotar_ai::AiRequest { prompt: intent.prompt.clone() },
+            intent.max_output_tokens,
+        ).unwrap();
+        assert_eq!(effect.fingerprint, sha256_hex(&exact_bytes));
+        assert_eq!(effect.status, ExternalEffectStatus::Completed);
+        assert_eq!(effect.attempt, 1);
+        assert_eq!(effect.provider_request_id.as_deref(), Some("controlled_receipt_1"));
+        assert!(services.dispatch_provider_angle_consent_sealed(
+            &boundary, &intent, &preview, &context, &prices, &transport, "test-only"
+        ).is_err());
+        // A fresh in-memory approval must not replay a completed durable claim.
+        let restarted_consent = ConsentBoundary::default();
+        let same_preview = restarted_consent
+            .prepare(intent.clone(), &services, &prices, current_ms()).unwrap();
+        restarted_consent.decide(
+            &run_id, &same_preview.fingerprint, true, &services, current_ms()
+        ).unwrap();
+        assert!(services.dispatch_provider_angle_consent_sealed(
+            &restarted_consent, &intent, &same_preview, &context, &prices, &transport, "test-only"
+        ).is_err());
+        assert_eq!(transport.0.load(Ordering::SeqCst), 1);
+        let persisted = services.store.get_external_effect(ExternalEffectKey {
+            project,
+            study: study_id,
+            run_id: &run_id,
+            step_id: "draft",
+            idempotency_key: &idem,
+        }).unwrap().unwrap();
+        assert_eq!(persisted.status, ExternalEffectStatus::Completed);
+    }
+
     #[test]
     fn host_rejects_foreign_project_and_never_approves_unknown_pricing() {
         let directory = TempDir::new().unwrap();
