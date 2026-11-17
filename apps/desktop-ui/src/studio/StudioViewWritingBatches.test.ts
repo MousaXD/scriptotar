@@ -72,7 +72,7 @@ describe('Studio read-only canonical three-script receipts', () => {
     }]);
     render(StudioView, { props: { api, projectId, gateway } });
     await openStudy();
-    expect(await screen.findByRole('alert')).toHaveTextContent('different project');
+    expect(await screen.findByText('This study belongs to a different project.')).toHaveAttribute('role', 'alert');
     expect(screen.queryByRole('button', { name: 'Generated 2' })).not.toBeInTheDocument();
   });
 
@@ -85,7 +85,7 @@ describe('Studio read-only canonical three-script receipts', () => {
     }]);
     render(StudioView, { props: { api, projectId, gateway } });
     await openStudy();
-    expect(await screen.findByRole('alert')).toHaveTextContent('different project');
+    expect(await screen.findByText('This study belongs to a different project.')).toHaveAttribute('role', 'alert');
     expect(screen.queryByRole('button', { name: 'Generated 2' })).not.toBeInTheDocument();
   });
 });
