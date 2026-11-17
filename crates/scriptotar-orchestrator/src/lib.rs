@@ -414,8 +414,7 @@ fn worker_loop<R>(
                 &mut queue,
                 (&mut host, &mut cleanup_unverified),
                 job_id,
-                &notifier,
-                &content_write_gate,
+                (&notifier, &content_write_gate),
             ) {
                 if cleanup_unverified {
                     // Keep the active job nonterminal. Failing it would lose
@@ -452,12 +451,12 @@ fn run_job<R>(
     queue: &mut VecDeque<Uuid>,
     session: (&mut Option<SidecarHost>, &mut bool),
     job_id: Uuid,
-    notifier: &JobChangeNotifier,
-    content_write_gate: &ContentWriteGate,
+    hooks: (&JobChangeNotifier, &ContentWriteGate),
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
+    let (notifier, content_write_gate) = hooks;
     let (host, cleanup_unverified) = session;
     let job = repository.get_job(job_id)?;
     if job.state != JobState::Queued {
