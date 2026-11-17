@@ -495,7 +495,14 @@ fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
                 if result.is_ok() {
                     successes.fetch_add(1, Ordering::SeqCst);
                 } else {
-                    assert!(matches!(result, Err(ConsentError::AlreadyUsed)));
+                    // After the one-winner pre-send CAS, the first attempt is
+                    // temporarily Uncertain until its authenticated receipt
+                    // settles. A concurrent duplicate can safely see either
+                    // AlreadyUsed or UncertainEffect; both forbid another send.
+                    assert!(
+                        matches!(result, Err(ConsentError::AlreadyUsed | ConsentError::UncertainEffect)),
+                        "duplicate dispatch returned an unexpected result: {result:?}"
+                    );
                 }
             });
         }
