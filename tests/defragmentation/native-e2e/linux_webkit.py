@@ -870,42 +870,38 @@ def exercise(args, report: dict, root: Path):
 
         def arabic():
             a = session.ax
-            try:
-                a.choose(a.global_locale_control(), "ع")
-                # Require actual translated navigation and the semantic
-                # Arabic page heading on the installed WebKit document.
-                a.click("الاستوديو", "button")
-                a.heading("الاستوديو")
-                session.screenshot("arabic-locale")
+            # Preserve the first native failure. A finally-block which tries to
+            # restore English after a failed graphical restart can overwrite a
+            # genuine Alt+F4, AT-SPI, or SIGSEGV diagnosis with a generic
+            # "process unavailable" error. This isolated run fails closed on
+            # the first exception; no subsequent scenario depends on cleanup.
+            a.choose(a.global_locale_control(), "ع")
+            a.click("الاستوديو", "button")
+            a.heading("الاستوديو")
+            session.screenshot("arabic-locale")
 
-                # An application restart proves the UI locale is not merely
-                # temporary component state. A real GUI Alt+F4 and new PID are
-                # mandatory; the boot gate itself expects Arabic controls.
-                session.stop()
-                session.start(expected_studio="الاستوديو")
-                a = session.ax
-                a.click("الاستوديو", "button")
-                a.heading("الاستوديو")
-                if a.available("Studio", "button"):
-                    raise NativeFailure(
-                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
-                    )
-                session.screenshot("arabic-reopened")
-            finally:
-                # The global toolbar is present on Studio in both languages.
-                # Discover its native control beside the project selector;
-                # Settings may not be mounted, and aria-label is not necessarily
-                # translated. This is a GUI action, never a persisted-value edit.
-                a = session.ax
-                if a is None or session.proc is None or session.proc.poll() is not None:
-                    raise NativeFailure(
-                        "Installed process unavailable during graphical English restoration"
-                    )
-                a.choose(a.global_locale_control(), "EN")
-            # The installed shell AND the Studio component must restore to
-            # English, not just a topbar EN marker. Mixed-locale content is a
-            # product regression, and this scenario must remain FAIL.
+            # Real Alt+F4 quit and a new installed PID are mandatory.
+            session.stop()
+            session.start(expected_studio="الاستوديو")
             a = session.ax
+            a.click("الاستوديو", "button")
+            a.heading("الاستوديو")
+            if a.available("Studio", "button"):
+                raise NativeFailure(
+                    "Arabic persisted-relaunch shell still exposes English Studio navigation"
+                )
+            session.screenshot("arabic-reopened")
+
+            # Restore English only after all Arabic native assertions pass.
+            # Any failed restoration is still an acceptance FAIL, and never
+            # obscures an earlier native application crash.
+            if a is None or session.proc is None or session.proc.poll() is not None:
+                exit_code = None if session.proc is None else session.proc.returncode
+                raise NativeFailure(
+                    f"Installed process unavailable during graphical English restoration "
+                    f"(exit={exit_code})"
+                )
+            a.choose(a.global_locale_control(), "EN")
             a.find("Studio", "button", timeout=8)
             a.heading("Studio", timeout=12)
             if a.heading_available("الاستوديو"):
