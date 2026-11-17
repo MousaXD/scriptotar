@@ -11,6 +11,9 @@ mod project_jobs;
 // Compiled host consent policy; paid egress stays disabled until shared dispatch fencing.
 #[allow(dead_code)]
 mod provider_consent;
+// Wire-ready transport is private; no reviewed price catalog or public paid IPC yet.
+#[allow(dead_code)]
+mod provider_openai_wire;
 mod study_gateway;
 // Compile the scoped offline research adapter privately before exposing IPC.
 pub(super) mod study_research;
