@@ -491,6 +491,97 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(native.NativeFailure):
             ax.heading("NativeQA-abc-A", timeout=0.01)
 
+    def test_webkit_waits_for_canonical_immutable_save_without_writing_db(self):
+        # Native screenshot in run #44150090373 showed the actual draft text
+        # while Save changes was still "Saving..."; version 1 was still empty.
+        # A bounded read-only wait must retry and never downgrade DB proof.
+        expected = "Canonical SQLite stores exact GUI draft body and immutable version 2"
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=[native.NativeFailure("revision=1, persisted_len=0"), expected],
+        ) as verify, mock.patch.object(native.time, "sleep") as sleeper:
+            actual = native.wait_for_canonical_saved_draft(
+                Path("/unused"), "QA-A", "QA-Study", "Exact typed body"
+            )
+        self.assertEqual(actual, expected)
+        self.assertEqual(verify.call_count, 2)
+        sleeper.assert_called_once()
+
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=native.NativeFailure("revision=1, persisted_len=0"),
+        ), mock.patch.object(native.time, "monotonic",
+                             side_effect=[0.0, 0.0, 2.0]), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(native.NativeFailure, "persisted_len=0"):
+                native.wait_for_canonical_saved_draft(
+                    Path("/unused"), "QA-A", "QA-Study", "Exact typed body",
+                    timeout_seconds=1.0,
+                )
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('ax.read_text("Script draft") != body', source)
+        self.assertIn("wait_for_canonical_saved_draft(", source)
+
+    def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
+        # The installed RTL screenshot shows a top-bar locale combo adjacent
+        # to the project chooser, while Studio Settings is not mounted.
+        class Rect:
+            def __init__(self, y):
+                self.y, self.width, self.height = y, 90, 40
+
+        class Node:
+            def __init__(self, name, role, y):
+                self.name, self.role, self.y = name, role, y
+
+            def getRoleName(self):
+                return self.role
+
+            def queryComponent(self):
+                return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
+
+        project = Node("PROJECT", "combo box", 77)
+        locale = Node("لغة الواجهة", "combo box", 81)
+        script_language = Node("لغة النص", "combo box", 620)
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
+        ax.find = lambda label, role: project
+        ax.nodes = lambda: iter([project, locale, script_language])
+        self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+        ax.nodes = lambda: iter([project, script_language])
+        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
+            ax.global_locale_control()
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
+        self.assertLess(source.index('def arabic():'), source.index('def theme():'))
+        self.assertNotIn('a.choose("Interface language"', source)
+
+    def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
+        # Actual restored screenshot at run #44150090373 was scrolled above
+        # the script candidate editor. A real UIA ScrollItemPattern is allowed,
+        # but no invisible-element click, direct DOM injection or skipped proof.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = source.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1)[0]
+        self.assertIn("[System.Windows.Automation.ScrollItemPattern]::Pattern", click)
+        self.assertIn("$scrollItem.ScrollIntoView()", click)
+        # Native WebView2 can expose ScrollItemPattern while refusing to
+        # move an offscreen element. Use the visible workflow link and still
+        # require actual candidate selection plus canonical immutable proof.
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            source,
+        )
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", source)
+        self.assertIn("reopened-scripts-navigation.png", source)
+        self.assertIn("$owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)", click)
+        self.assertIn("-not $candidate.Current.IsOffscreen", click)
+        self.assertIn("No visible, enabled, bounded UIA control", click)
+        self.assertNotIn("SetValue(", click)
+        self.assertNotIn("return # skip", click)
+
     def test_document_alone_cannot_satisfy_startup(self):
         # Exercise Session.start's actual fail-closed gate, not an obsolete
         # English source-code literal. This is a mocked *contract* test only;
