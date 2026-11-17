@@ -1004,6 +1004,25 @@ def exercise(args, report: dict, root: Path):
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
                 session.screenshot("arabic-locale")
+                # Independently review a *genuinely open* native Arabic
+                # toolbar popup; switching language alone is not RTL review.
+                # This capture is not a PASS assertion for the visual gate.
+                try:
+                    locale_combo = a.global_locale_control()
+                    a.click(locale_combo, "combo")
+                    try:
+                        a.find("EN", "list item", timeout=5)
+                        a.find("ع", "list item", timeout=5)
+                        report.setdefault("visual_capture", {})["arabic_menu"] = (
+                            session.screenshot("arabic-locale-menu-open")
+                        )
+                    finally:
+                        command("xdotool", "key", "--clearmodifiers", "Escape")
+                        time.sleep(0.3)
+                except Exception as capture_error:
+                    report.setdefault("visual_capture_errors", {})["arabic_menu"] = (
+                        f"{type(capture_error).__name__}: {capture_error}"
+                    )
                 reached("arabic_studio_observed")
 
                 # Real Alt+F4, then a new PID; do not write settings or
@@ -1109,6 +1128,24 @@ def exercise(args, report: dict, root: Path):
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "Dark")
             session.screenshot("dark-theme")
+            # Capture actual installed theme popup and native options for
+            # independent contrast/stacking inspection. The System/Dark
+            # persistence PASS and visual-review verdict stay separate.
+            try:
+                a.click("Theme", "combo")
+                try:
+                    a.find("System", "list item", timeout=5)
+                    a.find("Dark", "list item", timeout=5)
+                    report.setdefault("visual_capture", {})["dark_theme_menu"] = (
+                        session.screenshot("dark-theme-menu-open")
+                    )
+                finally:
+                    command("xdotool", "key", "--clearmodifiers", "Escape")
+                    time.sleep(0.3)
+            except Exception as capture_error:
+                report.setdefault("visual_capture_errors", {})["dark_theme_menu"] = (
+                    f"{type(capture_error).__name__}: {capture_error}"
+                )
             session.stop()
             session.start()
             a = session.ax
