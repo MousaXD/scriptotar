@@ -203,20 +203,22 @@ pub(crate) fn migration_provider_identities(tx: &Transaction<'_>) -> rusqlite::R
         r#"
 CREATE TABLE agent_external_provider_identities (
     provider TEXT NOT NULL COLLATE NOCASE CHECK(length(provider) BETWEEN 1 AND 64),
+    -- Origin role is diagnostic metadata, never a uniqueness namespace.
+    kind TEXT NOT NULL CHECK(kind IN ('request','receipt')),
     identity TEXT NOT NULL CHECK(length(identity) BETWEEN 1 AND 128),
     idempotency_key TEXT NOT NULL,
     attempt INTEGER NOT NULL CHECK(attempt BETWEEN 1 AND 3),
     claimed_at TEXT NOT NULL,
     PRIMARY KEY(provider, identity)
 );
-INSERT INTO agent_external_provider_identities(provider, identity, idempotency_key, attempt, claimed_at)
-    SELECT provider, identity, idempotency_key, attempt, MAX(claimed_at)
+INSERT INTO agent_external_provider_identities(provider, kind, identity, idempotency_key, attempt, claimed_at)
+    SELECT provider, MIN(kind), identity, idempotency_key, attempt, MAX(claimed_at)
     FROM (
-        SELECT provider, provider_request_id AS identity, idempotency_key, attempt,
+        SELECT provider, 'request' AS kind, provider_request_id AS identity, idempotency_key, attempt,
                updated_at AS claimed_at
         FROM agent_external_effects WHERE provider_request_id IS NOT NULL
         UNION ALL
-        SELECT provider, receipt_id AS identity, idempotency_key, attempt,
+        SELECT provider, 'receipt' AS kind, receipt_id AS identity, idempotency_key, attempt,
                updated_at AS claimed_at
         FROM agent_external_effects WHERE receipt_id IS NOT NULL
     )
@@ -239,8 +241,8 @@ CREATE TRIGGER external_provider_identity_on_insert
 AFTER INSERT ON agent_external_effects
 BEGIN
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, attempt, claimed_at)
-        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
+        (provider, kind, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, 'request', NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.provider_request_id IS NOT NULL;
     SELECT CASE WHEN NEW.provider_request_id IS NOT NULL
         AND NOT EXISTS (
@@ -249,8 +251,8 @@ BEGIN
               AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider acknowledgement identity already claimed') END;
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, attempt, claimed_at)
-        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
+        (provider, kind, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, 'receipt', NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.receipt_id IS NOT NULL;
     SELECT CASE WHEN NEW.receipt_id IS NOT NULL
         AND NOT EXISTS (
@@ -263,8 +265,8 @@ CREATE TRIGGER external_provider_identity_on_update
 AFTER UPDATE OF provider_request_id, receipt_id ON agent_external_effects
 BEGIN
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, attempt, claimed_at)
-        SELECT NEW.provider, NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
+        (provider, kind, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, 'request', NEW.provider_request_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.provider_request_id IS NOT NULL;
     SELECT CASE WHEN NEW.provider_request_id IS NOT NULL
         AND NOT EXISTS (
@@ -273,8 +275,8 @@ BEGIN
               AND idempotency_key=NEW.idempotency_key AND attempt=NEW.attempt)
         THEN RAISE(ABORT, 'provider acknowledgement identity already claimed') END;
     INSERT OR IGNORE INTO agent_external_provider_identities
-        (provider, identity, idempotency_key, attempt, claimed_at)
-        SELECT NEW.provider, NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
+        (provider, kind, identity, idempotency_key, attempt, claimed_at)
+        SELECT NEW.provider, 'receipt', NEW.receipt_id, NEW.idempotency_key, NEW.attempt, NEW.updated_at
         WHERE NEW.receipt_id IS NOT NULL;
     SELECT CASE WHEN NEW.receipt_id IS NOT NULL
         AND NOT EXISTS (
