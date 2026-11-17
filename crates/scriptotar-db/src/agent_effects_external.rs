@@ -262,7 +262,7 @@ BEGIN
         THEN RAISE(ABORT, 'provider receipt identity already claimed') END;
 END;
 CREATE TRIGGER external_provider_identity_on_update
-AFTER UPDATE OF provider_request_id, receipt_id ON agent_external_effects
+AFTER UPDATE OF attempt, provider_request_id, receipt_id ON agent_external_effects
 BEGIN
     INSERT OR IGNORE INTO agent_external_provider_identities
         (provider, kind, identity, idempotency_key, attempt, claimed_at)
@@ -1483,6 +1483,10 @@ mod tests {
         db.mark_external_dispatched(key, first.revision, 1).unwrap();
         db.record_external_ack(key, 1, "claimed_forever_12").unwrap();
         let conn = rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        assert!(conn.execute(
+            "UPDATE agent_external_effects SET attempt=2 WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+        ).is_err(), "changing an attempt cannot launder an existing ACK ownership claim");
         for attempted_sql in [
             "DELETE FROM agent_external_provider_identities WHERE identity='claimed_forever_12'",
             "UPDATE agent_external_provider_identities SET idempotency_key='stolen' WHERE identity='claimed_forever_12'",
