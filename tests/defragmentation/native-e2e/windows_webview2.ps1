@@ -610,6 +610,26 @@ function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
   return [string]$field.GetCurrentPattern(
     [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
 }
+function Wait-InstalledDraftBody([IntPtr]$hwnd, [string]$expected, [int]$timeoutSec=15) {
+  # Project switching/reopening a Study loads the draft asynchronously.
+  # Observe real installed UIA ValuePattern until exact body renders;
+  # never set a field, mutate SQLite, or pass on a transient blank.
+  $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
+  $lastLength = -1
+  $lastError = ''
+  do {
+    try {
+      $current = Read-InstalledEdit $hwnd 'Script draft'
+      $lastLength = $current.Length
+      $lastError = ''
+      if ($current -ceq $expected) { return }
+    } catch {
+      $lastError = $_.Exception.Message
+    }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed Study draft failed exact UIA restore after ${timeoutSec}s (expected length=$($expected.Length), last visible length=$lastLength, last UIA error=$lastError)"
+}
 function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
   # Windows CI has Python 3.12, and this imports only standard library code.
   # The canonical probe opens installed app SQLite in mode=ro and never
@@ -1023,9 +1043,7 @@ try {
         Choose-InstalledProject $restoredHwnd $first
         Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
-        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
-          throw 'Project A Study disappeared after native wrong-project UI isolation probe'
-        }
+        Wait-InstalledDraftBody $restoredHwnd $draftBody 15
         $isolationProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         $cases.wrong_project_ui_isolation = @{
           status='PASS'
