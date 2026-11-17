@@ -522,7 +522,8 @@ impl AppServices {
             return Err(consent_error(ConsentError::EffectFenceUnavailable));
         }
         let prompt = self.prepare_studio_angle_prompt(project, study)?.prompt;
-        let scope = self.current_scope(&project.to_string(), &study.to_string())
+        let scope = self
+            .current_scope(&project.to_string(), &study.to_string())
             .map_err(consent_error)?;
         let intent = ProviderIntent {
             run_id: run_id.to_owned(),
@@ -532,19 +533,22 @@ impl AppServices {
             max_output_tokens,
             limits,
         };
-        let request = scriptotar_ai::AiRequest { prompt: intent.prompt.clone() };
-        let bytes = transport.serialize_exact_request(
-            &intent.provider, &request, intent.max_output_tokens
-        ).map_err(consent_error)?;
+        let request = scriptotar_ai::AiRequest {
+            prompt: intent.prompt.clone(),
+        };
+        let bytes = transport
+            .serialize_exact_request(&intent.provider, &request, intent.max_output_tokens)
+            .map_err(consent_error)?;
         if bytes.is_empty() || bytes.len() > 524_288 {
             return Err(consent_error(ConsentError::InvalidRequest));
         }
         // No paid network access and no reservation during preparation.
-        let unsealed = boundary.prepare(intent.clone(), self, pricing, current_ms())
+        let unsealed = boundary
+            .prepare(intent.clone(), self, pricing, current_ms())
             .map_err(consent_error)?;
-        let sealed = boundary.bind_exact_wire_request(
-            run_id, &unsealed.fingerprint, &sha256_hex(&bytes)
-        ).map_err(consent_error)?;
+        let sealed = boundary
+            .bind_exact_wire_request(run_id, &unsealed.fingerprint, &sha256_hex(&bytes))
+            .map_err(consent_error)?;
         Ok((intent, sealed))
     }
 
