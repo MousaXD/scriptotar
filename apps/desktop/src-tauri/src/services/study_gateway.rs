@@ -1541,7 +1541,37 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(versions, 1);
+            let lineage: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM study_writing_revisions WHERE draft_id=?1 AND version=1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(lineage, 1, "generated candidate must retain structured provenance");
         }
+        let chosen = services.get_studio_study_draft(project, study, stored[0]).unwrap();
+        assert_eq!(chosen.drafts.len(), 3);
+        let edited_body = format!(
+            "{}\\n\\nReviewer manual edit: preserve this wording after restart.",
+            chosen.draft
+        );
+        let edited = services
+            .save_studio_study(
+                project,
+                study,
+                chosen.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: None,
+                    draft: Some(edited_body.clone()),
+                    draft_id: Some(stored[0].to_string()),
+                    draft_revision: chosen.draft_revision,
+                },
+            )
+            .unwrap();
+        assert_eq!(edited.draft, edited_body);
+        assert!(services.get_studio_study_draft(Uuid::new_v4(), study, stored[0]).is_err());
         drop(conn);
         drop(services);
 
@@ -1569,6 +1599,12 @@ mod tests {
         assert_eq!(recovered, stored);
         assert_eq!(no_approval.steps, 0);
         assert_eq!(no_provider.calls, 0);
+        let manual = reopened.get_studio_study_draft(project, study, stored[0]).unwrap();
+        assert_eq!(manual.draft, edited_body, "recovery must not overwrite a manual edit");
+        assert!(manual.draft_versions.len() >= 2);
+        let untouched = reopened.get_studio_study_draft(project, study, stored[1]).unwrap();
+        assert_eq!(untouched.draft_versions.len(), 1);
+        assert!(untouched.draft.contains("personal diary"));
     }
 
     #[test]
