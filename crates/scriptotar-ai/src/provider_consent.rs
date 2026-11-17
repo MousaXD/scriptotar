@@ -155,6 +155,8 @@ struct SavedConsent {
     intent: ProviderIntent,
     preview: ConsentPreview,
     decision: Decision,
+    /// The SHA-256 of exact serialized transport bytes, sealed before approval.
+    sealed_wire_sha256: Option<String>,
 }
 
 /// A process restart drops pending consent. It never silently reconstructs approval.
@@ -235,6 +237,17 @@ pub trait BoundedProvider: Send + Sync {
     /// MUST NOT settle a paid effect. Deny by default.
     fn verified_usage_receipt(&self, _config: &ProviderConfig, _reply: &MeteredReply) -> bool {
         false
+    }
+
+    /// Digest of the exact buffer sent by generate_once, if wire-sealed.
+    /// Uncertified legacy adapters return None and cannot use sealed approval.
+    fn prepared_request_sha256(
+        &self,
+        _config: &ProviderConfig,
+        _request: &AiRequest,
+        _max_output_tokens: u64,
+    ) -> Option<String> {
+        None
     }
 
     fn generate_once(
@@ -433,11 +446,40 @@ impl ConsentBoundary {
                     intent,
                     preview: preview.clone(),
                     decision: Decision::Pending,
+                    sealed_wire_sha256: None,
                 })));
                 Ok(preview)
             }
             std::collections::hash_map::Entry::Occupied(_) => Err(ConsentError::AlreadyUsed),
         }
+    }
+
+    /// Seal transport bytes while Pending. Only the new sealed fingerprint
+    /// may be approved; a second seal or a seal after approval is forbidden.
+    pub fn bind_exact_wire_request(
+        &self,
+        run_id: &str,
+        expected_fingerprint: &str,
+        wire_sha256: &str,
+    ) -> Result<ConsentPreview, ConsentError> {
+        if wire_sha256.len() != 64
+            || !wire_sha256.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(ConsentError::InvalidRequest);
+        }
+        let consent = self.records.lock()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?
+            .get(run_id).cloned().ok_or(ConsentError::NoApproval)?;
+        let mut record = consent.lock().map_err(|_| ConsentError::EffectFenceUnavailable)?;
+        if record.decision != Decision::Pending || record.sealed_wire_sha256.is_some() {
+            return Err(ConsentError::AlreadyUsed);
+        }
+        if record.preview.fingerprint != expected_fingerprint {
+            return Err(ConsentError::ChangedContext);
+        }
+        record.preview.fingerprint = sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
+        record.sealed_wire_sha256 = Some(wire_sha256.to_owned());
+        Ok(record.preview.clone())
     }
 
     pub fn decide(
@@ -548,11 +590,24 @@ impl ConsentBoundary {
         if record.intent != *intent {
             return Err(ConsentError::ChangedContext);
         }
+        if let Some(expected_wire) = record.sealed_wire_sha256.as_deref() {
+            if runner.prepared_request_sha256(
+                &intent.provider,
+                &AiRequest { prompt: intent.prompt.clone() },
+                intent.max_output_tokens,
+            ).as_deref() != Some(expected_wire) {
+                return Err(ConsentError::ChangedContext);
+            }
+        }
         validate_context(&record.intent.scope, authority)?;
         let trusted_price = pricing
             .ceiling(&record.intent.provider)
             .ok_or(ConsentError::UnknownPricing)?;
-        if record.preview.fingerprint != hash_intent(&record.intent, &Some(trusted_price.clone())) {
+        let mut expected_fingerprint = hash_intent(&record.intent, &Some(trusted_price.clone()));
+        if let Some(wire_sha256) = record.sealed_wire_sha256.as_deref() {
+            expected_fingerprint = sha256_hex(format!("{expected_fingerprint}:{wire_sha256}").as_bytes());
+        }
+        if record.preview.fingerprint != expected_fingerprint {
             return Err(ConsentError::ChangedContext);
         }
         let expected_ceiling = record
@@ -642,6 +697,13 @@ impl ConsentBoundary {
         record.decision = Decision::Uncertain;
         if scope_guard.scope() != &record.intent.scope
             || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
+            || record.sealed_wire_sha256.as_deref().is_some_and(|expected| {
+                runner.prepared_request_sha256(
+                    &intent.provider,
+                    &AiRequest { prompt: intent.prompt.clone() },
+                    intent.max_output_tokens,
+                ).as_deref() != Some(expected)
+            })
         {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::ChangedContext);
