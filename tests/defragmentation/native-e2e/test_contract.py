@@ -656,6 +656,37 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertLess(source.index('def arabic():'), source.index('def theme():'))
         self.assertNotIn('a.choose("Interface language"', source)
 
+    def test_windows_project_switch_requires_eventual_exact_native_draft(self):
+        # Real installed integration #44176696340 already showed Project A,
+        # the correct Study and Scripts 2, but immediate ValuePattern content
+        # mismatched. Poll actual UIA text, not a DB-only/screenshot shortcut.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        waiter = source.split("function Wait-InstalledEditExact(", 1)[1].split(
+            "function Verify-InstalledCanonicalDb(", 1
+        )[0]
+        isolation = source.split(
+            "if ($cases.quit_relaunch_persistence.status -eq 'PASS')", 1
+        )[1].split(
+            "if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", 1
+        )[0]
+        self.assertIn("Read-InstalledEdit $hwnd $name", waiter)
+        self.assertIn("$actual -ceq $expected", waiter)
+        self.assertIn("Start-Sleep -Milliseconds 350", waiter)
+        self.assertIn("throw \"Installed UIA edit", waiter)
+        self.assertNotIn("SetValue(", waiter)
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle",
+            isolation,
+        )
+
     def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
         # Actual restored screenshot at run #44150090373 was scrolled above
         # the script candidate editor. A real UIA ScrollItemPattern is allowed,
