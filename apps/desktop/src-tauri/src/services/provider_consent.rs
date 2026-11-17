@@ -974,7 +974,13 @@ mod tests {
             .unwrap();
         assert_eq!(preview.run_id, run_id);
         assert_eq!(preview.fingerprint.len(), 64);
-        assert!(preview.prompt.contains("Source-grounded factual notes"));
+        // Manual-source raw text is intentionally not treated as quoted
+        // transcript evidence by scoped_writing_input_locked. Verify that the
+        // sealed preview uses exactly the authoritative Studio prompt and
+        // binds the selected source identity without laundering raw notes.
+        let canonical = services.prepare_studio_angle_prompt(project, study_id).unwrap();
+        assert_eq!(preview.prompt, canonical.prompt);
+        assert_eq!(preview.selected_source_ids.len(), 1);
         assert_eq!(preview.worst_case_cost_microusd, None);
         assert!(services
             .decide_openai_provider_consent(project, study_id, &run_id, &preview.fingerprint, true,)
