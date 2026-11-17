@@ -34,6 +34,8 @@ $report = [ordered]@{
   }
   native_ui_probe = $null
   cases = $cases
+  visual_capture = @{}
+  visual_capture_errors = @{}
   verdict = 'NOT TESTED'
 }
 function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess) {
@@ -1151,6 +1153,23 @@ try {
           }
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir ("windows-theme-" + $choice.ToLowerInvariant() + ".png"))
         }
+        # Capture the genuine installed open theme menu (not a web mock).
+        # A screenshot is review material, NEVER automatic visual PASS.
+        try {
+          Click-InstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+          if (-not (Test-InstalledPopupOptionVisible $restoredHwnd 'System')) {
+            throw 'Expected actual System option in open native theme menu'
+          }
+          $themeMenuShot = Join-Path $EvidenceDir 'windows-theme-menu-open.png'
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) $themeMenuShot
+          if (-not (Test-Path $themeMenuShot)) { throw 'Installed theme menu screenshot not captured' }
+          $report.visual_capture['dark_theme_menu'] = 'captured'
+        } catch {
+          $report.visual_capture_errors['dark_theme_menu'] = $_.Exception.Message
+        } finally {
+          [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+          Start-Sleep -Milliseconds 200
+        }
         # Certify saved theme state across a SECOND genuine installed process
         # shutdown/relaunch. A visual selector click in one process is not enough.
         if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
@@ -1205,6 +1224,23 @@ try {
         Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-locale.png')
+        # Preserve actual native RTL popup placement for independent review.
+        # Not a PASS assertion: dialog, focus, and offscreen views still matter.
+        try {
+          Click-InstalledControl $themeHwnd 'لغة الواجهة' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+          if (-not (Test-InstalledPopupOptionVisible $themeHwnd 'EN')) {
+            throw 'Expected actual EN option in open Arabic locale menu'
+          }
+          $arabicMenuShot = Join-Path $EvidenceDir 'windows-arabic-menu-open.png'
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) $arabicMenuShot
+          if (-not (Test-Path $arabicMenuShot)) { throw 'Installed Arabic menu screenshot not captured' }
+          $report.visual_capture['arabic_menu'] = 'captured'
+        } catch {
+          $report.visual_capture_errors['arabic_menu'] = $_.Exception.Message
+        } finally {
+          [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+          Start-Sleep -Milliseconds 200
+        }
 
         # Genuinely quit and relaunch with saved Arabic locale. The native
         # document/rail gate must now seek Arabic rather than English.
