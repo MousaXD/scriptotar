@@ -182,6 +182,13 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledPopupClosed $hwnd $name", script)
+        self.assertIn("$stillOpen = Test-InstalledPopupOptionVisible $hwnd $expected", script)
+        self.assertIn("TreeWalker]::ControlViewWalker.GetParent($ancestor)", script)
+        self.assertIn("ControlType]::List", script)
+        # The actual popup List may be named 'Project' even when its ComboBox
+        # is 'PROJECT'; checking $label as a List name would silently accept
+        # a still-open candidate popup and give a false selection PASS.
+        self.assertNotIn("NameProperty, $label),\n        [System.Windows.Automation.PropertyCondition]::new(\n          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,\n          [System.Windows.Automation.ControlType]::List)", script)
         self.assertNotIn("$list.SetFocus()", script)
 
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
