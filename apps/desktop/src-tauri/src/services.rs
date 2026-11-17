@@ -406,6 +406,13 @@ impl AppServices {
     }
 
     pub fn import_legacy_data(&self) -> RepositoryResult<scriptotar_core::LegacyImportReport> {
+        // Legacy import can change canonical sources, research and Studio
+        // records. Never allow an import to race a scope-locked pre-send CAS.
+        // The import is local SQLite I/O; no network runs under this mutex.
+        let _scope_guard = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
         self.store.import_legacy_database(&self.legacy_path)
     }
 
@@ -1704,6 +1711,31 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
+
+    #[test]
+    fn legacy_import_waits_for_authorization_guard_before_mutating_sources() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let held_by_dispatch = services.active_project.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_services = services.clone();
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            // The fixture has no legacy snapshot. The result itself is not the
+            // assertion: import must not even inspect/write while scope is held.
+            let result = worker_services.import_legacy_data();
+            finished_tx.send(result.is_ok()).unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
 
     #[test]
     fn background_research_origin_writer_respects_host_authorization_gate() {
