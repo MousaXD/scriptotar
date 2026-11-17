@@ -433,9 +433,7 @@ impl CertifiedWireTransport for scriptotar_ai::provider_openai_wire::OpenAiRespo
         reply: &scriptotar_ai::provider_consent::MeteredReply,
     ) -> bool {
         scriptotar_ai::provider_openai_wire::OpenAiResponsesWire::authenticates_receipt(
-            self,
-            config,
-            reply,
+            self, config, reply,
         )
     }
 }
