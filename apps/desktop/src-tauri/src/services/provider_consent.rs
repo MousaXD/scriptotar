@@ -353,6 +353,94 @@ impl PaidEffectFence for SqlitePaidEffectFence {
     }
 }
 
+/// A transport must serialize the exact bytes it will send *before* a paid
+/// reservation. Its send implementation MUST use only those bytes, with no
+/// hidden reserialization, redirects or automatic retry. No production network
+/// implementation is registered yet; controlled, no-network test transports can
+/// exercise the real host/v10 admission flow without enabling billable egress.
+#[allow(dead_code)]
+pub(super) trait CertifiedWireTransport: Send + Sync {
+    fn serialize_exact_request(
+        &self,
+        config: &ProviderConfig,
+        request: &scriptotar_ai::AiRequest,
+        max_output_tokens: u64,
+    ) -> Result<Vec<u8>, ConsentError>;
+
+    fn supports_hard_bounds(&self, config: &ProviderConfig) -> bool;
+
+    fn send_prepared_once(
+        &self,
+        config: &ProviderConfig,
+        api_key: &str,
+        exact_bytes: &[u8],
+        max_output_tokens: u64,
+        deadline_ms: u64,
+    ) -> Result<scriptotar_ai::provider_consent::MeteredReply, ConsentError>;
+
+    fn authenticates_receipt(
+        &self,
+        config: &ProviderConfig,
+        reply: &scriptotar_ai::provider_consent::MeteredReply,
+    ) -> bool;
+}
+
+/// The policy invokes BoundedProvider after the durable pre-send CAS. This
+/// adapter verifies that the policy supplied the *same* model, prompt and token
+/// ceiling that were sealed and hashed before reservation, and passes the
+/// immutable wire bytes (not a newly serialized request) to the transport.
+struct SealedWireProvider<'a, T: CertifiedWireTransport> {
+    transport: &'a T,
+    intent: &'a ProviderIntent,
+    wire_bytes: Vec<u8>,
+    deadline_ms: u64,
+    max_output_bytes: u64,
+}
+
+impl<T: CertifiedWireTransport> scriptotar_ai::provider_consent::BoundedProvider
+    for SealedWireProvider<'_, T>
+{
+    fn supports_hard_bounds(&self, config: &ProviderConfig) -> bool {
+        config == &self.intent.provider && self.transport.supports_hard_bounds(config)
+    }
+
+    fn verified_usage_receipt(
+        &self,
+        config: &ProviderConfig,
+        reply: &scriptotar_ai::provider_consent::MeteredReply,
+    ) -> bool {
+        config == &self.intent.provider && self.transport.authenticates_receipt(config, reply)
+    }
+
+    fn generate_once(
+        &self,
+        config: &ProviderConfig,
+        api_key: &str,
+        request: &scriptotar_ai::AiRequest,
+        max_output_tokens: u64,
+        deadline_ms: u64,
+    ) -> Result<scriptotar_ai::provider_consent::MeteredReply, ConsentError> {
+        if config != &self.intent.provider
+            || request.prompt != self.intent.prompt
+            || max_output_tokens != self.intent.max_output_tokens
+            || current_ms() >= self.deadline_ms
+        {
+            return Err(ConsentError::ChangedContext);
+        }
+        let reply = self.transport.send_prepared_once(
+            config,
+            api_key,
+            &self.wire_bytes,
+            max_output_tokens,
+            deadline_ms.min(self.deadline_ms),
+        )?;
+        if u64::try_from(reply.text.len()).unwrap_or(u64::MAX) > self.max_output_bytes {
+            return Err(ConsentError::UsageOverBudget);
+        }
+        Ok(reply)
+    }
+}
+
 #[allow(dead_code)] // Rust-only integration surface reserved for Agent 00.
 impl AppServices {
     /// Prepare the exact server-derived three-angle request, never an arbitrary
@@ -396,6 +484,94 @@ impl AppServices {
     ) -> RepositoryResult<()> {
         boundary
             .decide(run_id, fingerprint, approve, self, current_ms())
+            .map_err(consent_error)
+    }
+
+    /// An executable but NOT publicly registered authorization path. Only a
+    /// transport that accepts the exact sealed request bytes can reach egress.
+    /// v10 independently requires this context to match an approved, RUNNING
+    /// checkpoint; the host does not create or fake that checkpoint here.
+    ///
+    /// There is deliberately no production CertifiedWireTransport for HTTP and
+    /// no Tauri command that exposes this method. A controlled no-cost provider
+    /// is required to certify admission, receipt and crash behavior first.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub(super) fn dispatch_provider_angle_consent_sealed<T: CertifiedWireTransport>(
+        &self,
+        boundary: &ConsentBoundary,
+        intent: &ProviderIntent,
+        preview: &ConsentPreview,
+        context: &ExecutionContext,
+        pricing: &dyn scriptotar_ai::provider_consent::TrustedPricing,
+        transport: &T,
+        request_time_api_key: &str,
+    ) -> RepositoryResult<scriptotar_ai::provider_consent::MeteredReply> {
+        // The checkpoint context is host-owned. Never accept an unrelated
+        // project, Study, run or stale plan budget as a v10 effect identity.
+        let now = current_ms();
+        if context.project_id != intent.scope.project_id
+            || context.study_id != intent.scope.study_id
+            || context.run_id != intent.run_id
+            || context.deadline_ms <= now
+            || context.step_id.is_empty()
+            || context.idempotency_key.is_empty()
+            || context.estimate.tokens < intent.limits.max_tokens
+            || context.estimate.cost_microusd < intent.limits.max_cost_microusd
+            || context.estimate.max_output_bytes == 0
+            || context.estimate.max_output_bytes > 1_048_576
+            || preview.run_id != intent.run_id
+            || preview.provider != intent.provider.provider
+            || preview.model != intent.provider.model
+            || preview.selected_source_ids != intent.scope.selected_source_ids
+            || preview.max_output_tokens != intent.max_output_tokens
+            || preview.limits != intent.limits
+        {
+            return Err(consent_error(ConsentError::ChangedContext));
+        }
+        if !transport.supports_hard_bounds(&intent.provider) {
+            return Err(consent_error(ConsentError::EffectFenceUnavailable));
+        }
+        let wire_request = scriptotar_ai::AiRequest {
+            prompt: intent.prompt.clone(),
+        };
+        let exact_bytes = transport
+            .serialize_exact_request(&intent.provider, &wire_request, intent.max_output_tokens)
+            .map_err(consent_error)?;
+        if exact_bytes.is_empty() || exact_bytes.len() > 524_288 {
+            return Err(consent_error(ConsentError::InvalidRequest));
+        }
+        let wire_sha256 = sha256_hex(&exact_bytes);
+        let fingerprint = &preview.fingerprint;
+        let provider_id = format!("{:?}", intent.provider.provider).to_ascii_lowercase();
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            self.store.clone(),
+            context,
+            fingerprint,
+            &wire_sha256,
+            &provider_id,
+            ExternalEffectLimits {
+                tokens: intent.limits.max_tokens,
+                cost_microusd: intent.limits.max_cost_microusd,
+            },
+        )
+        .map_err(consent_error)?;
+        let sealed = SealedWireProvider {
+            transport,
+            intent,
+            wire_bytes: exact_bytes,
+            deadline_ms: context.deadline_ms,
+            max_output_bytes: context.estimate.max_output_bytes,
+        };
+        boundary
+            .dispatch(
+                intent,
+                self,
+                pricing,
+                &fence,
+                &sealed,
+                request_time_api_key,
+                now,
+            )
             .map_err(consent_error)
     }
 
