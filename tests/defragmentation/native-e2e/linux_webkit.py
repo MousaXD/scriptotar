@@ -120,6 +120,60 @@ def verify_canonical_saved_draft(
     return f"Canonical SQLite stores exact GUI draft body and immutable version {saved_version}"
 
 
+
+def verify_canonical_reopened_candidates(
+    data_dir: Path, project_name: str, study_name: str,
+    expected_body: str, expected_copy_title: str,
+) -> str:
+    """Independently prove BOTH renamed and original drafts survived restart.
+
+    The pre-duplication save check expects one draft. Reusing that assertion
+    after duplication would incorrectly fail correctly persisted data.
+    """
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing on Study relaunch: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as con:
+            rows = con.execute(
+                """
+                SELECT d.id, d.title, d.body, d.revision, v.version, v.body
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                  JOIN draft_versions v ON v.draft_id=d.id
+                       AND v.version=(SELECT MAX(latest.version) FROM draft_versions latest
+                                      WHERE latest.draft_id=d.id)
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                """,
+                (project_name, study_name),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Cannot read restored canonical candidates: {exc}") from exc
+    if len(rows) != 2 or {row[1] for row in rows} != {study_name, expected_copy_title}:
+        raise NativeFailure(
+            "Installed Study relaunch must retain exactly the original and "
+            f"renamed duplicate candidates, actual titles={[row[1] for row in rows]}"
+        )
+    try:
+        ids = {uuid.UUID(row[0]) for row in rows}
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Restored candidate has invalid canonical UUID") from exc
+    if len(ids) != 2:
+        raise NativeFailure("Restored original and duplicate share an invalid draft identity")
+    for _id, title, body, revision, version, saved_body in rows:
+        min_version = 2 if title == study_name else 1
+        if (revision < min_version or version < min_version
+                or body != expected_body or saved_body != expected_body):
+            raise NativeFailure(
+                f"Restored candidate {title!r} does not preserve exact immutable "
+                "GUI-authored body and version"
+            )
+    return "Two distinct original/renamed candidates and immutable versions restored from canonical SQLite"
+
+
 class NativeUnavailable(RuntimeError):
     """Instrumentation missing: NOT TESTED, never PASS."""
 
@@ -647,7 +701,9 @@ def exercise(args, report: dict, root: Path):
                 raise NativeFailure(
                     "Renamed duplicate candidate body changed after relaunch"
                 )
-            verify_canonical_saved_draft(root / "data", name_a, study, body)
+            verify_canonical_reopened_candidates(
+                root / "data", name_a, study, body, tag + "-copy"
+            )
             session.screenshot("reopened")
             return (
                 "Graphical Alt+F4/relaunch kept selected project, saved Study "

@@ -244,6 +244,58 @@ class NativeEvidenceContractTests(unittest.TestCase):
                     Path(tmp), "QA-A", "QA-Study", "Original GUI saved body"
                 )
 
+
+    def test_two_restored_candidates_preserve_distinct_ids_and_immutable_bodies(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "scriptotar.sqlite3"
+            original = "11111111-1111-4111-8111-111111111111"
+            copied = "22222222-2222-4222-8222-222222222222"
+            with sqlite3.connect(db) as con:
+                con.executescript("""
+                    CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT, archived_at TEXT);
+                    CREATE TABLE content_studies(
+                        id TEXT PRIMARY KEY, project_id TEXT, title TEXT, archived_at TEXT);
+                    CREATE TABLE creative_drafts(
+                        id TEXT PRIMARY KEY, project_id TEXT, study_id TEXT,
+                        title TEXT, body TEXT, revision INTEGER, archived_at TEXT);
+                    CREATE TABLE draft_versions(
+                        id TEXT PRIMARY KEY, draft_id TEXT, version INTEGER, body TEXT);
+                """)
+                con.execute("INSERT INTO projects VALUES ('project-A','QA-A',NULL)")
+                con.execute(
+                    "INSERT INTO content_studies VALUES ('study-A','project-A','QA-Study',NULL)"
+                )
+                for draft_id, title, revision in (
+                    (original, "QA-Study", 2), (copied, "QA-copy", 1)
+                ):
+                    con.execute(
+                        "INSERT INTO creative_drafts VALUES (?,?,?,?,?,?,NULL)",
+                        (draft_id, "project-A", "study-A",
+                         title, "Saved body", revision)
+                    )
+                    con.execute(
+                        "INSERT INTO draft_versions VALUES (?,?,?,?)",
+                        (title, draft_id, revision, "Saved body"),
+                    )
+            detail = native.verify_canonical_reopened_candidates(
+                Path(tmp), "QA-A", "QA-Study", "Saved body", "QA-copy"
+            )
+            self.assertIn("Two distinct", detail)
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_reopened_candidates(
+                    Path(tmp), "QA-A", "QA-Study", "Saved body", "Wrong-copy"
+                )
+            with sqlite3.connect(db) as con:
+                con.execute(
+                    "UPDATE draft_versions SET body='Corrupted' WHERE draft_id=?",
+                    (copied,),
+                )
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_reopened_candidates(
+                    Path(tmp), "QA-A", "QA-Study", "Saved body", "QA-copy"
+                )
+
     def test_webkit_reads_editable_draft_not_same_named_heading(self):
         class FakeNode:
             def __init__(self, name, role, content=""):

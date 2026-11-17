@@ -435,7 +435,7 @@ function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
   return [string]$field.GetCurrentPattern(
     [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
 }
-function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third) {
+function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
   # Windows CI has Python 3.12, and this imports only standard library code.
   # The canonical probe opens installed app SQLite in mode=ro and never
   # changes user state, shortcuts project selection or fabricates GUI PASS.
@@ -444,29 +444,35 @@ function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$sec
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from linux_webkit import verify_canonical_projects, verify_canonical_saved_draft
-kind, root, a, b, c = sys.argv[2:7]
+from linux_webkit import (
+    verify_canonical_projects,
+    verify_canonical_saved_draft,
+    verify_canonical_reopened_candidates,
+)
+kind, root, a, b, c, copy = sys.argv[2:8]
 if kind == "projects":
     print(verify_canonical_projects(Path(root), (a, b)))
 elif kind == "draft":
     print(verify_canonical_saved_draft(Path(root), a, b, c))
+elif kind == "candidates":
+    print(verify_canonical_reopened_candidates(Path(root), a, b, c, copy))
 else:
     raise ValueError("Unsupported canonical installed DB probe")
 '@
-  $result = & python -c $probe $qaRoot $kind $dataDir $first $second $third 2>&1
+  $result = & python -c $probe $qaRoot $kind $dataDir $first $second $third $fourth 2>&1
   if ($LASTEXITCODE -ne 0) {
     throw "Installed canonical SQLite $kind probe failed: $($result | Out-String)"
   }
   return [string]($result | Out-String).Trim()
 }
-function Wait-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third) {
+function Wait-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
   # The real UI can complete an auto-save shortly after a native key event.
   # Poll the authoritative SQLite snapshot instead of racing an inaccessible
   # status label or interpreting a temporarily disabled save button as failure.
   $lastError = 'Not checked'
   for ($attempt=0; $attempt -lt 24; $attempt++) {
     try {
-      return Verify-InstalledCanonicalDb $kind $first $second $third
+      return Verify-InstalledCanonicalDb $kind $first $second $third $fourth
     } catch {
       $lastError = $_.Exception.Message
       Start-Sleep -Milliseconds 350
@@ -787,7 +793,7 @@ try {
         if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
           throw 'Renamed draft body was not restored from canonical Study after restart'
         }
-        $restoreProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        $restoreProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'reopened-candidate.png')
         $cases.quit_relaunch_persistence = @{
           status='PASS'
