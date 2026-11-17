@@ -649,10 +649,28 @@ class Session:
                     raise NativeFailure(
                         f"No visible Scriptotar window for graphical quit (XIDs={ids})"
                     )
+                # xdotool --sync may hang on a genuine WebKitGTK toplevel
+                # even after Openbox has focused it. Request activation without
+                # synchronization, then independently observe the active X11
+                # window before sending the real Alt+F4. Never send a key to
+                # an unverified different application.
                 target = titled[0]
-                focus = command("xdotool", "windowactivate", "--sync", target, check=False)
+                focus = command("xdotool", "windowactivate", target, check=False)
                 if focus.returncode != 0:
-                    raise NativeFailure(f"Window manager could not activate Scriptotar {target}")
+                    raise NativeFailure(f"Window manager could not request Scriptotar activation {target}")
+                focused = False
+                until = time.monotonic() + 4
+                while time.monotonic() < until:
+                    active = command("xdotool", "getactivewindow", check=False)
+                    if active.returncode == 0 and active.stdout.strip() == target:
+                        focused = True
+                        break
+                    time.sleep(0.2)
+                if not focused:
+                    raise NativeFailure(
+                        f"Installed Scriptotar window {target} never became the active "
+                        "native X11 window; refusing Alt+F4"
+                    )
                 key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
                 if key.returncode != 0:
                     raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
