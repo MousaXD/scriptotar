@@ -343,11 +343,13 @@ impl AppServices {
             return Err(RepositoryError::NotFound("active Study".into()));
         }
         let storage_failure = || RepositoryError::Storage("writing receipt read failed".into());
-        let corrupt_receipt = || RepositoryError::Storage("writing receipt failed integrity check".into());
+        let corrupt_receipt =
+            || RepositoryError::Storage("writing receipt failed integrity check".into());
         let mut db = Connection::open(self.store.path()).map_err(|_| storage_failure())?;
         db.pragma_update(None, "query_only", true)
             .map_err(|_| storage_failure())?;
-        let snapshot = db.transaction_with_behavior(TransactionBehavior::Deferred)
+        let snapshot = db
+            .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(|_| storage_failure())?;
         let mut rows = Vec::new();
         {
@@ -1609,7 +1611,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(batches, 1);
-        let receipts = services.list_studio_writing_batches(project, study).unwrap();
+        let receipts = services
+            .list_studio_writing_batches(project, study)
+            .unwrap();
         assert_eq!(receipts.len(), 1);
         assert_eq!(receipts[0].run_id, "controlled-four-step");
         assert_eq!(
@@ -1696,7 +1700,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(recovered, stored);
-        let after_restart = reopened.list_studio_writing_batches(project, study).unwrap();
+        let after_restart = reopened
+            .list_studio_writing_batches(project, study)
+            .unwrap();
         assert_eq!(after_restart.len(), 1);
         assert_eq!(after_restart[0].draft_ids, receipts[0].draft_ids);
         assert_eq!(no_approval.steps, 0);
