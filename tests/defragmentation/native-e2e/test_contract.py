@@ -191,6 +191,21 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("NameProperty, $label),\n        [System.Windows.Automation.PropertyCondition]::new(\n          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,\n          [System.Windows.Automation.ControlType]::List)", script)
         self.assertNotIn("$list.SetFocus()", script)
 
+    def test_windows_post_restart_negative_ui_and_escape_are_gated(self):
+        # These are real installed WebView2 user interactions, not mocks
+        # or a bypass for project/draft persistence failure.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.quit_relaunch_persistence.status -eq 'PASS')", script)
+        self.assertIn("if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", script)
+        self.assertIn("Choose-InstalledProject $restoredHwnd $second", script)
+        self.assertIn("Foreign Study '$studyTitle' visible within project B's native Studio", script)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", script)
+        self.assertIn("Test-InstalledPopupOptionVisible $restoredHwnd $studyTitle", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('{ESC}')", script)
+        self.assertIn("Wait-InstalledPopupClosed $restoredHwnd $studyTitle", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
+        self.assertNotIn("$list.SetFocus()", script)
+
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
         # The real Settings selector uses aria-selected; unsupported or
         # unselected AT-SPI state must never be reported as theme persistence.
