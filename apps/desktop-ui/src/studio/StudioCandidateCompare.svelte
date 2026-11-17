@@ -41,7 +41,28 @@
     const expected = signature;
     const request = ++epoch;
     try {
-      const result = await Promise.all(candidates.map(async candidate => {
+      // Prefer the *exact* three draft IDs in the latest immutable v11
+      // receipt, not the three newest summaries (a Study may already have a
+      // manual candidate, and edits/renames can reorder the draft list).
+      // This is read-only; no automatic AI request or approval occurs here.
+      let selected = candidates;
+      if (gateway.listStudyWritingBatches) {
+        const batches = await gateway.listStudyWritingBatches(projectId, current.id);
+        if (request !== epoch || signature !== expected) return;
+        if (!Array.isArray(batches)) throw new Error(t.comparisonError);
+        if (batches.length > 0) {
+          const batch = batches[0];
+          if (batch.projectId !== projectId || batch.studyId !== current.id ||
+              !Array.isArray(batch.draftIds) || batch.draftIds.length !== 3 ||
+              new Set(batch.draftIds).size !== 3) {
+            throw new Error(t.comparisonError);
+          }
+          const exact = batch.draftIds.map(id => current.drafts?.find(item => item.id === id));
+          if (exact.some(item => !item)) throw new Error(t.comparisonError);
+          selected = exact as DraftCandidate[];
+        }
+      }
+      const result = await Promise.all(selected.map(async candidate => {
         const item = await gateway.getStudy(projectId, current.id, candidate.id);
         if (item.id !== current.id || item.projectId !== projectId ||
             item.draftId !== candidate.id || item.draftRevision !== candidate.revision ||
