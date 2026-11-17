@@ -224,3 +224,70 @@ fn studio_bundle_rejects_stale_and_wrong_project_without_mutation() {
     assert_eq!(snapshot(&reopened, project.id, study, draft), before);
     assert!(reopened.get_study(other.id, study).is_err());
 }
+
+#[test]
+fn deferred_commit_constraint_rolls_back_the_complete_studio_bundle() {
+    // A deferred FK violation is only discovered by SQLite at COMMIT, not
+    // during the preceding Study CAS, brief, source and draft-version writes.
+    // The transaction must roll back even when commit itself returns Err.
+    let (dir, db, project, study, draft, research) = fixture();
+    let before = snapshot(&db, project.id, study, draft);
+    let guard = Connection::open(db.path()).unwrap();
+    guard
+        .execute_batch(
+            "PRAGMA foreign_keys=ON;
+             CREATE TABLE test_studio_commit_guard(
+                 id TEXT PRIMARY KEY,
+                 project_id TEXT NOT NULL REFERENCES projects(id)
+                     DEFERRABLE INITIALLY DEFERRED
+             );
+             CREATE TRIGGER test_inject_commit_fault
+               AFTER INSERT ON draft_versions
+               BEGIN
+                 INSERT INTO test_studio_commit_guard(id,project_id)
+                 VALUES('attempted-new-version','invalid-fk-at-commit');
+               END;",
+        )
+        .unwrap();
+    drop(guard);
+    let new_brief = brief("Commit-failed audience");
+    let edit = StudyEdit {
+        title: "Commit-failed Study".into(),
+        goal: "Commit-failed goal".into(),
+        status: StudyStatus::Active,
+    };
+    let result = db.save_studio_bundle(
+        project.id,
+        study,
+        StudioBundleUpdate {
+            expected_revision: before.revision,
+            edit: &edit,
+            brief: &new_brief,
+            brief_changed: true,
+            sources: &[(StudySourceKind::ResearchItem, research)],
+            draft: "Commit-failed original script change",
+            draft_id: Some(draft),
+            expected_draft_revision: Some(before.draft_revision),
+        },
+    );
+    assert!(
+        result.is_err(),
+        "SQLite accepted a deferred invalid FK at transaction COMMIT"
+    );
+
+    drop(db);
+    let reopened = SqliteStore::open(dir.path().join("studio.sqlite")).unwrap();
+    reopened.run_integration_migrations().unwrap();
+    assert_eq!(
+        snapshot(&reopened, project.id, study, draft),
+        before,
+        "failed COMMIT retained partial Study, brief, source or draft changes"
+    );
+    let count: i64 = Connection::open(reopened.path())
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM test_studio_commit_guard", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 0, "failed COMMIT retained its invalid guard row");
+}
