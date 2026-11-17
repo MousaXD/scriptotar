@@ -1064,6 +1064,50 @@ try {
     }
     if ($cases.wrong_project_ui_isolation.status -eq 'PASS') {
       try {
+        # Actual artifact #14378911964 shows the real candidate ComboBox at
+        # y=80, partially hidden behind the fixed Studio toolbar (bottom=111),
+        # after the wrong-project isolation navigation. Clicking its UIA
+        # rectangle center would hit the toolbar, not the candidate menu.
+        # Scroll the genuine installed WebView2 Document upward via its native
+        # UI Automation ScrollPattern, then require the entire ComboBox below
+        # the fixed toolbar before any pointer action. No injected DOM/JS.
+        $candidateReady = $false
+        for ($attempt=0; $attempt -lt 5; $attempt++) {
+          $frame = [System.Windows.Automation.AutomationElement]::FromHandle($restoredHwnd)
+          if (-not $frame) { throw 'Installed native WebView2 HWND missing while locating candidate' }
+          $document = $frame.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree,
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Document))
+          if (-not $document) { throw 'Installed WebView2 document unavailable during candidate navigation' }
+          $candidate = $frame.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree,
+            [System.Windows.Automation.AndCondition]::new(
+              [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::NameProperty, 'Script candidates'),
+              [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::ComboBox)))
+          if (-not $candidate) { throw 'Installed Script candidates ComboBox absent after project restoration' }
+          $rect = $candidate.Current.BoundingRectangle
+          $viewport = $frame.Current.BoundingRectangle
+          if ($candidate.Current.IsEnabled -and $rect.Width -gt 3 -and
+              $rect.Height -gt 3 -and $rect.Y -ge ($viewport.Y + 90) -and
+              $rect.Bottom -le ($viewport.Bottom - 5)) {
+            $candidateReady = $true
+            break
+          }
+          $scroll = $document.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+          if (-not $scroll) { throw 'Installed document has no native UIA ScrollPattern to reveal Script candidates' }
+          $scroll.Scroll(
+            [System.Windows.Automation.ScrollAmount]::NoAmount,
+            [System.Windows.Automation.ScrollAmount]::SmallDecrement)
+          Start-Sleep -Milliseconds 350
+        }
+        if (-not $candidateReady) {
+          throw 'Native Script candidates ComboBox remained obscured by fixed toolbar after bounded UIA scroll'
+        }
         # Actually open the Svelte custom listbox and send a native Escape
         # keystroke to the installed foreground WebView2 window.
         Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle

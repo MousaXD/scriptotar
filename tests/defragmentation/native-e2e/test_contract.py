@@ -660,13 +660,38 @@ class NativeEvidenceContractTests(unittest.TestCase):
 
         session.proc = proc
         seen.clear()
+        keyboard_requested = [False]
+        def keyboard_focused_command(*argv, **_kwargs):
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\\n")
+            if argv[1] == "windowfocus":
+                keyboard_requested[0] = True
+                return SimpleNamespace(returncode=0, stdout="")
+            if argv[1] == "getwindowfocus":
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="4196049\\n" if keyboard_requested[0] else "999999\\n",
+                )
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=keyboard_focused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 7]),
+        ):
+            session.stop()
+        self.assertIn(("xdotool", "windowfocus", "4196049"), seen)
+        self.assertIn(("xdotool", "getwindowfocus"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+
+        session.proc = proc
+        seen.clear()
         def unfocused_command(*argv, **_kwargs):
             if argv[1] == "getactivewindow":
                 return SimpleNamespace(returncode=0, stdout="999999\n")
             return installed_command(*argv, **_kwargs)
         with (
             mock.patch.object(native, "command", side_effect=unfocused_command),
-            mock.patch.object(native.time, "monotonic", side_effect=[0, 5]),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 11]),
         ):
             with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
                 session.stop()

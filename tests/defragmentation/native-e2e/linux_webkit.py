@@ -726,9 +726,26 @@ class Session:
                         break
                     time.sleep(0.2)
                 if not focused:
+                    # Openbox/WebKitGTK can leave _NET_ACTIVE_WINDOW unchanged
+                    # after an Arabic toolbar transition. Request real X11
+                    # *keyboard* focus for this exact installed application
+                    # window, then independently observe that X focus moved.
+                    # A focus request alone never licenses sending Alt+F4.
+                    requested = command("xdotool", "windowfocus", target, check=False)
+                    if requested.returncode == 0:
+                        keyboard_deadline = time.monotonic() + 4
+                        while time.monotonic() < keyboard_deadline:
+                            keyboard = command("xdotool", "getwindowfocus", check=False)
+                            if (keyboard.returncode == 0
+                                    and keyboard.stdout.strip() == target):
+                                focused = True
+                                break
+                            time.sleep(0.2)
+                if not focused:
                     raise NativeFailure(
-                        f"Installed Scriptotar window {target} never became the active "
-                        "native X11 window; refusing Alt+F4"
+                        f"Installed Scriptotar window {target} never acquired "
+                        "verified native X11 active-window or keyboard focus; "
+                        "refusing Alt+F4"
                     )
                 key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
                 if key.returncode != 0:
