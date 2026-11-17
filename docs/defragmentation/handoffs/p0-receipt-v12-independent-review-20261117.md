@@ -70,3 +70,9 @@ Require 1) exact new PR #128 independent v12 DB **PASS** including positive test
 **Agent 10 test-only source:** `0310fae5814f9bb816cacbcb15bb43008d21c041`. Existing host structural test already fails absent Tauri paid command. Added second necessary-but-not-sufficient test `test_registered_paid_host_has_real_serialized_openai_transport` that refuses to certify a dummy registered command: it requires a non-test sealed provider dispatch call, a production `HostOpenAiResponsesWire::new` construction and implementation of `CertifiedWireTransport`, and delegation from the registered command into `AppServices`. [Owner notice](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6955515969).
 
 **Current verdict: FAIL on prior integrated v11 source `efb38cf186fb76138323b0d8d1136ed727739974` for missing public paid Tauri entrypoint (run #44119319865).** New structural test exact-head execution is **NOT TESTED** until independent CI finishes. A future structural PASS alone will **not** certify real HTTP use, pricing, revocation, authenticated receipt or cross-process source synchronization; keep egress disabled. Latest observed integration branch still draft.
+
+## Original five negative regressions — byte-for-byte preservation proof
+
+Refreshed GitHub blob content for baseline audit source `a816ec761903e274e033540b4f90d27fc62a153d` and latest Agent 10 source. The original `external_receipt_replay_additional_tests.rs` **13,114-byte content is an exact byte-for-byte prefix** of the current **25,556-byte** file (all five original regression test bodies untouched). Original Git blob SHA `cf99a1bf09faf15c6277dd29e1045b6658cfee0a`; expanded blob SHA `3e325fb54a222d05bee504c7cb5f8ae2835e67ba`. Additional appended tests cannot weaken the old pass/fail assertions.
+
+Verified source-level preservation only, **not** a substitute for a passing exact-SHA `receipt-v12:128` CI run.
