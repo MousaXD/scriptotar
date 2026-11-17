@@ -662,15 +662,17 @@ class NativeEvidenceContractTests(unittest.TestCase):
         seen.clear()
         keyboard_requested = [False]
         def keyboard_focused_command(*argv, **_kwargs):
+            if argv[1] in ("getactivewindow", "windowfocus", "getwindowfocus"):
+                seen.append(argv)
             if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="999999\\n")
+                return SimpleNamespace(returncode=0, stdout="999999\n")
             if argv[1] == "windowfocus":
                 keyboard_requested[0] = True
                 return SimpleNamespace(returncode=0, stdout="")
             if argv[1] == "getwindowfocus":
                 return SimpleNamespace(
                     returncode=0,
-                    stdout="4196049\\n" if keyboard_requested[0] else "999999\\n",
+                    stdout="4196049\n" if keyboard_requested[0] else "999999\n",
                 )
             return installed_command(*argv, **_kwargs)
         with (
