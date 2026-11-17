@@ -20,6 +20,29 @@ case "$gate:$pr" in
       cargo test --locked -p scriptotar-ai provider_consent
     )
     ;;
+  receipt-v12:128)
+    # Independently test Agent 02's NEW v12 recovery BEFORE owner integration.
+    # This writes only the disposable 'target' CI checkout, never #128.
+    test -f target/crates/scriptotar-db/src/agent_effects_external.rs
+    python3 - <<'PY'
+from pathlib import Path
+target = Path('target/crates/scriptotar-db/src/agent_effects_external.rs')
+source = target.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in source, 'cannot find actual v12 DB test fixture'
+closing = source.rfind('}')
+assert closing > source.index(marker), 'bad real DB fixture boundary'
+assert not source[closing + 1:].strip(), 'DB test module is not last'
+extra = Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text()
+target.write_text(source[:closing] + '\n' + extra + '\n' + source[closing:])
+PY
+    (
+      cd target
+      # All original five regressions plus new adversarial and positive
+      # provider-scoping, retry, ACK, migration and restart tests.
+      cargo test --locked -p scriptotar-db
+    )
+    ;;
   migration:119)
     test -f target/crates/scriptotar-db/src/agent_effects_external.rs
     (
