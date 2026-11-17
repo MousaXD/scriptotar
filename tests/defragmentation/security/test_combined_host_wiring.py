@@ -116,6 +116,39 @@ class CombinedHostWiringSecurity(unittest.TestCase):
         )
 
 
+    def test_public_legacy_byok_command_cannot_bypass_sealed_consent(self):
+        """Public run_ai is still registered, but must be non-networking.
+
+        Verify the exact production service method, not a fake unit-test
+        helper or an unused deny function. The actual host Rust test also
+        executes BYOK with a synthetic key and hostile endpoint to prove
+        refusal without inserting an AI receipt.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        self.require(
+            r"(?s)async\s+fn\s+run_ai\s*\([^)]*\)[^{]*\{[\s\S]*?"
+            r"services\s*\.\s*run_ai\s*\(\s*&input\s*\)",
+            tauri,
+            "public Tauri run_ai does not delegate to audited AppServices::run_ai",
+        )
+        start = self.services.find("pub fn run_ai(")
+        self.assertGreaterEqual(start, 0, "production AppServices::run_ai missing")
+        end = self.services.find("\n    fn require_active_project(", start)
+        self.assertGreater(end, start, "cannot isolate production BYOK handler")
+        body = self.services[start:end]
+        self.require(
+            r'if\s+input\.mode\.eq_ignore_ascii_case\(\s*"byok"\s*\)'
+            r'\s*\{\s*return\s+Err\s*\(',
+            body,
+            "public legacy BYOK request is not rejected before paid network execution",
+        )
+        for forbidden in ("HttpAiProvider", "AiService::new", "send_prepared_once"):
+            self.assertNotIn(
+                forbidden, body,
+                f"public legacy run_ai still references an unsealed paid egress API: {forbidden}",
+            )
+
+
     def test_approved_paid_provider_dispatch_is_exposed_through_tauri_host(self):
         """A private adapter or unit-test-only constructor is not an IPC path.
 
