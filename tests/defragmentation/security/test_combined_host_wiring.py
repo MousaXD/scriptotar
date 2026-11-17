@@ -179,5 +179,59 @@ class CombinedHostWiringSecurity(unittest.TestCase):
         )
 
 
+    def test_registered_paid_host_has_real_serialized_openai_transport(self):
+        """A named Tauri command is not enough: production must call the sealed
+        handler and construct its actual hardened OpenAI Responses transport.
+
+        Structural evidence only. A green result still requires exact-wire,
+        synchronous revocation/consent, pricing and no-billable-replay tests.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        generated = re.search(
+            r"\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)",
+            tauri,
+        )
+        self.assertIsNotNone(generated, "production Tauri command registry missing")
+        registered = {
+            name.strip().split("::")[-1]
+            for name in generated.group(1).split(",")
+            if name.strip()
+        }
+        paid = {
+            name for name in registered
+            if re.search(r"(?:provider|consent|paid)", name, re.I)
+            and re.search(r"(?:dispatch|execute|generate|send)", name, re.I)
+        }
+        self.assertTrue(paid, "no public registered approved paid command to audit")
+        self.require(
+            r"\.\s*dispatch_provider_angle_consent_sealed\s*\(",
+            self.production,
+            "real sealed Tauri service dispatch has no non-test caller",
+        )
+        self.require(
+            r"\bHostOpenAiResponsesWire\s*::\s*new\s*\(",
+            self.production,
+            "real OpenAI Responses transport is not constructed on production host path",
+        )
+        self.require(
+            r"\bCertifiedWireTransport\s+for\s+HostOpenAiResponsesWire\b",
+            self.production,
+            "real OpenAI wire adapter does not implement the sealed host transport",
+        )
+        # The registered IPC callback must at least delegate to production
+        # service logic; merely registering an unrelated no-op returns FAIL.
+        self.assertTrue(
+            any(re.search(
+                r"(?s)(?:async\s+)?fn\s+" + re.escape(name)
+                + r"\s*\([^)]*\)[^{]*\{[\s\S]{0,4000}?\bservices\s*\.",
+                tauri,
+            ) for name in paid),
+            "registered paid Tauri command never delegates to AppServices",
+        )
+        # Runtime tests must still prove source locking, exact model/pricing,
+        # authenticated provider receipts and no HTTP execution on revoked
+        # consent. Static symbols cannot certify a billable transaction.
+
+
 if __name__ == "__main__":
     unittest.main()
