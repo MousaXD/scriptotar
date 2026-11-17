@@ -320,11 +320,13 @@ function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [sw
       [System.Windows.Automation.AutomationElement]::ControlTypeProperty, $kind))
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   $element = $null
+  $scrollAttempted = $false
   do {
     try {
       $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
       $ownerRect = $owner.Current.BoundingRectangle
       $matches = $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
+      $scrollCandidate = $null
       foreach ($candidate in $matches) {
         $bounds = $candidate.Current.BoundingRectangle
         $cx = $bounds.X + $bounds.Width / 2
@@ -337,6 +339,30 @@ function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [sw
           $element = $candidate
           break
         }
+        # Run #44150090373: the genuine, restored Script candidates ComboBox
+        # was at y=971, below the 720px installed WebView viewport. UIA exposes
+        # ScrollItemPattern; do not call this a missing product control.
+        if (-not $scrollAttempted -and -not $scrollCandidate -and
+            $candidate.Current.IsEnabled -and $bounds.Width -gt 3 -and
+            $bounds.Height -gt 3) {
+          $scrollCandidate = $candidate
+        }
+      }
+      if (-not $element -and -not $scrollAttempted -and $scrollCandidate) {
+        $scrollAttempted = $true
+        try {
+          $scrollItem = $scrollCandidate.GetCurrentPattern(
+            [System.Windows.Automation.ScrollItemPattern]::Pattern)
+          if ($scrollItem) {
+            $scrollItem.ScrollIntoView()
+            Write-Host "Native UIA ScrollIntoView requested for offscreen '$name'"
+            Start-Sleep -Milliseconds 400
+          }
+        } catch {
+          Write-Host "Native UIA ScrollIntoView unavailable for '$name': $($_.Exception.Message)"
+        }
+        # Always requery HWND and freshly rendered accessibility bounds;
+        # scrolling by itself is never a verified click or a PASS.
       }
     } catch {
       # Provider may be re-rendering after native relaunch; retry in bounds.
@@ -933,6 +959,14 @@ try {
         Wait-InstalledDashboard $restoredHwnd $first
         Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+        # Exact installed UIA tree at run #44159845627 retained Studio,
+        # project A, Study, two scripts and the Script candidates ComboBox,
+        # but candidate bounds were y=971 below the 749px document viewport.
+        # ScrollItemPattern alone did not bring that control onscreen.
+        # Use the genuine, visible Studio 'Scripts 2' hyperlink, then still
+        # require the candidate control, exact body and immutable SQLite.
+        Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'reopened-scripts-navigation.png')
         Find-ExactInstalledControl $restoredHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
         if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
           throw 'Original Study draft was not restored after true installed GUI restart'
