@@ -495,7 +495,18 @@ fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
                 if result.is_ok() {
                     successes.fetch_add(1, Ordering::SeqCst);
                 } else {
-                    assert!(matches!(result, Err(ConsentError::AlreadyUsed)));
+                    // Preserve the strict assertion, but make unexpected
+                    // fail-closed variants reproducible without logging keys,
+                    // prompts, response bodies or user data.
+                    assert!(
+                        matches!(result, Err(ConsentError::AlreadyUsed)),
+                        "losing concurrent claim returned {:?}; sends={}, reservations={}, dispatch_CAS={}, receipts={}",
+                        result.as_ref().err(),
+                        provider.0.load(Ordering::SeqCst),
+                        fence.reservations.load(Ordering::SeqCst),
+                        fence.dispatches.load(Ordering::SeqCst),
+                        fence.receipts.load(Ordering::SeqCst)
+                    );
                 }
             });
         }
