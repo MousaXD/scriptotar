@@ -4,7 +4,7 @@
 //! No paid execution can occur through this adapter until Agent 02 delivers
 //! transactional remote-effect fencing AND bounded provider usage receipts.
 use super::AppServices;
-use scriptotar_agent::ExecutionContext;
+use scriptotar_agent::{CheckpointStore, ExecutionContext, RunState, StepState};
 use scriptotar_ai::{
     provider_consent::{
         sha256_hex, ActualUsage, ConsentBoundary, ConsentError, ConsentPreview,
@@ -19,7 +19,8 @@ use scriptotar_db::{
     ExternalResolution, SqliteStore,
 };
 use std::{
-    sync::MutexGuard,
+    collections::HashMap,
+    sync::{Mutex, MutexGuard},
     time::{SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -719,6 +720,195 @@ impl AppServices {
             )
             .map(|result| result.text)
             .map_err(consent_error)
+    }
+}
+
+
+/// Per-application consent state. Approval is never reconstructed from SQLite or
+/// from a client-supplied fingerprint after a restart. This state has no secrets.
+#[derive(Default)]
+pub(super) struct HostProviderSession {
+    boundary: ConsentBoundary,
+    prepared: Mutex<HashMap<String, (ProviderIntent, ConsentPreview)>>,
+}
+
+/// Production egress remains disabled until the independent security review
+/// certifies current provider pricing, snapshot isolation across processes,
+/// restart recovery, and canonical three-script persistence. An environment
+/// variable, frontend flag, or caller cannot enable a billable request.
+fn certified_paid_egress_enabled() -> bool {
+    false
+}
+
+impl AppServices {
+    /// Public IPC preview: derive the prompt from the authoritative current
+    /// Study; seal the literal OpenAI request bytes. No HTTP or cost incurred.
+    /// Pricing is deliberately unavailable; approval fails closed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preview_openai_provider_consent(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        model: String,
+        max_output_tokens: u64,
+        limits: RunBudget,
+    ) -> RepositoryResult<ConsentPreview> {
+        Uuid::parse_str(run_id)
+            .map_err(|_| RepositoryError::Validation("invalid provider run id".into()))?;
+        let transport = super::provider_openai_wire::HostOpenAiResponsesWire::new()
+            .map_err(consent_error)?;
+        let provider = ProviderConfig {
+            provider: scriptotar_ai::ProviderKind::OpenAi,
+            model,
+            base_url: None,
+        };
+        let (intent, preview) = self.prepare_provider_angle_consent_sealed(
+            &self.provider_session.boundary,
+            project,
+            study,
+            run_id,
+            provider,
+            max_output_tokens,
+            limits,
+            &NoTrustedPricing,
+            &transport,
+        )?;
+        let mut prepared = self
+            .provider_session
+            .prepared
+            .lock()
+            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?;
+        // Bound in-memory pending consent, even for hostile IPC callers.
+        if prepared.len() >= 64 {
+            let _ = self.provider_session.boundary.cancel(run_id);
+            return Err(consent_error(ConsentError::EffectFenceUnavailable));
+        }
+        prepared.insert(run_id.to_owned(), (intent, preview.clone()));
+        Ok(preview)
+    }
+
+    pub fn decide_openai_provider_consent(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        fingerprint: &str,
+        approve: bool,
+    ) -> RepositoryResult<()> {
+        let (intent, preview) = self.lookup_provider_consent(project, study, run_id, fingerprint)?;
+        // No public callback can approve a changed model, scope or sealed hash.
+        if intent.scope.project_id != project.to_string()
+            || intent.scope.study_id != study.to_string()
+            || preview.fingerprint != fingerprint
+        {
+            return Err(consent_error(ConsentError::ChangedContext));
+        }
+        self.decide_provider_angle_consent(
+            &self.provider_session.boundary,
+            run_id,
+            fingerprint,
+            approve,
+        )
+    }
+
+    fn lookup_provider_consent(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        fingerprint: &str,
+    ) -> RepositoryResult<(ProviderIntent, ConsentPreview)> {
+        let prepared = self
+            .provider_session
+            .prepared
+            .lock()
+            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?;
+        let (intent, preview) = prepared
+            .get(run_id)
+            .cloned()
+            .ok_or_else(|| consent_error(ConsentError::NoApproval))?;
+        if intent.scope.project_id != project.to_string()
+            || intent.scope.study_id != study.to_string()
+            || preview.fingerprint != fingerprint
+        {
+            return Err(consent_error(ConsentError::ChangedContext));
+        }
+        Ok((intent, preview))
+    }
+
+    /// The public execution entrypoint reaches the real serialized OpenAI wire
+    /// through the same consent, scoped ledger, and pre-send CAS adapter used by
+    /// controlled integration tests. It is intentionally fail-closed in this
+    /// release candidate: no trusted model-price catalog or complete paid
+    /// output persistence has been independently certified.
+    pub fn execute_openai_provider_consent(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        fingerprint: &str,
+        request_time_api_key: &str,
+    ) -> RepositoryResult<String> {
+        let (intent, preview) = self.lookup_provider_consent(project, study, run_id, fingerprint)?;
+        if !certified_paid_egress_enabled() {
+            return Err(RepositoryError::Validation(
+                "Paid provider execution is disabled pending independent certification".into(),
+            ));
+        }
+
+        // Never trust a browser-provided execution context. The real durable
+        // checkpoint must already have an explicitly approved RUNNING step.
+        let checkpoints = self
+            .store
+            .scoped_agent_checkpoints(project, study)
+            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?;
+        let snapshot = checkpoints
+            .load(run_id)
+            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?
+            .ok_or_else(|| consent_error(ConsentError::NoApproval))?;
+        let index = snapshot.current_step;
+        let record = snapshot
+            .steps
+            .get(index)
+            .ok_or_else(|| consent_error(ConsentError::NoApproval))?;
+        let plan_step = snapshot
+            .plan
+            .steps
+            .get(index)
+            .ok_or_else(|| consent_error(ConsentError::NoApproval))?;
+        if snapshot.plan.id != run_id
+            || snapshot.plan.project_id != project.to_string()
+            || snapshot.plan.study_id != study.to_string()
+            || snapshot.state != RunState::Running
+            || record.state != StepState::Running
+            || !record.approved
+            || record.attempts != 1
+            || snapshot.cancel_requested
+        {
+            return Err(consent_error(ConsentError::NoApproval));
+        }
+        let context = ExecutionContext {
+            run_id: run_id.to_owned(),
+            project_id: project.to_string(),
+            study_id: study.to_string(),
+            step_id: record.id.clone(),
+            idempotency_key: record.idempotency_key.clone(),
+            deadline_ms: preview.expires_at_ms,
+            estimate: plan_step.estimate,
+        };
+        let transport = super::provider_openai_wire::HostOpenAiResponsesWire::new()
+            .map_err(consent_error)?;
+        let reply = self.dispatch_provider_angle_consent_sealed(
+            &self.provider_session.boundary,
+            &intent,
+            &preview,
+            &context,
+            &NoTrustedPricing,
+            &transport,
+            request_time_api_key,
+        )?;
+        Ok(reply.text)
     }
 }
 
