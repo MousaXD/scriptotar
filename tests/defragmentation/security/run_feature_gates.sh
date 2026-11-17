@@ -33,8 +33,11 @@ assert marker in source, 'cannot find actual v12 DB test fixture'
 closing = source.rfind('}')
 assert closing > source.index(marker), 'bad real DB fixture boundary'
 assert not source[closing + 1:].strip(), 'DB test module is not last'
-extra = Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text()
-target.write_text(source[:closing] + '\n' + extra + '\n' + source[closing:])
+extras = [
+    Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text(),
+    Path('audit/tests/defragmentation/security/external_v12_upgrade_additional_tests.rs').read_text(),
+]
+target.write_text(source[:closing] + '\n' + '\n'.join(extras) + '\n' + source[closing:])
 PY
     (
       cd target
@@ -129,8 +132,15 @@ assert marker in source, 'cannot find real v10 test fixture'
 closing = source.rfind('}')
 assert closing > source.index(marker)
 assert not source[closing + 1:].strip(), 'v10 test fixture is not last in file'
-extra = Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text()
-target.write_text(source[:closing] + '\n' + extra + '\n' + source[closing:])
+extras = [
+    Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text(),
+]
+schema = Path('target/crates/scriptotar-db/src/lib.rs').read_text()
+if 'pub const LATEST_SCHEMA_VERSION: u32 = 12;' in schema:
+    extras.append(
+        Path('audit/tests/defragmentation/security/external_v12_upgrade_additional_tests.rs').read_text()
+    )
+target.write_text(source[:closing] + '\n' + '\n'.join(extras) + '\n' + source[closing:])
 PY
     (
       cd target
