@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -582,7 +583,27 @@ class Session:
         deadline = time.monotonic() + 35
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
-                raise NativeFailure(f"Installed executable exited: {self.proc.returncode}")
+                exit_code = self.proc.returncode
+                signal_name = None
+                if exit_code < 0:
+                    try:
+                        signal_name = signal.Signals(-exit_code).name
+                    except ValueError:
+                        signal_name = f"signal {-exit_code}"
+                crash = {
+                    "pid": self.proc.pid,
+                    "returncode": exit_code,
+                    "signal": signal_name,
+                    "startup_expected_studio": expected_studio,
+                    "stage": "installed native application startup after launch/relaunch",
+                }
+                (self.root / "process-exit.json").write_text(
+                    json.dumps(crash, indent=2) + "\n", encoding="utf-8"
+                )
+                raise NativeFailure(
+                    f"Installed executable exited: {exit_code}"
+                    + (f" ({signal_name})" if signal_name else "")
+                )
             try:
                 if self.ax.web_document() and (
                     self.ax.available(expected_studio, "button") or
@@ -1018,6 +1039,11 @@ def main() -> int:
             photo.replace(args.output / photo.name)
         if (root / "desktop.log").exists():
             (args.output / "desktop.log").write_bytes((root / "desktop.log").read_bytes()[-100000:])
+        if (root / "process-exit.json").exists():
+            (args.output / "process-exit.json").write_bytes(
+                (root / "process-exit.json").read_bytes()
+            )
+            report["native_process_exit_evidence"] = "process-exit.json"
         if (root / "a11y-diagnostics.json").exists():
             (args.output / "a11y-diagnostics.json").write_bytes(
                 (root / "a11y-diagnostics.json").read_bytes()
