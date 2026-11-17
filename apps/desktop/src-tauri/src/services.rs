@@ -1732,7 +1732,7 @@ mod tests {
         worker.join().unwrap();
     }
 
-        fn prompt_input(task: &str) -> AiPromptInput {
+    fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
             mode: "byok".to_owned(),
             provider: "OpenAI".to_owned(),
