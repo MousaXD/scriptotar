@@ -570,6 +570,8 @@ class NativeEvidenceContractTests(unittest.TestCase):
                 return SimpleNamespace(stdout="24680\n", returncode=0)
             if arguments[1] == "getwindowname":
                 return SimpleNamespace(stdout="Scriptotar\n", returncode=0)
+            if arguments[1] == "getactivewindow":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
             return SimpleNamespace(stdout="", returncode=0)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -600,6 +602,76 @@ class NativeEvidenceContractTests(unittest.TestCase):
         main = inspect.getsource(native.main)
         self.assertIn('"native_arabic_transition_evidence"', main)
         self.assertIn('args.output / "arabic-transition.json"', main)
+
+    def test_linux_graphical_quit_requires_real_focus_without_blocking_sync(self):
+        # The hosted Openbox/WebKit X11 activation may deadlock under --sync.
+        # A nonblocking request is not enough: actual focus must be observed
+        # before dispatching the genuine native Alt+F4.
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.proc = proc
+        seen = []
+
+        def installed_command(*argv, **_kwargs):
+            seen.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=installed_command):
+            session.stop()
+        self.assertIsNone(session.proc)
+        self.assertIn(("xdotool", "windowactivate", "4196049"), seen)
+        self.assertIn(("xdotool", "getactivewindow"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+        self.assertLess(
+            seen.index(("xdotool", "getactivewindow")),
+            seen.index(("xdotool", "key", "--clearmodifiers", "alt+F4")),
+        )
+        proc.terminate.assert_not_called()
+
+        # A SIGSEGV on real Alt+F4 must never be accepted as normal quit.
+        # Preserve the signal for independent installed-run diagnostics.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session.root = Path(temp_dir)
+            session.proc = proc
+            proc.wait.return_value = -11
+            with mock.patch.object(native, "command", side_effect=installed_command):
+                with self.assertRaisesRegex(
+                    native.NativeFailure, "graphical shutdown exited abnormally"
+                ):
+                    session.stop()
+            import json
+            crash = json.loads((Path(temp_dir) / "process-exit.json").read_text())
+            self.assertEqual(crash["pid"], 1234)
+            self.assertEqual(crash["returncode"], -11)
+            self.assertEqual(crash["signal"], "SIGSEGV")
+            self.assertEqual(
+                crash["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+        proc.wait.return_value = 0
+
+        session.proc = proc
+        seen.clear()
+        def unfocused_command(*argv, **_kwargs):
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\n")
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=unfocused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5]),
+        ):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
+                session.stop()
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        proc.terminate.assert_called()
 
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
         # Native Arabic accessibility may expose localized project and language

@@ -709,9 +709,27 @@ class Session:
                         f"No visible Scriptotar window for graphical quit (XIDs={ids})"
                     )
                 target = titled[0]
-                focus = command("xdotool", "windowactivate", "--sync", target, check=False)
+                # Nonblocking X11 activation: --sync can hang on a real
+                # WebKitGTK top-level after the Arabic toolbar changes.
+                # Confirm the active native window before dispatching Alt+F4.
+                focus = command("xdotool", "windowactivate", target, check=False)
                 if focus.returncode != 0:
-                    raise NativeFailure(f"Window manager could not activate Scriptotar {target}")
+                    raise NativeFailure(
+                        f"Window manager could not request Scriptotar activation {target}"
+                    )
+                focused = False
+                deadline = time.monotonic() + 4
+                while time.monotonic() < deadline:
+                    active = command("xdotool", "getactivewindow", check=False)
+                    if active.returncode == 0 and active.stdout.strip() == target:
+                        focused = True
+                        break
+                    time.sleep(0.2)
+                if not focused:
+                    raise NativeFailure(
+                        f"Installed Scriptotar window {target} never became the active "
+                        "native X11 window; refusing Alt+F4"
+                    )
                 key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
                 if key.returncode != 0:
                     raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
