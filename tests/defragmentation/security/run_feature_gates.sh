@@ -94,6 +94,21 @@ case "$gate:$pr" in
     (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v) || combined_host_static_status=$?
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    # Add one independent v10 cross-run receipt replay test inside the REAL
+    # database's existing Rust test fixture. This modifies only CI's checkout;
+    # never persist any changes into PR #114 or the production source tree.
+    python3 - <<'PY'
+from pathlib import Path
+target = Path('target/crates/scriptotar-db/src/agent_effects_external.rs')
+source = target.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in source, 'cannot find real v10 test fixture'
+closing = source.rfind('}')
+assert closing > source.index(marker)
+assert not source[closing + 1:].strip(), 'v10 test fixture is not last in file'
+extra = Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text()
+target.write_text(source[:closing] + '\n' + extra + '\n' + source[closing:])
+PY
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
