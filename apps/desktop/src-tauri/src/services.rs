@@ -145,10 +145,22 @@ impl AppServices {
         // Every foreground Studio mutation and in-process research-origin
         // writer must share this host authorization gate with paid admission.
         let active_project_gate = Arc::new(Mutex::new(active_project));
-        let orchestrator = JobOrchestrator::start_with_notifier(
+        let transcription_write_guard = Arc::clone(&active_project_gate);
+        let orchestrator = JobOrchestrator::start_with_notifier_and_content_gate(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
             notifier,
+            Arc::new(move |commit| {
+                // The sidecar can run without this lock. Only its final
+                // Source/Media/Transcript transaction must serialize with
+                // Studio source changes and the provider pre-send CAS.
+                let _guard = transcription_write_guard.lock().map_err(|_| {
+                    scriptotar_orchestrator::OrchestratorError::Unavailable(
+                        "host source authorization gate unavailable".into(),
+                    )
+                })?;
+                commit()
+            }),
         );
         let research_command = YtDlpCommand::from_environment();
         let watchlist_refresher = spawn_watchlist_refresher(
