@@ -39,9 +39,8 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use scriptotar_ai::{
-    AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind,
-};
+#[cfg(test)]
+use scriptotar_ai::{EndpointPolicy, ProviderConfig, ProviderKind};
 use scriptotar_core::{
     now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository,
     Creator, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, RepositoryError,
@@ -616,75 +615,36 @@ impl AppServices {
         Ok(ai_run_detail(&run))
     }
 
+    /// Legacy AI Studio compatibility. Never dispatch a raw BYOK request:
+    /// this path has no per-request scope approval, v10 effect reservation,
+    /// trusted model pricing or authenticated bounded usage receipt. The
+    /// sealed provider adapter remains private until all release gates pass.
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
-        let prompt = self.build_ai_prompt(input)?;
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
-        if !input.mode.eq_ignore_ascii_case("byok") {
-            self.store
-                .insert_ai_run(&AiRun {
-                    id: Uuid::new_v4(),
-                    project_id: active_project,
-                    task: input.task.trim().to_owned(),
-                    mode: AiRunMode::CopyPrompt,
-                    provider: None,
-                    model: None,
-                    prompt: prompt.clone(),
-                    result: None,
-                    created_at: now_rfc3339(),
-                })
-                .map_err(|error| error.to_string())?;
-            return Ok(prompt);
+        if input.mode.eq_ignore_ascii_case("byok") {
+            return Err("Direct BYOK execution is disabled until explicit provider approval, trusted pricing and durable usage accounting are certified. Use Copy Prompt instead.".to_owned());
         }
 
-        let api_key = input
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|key| !key.is_empty())
-            .ok_or_else(|| "an API key is required for BYOK mode".to_owned())?;
-        let provider = provider_kind(&input.provider)?;
-        if provider == ProviderKind::Local {
-            return Err("local AI provider execution is not enabled yet".to_owned());
-        }
-        let config = ProviderConfig {
-            provider,
-            model: input.model.trim().to_owned(),
-            base_url: input
-                .base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
-        };
-        EndpointPolicy
-            .endpoint_for(&config)
-            .map_err(|error| error.to_string())?;
-        let provider_client = HttpAiProvider::new(provider).map_err(|error| error.to_string())?;
-        let response = AiService::new(provider_client)
-            .generate(
-                &config,
-                api_key,
-                &AiRequest {
-                    prompt: prompt.clone(),
-                },
-            )
-            .map_err(|error| error.to_string())?;
+        // Preserve the historical prompt-only behavior. Serialize the write
+        // against project switching and final provider scope admission.
+        let prompt = self.build_ai_prompt(input)?;
+        let active_project = self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
         self.store
             .insert_ai_run(&AiRun {
                 id: Uuid::new_v4(),
-                project_id: active_project,
+                project_id: *active_project,
                 task: input.task.trim().to_owned(),
-                mode: AiRunMode::Byok,
-                provider: Some(input.provider.clone()),
-                model: Some(config.model),
-                prompt,
-                result: Some(response.text.clone()),
+                mode: AiRunMode::CopyPrompt,
+                provider: None,
+                model: None,
+                prompt: prompt.clone(),
+                result: None,
                 created_at: now_rfc3339(),
             })
             .map_err(|error| error.to_string())?;
-        Ok(response.text)
+        Ok(prompt)
     }
 
     fn require_active_project(&self, project_id: Uuid) -> RepositoryResult<()> {
@@ -1700,17 +1660,6 @@ fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<S
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
-fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
-    match provider {
-        "OpenAI" => Ok(ProviderKind::OpenAi),
-        "Anthropic" => Ok(ProviderKind::Anthropic),
-        "Gemini" => Ok(ProviderKind::Gemini),
-        "OpenAI-compatible" => Ok(ProviderKind::OpenAiCompatible),
-        "Local (coming later)" => Ok(ProviderKind::Local),
-        _ => Err("unsupported AI provider".to_owned()),
-    }
-}
-
 fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
     let value = value.trim();
     if !value.is_empty() {
@@ -1799,6 +1748,34 @@ mod tests {
 
     fn database_path(temp: &TempDir) -> PathBuf {
         temp.path().join("scriptotar.sqlite3")
+    }
+
+    #[test]
+    fn legacy_byok_host_command_fails_closed_without_receipt_or_network() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let prior = services.store.list_ai_runs(Some(project_id)).unwrap().len();
+
+        // Deliberately supply credentials and a custom endpoint. Neither
+        // may trigger legacy HTTP execution, spending, or a false AI receipt.
+        let mut request = prompt_input("Hook ideas");
+        request.provider = "OpenAI-compatible".to_owned();
+        request.base_url = Some("https://example.com/v1".to_owned());
+        let refusal = services.run_ai(&request).unwrap_err();
+        assert!(refusal.contains("Direct BYOK execution is disabled"));
+        assert!(!refusal.contains("super-secret"));
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            prior
+        );
+
+        request.mode = "copy_prompt".to_owned();
+        let preview = services.run_ai(&request).unwrap();
+        assert!(preview.contains("10 distinct hooks"));
+        let runs = services.store.list_ai_runs(Some(project_id)).unwrap();
+        assert_eq!(runs.len(), prior + 1);
+        assert_eq!(runs.last().unwrap().mode, AiRunMode::CopyPrompt);
     }
 
     #[test]
