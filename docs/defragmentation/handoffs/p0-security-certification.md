@@ -1,3 +1,9 @@
+# Agent 10 — last observed integration HEAD `c2bd18d` (2026-11-17)
+
+Current owner SHA **`c2bd18d61e3f581e9e9263959423bc326d64ee82`** adds a **controlled test of changed serialized wire bytes** after approval in `services/provider_consent.rs`. The test toggles `corrupt_wire` and requires refusal before the controlled transport sends. This is a helpful additional adversarial test, **not yet independently CI-certified at this exact SHA** and not a real paid HTTP path. Previous [security CI #44092349962](https://github.com/MousaXD/scriptotar/actions/runs/44092349962) remains 5 PASS / 1 FAIL on earlier `9b249e2` (isolated concurrent loser outcome). [Next security #44093194240](https://github.com/MousaXD/scriptotar/actions/runs/44093194240) was still in progress against intermediate `19e798b`; [Rust foundation #44093194389](https://github.com/MousaXD/scriptotar/actions/runs/44093194389) **FAIL** on that intermediate SHA (exact cause not yet inspected). Latest build-native acceptance still unproved. No registered Tauri paid-consent entrypoint or production authenticated `CertifiedWireTransport`; release NO-GO, egress OFF. Future exact-head verdict requires new GitHub runs matching `c2bd18d` and independent Agent 10 tests imported/executed.
+
+---
+
 # Agent 10 — new owner exact SHA `19e798b` source inspection (2026-11-17)
 
 **Updated integration head:** `19e798b54acc429621727e49ff520254db2d8882` (two source commits after the last **completed** security run at `9b249e2`). **Security/release remains NO-GO; paid egress OFF.** [New independent run #44093194240](https://github.com/MousaXD/scriptotar/actions/runs/44093194240) was **QUEUED** at review; [native #44093194425](https://github.com/MousaXD/scriptotar/actions/runs/44093194425) **IN PROGRESS**. The completed 5-PASS/1-FAIL matrix at the preceding SHA is preserved immediately below, not transferred to this new SHA.
