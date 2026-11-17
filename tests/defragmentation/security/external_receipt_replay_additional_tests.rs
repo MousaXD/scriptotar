@@ -526,3 +526,39 @@ fn independent_v12_retry_cannot_claim_same_provider_request_from_older_attempt()
     assert_eq!(after.status, ExternalEffectStatus::Dispatched);
     assert!(after.provider_request_id.is_none());
 }
+
+
+#[test]
+fn independent_v12_openai_response_id_cannot_cross_request_receipt_roles() {
+    let (_dir, db, project, study, run) = setup();
+    let peer = independent_v10_approved_peer(&db, &run, project, study);
+    let first_key = identity(&run, project, study);
+    let peer_key = identity(&peer, project, study);
+    let first = reserve(&db, &run, project, study);
+    let second = reserve(&db, &peer, project, study);
+    db.mark_external_dispatched(first_key, first.revision, 1).unwrap();
+    db.mark_external_dispatched(peer_key, second.revision, 1).unwrap();
+
+    // The desktop OpenAI sealed adapter uses the SAME response ID as its
+    // provider_request_id and receipt_id. Two different effects cannot claim
+    // that same provider-issued OpenAI response under different column roles.
+    db.record_external_ack(first_key, 1, "resp_shared_across_roles_101")
+        .unwrap();
+    let stolen = db.reconcile_external_effect(
+        peer_key,
+        1,
+        ExternalResolution::Completed {
+            provider_request_id: Some("resp_different_request_202"),
+            receipt_id: "resp_shared_across_roles_101",
+            tokens: 55,
+            cost_microusd: 225,
+        },
+    );
+    assert!(
+        stolen.is_err(),
+        "one OpenAI response ID was assigned as one effect's ACK and another effect's receipt"
+    );
+    let losing = db.get_external_effect(peer_key).unwrap().unwrap();
+    assert_eq!(losing.status, ExternalEffectStatus::Dispatched);
+    assert!(losing.receipt_id.is_none());
+}
