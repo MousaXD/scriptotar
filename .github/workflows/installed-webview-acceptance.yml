@@ -52,7 +52,9 @@ jobs:
       - name: Verify native runner without faking application tests
         run: |
           /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/linux_webkit.py
-          /usr/bin/python3 -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*.py' -v
+          # Use the pinned Python 3.12 for the TOML lockfile regression tests;
+          # /usr/bin/python3 remains the actual native pyatspi interpreter.
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*.py' -v
       - name: Prepare included runtime and network tool resources
         run: |
           python sidecars/transcription/build_runtime.py --output apps/desktop/src-tauri/resources/transcription-runtime
@@ -204,11 +206,33 @@ jobs:
         run: |
           npm ci
           npm run build
-      - name: Bundle exact-source NSIS installer
+      - name: Build production-mode release binary and NSIS installer
+        working-directory: apps/desktop
         run: |
-          cargo build --release --locked -p scriptotar-desktop
-          cd apps/desktop
-          tauri bundle
+          # IMPORTANT: `cargo build --release` followed by `tauri bundle` can
+          # package a devUrl binary that tries http://localhost:5173. The
+          # installed WebView2 then displays ERR_CONNECTION_REFUSED instead of
+          # embedded frontend assets. Let Tauri set the production build mode.
+          # The JS Tauri CLI does not accept cargo's '-- --locked'. Check
+          # Cargo's resolved lock graph before/after its own production build.
+          # On Windows Cargo 1.97 can reorder package.dependencies in Cargo.lock
+          # (same IDs/versions/checksums), so raw byte diff is not a legitimate
+          # dependency drift signal. This canonical TOML hash remains strict:
+          # any real package, source, checksum or dependency change fails.
+          $lockPath = (Resolve-Path '../../Cargo.lock').Path
+          $fingerprinter = (Resolve-Path '../../tests/defragmentation/native-e2e/cargo_lock_fingerprint.py').Path
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock is not reproducible' }
+          $lockBefore = python $fingerprinter $lockPath
+          if ($LASTEXITCODE -ne 0 -or -not $lockBefore) { throw 'Could not fingerprint exact Cargo.lock before build' }
+          tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Production NSIS Tauri build failed' }
+          cargo metadata --locked --no-deps --format-version 1 | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Cargo.lock cannot be resolved after build' }
+          $lockAfter = python $fingerprinter $lockPath
+          if ($LASTEXITCODE -ne 0 -or $lockBefore -ne $lockAfter) {
+            throw 'NSIS release build changed the resolved Cargo.lock dependency graph'
+          }
       - name: Stage installer and machine evidence
         shell: pwsh
         run: |
