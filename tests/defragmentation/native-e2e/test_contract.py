@@ -206,6 +206,16 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
         self.assertNotIn("$list.SetFocus()", script)
 
+    def test_windows_uia_failure_evidence_records_actual_focus_and_patterns(self):
+        # UIA diagnostics must distinguish a non-focusable List from a
+        # supporting Edit/ComboBox. Pattern enumeration is evidence only.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$info.keyboard_focusable = [bool]$element.Current.IsKeyboardFocusable", source)
+        self.assertIn("$info.has_keyboard_focus = [bool]$element.Current.HasKeyboardFocus", source)
+        self.assertIn("$info.supported_patterns = @($element.GetSupportedPatterns()", source)
+        self.assertIn("$info.bounds = @{", source)
+        self.assertIn("$probe.child_webview_provider_nodes += $info", source)
+
     def test_windows_theme_uses_real_restart_and_exact_selected_value(self):
         # Feature-level source contract; only a fresh installed NSIS/UIA run
         # can certify the actual interactions and screenshot.
