@@ -191,6 +191,12 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       studies.set(studyId, structuredClone(selected));
       return structuredClone(selected);
     },
+    async listStudyWritingBatches(projectId, studyId) {
+      // Mock exposes no invented provider generation receipts. Real controlled
+      // v11 batches are listed by the SQLite-backed host implementation.
+      studyInProject(projectId, studyId);
+      return [];
+    },
     async duplicateStudyDraft(projectId, studyId, draftId, expectedDraftRevision) {
       const study = studyInProject(projectId, studyId);
       const candidate = draftCopies.get(studyId)?.get(draftId);

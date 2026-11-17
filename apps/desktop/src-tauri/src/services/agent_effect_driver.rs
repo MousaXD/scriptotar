@@ -311,7 +311,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &wire_sha256,
-            "OpenAi:test-model",
+            "openai:test-model",
             limits,
         )
         .unwrap();
@@ -375,7 +375,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &"d".repeat(64),
-            "OpenAi:test-model",
+            "openai:test-model",
             ExternalEffectLimits {
                 tokens: 500,
                 cost_microusd: 2500,

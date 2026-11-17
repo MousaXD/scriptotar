@@ -364,3 +364,153 @@ fn unauthenticated_paid_receipt_is_uncertain_and_never_replayed() {
     assert_eq!(provider.0.load(Ordering::SeqCst), 1, "unverified acknowledgement caused duplicate paid send");
     assert_eq!(fence.receipts.load(Ordering::SeqCst), 0);
 }
+
+
+/// The approved ProviderIntent must reach the bounded provider without a
+/// host-side model, prompt or output/deadline substitution. This inspects the
+/// BoundedProvider call, NOT the as-yet-unintegrated serialized HTTP body.
+#[derive(Default)]
+struct CaptureApprovedRequest(Mutex<Vec<(ProviderConfig, String, u64, u64)>>);
+impl BoundedProvider for CaptureApprovedRequest {
+    fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
+    fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
+        reply.provider_request_id == "fixture-request-id"
+    }
+    fn generate_once(
+        &self,
+        config: &ProviderConfig,
+        api_key: &str,
+        request: &AiRequest,
+        max_output_tokens: u64,
+        deadline_ms: u64,
+    ) -> Result<MeteredReply, ConsentError> {
+        assert_eq!(api_key, "fixture-key");
+        self.0.lock().unwrap().push((
+            config.clone(), request.prompt.clone(), max_output_tokens, deadline_ms,
+        ));
+        Ok(MeteredReply {
+            text: "trusted bounded fixture reply".into(),
+            provider_request_id: "fixture-request-id".into(),
+            usage: ActualUsage {
+                input_tokens: 10, output_tokens: 10,
+                tool_calls: 1, elapsed_ms: 10, cost_microusd: 0,
+            },
+        })
+    }
+}
+
+#[test]
+fn consent_boundary_preserves_approved_provider_prompt_and_hard_bounds() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let runner = CaptureApprovedRequest::default();
+    let fence = DispatchedFence::default();
+    let reply = boundary.dispatch(
+        &intent, &authority, &Catalog, &fence, &runner, "fixture-key", 102,
+    );
+    assert!(reply.is_ok(), "an unchanged approved intent must reach the bounded provider");
+    let sent = runner.0.lock().unwrap();
+    assert_eq!(sent.len(), 1, "approved run must result in exactly one provider call");
+    assert_eq!(sent[0].0, intent.provider, "provider/model changed after consent");
+    assert_eq!(sent[0].1, intent.prompt, "approved prompt changed after consent");
+    assert_eq!(sent[0].2, intent.max_output_tokens, "output bound changed after consent");
+    assert_eq!(
+        sent[0].3, 102 + intent.limits.max_elapsed_ms,
+        "deadline must be derived from the approved runtime budget"
+    );
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.receipts.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn unauthorized_model_prompt_and_budget_substitution_never_claim_or_send() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let provider = CountingProvider::default();
+    let fence = DispatchedFence::default();
+
+    let mut changed_model = intent.clone();
+    changed_model.provider.model = "substituted-model".into();
+    let mut changed_prompt = intent.clone();
+    changed_prompt.prompt.push_str(" attacker instruction");
+    let mut changed_output_cap = intent.clone();
+    changed_output_cap.max_output_tokens += 1;
+    let mut changed_budget = intent.clone();
+    changed_budget.limits.max_cost_microusd += 1;
+
+    for changed in [&changed_model, &changed_prompt, &changed_output_cap, &changed_budget] {
+        let result = boundary.dispatch(
+            changed, &authority, &Catalog, &fence, &provider, "fixture-key", 102,
+        );
+        assert!(
+            matches!(result, Err(ConsentError::ChangedContext)),
+            "a mutated approved intent must be rejected before external-effect reservation"
+        );
+    }
+    assert_eq!(fence.reservations.load(Ordering::SeqCst), 0);
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn cancellation_linearized_while_reservation_is_paused_prevents_cas_and_send() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let provider = CountingProvider::default();
+    let reservation_reached = std::sync::Barrier::new(2);
+    let allow_reservation_return = std::sync::Barrier::new(2);
+    let fence = PausedReservation {
+        reservation_reached: &reservation_reached,
+        allow_reservation_return: &allow_reservation_return,
+    };
+    std::thread::scope(|threads| {
+        threads.spawn(|| {
+            reservation_reached.wait();
+            boundary.cancel(&intent.run_id).unwrap();
+            allow_reservation_return.wait();
+        });
+        let result = boundary.dispatch(
+            &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 102,
+        );
+        assert!(matches!(result, Err(ConsentError::Denied)));
+    });
+    assert_eq!(provider.0.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
+    let (boundary, intent, _) = approval();
+    let authority = GuardAuthority(std::sync::RwLock::new(intent.scope.clone()));
+    let provider = CountingProvider::default();
+    let fence = DispatchedFence::default();
+    let start = std::sync::Barrier::new(3);
+    let successes = AtomicUsize::new(0);
+    std::thread::scope(|threads| {
+        for _ in 0..2 {
+            threads.spawn(|| {
+                start.wait();
+                let result = boundary.dispatch(
+                    &intent, &authority, &Catalog, &fence, &provider, "fixture-key", 102,
+                );
+                if result.is_ok() {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                } else {
+                    // After the one-winner pre-send CAS, the first attempt is
+                    // temporarily Uncertain until its authenticated receipt
+                    // settles. A concurrent duplicate can safely see either
+                    // AlreadyUsed or UncertainEffect; both forbid another send.
+                    assert!(
+                        matches!(result, Err(ConsentError::AlreadyUsed | ConsentError::UncertainEffect)),
+                        "duplicate dispatch returned an unexpected status"
+                    );
+                }
+            });
+        }
+        start.wait();
+    });
+    assert_eq!(successes.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.0.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.reservations.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.dispatches.load(Ordering::SeqCst), 1);
+    assert_eq!(fence.receipts.load(Ordering::SeqCst), 1);
+}

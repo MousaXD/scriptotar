@@ -290,6 +290,17 @@ impl Drop for SidecarHost {
 
 pub type JobChangeNotifier = Arc<dyn Fn(Uuid) + Send + Sync + 'static>;
 
+/// Host-supplied serialization around the *final* Source/Media/Transcript
+/// commit. The callback must be synchronous and must not perform external I/O.
+/// The desktop supplies its same active-project mutex used by provider-consent
+/// dispatch. Existing standalone orchestrators default to a no-op gate.
+pub type ContentWriteGate = Arc<
+    dyn Fn(&dyn Fn() -> Result<(), OrchestratorError>) -> Result<(), OrchestratorError>
+        + Send
+        + Sync
+        + 'static,
+>;
+
 fn notify_job(notifier: &JobChangeNotifier, job_id: Uuid) {
     notifier(job_id);
 }
@@ -320,9 +331,29 @@ where
         config: RuntimeConfig,
         notifier: JobChangeNotifier,
     ) -> Self {
+        Self::start_with_notifier_and_content_gate(
+            repository,
+            config,
+            notifier,
+            Arc::new(|commit| commit()),
+        )
+    }
+
+    /// The final transcript/source insertion must coordinate with all
+    /// authorization-sensitive Study edits and the host's pre-send CAS.
+    /// This gate is deliberately injected instead of introducing a second
+    /// mutex or requiring the orchestrator to know about Studio state.
+    pub fn start_with_notifier_and_content_gate(
+        repository: R,
+        config: RuntimeConfig,
+        notifier: JobChangeNotifier,
+        content_write_gate: ContentWriteGate,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let worker_repository = repository.clone();
-        thread::spawn(move || worker_loop(worker_repository, config, rx, notifier));
+        thread::spawn(move || {
+            worker_loop(worker_repository, config, rx, notifier, content_write_gate)
+        });
         Self {
             control: tx,
             _repository: repository,
@@ -347,6 +378,7 @@ fn worker_loop<R>(
     config: RuntimeConfig,
     controls: Receiver<Control>,
     notifier: JobChangeNotifier,
+    content_write_gate: ContentWriteGate,
 ) where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
@@ -382,7 +414,7 @@ fn worker_loop<R>(
                 &mut queue,
                 (&mut host, &mut cleanup_unverified),
                 job_id,
-                &notifier,
+                (&notifier, &content_write_gate),
             ) {
                 if cleanup_unverified {
                     // Keep the active job nonterminal. Failing it would lose
@@ -419,11 +451,12 @@ fn run_job<R>(
     queue: &mut VecDeque<Uuid>,
     session: (&mut Option<SidecarHost>, &mut bool),
     job_id: Uuid,
-    notifier: &JobChangeNotifier,
+    hooks: (&JobChangeNotifier, &ContentWriteGate),
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + SettingsRepository + ContentRepository + Clone,
 {
+    let (notifier, content_write_gate) = hooks;
     let (host, cleanup_unverified) = session;
     let job = repository.get_job(job_id)?;
     if job.state != JobState::Queued {
@@ -475,7 +508,7 @@ where
                     eprintln!("[scriptotar-sidecar] ignoring terminal/progress event while engine cleanup remains unverified for job {job_id}");
                     continue;
                 }
-                match handle_event(repository, &job, *event, notifier) {
+                match handle_event(repository, &job, *event, notifier, content_write_gate) {
                     Ok(true) => {
                         if confirmed_cancel {
                             *cleanup_unverified = false;
@@ -571,6 +604,7 @@ fn handle_event<R>(
     original_job: &Job,
     event: SidecarEvent,
     notifier: &JobChangeNotifier,
+    content_write_gate: &ContentWriteGate,
 ) -> Result<bool, OrchestratorError>
 where
     R: JobRepository + JobRuntimeRepository + ContentRepository,
@@ -595,7 +629,7 @@ where
         }
         SidecarEvent::Result { result, .. } => {
             ensure_processing(repository, original_job)?;
-            persist_result(repository, original_job, result)?;
+            persist_result(repository, original_job, result, content_write_gate)?;
             notify_job(notifier, original_job.id);
             Ok(true)
         }
@@ -729,6 +763,7 @@ fn persist_result<R>(
     repository: &R,
     job: &Job,
     result: SidecarResult,
+    content_write_gate: &ContentWriteGate,
 ) -> Result<(), OrchestratorError>
 where
     R: JobRepository + ContentRepository,
@@ -785,8 +820,12 @@ where
         created_at: now.clone(),
         updated_at: now,
     };
-    repository.persist_transcription(job.id, &source, &media, &transcript)?;
-    Ok(())
+    // Only this actual database commit runs under the shared dispatch gate.
+    // Do not serialize sidecar execution, encoding or filesystem I/O under it.
+    content_write_gate(&|| {
+        repository.persist_transcription(job.id, &source, &media, &transcript)?;
+        Ok(())
+    })
 }
 
 fn transcribe_command(
@@ -953,6 +992,58 @@ mod tests {
     }
 
     #[test]
+    fn source_persistence_waits_for_host_dispatch_gate_after_sidecar_result() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("gated.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Gated source");
+        store.create_project(&project).unwrap();
+        let mut settings = store.load_settings().unwrap();
+        settings.output_directory = Some(temp.path().join("output").to_string_lossy().into_owned());
+        store.save_settings(&settings).unwrap();
+
+        let (sidecar, fake_worker) = paths();
+        let config = RuntimeConfig::new("python3", sidecar, temp.path().join("output"))
+            .with_environment(
+                "SCRIPTOTAR_SIDECAR_ENGINE_WORKER",
+                fake_worker.to_string_lossy().into_owned(),
+            );
+        let host_gate = Arc::new(std::sync::Mutex::new(()));
+        let held_by_dispatch = host_gate.lock().unwrap();
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let callback_gate = Arc::clone(&host_gate);
+        let guarded_persist: ContentWriteGate = Arc::new(move |commit| {
+            // A real worker has completed, and is about to write Source,
+            // Media and Transcript rows. Signal before trying the lock so
+            // the test does not depend on a sleep or an event race.
+            let _ = attempted_tx.send(());
+            let _scope_guard = callback_gate.lock().map_err(|_| {
+                OrchestratorError::Unavailable("authorization mutex poisoned".into())
+            })?;
+            commit()
+        });
+        let worker = JobOrchestrator::start_with_notifier_and_content_gate(
+            store.clone(),
+            config,
+            Arc::new(|_| {}),
+            guarded_persist,
+        );
+        let job = enqueue_file(&store, &worker, &temp.path().join("normal.mp4"));
+        attempted_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(store.get_job(job.id).unwrap().state, JobState::Processing);
+        assert!(store
+            .list_transcripts(Some(job.project_id))
+            .unwrap()
+            .is_empty());
+        drop(held_by_dispatch);
+        assert_eq!(wait_for_terminal(&store, job.id).state, JobState::Completed);
+        assert_eq!(
+            store.list_transcripts(Some(job.project_id)).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
     fn failed_job_does_not_stall_the_next_job() {
         let (temp, store, orchestrator) = setup();
         let failed = enqueue_file(&store, &orchestrator, &temp.path().join("fail.mp4"));
@@ -1004,7 +1095,8 @@ mod tests {
             },
             request_id: None,
         };
-        assert!(!handle_event(&store, &job, error, &notifier).unwrap());
+        let no_op_gate: ContentWriteGate = Arc::new(|commit| commit());
+        assert!(!handle_event(&store, &job, error, &notifier, &no_op_gate).unwrap());
         assert_eq!(store.get_job(job.id).unwrap().state, JobState::Preparing);
     }
 
