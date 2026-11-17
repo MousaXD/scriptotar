@@ -302,7 +302,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('a.heading("الاستوديو")', source)
         self.assertIn('a.heading("Studio", timeout=12)', source)
         self.assertIn('"Arabic Studio heading remains mounted after restoring English"', source)
-        self.assertIn('a.choose("Interface language", "EN")', source)
+        # The current EN/AR restore discovers the real translated native
+        # toolbar control; an English-only fixed label is unsafe after RTL.
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
         self.assertIn('session.screenshot("arabic-reopened")', source)
 
     def test_webkit_option_rejects_zero_size_bounds(self):
