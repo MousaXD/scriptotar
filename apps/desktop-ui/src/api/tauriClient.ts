@@ -1,5 +1,5 @@
 import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput, StudyWritingBatch } from '../studio/contract';
 import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type {
   AiRunDetail,
@@ -56,6 +56,8 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
     getStudy: (projectId, studyId, draftId) => invoke<ContentStudy>('get_study',
       draftId ? { projectId, studyId, draftId } : { projectId, studyId }),
+    listStudyWritingBatches: (projectId, studyId) =>
+      invoke<StudyWritingBatch[]>('list_study_writing_batches', { projectId, studyId }),
     duplicateStudyDraft: (projectId, studyId, draftId, expectedDraftRevision) =>
       invoke<ContentStudy>('duplicate_study_draft', { projectId, studyId, draftId, expectedDraftRevision }),
     renameStudyDraft: (projectId, studyId, draftId, expectedDraftRevision, title) =>

@@ -1138,7 +1138,7 @@
         {/if}
       </div>
       <div class="brief-grid">
-        <label class="wide">{t.studyName}<input bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" /></label>
+        <label class="wide">{t.studyName}<input aria-label={t.studyName} bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" /></label>
         <label class="wide">{t.goal}<textarea bind:value={brief.goal} on:input={queueSave} placeholder={t.goalPlaceholder} rows="2" dir="auto"></textarea></label>
         <label>{t.audience}<input bind:value={brief.audience} on:input={queueSave} placeholder={t.audiencePlaceholder} dir="auto" /></label>
         <Select label={t.platform} value={brief.platform} options={['TikTok', 'Instagram Reels', 'YouTube Shorts', 'Other'].map((value) => ({ value, label: value }))} onChange={(value) => { brief.platform = value; queueSave(); }} />

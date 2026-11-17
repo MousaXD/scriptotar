@@ -326,6 +326,83 @@ impl AppServices {
             .collect()
     }
 
+    /// Read-only, active-project-scoped listing of genuine v11 three-script
+    /// commit receipts. This does not reconstruct approval, invoke any
+    /// provider, or expose historical raw source excerpts after revocation.
+    /// Each tuple is rechecked against immutable initial draft versions and
+    /// structured provenance before it reaches the frontend.
+    pub fn list_studio_writing_batches(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<Vec<crate::dto::UiStudioWritingBatch>> {
+        use rusqlite::{params, Connection, TransactionBehavior};
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let study = self.store.get_study(project_id, study_id)?;
+        if study.archived_at.is_some() {
+            return Err(RepositoryError::NotFound("active Study".into()));
+        }
+        let storage_failure = || RepositoryError::Storage("writing receipt read failed".into());
+        let corrupt_receipt = || RepositoryError::Storage("writing receipt failed integrity check".into());
+        let mut db = Connection::open(self.store.path()).map_err(|_| storage_failure())?;
+        db.pragma_update(None, "query_only", true)
+            .map_err(|_| storage_failure())?;
+        let snapshot = db.transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| storage_failure())?;
+        let mut rows = Vec::new();
+        {
+            let mut statement = snapshot
+                .prepare(
+                    "SELECT run_id,draft_ids_json,committed_at
+                     FROM study_writing_batches
+                     WHERE project_id=?1 AND study_id=?2
+                     ORDER BY committed_at DESC,run_id DESC LIMIT 50",
+                )
+                .map_err(|_| storage_failure())?;
+            let mut cursor = statement
+                .query(params![project_id.to_string(), study_id.to_string()])
+                .map_err(|_| storage_failure())?;
+            while let Some(row) = cursor.next().map_err(|_| storage_failure())? {
+                let run_id: String = row.get(0).map_err(|_| corrupt_receipt())?;
+                let serialized: String = row.get(1).map_err(|_| corrupt_receipt())?;
+                let committed_at: String = row.get(2).map_err(|_| corrupt_receipt())?;
+                let ids: [String; 3] =
+                    serde_json::from_str(&serialized).map_err(|_| corrupt_receipt())?;
+                let distinct = ids.iter().collect::<std::collections::HashSet<_>>();
+                if distinct.len() != 3 || run_id.is_empty() {
+                    return Err(corrupt_receipt());
+                }
+                for id in &ids {
+                    Uuid::parse_str(id).map_err(|_| corrupt_receipt())?;
+                    let valid: i64 = snapshot
+                        .query_row(
+                            "SELECT COUNT(*) FROM creative_drafts d
+                             JOIN draft_versions v
+                               ON v.draft_id=d.id AND v.version=1
+                             JOIN study_writing_revisions sr
+                               ON sr.draft_id=d.id AND sr.version=1
+                             WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                            params![id, project_id.to_string(), study_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| corrupt_receipt())?;
+                    if valid != 1 {
+                        return Err(corrupt_receipt());
+                    }
+                }
+                rows.push(crate::dto::UiStudioWritingBatch {
+                    run_id,
+                    project_id: project_id.to_string(),
+                    study_id: study_id.to_string(),
+                    draft_ids: ids,
+                    committed_at,
+                });
+            }
+        }
+        snapshot.commit().map_err(|_| storage_failure())?;
+        Ok(rows)
+    }
+
     pub fn get_studio_study(
         &self,
         project_id: Uuid,
@@ -1532,6 +1609,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(batches, 1);
+        let receipts = services.list_studio_writing_batches(project, study).unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].run_id, "controlled-four-step");
+        assert_eq!(
+            receipts[0].draft_ids,
+            std::array::from_fn(|index| stored[index].to_string())
+        );
+        assert!(services
+            .list_studio_writing_batches(Uuid::new_v4(), study)
+            .is_err());
         for id in stored {
             let versions: i64 = conn
                 .query_row(
@@ -1541,7 +1628,49 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(versions, 1);
+            let lineage: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM study_writing_revisions WHERE draft_id=?1 AND version=1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                lineage, 1,
+                "generated candidate must retain structured provenance"
+            );
         }
+        let chosen = services
+            .get_studio_study_draft(project, study, stored[0])
+            .unwrap();
+        // Creating a Study may already create a manual candidate. The atomic
+        // batch must add exactly its own three drafts without deleting it.
+        assert!(chosen.drafts.len() >= 3);
+        assert!(stored
+            .iter()
+            .all(|id| { chosen.drafts.iter().any(|draft| draft.id == id.to_string()) }));
+        let edited_body = format!(
+            "{}\\n\\nReviewer manual edit: preserve this wording after restart.",
+            chosen.draft
+        );
+        let edited = services
+            .save_studio_study(
+                project,
+                study,
+                chosen.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: None,
+                    draft: Some(edited_body.clone()),
+                    draft_id: Some(stored[0].to_string()),
+                    draft_revision: chosen.draft_revision,
+                },
+            )
+            .unwrap();
+        assert_eq!(edited.draft, edited_body);
+        assert!(services
+            .get_studio_study_draft(Uuid::new_v4(), study, stored[0])
+            .is_err());
         drop(conn);
         drop(services);
 
@@ -1567,8 +1696,24 @@ mod tests {
             )
             .unwrap();
         assert_eq!(recovered, stored);
+        let after_restart = reopened.list_studio_writing_batches(project, study).unwrap();
+        assert_eq!(after_restart.len(), 1);
+        assert_eq!(after_restart[0].draft_ids, receipts[0].draft_ids);
         assert_eq!(no_approval.steps, 0);
         assert_eq!(no_provider.calls, 0);
+        let manual = reopened
+            .get_studio_study_draft(project, study, stored[0])
+            .unwrap();
+        assert_eq!(
+            manual.draft, edited_body,
+            "recovery must not overwrite a manual edit"
+        );
+        assert!(manual.draft_versions.len() >= 2);
+        let untouched = reopened
+            .get_studio_study_draft(project, study, stored[1])
+            .unwrap();
+        assert_eq!(untouched.draft_versions.len(), 1);
+        assert!(untouched.draft.contains("personal diary"));
     }
 
     #[test]

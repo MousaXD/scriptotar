@@ -68,6 +68,7 @@ describe('Tauri client command contract', () => {
       platform: 'TikTok', language: 'Arabic', duration: '40', style: 'Direct' });
     await api.getStudy('project-id', 'study-id');
     await api.getStudy('project-id', 'study-id', 'draft-id');
+    await api.listStudyWritingBatches('project-id', 'study-id');
     await api.duplicateStudyDraft('project-id', 'study-id', 'draft-id', 3);
     await api.renameStudyDraft('project-id', 'study-id', 'draft-id', 3, 'New angle');
     await api.setStudyDraftArchived('project-id', 'study-id', 'draft-id', 3, true);
@@ -158,6 +159,9 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('get_study', { projectId: 'project-id', studyId: 'study-id' });
     expect(invokeMock).toHaveBeenCalledWith('get_study', {
       projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_writing_batches', {
+      projectId: 'project-id', studyId: 'study-id'
     });
     expect(invokeMock).toHaveBeenCalledWith('duplicate_study_draft', {
       projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id', expectedDraftRevision: 3

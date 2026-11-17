@@ -15,7 +15,7 @@ import type {
   Transcript,
   WatchlistStatus
 } from '../types';
-import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudySourceRef, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudySourceRef, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput, StudyWritingBatch } from '../studio/contract';
 import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 
 export interface ResearchQuery {
@@ -51,6 +51,7 @@ export interface ScriptotarApi {
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  listStudyWritingBatches(projectId: string, studyId: string): Promise<StudyWritingBatch[]>;
   duplicateStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   renameStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   setStudyDraftArchived(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;

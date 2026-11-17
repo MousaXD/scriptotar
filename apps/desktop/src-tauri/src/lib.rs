@@ -677,6 +677,25 @@ async fn get_study(
     .await
 }
 
+/// Recovery/readback only. This command cannot approve AI, create an
+/// external effect, or recover a missing usage receipt as a new dispatch.
+#[tauri::command]
+async fn list_study_writing_batches(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<crate::dto::UiStudioWritingBatch>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_writing_batches(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn duplicate_study_draft(
     project_id: String,
@@ -1484,6 +1503,7 @@ pub fn run() {
             list_studies,
             create_study,
             get_study,
+            list_study_writing_batches,
             duplicate_study_draft,
             rename_study_draft,
             set_study_draft_archived,

@@ -58,6 +58,17 @@ export interface StudyScriptReview {
   limitations: string[];
   savedStudy: ContentStudy | null;
 }
+/** The three immutable canonical draft IDs from a verified v11 receipt.
+ * Read-only history. This is neither consent nor proof that paid egress is enabled.
+ */
+export interface StudyWritingBatch {
+  runId: string;
+  projectId: string;
+  studyId: string;
+  draftIds: [string, string, string];
+  committedAt: string;
+}
+
 export interface DraftCandidate {
   id: string;
   title: string;
@@ -135,6 +146,8 @@ export interface StudioGateway {
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
   getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  /** Read-only history of committed three-script v11 batches, no AI/network. */
+  listStudyWritingBatches?(projectId: string, studyId: string): Promise<StudyWritingBatch[]>;
   duplicateStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   renameStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;
   setStudyDraftArchived?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
