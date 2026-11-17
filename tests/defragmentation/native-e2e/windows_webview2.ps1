@@ -695,6 +695,65 @@ try {
         Write-UiaDiagnostics $root (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
+
+    if ($cases.edit_save_duplicate_candidate.status -eq 'PASS') {
+      try {
+        # Native Alt+F4 targets only the installed app main HWND; a forced
+        # Stop-Process would not prove graphical shutdown or flush behavior.
+        if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
+          throw 'Cannot focus installed WebView2 window for native Alt+F4'
+        }
+        Start-Sleep -Milliseconds 250
+        [System.Windows.Forms.SendKeys]::SendWait('%{F4}')
+        if (-not $proc.WaitForExit(12000)) {
+          throw 'Installed Windows app did not exit from graphical Alt+F4'
+        }
+        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $probeRestored = $null
+        $deadline = [DateTime]::UtcNow.AddSeconds(45)
+        do {
+          $proc.Refresh()
+          if ($proc.HasExited) { throw 'Installed app exited during native relaunch' }
+          if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+            $probeRestored = Find-InstalledDocumentAndStudio $proc
+            if ($probeRestored.document -and $probeRestored.studio) { break }
+          }
+          Start-Sleep -Milliseconds 550
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not $probeRestored -or -not $probeRestored.document -or -not $probeRestored.studio) {
+          throw 'Relaunched installed WebView2 has no native Document and Studio control'
+        }
+        $restoredHwnd = [IntPtr]$probeRestored.hwnd
+        Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledDashboard $restoredHwnd $first
+        Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+        Find-ExactInstalledControl $restoredHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Original Study draft was not restored after true installed GUI restart'
+        }
+        Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Renamed draft body was not restored from canonical Study after restart'
+        }
+        $restoreProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'reopened-candidate.png')
+        $cases.quit_relaunch_persistence = @{
+          status='PASS'
+          reason="Native installed WebView2 Alt+F4, process relaunch, saved project, original/copy candidate and DB restoration ($restoreProof)"
+        }
+      } catch {
+        $cases.quit_relaunch_persistence = @{
+          status='FAIL'
+          reason="Windows graphical quit/relaunch: $($_.Exception.Message)"
+        }
+        if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-quit_relaunch_persistence.png')
+          Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+        }
+      }
+    }
   }
 } catch {
   $message = $_.Exception.Message

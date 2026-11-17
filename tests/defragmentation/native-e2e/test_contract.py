@@ -115,11 +115,20 @@ class NativeEvidenceContractTests(unittest.TestCase):
             ("option", "NativeQA-sample-A", "list item")
         ])
         self.assertIn(
-            ("xdotool", "mousemove", "--sync", "160", "268"), calls
+            ("xdotool", "mousemove", "160", "268"), calls
         )
         self.assertIn(
             ("xdotool", "click", "--clearmodifiers", "1"), calls
         )
+
+    def test_webkit_pointer_does_not_use_stalling_mousemove_sync(self):
+        # A real installed restart left the correct project already active,
+        # while xdotool mousemove --sync hung for 15s (run #44107946419).
+        # Still require a native pointer action + post-click heading assertion.
+        import inspect
+        source = inspect.getsource(native.AxWebKit.choose)
+        self.assertIn('"xdotool", "mousemove", str(x), str(y)', source)
+        self.assertNotIn('"mousemove", "--sync"', source)
 
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)

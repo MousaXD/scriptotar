@@ -351,7 +351,7 @@ class AxWebKit:
             y = int(bounds.y + bounds.height / 2)
             if x < 0 or y < 0:
                 raise NativeFailure(f"Invalid option coordinates for {option!r}: {(x, y)}")
-            command("xdotool", "mousemove", "--sync", str(x), str(y))
+            command("xdotool", "mousemove", str(x), str(y))
             command("xdotool", "click", "--clearmodifiers", "1")
             time.sleep(0.8)
         except NativeFailure:
@@ -628,6 +628,37 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "edit_save_duplicate_candidate", drafts):
             return
 
+        def persist():
+            session.stop()
+            session.start()
+            a = session.ax
+            # The installed application must reopen the same selected
+            # project after a true graphical Alt+F4; no artificial reselect.
+            a.heading(name_a, timeout=20)
+            a.click("Studio", "button")
+            a.choose("Open study", study)
+            restored = a.read_text("Script draft")
+            if restored != body:
+                raise NativeFailure(
+                    "Script body changed after installed process quit/relaunch"
+                )
+            a.choose("Script candidates", tag + "-copy")
+            if a.read_text("Script draft") != body:
+                raise NativeFailure(
+                    "Renamed duplicate candidate body changed after relaunch"
+                )
+            verify_canonical_saved_draft(root / "data", name_a, study, body)
+            session.screenshot("reopened")
+            return (
+                "Graphical Alt+F4/relaunch kept selected project, saved Study "
+                "body, immutable version and renamed candidate"
+            )
+        if not checked(report, "quit_relaunch_persistence", persist):
+            # A failed restart can corrupt follow-on UI state: preserve the
+            # exact first failing screen and don't create cascading false FAILs.
+            return
+        ax = session.ax
+
         def isolation():
             ax.choose("PROJECT", name_b)
             ax.click("Studio", "button")
@@ -637,39 +668,38 @@ def exercise(args, report: dict, root: Path):
             ax.choose("PROJECT", name_a)
             ax.heading("Studio")
             return "Foreign Study absent in second project's native Studio (UI only; not forged IPC)"
-        checked(report, "wrong_project_ui_isolation", isolation)
+        if not checked(report, "wrong_project_ui_isolation", isolation):
+            return
 
         def keyboard():
+            # A project switch unmounts its previous Study editor; reopen
+            # the real Study before asserting the candidate combobox exists.
+            if not ax.available("Script candidates", "combo"):
+                ax.choose("Open study", study)
             ax.escape_custom_select("Script candidates")
             command("xdotool", "key", "Escape")
             session.screenshot("controls")
-            return "Custom candidate select opens through native interaction and closes on Escape"
-        checked(report, "keyboard_custom_controls", keyboard)
-
-        def persist():
-            session.stop()
-            session.start()
-            a = session.ax
-            a.choose("PROJECT", name_a)
-            a.click("Studio", "button")
-            a.choose("Open study", study)
-            text = a.read_text("Script draft")
-            if body not in text:
-                raise NativeFailure("Script body was not restored after process quit and relaunch")
-            a.choose("Script candidates", tag + "-copy")
-            session.screenshot("reopened")
-            return "Installed process closed and restarted; Study body and renamed candidate restored"
-        checked(report, "quit_relaunch_persistence", persist)
+            return "Opened saved Study and closed its native custom selector with Escape"
+        if not checked(report, "keyboard_custom_controls", keyboard):
+            return
 
         def arabic():
             a = session.ax
-            a.choose("Interface language", "ع")
-            a.heading("الاستوديو")
-            session.screenshot("arabic-locale")
-            a.choose("لغة الواجهة", "EN")
+            try:
+                a.choose("Interface language", "ع")
+                # The translated sidebar button must truly navigate; merely
+                # changing a global language label is insufficient.
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                session.screenshot("arabic-locale")
+            finally:
+                # Don't poison subsequent English accessibility assertions.
+                if a.available("لغة الواجهة", "combo"):
+                    a.choose("لغة الواجهة", "EN")
             a.heading("Studio")
-            return "Native WebKit switched to Arabic UI and back through the real custom language control"
-        checked(report, "arabic_locale_control", arabic)
+            return "Real native Arabic Studio route and restored English UI"
+        if not checked(report, "arabic_locale_control", arabic):
+            return
 
         def theme():
             a = session.ax
