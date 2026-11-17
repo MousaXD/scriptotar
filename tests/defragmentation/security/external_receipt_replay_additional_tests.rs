@@ -77,7 +77,7 @@ fn independent_v10_provider_receipt_must_not_settle_two_distinct_runs() {
 
 #[test]
 fn independent_v10_provider_receipt_must_not_settle_across_project_boundary() {
-    let (_dir, db, first_project, first_study, first_run) = setup();
+    let (dir, db, first_project, first_study, first_run) = setup();
     let foreign_project = Project::new("Different billing project");
     db.create_project(&foreign_project).unwrap();
     let foreign_study = db
@@ -131,7 +131,13 @@ fn independent_v10_provider_receipt_must_not_settle_across_project_boundary() {
         },
     ).unwrap();
 
-    let reused = db.reconcile_external_effect(
+    // A different process/host may reopen the same database after the first
+    // provider receipt settles. Uniqueness cannot depend on process-local
+    // memory, a per-instance HashSet or the original SQLite connection.
+    drop(checkpoints);
+    drop(db);
+    let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+    let reused = reopened.reconcile_external_effect(
         foreign_key, 1, ExternalResolution::Completed {
             provider_request_id: Some("resp_cross_project_9123"),
             receipt_id: "resp_cross_project_9123",
@@ -144,7 +150,7 @@ fn independent_v10_provider_receipt_must_not_settle_across_project_boundary() {
         "provider receipt reused across projects and credited as two separate paid effects"
     );
     assert_eq!(
-        db.get_external_effect(foreign_key).unwrap().unwrap().status,
+        reopened.get_external_effect(foreign_key).unwrap().unwrap().status,
         ExternalEffectStatus::Dispatched,
         "other project's in-flight payment must not be completed by a reused receipt"
     );
