@@ -206,6 +206,21 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
         self.assertNotIn("$list.SetFocus()", script)
 
+    def test_windows_theme_uses_real_restart_and_exact_selected_value(self):
+        # Feature-level source contract; only a fresh installed NSIS/UIA run
+        # can certify the actual interactions and screenshot.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.keyboard_custom_controls.status -eq 'PASS')", script)
+        self.assertIn("foreach ($choice in @('System', 'Dark'))", script)
+        self.assertIn("Choose-InstalledOption $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("if ($saveTheme.Current.IsEnabled)", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('%{F4}')", script)
+        self.assertIn("$themeProbe = Find-InstalledDocumentAndStudio $proc", script)
+        self.assertIn("Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'", script)
+        self.assertIn("windows-theme-dark-reopened.png", script)
+        self.assertIn("$cases.theme_mode_control = @{", script)
+
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
         # The real Settings selector uses aria-selected; unsupported or
         # unselected AT-SPI state must never be reported as theme persistence.
