@@ -1,5 +1,40 @@
 # Agent 07 — P0 native installed WebView QA handoff
 
+## 2026-11-18 — integration native evidence and QA-only recovery (NO-GO)
+
+**Latest completed installed run:** [#44159845627](https://github.com/MousaXD/scriptotar/actions/runs/44159845627), **exact integration source** `a5aa2430dec24661a78409bf845964089e4145ea`. Both native jobs **FAIL**. This is NOT a run of the QA recovery commits below.
+
+| Installed scenario | Linux WebKitGTK / AT-SPI | Windows WebView2 / UIA |
+|---|---|---|
+| Installed WebView document/Studio | PASS | PASS |
+| Two GUI projects, switching + canonical SQLite | PASS | PASS |
+| Study creation | PASS | PASS |
+| GUI draft save, immutable version, duplicate/rename/select | PASS | PASS |
+| Native Alt+F4/relaunch and draft/candidate restoration | PASS | FAIL — candidate control present but below viewport |
+| Wrong-project graphical isolation | PASS | NOT TESTED |
+| Candidate keyboard Escape | PASS | NOT TESTED |
+| Arabic locale switch/relaunch/English restore | FAIL — test was attempted after a native crash, so cause not separately certified | NOT TESTED |
+| Settings System/Dark with post-change relaunch | FAIL — process exits `-11` (SIGSEGV) during new installed startup | NOT TESTED |
+| Full Arabic RTL, visual System/Dark review | NOT TESTED | NOT TESTED |
+| Forged wrong-project IPC, multiple source/transcripts, source revocation, error recovery, three-script production journey | NOT TESTED | NOT TESTED |
+
+**Linux crash forensic:** `dark-theme.png` proves the installed Settings screen reached Dark and the control selected. After real graphical close, `Session.start()` observed installed process exit `-11`. `desktop.log` is **0 bytes**; `a11y-diagnostics.json` after failure contains no live native application/window; `failed-arabic_locale_control.png` is black. This is a genuine **native process SIGSEGV observation**, but the evidence does NOT yet distinguish WebKitGTK, Tauri, frontend initialization or runner environment. Agent 00 should obtain a native stack trace/coredump on the installed binary. The subsequent missing Arabic language selector is **not independent proof of a localization defect** because the process was already dead.
+
+**Windows relaunch forensic:** `failed-quit_relaunch_persistence.png` displays **project A and the original Study restored**, `Scripts 2` visible. Native UIA diagnostic records the real `Script candidates` `ControlType.ComboBox` at **y=971**, below the installed document's **y=31 to y=780** viewport; `ScrollItemPattern` is advertised but did not establish a visible clickable control. Data loss is **not established**; immutable body/version checks remain mandatory before PASS. A real visible `Scripts 2` `Hyperlink` is available in UIA, so QA now navigates through it before attempting candidate selection.
+
+**Exact installed artifact evidence and hashes:**
+- Linux native review artifact `14362539538` (run above): `dark-theme.png` SHA-256 `52be9d5706facc064605c007da63a0189727b0006aca8635b91e479d734d91f1`; deb `85fdb87cecdde6e57fc2f67430cf2694c2174d53c5d59fc5da83550103d6eca8`; installed executable `06dc1e333498902c2f1b8709433d0b18494ff336f3e61ff563189fe530278c34`.
+- Windows native review artifact `14364161486`: failed relaunch screenshot SHA-256 `b41529077597125b3dd05969ffdb348a420aa37fe47d59c9f92645beae97fde2`, `uia-diagnostics.json` SHA-256 `c78e8deab3ad738b70a3f8c235209765031fdb82520d034a2c83a9ed32de8453`; NSIS installer `d183fee87926aaa1098dadf3be901b84e3ad2248cfa10e549fd3e6ce968544b8`; installed executable `2e5ad5737c0e5dfbaa59c9d226570aa081f05441fa0070a34a14568ded42b751`.
+
+**QA-only corrections after that installed run** (not installed-certified): 
+1. Linux locates the real top-bar language control by native AT-SPI role and project-toolbar geometry; the Arabic test runs before Dark relaunch so the latter crash cannot mask the former. Native Arabic heading and English restoration remain mandatory.
+2. Windows clicks the real, visible `Scripts 2` hyperlink after reopening the Study and captures an extra screenshot, then still requires exact native selected candidate, draft body and canonical immutable SQLite.
+3. Linux records an exact `process-exit.json` with exit code, signal, PID and expected locale when the app exits during native startup.
+4. Source contract tests now assert these behaviors without fabricating an installed PASS.
+
+**Next required gate:** run **Independent Installed WebView Acceptance** against the final `agent-07/p0-native-webview-qa-20261116` SHA, using its workflow dispatch in GitHub Actions. No new QA-source run had been triggered at the time of this entry; an older run or source-only test is not a substitute. Keep PR #126 **DRAFT** and release **NO-GO**. Agent 00 owns the production SIGSEGV investigation. Do not reimplement passing project/Study/draft workflows.
+
+
 **Date:** 2026-11-16  
 **Repo:** MousaXD/scriptotar  
 **Integration target:** integration/scriptotar-defragmentation-agent00-20261113  
