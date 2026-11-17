@@ -326,6 +326,83 @@ impl AppServices {
             .collect()
     }
 
+    /// Read-only, active-project-scoped listing of genuine v11 three-script
+    /// commit receipts. This does not reconstruct approval, invoke any
+    /// provider, or expose historical raw source excerpts after revocation.
+    /// Each tuple is rechecked against immutable initial draft versions and
+    /// structured provenance before it reaches the frontend.
+    pub fn list_studio_writing_batches(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<Vec<crate::dto::UiStudioWritingBatch>> {
+        use rusqlite::{params, Connection, TransactionBehavior};
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let study = self.store.get_study(project_id, study_id)?;
+        if study.archived_at.is_some() {
+            return Err(RepositoryError::NotFound("active Study".into()));
+        }
+        let storage_failure = || RepositoryError::Storage("writing receipt read failed".into());
+        let corrupt_receipt = || RepositoryError::Storage("writing receipt failed integrity check".into());
+        let mut db = Connection::open(self.store.path()).map_err(|_| storage_failure())?;
+        db.pragma_update(None, "query_only", true)
+            .map_err(|_| storage_failure())?;
+        let snapshot = db.transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| storage_failure())?;
+        let mut rows = Vec::new();
+        {
+            let mut statement = snapshot
+                .prepare(
+                    "SELECT run_id,draft_ids_json,committed_at
+                     FROM study_writing_batches
+                     WHERE project_id=?1 AND study_id=?2
+                     ORDER BY committed_at DESC,run_id DESC LIMIT 50",
+                )
+                .map_err(|_| storage_failure())?;
+            let mut cursor = statement
+                .query(params![project_id.to_string(), study_id.to_string()])
+                .map_err(|_| storage_failure())?;
+            while let Some(row) = cursor.next().map_err(|_| storage_failure())? {
+                let run_id: String = row.get(0).map_err(|_| corrupt_receipt())?;
+                let serialized: String = row.get(1).map_err(|_| corrupt_receipt())?;
+                let committed_at: String = row.get(2).map_err(|_| corrupt_receipt())?;
+                let ids: [String; 3] =
+                    serde_json::from_str(&serialized).map_err(|_| corrupt_receipt())?;
+                let distinct = ids.iter().collect::<std::collections::HashSet<_>>();
+                if distinct.len() != 3 || run_id.is_empty() {
+                    return Err(corrupt_receipt());
+                }
+                for id in &ids {
+                    Uuid::parse_str(id).map_err(|_| corrupt_receipt())?;
+                    let valid: i64 = snapshot
+                        .query_row(
+                            "SELECT COUNT(*) FROM creative_drafts d
+                             JOIN draft_versions v
+                               ON v.draft_id=d.id AND v.version=1
+                             JOIN study_writing_revisions sr
+                               ON sr.draft_id=d.id AND sr.version=1
+                             WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                            params![id, project_id.to_string(), study_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| corrupt_receipt())?;
+                    if valid != 1 {
+                        return Err(corrupt_receipt());
+                    }
+                }
+                rows.push(crate::dto::UiStudioWritingBatch {
+                    run_id,
+                    project_id: project_id.to_string(),
+                    study_id: study_id.to_string(),
+                    draft_ids: ids,
+                    committed_at,
+                });
+            }
+        }
+        snapshot.commit().map_err(|_| storage_failure())?;
+        Ok(rows)
+    }
+
     pub fn get_studio_study(
         &self,
         project_id: Uuid,
