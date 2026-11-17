@@ -116,5 +116,35 @@ class CombinedHostWiringSecurity(unittest.TestCase):
         )
 
 
+    def test_approved_paid_provider_dispatch_is_exposed_through_tauri_host(self):
+        """A private adapter or unit-test-only constructor is not an IPC path.
+
+        This is only an entrypoint check. A green result is not a substitute
+        for runtime authorization, durable CAS and controlled wire-byte tests.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        generated = re.search(
+            r"\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)",
+            tauri,
+        )
+        self.assertIsNotNone(
+            generated, "Tauri production command registration not found",
+        )
+        registered = {
+            name.strip().split("::")[-1]
+            for name in generated.group(1).split(",")
+            if name.strip()
+        }
+        paid = {
+            name for name in registered
+            if re.search(r"(?:provider|consent|paid)", name, re.I)
+            and re.search(r"(?:dispatch|execute|generate|send)", name, re.I)
+        }
+        self.assertTrue(
+            paid,
+            "no real consent-approved paid provider execution entrypoint in Tauri generate_handler",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
