@@ -312,3 +312,129 @@ fn independent_v10_concurrent_cross_run_receipt_settlement_has_one_winner() {
     );
     assert_eq!(results.iter().filter(|result| result.is_err()).count(), 1);
 }
+
+
+#[test]
+fn independent_v10_same_effect_receipt_replay_after_reopen_is_idempotent() {
+    let (dir, db, project, study, run) = setup();
+    let key = identity(&run, project, study);
+    let first = reserve(&db, &run, project, study);
+    db.mark_external_dispatched(key, first.revision, 1).unwrap();
+    let acknowledged = db
+        .record_external_ack(key, 1, "req_independent_reopen_1")
+        .unwrap();
+    assert_eq!(
+        acknowledged.provider_request_id.as_deref(),
+        Some("req_independent_reopen_1")
+    );
+    let receipt = || ExternalResolution::Completed {
+        provider_request_id: Some("req_independent_reopen_1"),
+        receipt_id: "receipt_independent_reopen_1",
+        tokens: 100,
+        cost_microusd: 450,
+    };
+    let settled = db.reconcile_external_effect(key, 1, receipt()).unwrap();
+    assert_eq!(settled.status, ExternalEffectStatus::Completed);
+    drop(db);
+
+    let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+    assert_eq!(
+        reopened.record_external_ack(key, 1, "req_independent_reopen_1").unwrap(),
+        settled,
+        "a duplicate ACK for the original effect must not allocate new charge"
+    );
+    assert_eq!(
+        reopened.reconcile_external_effect(key, 1, receipt()).unwrap(),
+        settled,
+        "identical late receipt for the original effect must remain idempotent"
+    );
+    assert!(reopened.mark_external_dispatched(key, settled.revision, 1).is_err());
+    let connection = rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+    let credited_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_external_effects
+             WHERE provider = 'openai' AND provider_request_id = ?1
+               AND receipt_id = ?2 AND status = 'completed'",
+            rusqlite::params!["req_independent_reopen_1", "receipt_independent_reopen_1"],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(credited_rows, 1, "one effect, one durable billable receipt");
+}
+
+#[test]
+fn independent_v10_provider_scoped_identities_do_not_block_distinct_providers() {
+    let (_dir, db, project, study, run) = setup();
+    let other = independent_v10_approved_peer(&db, &run, project, study);
+    let first_key = identity(&run, project, study);
+    let other_key = identity(&other, project, study);
+    let first = reserve(&db, &run, project, study);
+    let other_reserved = db
+        .reserve_external_effect(other_key, fp(), "other_provider", limits())
+        .unwrap();
+    let ExternalReservation::Fresh(other_first) = other_reserved else {
+        panic!("independent provider must receive a fresh effect");
+    };
+    db.mark_external_dispatched(first_key, first.revision, 1).unwrap();
+    db.mark_external_dispatched(other_key, other_first.revision, 1).unwrap();
+    let same_provider_local_request_id = "req_provider_local_101";
+    let same_provider_local_receipt_id = "receipt_provider_local_202";
+    for key in [first_key, other_key] {
+        let outcome = db
+            .reconcile_external_effect(
+                key,
+                1,
+                ExternalResolution::Completed {
+                    provider_request_id: Some(same_provider_local_request_id),
+                    receipt_id: same_provider_local_receipt_id,
+                    tokens: 40,
+                    cost_microusd: 200,
+                },
+            )
+            .unwrap();
+        assert_eq!(outcome.status, ExternalEffectStatus::Completed);
+    }
+    assert_ne!(
+        db.get_external_effect(first_key).unwrap().unwrap().provider,
+        db.get_external_effect(other_key).unwrap().unwrap().provider,
+        "uniqueness must be provider-scoped, not globally overbroad"
+    );
+}
+
+#[test]
+fn independent_v10_old_attempt_ack_cannot_be_reclaimed_after_proven_retry() {
+    let (_dir, db, project, study, run) = setup();
+    let key = identity(&run, project, study);
+    let initial = reserve(&db, &run, project, study);
+    db.mark_external_dispatched(key, initial.revision, 1).unwrap();
+    db.record_external_ack(key, 1, "req_historical_attempt_identity_101")
+        .unwrap();
+    let not_executed = db
+        .reconcile_external_effect(
+            key,
+            1,
+            ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "proof_independent_nonexecution_1",
+            },
+        )
+        .unwrap();
+    let retry = db.prepare_external_retry(key, not_executed.revision).unwrap();
+    assert_eq!(retry.attempt, 2);
+    assert_eq!(retry.status, ExternalEffectStatus::Reserved);
+
+    // The retry clears the current-row request field. It must not erase an
+    // immutable identity claimed by attempt 1 before the nonexecution proof.
+    let peer = independent_v10_approved_peer(&db, &run, project, study);
+    let peer_key = identity(&peer, project, study);
+    let peer_reserved = reserve(&db, &peer, project, study);
+    db.mark_external_dispatched(peer_key, peer_reserved.revision, 1)
+        .unwrap();
+    assert!(
+        db.record_external_ack(peer_key, 1, "req_historical_attempt_identity_101")
+            .is_err(),
+        "a provider request identity from attempt 1 was reassigned to another effect after retry"
+    );
+    let losing = db.get_external_effect(peer_key).unwrap().unwrap();
+    assert_eq!(losing.status, ExternalEffectStatus::Dispatched);
+    assert!(losing.provider_request_id.is_none());
+}
