@@ -169,6 +169,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("$list.SetFocus()", choose)
         self.assertNotIn("Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List)", choose)
 
+    def test_windows_unavailable_clickable_point_requires_real_native_pointer(self):
+        # Source-only regression contract: a UIA GetClickablePoint exception
+        # cannot mean success, an unchecked click, or a skipped native event.
+        # Fresh installed WebView2 evidence is still mandatory.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = script.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1
+        )[0]
+        self.assertIn("FindAll([System.Windows.Automation.TreeScope]::Subtree", click)
+        self.assertIn("$candidate.Current.IsOffscreen", click)
+        self.assertIn("$candidate.Current.IsEnabled", click)
+        self.assertIn("$ownerRect = $owner.Current.BoundingRectangle", click)
+        self.assertIn("$element.GetClickablePoint()", click)
+        self.assertIn("} catch {", click)
+        self.assertIn("[NativeWebViewWindow]::NativeClick", click)
+        self.assertIn('throw "No visible, enabled, bounded UIA control', click)
+        self.assertNotIn("Stop-Process", click)
+        self.assertNotIn("return # skip", click)
+
     def test_windows_candidate_switch_requires_rendered_selected_label(self):
         # A candidate copy has identical body text. A pass requires the
         # selected label inside the combobox plus the closed listbox, rather
@@ -182,7 +201,72 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledPopupClosed $hwnd $name", script)
+        self.assertIn("$stillOpen = Test-InstalledPopupOptionVisible $hwnd $expected", script)
+        self.assertIn("TreeWalker]::ControlViewWalker.GetParent($ancestor)", script)
+        self.assertIn("ControlType]::List", script)
+        # The actual popup List may be named 'Project' even when its ComboBox
+        # is 'PROJECT'; checking $label as a List name would silently accept
+        # a still-open candidate popup and give a false selection PASS.
+        self.assertNotIn("NameProperty, $label),\n        [System.Windows.Automation.PropertyCondition]::new(\n          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,\n          [System.Windows.Automation.ControlType]::List)", script)
         self.assertNotIn("$list.SetFocus()", script)
+
+    def test_windows_post_restart_negative_ui_and_escape_are_gated(self):
+        # These are real installed WebView2 user interactions, not mocks
+        # or a bypass for project/draft persistence failure.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.quit_relaunch_persistence.status -eq 'PASS')", script)
+        self.assertIn("if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", script)
+        self.assertIn("Choose-InstalledProject $restoredHwnd $second", script)
+        self.assertIn("Foreign Study '$studyTitle' visible within project B's native Studio", script)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", script)
+        self.assertIn("Test-InstalledPopupOptionVisible $restoredHwnd $studyTitle", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('{ESC}')", script)
+        self.assertIn("Wait-InstalledPopupClosed $restoredHwnd $studyTitle", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
+        self.assertNotIn("$list.SetFocus()", script)
+
+    def test_windows_uia_failure_evidence_records_actual_focus_and_patterns(self):
+        # UIA diagnostics must distinguish a non-focusable List from a
+        # supporting Edit/ComboBox. Pattern enumeration is evidence only.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$info.keyboard_focusable = [bool]$element.Current.IsKeyboardFocusable", source)
+        self.assertIn("$info.has_keyboard_focus = [bool]$element.Current.HasKeyboardFocus", source)
+        self.assertIn("$info.supported_patterns = @($element.GetSupportedPatterns()", source)
+        self.assertIn("$info.bounds = @{", source)
+        self.assertIn("$probe.child_webview_provider_nodes += $info", source)
+
+    def test_windows_theme_uses_real_restart_and_exact_selected_value(self):
+        # Feature-level source contract; only a fresh installed NSIS/UIA run
+        # can certify the actual interactions and screenshot.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.keyboard_custom_controls.status -eq 'PASS')", script)
+        self.assertIn("foreach ($choice in @('System', 'Dark'))", script)
+        self.assertIn("Choose-InstalledOption $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("if ($saveTheme.Current.IsEnabled)", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('%{F4}')", script)
+        self.assertIn("$themeProbe = Find-InstalledDocumentAndStudio $proc", script)
+        self.assertIn("Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'", script)
+        self.assertIn("windows-theme-dark-reopened.png", script)
+        self.assertIn("$cases.theme_mode_control = @{", script)
+
+    def test_windows_arabic_persisted_relaunch_and_english_restore_fail_closed(self):
+        # Native UIA evidence, not a simulated DOM locale toggle. Studio
+        # main-content heading must follow locale, not just the topbar label.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Find-InstalledDocumentAndStudio([object]$process, [string]$studioName='Studio')", source)
+        self.assertIn("function Wait-InstalledStudioPageText(", source)
+        self.assertIn("if ($cases.theme_mode_control.status -eq 'PASS')", source)
+        self.assertIn("Choose-InstalledOption $themeHwnd 'Interface language' 'ع'", source)
+        self.assertIn("Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'", source)
+        self.assertIn("Find-InstalledDocumentAndStudio $proc 'الاستوديو'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'", source)
+        self.assertIn("Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'Studio'", source)
+        self.assertIn("Arabic Studio text still visibly mounted after English restoration", source)
+        self.assertIn("$cases.arabic_locale_control = @{", source)
+        self.assertIn("windows-arabic-reopened.png", source)
+        self.assertIn("windows-english-restored.png", source)
 
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
         # The real Settings selector uses aria-selected; unsupported or
@@ -408,11 +492,55 @@ class NativeEvidenceContractTests(unittest.TestCase):
             ax.heading("NativeQA-abc-A", timeout=0.01)
 
     def test_document_alone_cannot_satisfy_startup(self):
-        import inspect
-        source = inspect.getsource(native.Session.start)
-        self.assertIn('web_document()', source)
-        self.assertIn('available("Studio", "button")', source)
-        self.assertIn('available("Studio", "link")', source)
+        # Exercise Session.start's actual fail-closed gate, not an obsolete
+        # English source-code literal. This is a mocked *contract* test only;
+        # installed WebKitGTK acceptance is separately required in CI.
+        def startup(document, controls, expected_studio="Studio"):
+            observed = []
+            ax = SimpleNamespace(
+                web_document=lambda: document,
+                available=lambda name, role: (
+                    observed.append((name, role)) or (name, role) in controls
+                ),
+                diagnostics=lambda: {"desktop_apps": [], "x11_windows": []},
+            )
+            proc = SimpleNamespace(pid=34567, poll=lambda: None)
+            with tempfile.TemporaryDirectory() as tmp:
+                session = native.Session(
+                    SimpleNamespace(executable="/synthetic/not-executed"), Path(tmp)
+                )
+                session.screenshot = lambda _name: None
+                with mock.patch.object(native.subprocess, "Popen", return_value=proc), \
+                     mock.patch.object(native, "AxWebKit", return_value=ax), \
+                     mock.patch.object(native.time, "monotonic",
+                                       side_effect=[0.0, 0.0, 36.0]), \
+                     mock.patch.object(native.time, "sleep"):
+                    try:
+                        session.start(expected_studio=expected_studio)
+                    except native.NativeUnavailable:
+                        return False, observed
+                    return True, observed
+
+        # A document without the requested native rail button/link must fail.
+        passed, calls = startup(True, set())
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("Studio", "button"), ("Studio", "link")])
+
+        # A matching control without a real WebKit document must also fail.
+        passed, calls = startup(False, {("Studio", "button")})
+        self.assertFalse(passed)
+        self.assertEqual(calls, [])
+
+        # The persisted Arabic locale must reject an English-only control.
+        passed, calls = startup(True, {("Studio", "button")}, "الاستوديو")
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("الاستوديو", "button"), ("الاستوديو", "link")])
+
+        # Either accessible role is valid, but only with a real document.
+        for language, role in (("Studio", "button"), ("الاستوديو", "link")):
+            passed, calls = startup(True, {(language, role)}, language)
+            self.assertTrue(passed)
+            self.assertIn((language, role), calls)
 
 
 
