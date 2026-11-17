@@ -237,8 +237,33 @@ class AxWebKit:
             pass
         raise NativeFailure(f"Cannot activate accessible control {name!r}")
 
+    def edit_field(self, label: str, timeout: float = 12):
+        """Find an actual input/textarea, not a coincidental text label.
+
+        On real WebKitGTK the Svelte label + HTML placeholder are combined
+        into one accessible name, e.g. 'Study name e.g. Launch video'.
+        The role remains 'embedded'; exact 'Study name' is NOT exposed.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                for node in self.nodes():
+                    try:
+                        accessible_name = (node.name or "").strip()
+                        role = node.getRoleName().lower()
+                        if (role in ("embedded", "entry", "text entry", "text field")
+                                and (accessible_name == label
+                                     or accessible_name.startswith(label + " "))):
+                            return node
+                    except Exception:
+                        continue
+            except NativeUnavailable:
+                pass
+            time.sleep(0.3)
+        raise NativeFailure(f"AT-SPI editable field not found for label {label!r}")
+
     def type_into(self, name: str, value: str) -> None:
-        node = self.find(name)
+        node = self.edit_field(name)
         try:
             focused = node.queryComponent().grabFocus()
             if focused is False:

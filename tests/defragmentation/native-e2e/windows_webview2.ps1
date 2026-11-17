@@ -165,7 +165,9 @@ public static class NativeWebViewWindow {
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     public static void NativeClick(int x, int y) {
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position pointer at UIA option");
+        System.Threading.Thread.Sleep(120);
         mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero); // MOUSEEVENTF_LEFTDOWN
+        System.Threading.Thread.Sleep(65);
         mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero); // MOUSEEVENTF_LEFTUP
     }
     public static List<IntPtr> Children(IntPtr parent) {
@@ -320,11 +322,34 @@ function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
   Click-InstalledControl $hwnd 'PROJECT' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
   $option = Find-ExactInstalledControl $hwnd $name $null 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
-  if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
-    throw "Project option has unexpected UIA role $actualRole (expected list item/button)"
+  if ($actualRole -ne 'ControlType.ListItem') {
+    throw "Project option has unexpected UIA role $actualRole (expected real list item)"
   }
-  $point = $option.GetClickablePoint()
-  [NativeWebViewWindow]::NativeClick([int][Math]::Round($point.X), [int][Math]::Round($point.Y))
+  $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  $condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::ListItem)
+  $allOptions = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
+  $rect = $option.Current.BoundingRectangle
+  $ordered = @($allOptions | Where-Object {
+    $_.Current.BoundingRectangle.Width -gt 2 -and
+    $_.Current.BoundingRectangle.Height -gt 2 -and
+    [Math]::Abs($_.Current.BoundingRectangle.X - $rect.X) -lt 20
+  } | Sort-Object { $_.Current.BoundingRectangle.Y })
+  $labels = @($ordered | ForEach-Object { [string]$_.Current.Name })
+  $index = [Array]::IndexOf($labels, $name)
+  if ($index -lt 0 -or $labels.Count -gt 30) {
+    throw "Could not establish exact UIA option order for $name; seen=$($labels -join ',')"
+  }
+  # The Svelte custom Select moves focus to its listbox after opening and
+  # handles Home/ArrowDown/Enter. Use keyboard events on that real popup,
+  # with the option index grounded in UIA items, never a guessed position.
+  Start-Sleep -Milliseconds 400
+  [System.Windows.Forms.SendKeys]::SendWait('{HOME}')
+  for ($i = 0; $i -lt $index; $i++) {
+    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+  }
+  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
   Wait-InstalledDashboard $hwnd $name
 }
 

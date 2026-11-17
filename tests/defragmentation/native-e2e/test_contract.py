@@ -150,6 +150,24 @@ class NativeEvidenceContractTests(unittest.TestCase):
             with self.assertRaises(native.NativeFailure):
                 native.verify_canonical_projects(data, ("QA-A", "Missing"))
 
+    def test_webkit_labeled_embedded_input_includes_placeholder(self):
+        class FakeNode:
+            def __init__(self, name, role):
+                self.name, self.role = name, role
+            def getRoleName(self):
+                return self.role
+        wanted = FakeNode("Study name e.g. Launch video", "embedded")
+        ax = object.__new__(native.AxWebKit)
+        ax.nodes = lambda: iter([
+            FakeNode("Study name", "label"),
+            FakeNode("Study name not-a-field", "push button"),
+            wanted,
+        ])
+        self.assertIs(ax.edit_field("Study name", timeout=0.2), wanted)
+        ax.nodes = lambda: iter([FakeNode("Study name", "label")])
+        with self.assertRaises(native.NativeFailure):
+            ax.edit_field("Study name", timeout=0.01)
+
     def test_webkit_heading_requires_semantic_role_not_arbitrary_button(self):
         # Exact installed QA AT-SPI tree maps dashboard h1 to document frame.
         class FakeNode:
