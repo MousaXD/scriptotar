@@ -114,7 +114,8 @@ PY
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
       # Network is forbidden: independent public wire API assertions all pass
       # an already-expired deadline and use a placeholder key.
-      cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_wire_boundary -- --nocapture
+      wire_security_status=0
+      cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_wire_boundary -- --nocapture || wire_security_status=$?
       cargo test --locked -p scriptotar-ai provider_consent
       # Exercise the REAL compiled HTTPS wire parser, fixed endpoint, hard output
       # caps, exact serialized body and one-use authenticated response proof.
@@ -132,6 +133,10 @@ PY
       if [ "$db_security_status" -ne 0 ]; then
         echo "FAIL: independent v10 database/receipt replay gate (exit $db_security_status)" >&2
         exit "$db_security_status"
+      fi
+      if [ "$wire_security_status" -ne 0 ]; then
+        echo "FAIL: independent exact-wire transport authorization gate (exit $wire_security_status)" >&2
+        exit "$wire_security_status"
       fi
     )
     if [ "$combined_host_static_status" -ne 0 ]; then
