@@ -178,37 +178,26 @@ describe('AI Studio request isolation', () => {
     expect(source).toHaveValue('');
     await waitFor(() => expect(screen.queryByTestId('ai-source-lineage')).not.toBeInTheDocument());
   });
-  it('allows a new provider run after inputs change without an old completion clearing busy state', async () => {
-    const old = deferred<string>();
-    const next = deferred<string>();
+  it('keeps uncertified BYOK execution blocked without collecting credentials', async () => {
     let calls = 0;
     const api = createMockClient({
-      runAi: () => ++calls === 1 ? old.promise : next.promise
+      runAi: async () => {
+        calls += 1;
+        return 'Uncertified provider output';
+      }
     });
     render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });
 
     await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
-    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'session-secret' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
-    expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('BYOK sending is unavailable');
+    expect(screen.getByLabelText('API key')).toBeDisabled();
+    const send = screen.getByRole('button', { name: 'Run with API (unavailable)' });
+    expect(send).toBeDisabled();
+    await fireEvent.click(send);
+    expect(calls).toBe(0);
+    expect(screen.queryByText('Uncertified provider output')).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole('combobox', { name: 'AI provider' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Anthropic' }));
-    await fireEvent.input(screen.getByLabelText('Model'), { target: { value: 'custom-model' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
-    expect(calls).toBe(2);
-
-    await act(async () => {
-      old.resolve('STALE_RESPONSE');
-      await old.promise;
-    });
-    expect(screen.queryByText('STALE_RESPONSE')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled();
-
-    await act(async () => {
-      next.resolve('Current provider output');
-      await next.promise;
-    });
-    await waitFor(() => expect(screen.getByText('Current provider output')).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy Prompt' }));
+    expect(screen.getByRole('button', { name: 'Build prompt' })).toBeEnabled();
   });
 });
