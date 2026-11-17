@@ -318,9 +318,34 @@ function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
   } while ([DateTime]::UtcNow -lt $deadline)
   throw "Installed dashboard failed to activate project $name"
 }
+function Find-InstalledPopupOption([IntPtr]$hwnd, [string]$name, [int]$timeoutSec=7) {
+  # A selected Study is also exposed as a normal Text node in "Open study".
+  # Match the REAL open popup's option role, not the first equal-name Text
+  # anywhere in the current installed document.
+  $matchName = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+  $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
+  do {
+    try {
+      $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      $matches = $provider.FindAll(
+        [System.Windows.Automation.TreeScope]::Subtree, $matchName)
+      foreach ($element in $matches) {
+        $role = $element.Current.ControlType.ProgrammaticName
+        $rect = $element.Current.BoundingRectangle
+        if ($role -in @('ControlType.ListItem', 'ControlType.Button') -and
+            $rect.Width -gt 2 -and $rect.Height -gt 2) {
+          return $element
+        }
+      }
+    } catch { }
+    Start-Sleep -Milliseconds 250
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed popup option not found with actionable UIA role: $name"
+}
 function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   Click-InstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) -pointer
-  $option = Find-ExactInstalledControl $hwnd $name $null 7
+  $option = Find-InstalledPopupOption $hwnd $name 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
   if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
     throw "Project option has unexpected UIA role $actualRole (expected native list item/button)"
@@ -386,6 +411,21 @@ else:
     throw "Installed canonical SQLite $kind probe failed: $($result | Out-String)"
   }
   return [string]($result | Out-String).Trim()
+}
+function Wait-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third) {
+  # The real UI can complete an auto-save shortly after a native key event.
+  # Poll the authoritative SQLite snapshot instead of racing an inaccessible
+  # status label or interpreting a temporarily disabled save button as failure.
+  $lastError = 'Not checked'
+  for ($attempt=0; $attempt -lt 24; $attempt++) {
+    try {
+      return Verify-InstalledCanonicalDb $kind $first $second $third
+    } catch {
+      $lastError = $_.Exception.Message
+      Start-Sleep -Milliseconds 350
+    }
+  }
+  throw "Installed canonical SQLite $kind never reached the expected state: $lastError"
 }
 
 $testTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
@@ -577,7 +617,7 @@ try {
     }
     if ($cases.create_switch_projects.status -eq 'PASS') {
       try {
-        $projectProof = Verify-InstalledCanonicalDb 'projects' $first $second 'unused'
+        $projectProof = Wait-InstalledCanonicalDb 'projects' $first $second 'unused'
         $cases.canonical_project_persistence = @{
           status='PASS'
           reason=$projectProof
@@ -618,8 +658,14 @@ try {
       try {
         $draftBody = 'Original installed WebView2 user-edit candidate ' + $tag
         Type-InstalledEdit $providerHwnd 'Script draft' $draftBody
-        Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
-        $savedProof = Verify-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        $saveButton = Find-ExactInstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+        # The editor also auto-saves after 900ms; avoid failing when native UI
+        # has already saved and disabled the manual button. Database proof is
+        # mandatory in either case.
+        if ($saveButton.Current.IsEnabled) {
+          Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+        }
+        $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
         Click-InstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button) | Out-Null
         Click-InstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button)
