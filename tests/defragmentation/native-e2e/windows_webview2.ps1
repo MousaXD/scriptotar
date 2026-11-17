@@ -959,6 +959,14 @@ try {
         Wait-InstalledDashboard $restoredHwnd $first
         Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+        # Exact installed UIA tree at run #44159845627 retained Studio,
+        # project A, Study, two scripts and the Script candidates ComboBox,
+        # but candidate bounds were y=971 below the 749px document viewport.
+        # ScrollItemPattern alone did not bring that control onscreen.
+        # Use the genuine, visible Studio 'Scripts 2' hyperlink, then still
+        # require the candidate control, exact body and immutable SQLite.
+        Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'reopened-scripts-navigation.png')
         Find-ExactInstalledControl $restoredHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button) 12 | Out-Null
         if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
           throw 'Original Study draft was not restored after true installed GUI restart'
