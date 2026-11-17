@@ -91,7 +91,11 @@ impl OpenAiResponsesWire {
 
     /// Strictly decode one provider-issued response. Never invent a request ID,
     /// derive token usage from text, or accept an interrupted/incomplete result.
-    fn decode_response(value: &[u8], config: &ProviderConfig, elapsed_ms: u64) -> Result<MeteredReply, ConsentError> {
+    fn decode_response(
+        value: &[u8],
+        config: &ProviderConfig,
+        elapsed_ms: u64,
+    ) -> Result<MeteredReply, ConsentError> {
         if value.len() > MAX_RESPONSE_BYTES as usize {
             return Err(ConsentError::UncertainEffect);
         }
@@ -421,22 +425,33 @@ mod tests {
         ] {
             let before = value[bad.0].clone();
             value[bad.0] = bad.1;
-            assert!(
-                OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35)
-                    .is_err()
-            );
+            assert!(OpenAiResponsesWire::decode_response(
+                &serde_json::to_vec(&value).unwrap(),
+                &model(),
+                35
+            )
+            .is_err());
             value[bad.0] = before;
         }
         value["usage"]["total_tokens"] = json!(16);
-        assert!(
-            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35).is_err()
-        );
+        assert!(OpenAiResponsesWire::decode_response(
+            &serde_json::to_vec(&value).unwrap(),
+            &model(),
+            35
+        )
+        .is_err());
         value["usage"]["total_tokens"] = json!(17);
         value["output"][0]["type"] = json!("function_call");
+        assert!(OpenAiResponsesWire::decode_response(
+            &serde_json::to_vec(&value).unwrap(),
+            &model(),
+            35
+        )
+        .is_err());
         assert!(
-            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35).is_err()
+            OpenAiResponsesWire::decode_response(&completed(), &model(), MAX_ELAPSED_MS + 1)
+                .is_err()
         );
-        assert!(OpenAiResponsesWire::decode_response(&completed(), &model(), MAX_ELAPSED_MS + 1).is_err());
         assert!(OpenAiResponsesWire::decode_response(
             &vec![b'x'; MAX_RESPONSE_BYTES as usize + 1],
             &model(),
