@@ -169,6 +169,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("$list.SetFocus()", choose)
         self.assertNotIn("Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List)", choose)
 
+    def test_windows_unavailable_clickable_point_requires_real_native_pointer(self):
+        # Source-only regression contract: a UIA GetClickablePoint exception
+        # cannot mean success, an unchecked click, or a skipped native event.
+        # Fresh installed WebView2 evidence is still mandatory.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = script.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1
+        )[0]
+        self.assertIn("FindAll([System.Windows.Automation.TreeScope]::Subtree", click)
+        self.assertIn("$candidate.Current.IsOffscreen", click)
+        self.assertIn("$candidate.Current.IsEnabled", click)
+        self.assertIn("$ownerRect = $owner.Current.BoundingRectangle", click)
+        self.assertIn("$element.GetClickablePoint()", click)
+        self.assertIn("} catch {", click)
+        self.assertIn("[NativeWebViewWindow]::NativeClick", click)
+        self.assertIn('throw "No visible, enabled, bounded UIA control', click)
+        self.assertNotIn("Stop-Process", click)
+        self.assertNotIn("return # skip", click)
+
     def test_windows_candidate_switch_requires_rendered_selected_label(self):
         # A candidate copy has identical body text. A pass requires the
         # selected label inside the combobox plus the closed listbox, rather
