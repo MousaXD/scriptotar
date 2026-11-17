@@ -383,43 +383,46 @@ function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
   Wait-InstalledPopupClosed $hwnd $name
 
 }
+function Test-InstalledPopupOptionVisible([IntPtr]$hwnd, [string]$name) {
+  # Inspect the exact option within its actual List ancestor. The installed
+  # project ComboBox 'PROJECT' opens a List named 'Project'; never assume
+  # that a popup List and its corresponding ComboBox share an accessible name.
+  $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $provider) { throw "Installed WebView2 provider unavailable while verifying popup" }
+  $match = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, $name)
+  $matches = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $match)
+  foreach ($element in $matches) {
+    $kind = $element.Current.ControlType
+    if ($kind -notin @(
+        [System.Windows.Automation.ControlType]::ListItem,
+        [System.Windows.Automation.ControlType]::Button)) { continue }
+    $rect = $element.Current.BoundingRectangle
+    if ($rect.Width -le 2 -or $rect.Height -le 2) { continue }
+    $ancestor = $element
+    for ($depth=0; $depth -lt 12; $depth++) {
+      $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+      if (-not $ancestor) { break }
+      if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::List) {
+        return $true
+      }
+    }
+  }
+  return $false
+}
 function Wait-InstalledPopupClosed([IntPtr]$hwnd, [string]$name) {
-  # This is an independent rendered-state assertion, not a simulated selection.
-  # A still-visible matching popup option must fail even when the previously
-  # selected dashboard already displays the same project name.
+  # No provider errors count as closed. A still-visible option under its real
+  # List fails even if a coincidentally correct dashboard is already visible.
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
   do {
     try {
-      $provider = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
-      $match = [System.Windows.Automation.PropertyCondition]::new(
-        [System.Windows.Automation.AutomationElement]::NameProperty, $name)
-      $matches = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $match)
-      $popupVisible = $false
-      foreach ($element in $matches) {
-        $kind = $element.Current.ControlType
-        if ($kind -notin @(
-            [System.Windows.Automation.ControlType]::ListItem,
-            [System.Windows.Automation.ControlType]::Button)) { continue }
-        $rect = $element.Current.BoundingRectangle
-        if ($rect.Width -le 2 -or $rect.Height -le 2) { continue }
-        $ancestor = $element
-        for ($depth=0; $depth -lt 12; $depth++) {
-          $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
-          if (-not $ancestor) { break }
-          if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::List) {
-            $popupVisible = $true
-            break
-          }
-        }
-        if ($popupVisible) { break }
-      }
-      if (-not $popupVisible) { return }
+      if (-not (Test-InstalledPopupOptionVisible $hwnd $name)) { return }
     } catch {
-      # A disconnected provider cannot count as proof of a closed popup.
+      # A disconnected provider is not evidence of successful user selection.
     }
     Start-Sleep -Milliseconds 300
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw "Installed native popup option '$name' remained visible after pointer selection"
+  throw "Installed native popup option '$name' remained visible or UIA provider disconnected after pointer selection"
 }
 function Choose-InstalledProject([IntPtr]$hwnd, [string]$name) {
   Choose-InstalledOption $hwnd 'PROJECT' $name
@@ -456,14 +459,9 @@ function Wait-InstalledComboValue([IntPtr]$hwnd, [string]$label, [string]$expect
         }
       }
       # A still-open popup must not count as a completed selection.
-      $listCondition = [System.Windows.Automation.AndCondition]::new(
-        [System.Windows.Automation.PropertyCondition]::new(
-          [System.Windows.Automation.AutomationElement]::NameProperty, $label),
-        [System.Windows.Automation.PropertyCondition]::new(
-          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-          [System.Windows.Automation.ControlType]::List))
-      $stillOpen = [bool]$root.FindFirst(
-        [System.Windows.Automation.TreeScope]::Subtree, $listCondition)
+      # A mismatched List accessible name must not let an open popup
+      # masquerade as a completed candidate selection.
+      $stillOpen = Test-InstalledPopupOptionVisible $hwnd $expected
       if ($selected -and -not $stillOpen) { return }
     } catch { }
     Start-Sleep -Milliseconds 350
