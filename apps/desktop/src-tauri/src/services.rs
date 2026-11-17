@@ -142,14 +142,32 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
-        let orchestrator = JobOrchestrator::start_with_notifier(
+        // Every foreground Studio mutation and in-process research-origin
+        // writer must share this host authorization gate with paid admission.
+        let active_project_gate = Arc::new(Mutex::new(active_project));
+        let transcription_write_guard = Arc::clone(&active_project_gate);
+        let orchestrator = JobOrchestrator::start_with_notifier_and_content_gate(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
             notifier,
+            Arc::new(move |commit| {
+                // The sidecar can run without this lock. Only its final
+                // Source/Media/Transcript transaction must serialize with
+                // Studio source changes and the provider pre-send CAS.
+                let _guard = transcription_write_guard.lock().map_err(|_| {
+                    scriptotar_orchestrator::OrchestratorError::Unavailable(
+                        "host source authorization gate unavailable".into(),
+                    )
+                })?;
+                commit()
+            }),
         );
         let research_command = YtDlpCommand::from_environment();
-        let watchlist_refresher =
-            spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher = spawn_watchlist_refresher(
+            store.clone(),
+            research_command.clone(),
+            Arc::clone(&active_project_gate),
+        );
 
         if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
             eprintln!(
@@ -165,7 +183,7 @@ impl AppServices {
         Ok(Self {
             store,
             orchestrator,
-            active_project: Arc::new(Mutex::new(active_project)),
+            active_project: active_project_gate,
             legacy_path,
             research_command,
             _watchlist_refresher: watchlist_refresher,
@@ -400,6 +418,13 @@ impl AppServices {
     }
 
     pub fn import_legacy_data(&self) -> RepositoryResult<scriptotar_core::LegacyImportReport> {
+        // Legacy import can change canonical sources, research and Studio
+        // records. Never allow an import to race a scope-locked pre-send CAS.
+        // The import is local SQLite I/O; no network runs under this mutex.
+        let _scope_guard = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
         self.store.import_legacy_database(&self.legacy_path)
     }
 
@@ -454,6 +479,7 @@ impl AppServices {
         let result = scan_and_persist_research(
             &self.store,
             &self.research_command,
+            &self.active_project,
             active_project,
             &canonical_url,
             query.limit,
@@ -852,9 +878,23 @@ impl AppServices {
     }
 }
 
+/// Every in-process research origin mutation must pass the *same* mutex as
+/// ScopeDispatchGuard, including automatic watchlist and manual scans. Never
+/// hold it while yt-dlp or other network collection is running.
+fn with_research_origin_gate<T>(
+    scope_gate: &Arc<Mutex<Uuid>>,
+    mutation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = scope_gate
+        .lock()
+        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+    mutation()
+}
+
 fn scan_and_persist_research(
     store: &SqliteStore,
     command: &YtDlpCommand,
+    scope_gate: &Arc<Mutex<Uuid>>,
     project_id: Uuid,
     profile_url: &str,
     limit: u16,
@@ -871,30 +911,37 @@ fn scan_and_persist_research(
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
     let canonical_url = validated.as_url().to_string();
-    let creator = store
-        .upsert_creator(&Creator {
-            id: Uuid::new_v4(),
-            project_id,
-            platform: source_platform(&canonical_url, SourceType::Url),
-            profile_url: canonical_url.clone(),
-            display_name: Some(profile_label(validated.as_url())),
-            created_at: now_rfc3339(),
-        })
-        .map_err(|error| error.to_string())?;
+    let creator = with_research_origin_gate(scope_gate, || {
+        store
+            .upsert_creator(&Creator {
+                id: Uuid::new_v4(),
+                project_id,
+                platform: source_platform(&canonical_url, SourceType::Url),
+                profile_url: canonical_url.clone(),
+                display_name: Some(profile_label(validated.as_url())),
+                created_at: now_rfc3339(),
+            })
+            .map_err(|error| error.to_string())
+    })?;
     let provider = YtDlpProvider::new(command.clone())
         .with_cookie_browser(cookie_browser)
         .map_err(|error| error.to_string())?;
     let items = ResearchService::new(provider)
         .scan(project_id, Some(creator.id), &canonical_url, limit)
         .map_err(|error| error.to_string())?;
-    let persisted = store
-        .upsert_research_items(&items)
-        .map_err(|error| error.to_string())?;
-    let scanned_at = now_rfc3339();
-    store
-        .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
-        .map_err(|error| error.to_string())?;
-    Ok(persisted.len())
+    // Run network collection with no lock, then serialize the actual research
+    // origin mutations with Studio edits, consent revocation and the final
+    // pre-send CAS. No SQLite write transaction spans network I/O.
+    with_research_origin_gate(scope_gate, || {
+        let persisted = store
+            .upsert_research_items(&items)
+            .map_err(|error| error.to_string())?;
+        let scanned_at = now_rfc3339();
+        store
+            .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
+            .map_err(|error| error.to_string())?;
+        Ok(persisted.len())
+    })
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
@@ -936,7 +983,11 @@ fn safe_watchlist_error(error: &str) -> String {
     }
 }
 
-fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+fn spawn_watchlist_refresher(
+    store: SqliteStore,
+    command: YtDlpCommand,
+    scope_gate: Arc<Mutex<Uuid>>,
+) -> WatchlistRefresher {
     let (stop, receiver) = mpsc::channel();
     let handle = thread::spawn(move || loop {
         match receiver.recv_timeout(WATCHLIST_TICK) {
@@ -1002,6 +1053,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             match scan_and_persist_research(
                 &store,
                 &command,
+                &scope_gate,
                 watchlist.project_id,
                 &watchlist.profile_url,
                 watchlist.limit_count.min(200) as u16,
@@ -1671,6 +1723,58 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
+
+    #[test]
+    fn legacy_import_waits_for_authorization_guard_before_mutating_sources() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let held_by_dispatch = services.active_project.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_services = services.clone();
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            // The fixture has no legacy snapshot. The result itself is not the
+            // assertion: import must not even inspect/write while scope is held.
+            let result = worker_services.import_legacy_data();
+            finished_tx.send(result.is_ok()).unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn background_research_origin_writer_respects_host_authorization_gate() {
+        // The controlled writer performs no network activity; it tests the
+        // shared lock that both creator scans and paid scope guards use.
+        let gate = Arc::new(Mutex::new(Uuid::new_v4()));
+        let held_by_dispatch = gate.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+        let writer_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            with_research_origin_gate(&writer_gate, || {
+                written_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            written_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+    }
 
     fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
