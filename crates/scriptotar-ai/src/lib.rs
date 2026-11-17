@@ -1,4 +1,5 @@
 pub mod provider_consent;
+pub mod provider_openai_wire;
 pub mod writing;
 
 use std::{io::Read, time::Duration};
