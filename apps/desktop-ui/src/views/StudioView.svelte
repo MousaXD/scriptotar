@@ -1381,7 +1381,7 @@
                   {/each}
                   <button type="button" class="button secondary"
                     disabled={!!exportingBatchId || busy || saving || dirty || loading || importingSavedResult ||
-                      !batch.draftIds.every(id => record.drafts?.some(candidate => candidate.id === id))}
+                      !batch.draftIds.every(id => record?.drafts?.some(candidate => candidate.id === id))}
                     on:click={() => void exportWritingBatch(batch)}>{t.exportAllThree}</button>
                 </div>
               </div>

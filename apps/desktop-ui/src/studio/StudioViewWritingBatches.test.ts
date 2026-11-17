@@ -90,7 +90,7 @@ describe('Studio read-only canonical three-script receipts', () => {
   });
   it('exports the exact three receipt-linked scripts locally without AI egress', async () => {
     const { projectId, gateway, api, getStudy } = setup();
-    const createObjectURL = vi.fn(() => 'blob:receipt-export');
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:receipt-export');
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
     const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
