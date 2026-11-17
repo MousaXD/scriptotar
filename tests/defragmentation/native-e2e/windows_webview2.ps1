@@ -610,6 +610,25 @@ function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
   return [string]$field.GetCurrentPattern(
     [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
 }
+function Wait-InstalledEditExact([IntPtr]$hwnd, [string]$name, [string]$expected, [int]$seconds=12) {
+  # The installed WebView2 Studio can expose an existing Study and Scripts 2
+  # while the editor's asynchronous value is still settling after A->B->A.
+  # Require exact native UIA ValuePattern text, never a screenshot or DB-only
+  # substitute. Keep a bounded wait and fail closed with content length only.
+  $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
+  $actual = ''
+  $lastError = ''
+  do {
+    try {
+      $actual = Read-InstalledEdit $hwnd $name
+      if ($actual -ceq $expected) { return }
+    } catch {
+      $lastError = $_.Exception.Message
+    }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw "Installed UIA edit '$name' did not restore exact expected content (expected length $($expected.Length), actual length $($actual.Length), last UIA error: $lastError)"
+}
 function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
   # Windows CI has Python 3.12, and this imports only standard library code.
   # The canonical probe opens installed app SQLite in mode=ro and never
@@ -1023,9 +1042,12 @@ try {
         Choose-InstalledProject $restoredHwnd $first
         Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
-        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
-          throw 'Project A Study disappeared after native wrong-project UI isolation probe'
-        }
+        # Integration #44176696340 showed the exact Study title and Scripts 2
+        # visibly restored, but an immediate single UIA read was not the
+        # expected body. Navigate the real editor link, then poll the actual
+        # installed ValuePattern for bounded asynchronous hydration.
+        Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+        Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody
         $isolationProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         $cases.wrong_project_ui_isolation = @{
           status='PASS'
