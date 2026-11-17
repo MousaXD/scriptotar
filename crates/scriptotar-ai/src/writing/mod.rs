@@ -8,6 +8,7 @@ use thiserror::Error;
 use crate::AiRequest;
 
 mod quality;
+pub mod verification;
 pub use quality::{
     audit_draft, compare_angles, Advisory, AdvisoryKind, AdvisoryLevel, DraftAudit,
     DurationEstimate,

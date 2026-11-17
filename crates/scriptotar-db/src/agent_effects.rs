@@ -352,3 +352,8 @@ impl SqliteStore {
         Ok(after)
     }
 }
+
+// An external request has a separate lifecycle from v8's local-read receipt.
+pub(crate) mod external {
+    include!("agent_effects_external.rs");
+}

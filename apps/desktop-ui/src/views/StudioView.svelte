@@ -11,6 +11,10 @@
   import { evidencePromptContext } from '../studio/evidencePrompt';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
+  import StudioAgentReview from '../studio/StudioAgentReview.svelte';
+  import StudioCandidateCompare from '../studio/StudioCandidateCompare.svelte';
+  import StudioResearchReview from '../studio/StudioResearchReview.svelte';
+  import { workflowStrings } from '../studio/workflowStrings';
 
   export let api: ScriptotarApi;
   export let projectId: string;
@@ -94,6 +98,7 @@
   let consumedIncoming = '';
 
   $: t = studioStrings[$locale];
+  $: flowT = workflowStrings[$locale];
   // An edited brief, changed Study, or revised evidence must invalidate
   // old pasted model proposals even when no Study revision was written.
   $: if (angleScopeEpoch !== promptRequest) {
@@ -1011,6 +1016,13 @@
     <button type="button" class="button secondary" on:click={() => onNavigate('ai')}>{t.openAi}</button>
   </div>
 </section>
+<nav class="studio-progress" aria-label={flowT.workflow} dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
+  <a href="#studio-sources"><span>{flowT.sources}</span><strong>{refs.length}</strong></a>
+  <a href="#studio-evidence"><span>{flowT.evidence}</span><strong>{evidence.length}</strong></a>
+  <a href="#studio-execution"><span>{flowT.execution}</span><strong>{anglePromptSource ? flowT.prepared : '—'}</strong></a>
+  <a href="#studio-scripts"><span>{flowT.scripts}</span><strong>{record?.drafts?.length ?? 0}</strong></a>
+  <a href="#studio-export"><span>{flowT.export}</span><strong>{draft.trim() ? flowT.ready : '—'}</strong></a>
+</nav>
 {#if error}<p role="alert" class="studio-error">{error}</p>{/if}
 {#if !gateway}<p class="studio-warning" role="status">{t.notConnected}</p>{/if}
 <div class="studio-workspace">
@@ -1027,7 +1039,7 @@
       {/if}
     </section>
 
-    <section class="panel studio-sources">
+    <section id="studio-sources" class="panel studio-sources">
       <h2>{t.sources} <small>{refs.length}</small></h2>
       {#if refs.length}
         <ul class="source-list">
@@ -1091,6 +1103,11 @@
         {#if inspectionError}<p role="alert" class="studio-error">{inspectionError}</p>{/if}
       </section>
     {/if}
+    {#if record}
+      {#key projectId + ':' + record.id}
+        <StudioResearchReview {api} {projectId} studyId={record.id} />
+      {/key}
+    {/if}
     <section class="panel studio-history">
       <h2>{t.history}</h2>
       {#each savedRuns.slice(0, 15) as run (run.id)}
@@ -1134,6 +1151,11 @@
       </div>
     </section>
 
+    <section id="studio-execution" class="panel studio-provider-review">
+      <StudioAgentReview {projectId} study={record} {gateway} prompt={anglePromptSource}
+        dirty={dirty || saving || loading || importingSavedResult} />
+    </section>
+
     {#if historical}
       <section class="panel studio-historical">
         <div class="section-heading"><h2>{historical.result === null ? t.prompt : t.result}: {historical.title}</h2>
@@ -1156,11 +1178,11 @@
         {/if}
       </section>
     {/if}
-    <section class="panel studio-editor">
+    <section id="studio-scripts" class="panel studio-editor">
       <div class="section-heading">
         <h2>{t.script}</h2>
         <div class="draft-actions">
-          <button type="button" class="button secondary" on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
+          <button id="studio-export" type="button" class="button secondary" on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
           <button type="button" class="button secondary" on:click={() => exportDraft('md')}>{t.exportMd}</button>
           {#if gateway && record}
             <button type="button" class="button primary" disabled={!dirty || saving || !!previewVersion}
@@ -1234,6 +1256,8 @@
             on:click={() => void restoreArchivedDraft()}>{t.restoreDraft}</button>
         </div>
       {/if}
+      <StudioCandidateCompare study={record} {gateway} {projectId}
+        pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
           <button type="button" class:chosen={!previewVersion} on:click={() => previewVersion = null}>{t.currentDraft}</button>
@@ -1351,7 +1375,7 @@
     </section>
   </div>
 
-  <aside class="panel studio-evidence">
+  <aside id="studio-evidence" class="panel studio-evidence">
     <h2>{t.evidence}</h2>
     {#if selectedResearch}
       <h3 dir="auto">{selectedResearch.title}</h3>
@@ -1454,6 +1478,10 @@
 </div>
 
 <style>
+  .studio-progress { display: flex; flex-wrap: wrap; gap: 0; border-block-end: 1px solid var(--color-border); margin-block: 0 14px; }
+  .studio-progress a { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--color-text); text-decoration: none; font-size: var(--text-xs); }
+  .studio-progress a:hover, .studio-progress a:focus-visible { background: var(--color-surface-raised); text-decoration: underline; }
+  .studio-progress strong { font-weight: 700; color: var(--color-text-muted); }
   .studio-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }

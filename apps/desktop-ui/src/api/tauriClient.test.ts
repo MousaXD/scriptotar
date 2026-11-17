@@ -87,6 +87,11 @@ describe('Tauri client command contract', () => {
     await api.startLocalInspection('project-id', 'study-id', 'transcript-id');
     await api.listLocalInspections('project-id', 'study-id');
     await api.decideLocalInspection('project-id', 'study-id', 'run-id', 'approve');
+    await api.listStudyResearchSources('project-id', 'study-id');
+    await api.startStudyResearch('project-id', 'study-id', ['study-source-id']);
+    await api.listStudyResearchRuns('project-id', 'study-id');
+    await api.decideStudyResearch('project-id', 'study-id', 'run-id', 'approve');
+    await api.readStudyResearchReport('project-id', 'study-id', 'artifact-id');
     await api.getAiRun('project-id', 'ai-run-id');
     await api.getResearchItem('project-id', 'research-id');
     await api.saveCopyPrompt('project-id', aiInput);
@@ -197,6 +202,16 @@ describe('Tauri client command contract', () => {
       projectId: 'project-id', studyId: 'study-id' });
     expect(invokeMock).toHaveBeenCalledWith('decide_local_inspection', {
       projectId: 'project-id', studyId: 'study-id', runId: 'run-id', action: 'approve' });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_research_sources', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('start_study_research', {
+      projectId: 'project-id', studyId: 'study-id', sourceIds: ['study-source-id'] });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_research_runs', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('decide_study_research', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id', action: 'approve' });
+    expect(invokeMock).toHaveBeenCalledWith('read_study_research_report', {
+      projectId: 'project-id', studyId: 'study-id', artifactId: 'artifact-id' });
     expect(invokeMock).toHaveBeenCalledWith('get_ai_run', { projectId: 'project-id', aiRunId: 'ai-run-id' });
     expect(invokeMock).toHaveBeenCalledWith('get_research_item', { projectId: 'project-id', researchItemId: 'research-id' });
     expect(invokeMock).toHaveBeenCalledWith('save_copy_prompt', { projectId: 'project-id', input: aiInput });

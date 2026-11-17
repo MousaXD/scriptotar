@@ -960,6 +960,109 @@ async fn decide_local_inspection(
 }
 
 #[tauri::command]
+async fn list_study_research_sources(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<services::study_research::StudyResearchSource>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_sources(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_study_research(
+    project_id: String,
+    study_id: String,
+    source_ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    if source_ids.is_empty() || source_ids.len() > 8 {
+        return Err("select one to eight Study sources".into());
+    }
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let source_ids = source_ids
+        .iter()
+        .map(|id| artifact_uuid(id, "Study source id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .start_study_research(project_id, study_id, source_ids)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_research_runs(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<RunSnapshot>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_runs(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn decide_study_research(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    action: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    if !scriptotar_agent::valid_id(&run_id) {
+        return Err("invalid research run ID".into());
+    }
+    if !matches!(action.as_str(), "approve" | "deny" | "cancel" | "recover") {
+        return Err("unsupported research action".into());
+    }
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .decide_study_research(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_study_research_report(
+    project_id: String,
+    study_id: String,
+    artifact_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_research::study_intelligence::StudyResearchReport, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let artifact_id = artifact_uuid(&artifact_id, "research artifact id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .read_study_research_report(project_id, study_id, artifact_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
 ) -> Result<Vec<UiWatchlistStatus>, String> {
@@ -1394,6 +1497,11 @@ pub fn run() {
             start_local_inspection,
             list_local_inspections,
             decide_local_inspection,
+            list_study_research_sources,
+            start_study_research,
+            list_study_research_runs,
+            decide_study_research,
+            read_study_research_report,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

@@ -104,7 +104,7 @@ describe('desktop workstation', () => {
 
   it('switches AI Studio between Copy Prompt and BYOK without persisting a key in UI state', async () => {
     await ready();
-    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+    await fireEvent.keyDown(window, { key: 'a' });
     expect(screen.queryByLabelText('API key')).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
     expect(screen.getByTestId('byok-fields')).toBeInTheDocument();

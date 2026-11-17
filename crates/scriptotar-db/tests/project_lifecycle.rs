@@ -442,7 +442,13 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     }
     connection
         .execute_batch(
-            "DROP TABLE evidence_reviews;
+            "DROP TABLE study_writing_revisions;
+         DROP TABLE study_writing_batches;
+         DELETE FROM schema_migrations WHERE version=11;
+         DROP TABLE agent_external_attempt_history;
+         DROP TABLE agent_external_effects;
+         DELETE FROM schema_migrations WHERE version=10;
+         DROP TABLE evidence_reviews;
          DELETE FROM schema_migrations WHERE version=9;
          DROP TABLE agent_effects;
          DELETE FROM schema_migrations WHERE version=8;

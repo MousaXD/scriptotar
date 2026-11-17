@@ -68,6 +68,16 @@ describe('Research workspace', () => {
     expect(screen.queryByTestId('research-r-17')).not.toBeInTheDocument();
   });
 
+  it('clears empty search filters without discarding saved research rows', async () => {
+    mountResearch(researchItems(3));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Filter research' }), {
+      target: { value: 'not-present-qa-title' }
+    });
+    expect(screen.getByText('No matching research')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getAllByTestId(/^research-r-/)).toHaveLength(3);
+  });
+
   it('selects the current page without losing selections on other pages and queues only once', async () => {
     const onQueue = vi.fn().mockResolvedValue(undefined);
     mountResearch(researchItems(62), { onQueue });
@@ -136,6 +146,27 @@ describe('Research workspace', () => {
     await waitFor(() => expect(onQueue).toHaveBeenCalledWith(['r-1', 'r-2']));
   });
 
+  it('localizes research actions, status, and watchlist recovery details for Arabic users', async () => {
+    const onScan = vi.fn().mockResolvedValue(undefined);
+    setLocale('ar');
+    const statuses: WatchlistStatus[] = [{
+      watchlistId: 'arabic-watch', projectId: 'p1', label: 'Creator A',
+      state: 'retry_scheduled', lastError: 'Provider unavailable',
+      nextRetryAt: '2026-10-02T12:00:00Z'
+    }];
+    mountResearch(researchItems(1), { onScan, watchlistStatuses: statuses });
+    expect(screen.getByRole('heading', { name: 'البحث' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'تحديد عناصر الصفحة' })).toBeInTheDocument();
+    expect(screen.getByText('إعادة المحاولة مجدولة')).toBeInTheDocument();
+    expect(screen.getByText('المحاولة التالية')).toBeInTheDocument();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'رابط ملف المنشئ' }), {
+      target: { value: 'youtube.com/@creator' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'فحص الملف' }));
+    await waitFor(() => expect(onScan).toHaveBeenCalledWith('youtube.com/@creator', 25));
+    expect(screen.getByText('اكتمل فحص الملف.')).toHaveAttribute('role', 'status');
+  });
+
   it('keeps watchlist failures and retry timing visible while grouping normal diagnostics', async () => {
     mountResearch([], {
       watchlistStatuses: [{
@@ -191,6 +222,15 @@ describe('Library workspace', () => {
     await fireEvent.click(button);
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'item:75' }));
     expect(screen.queryByRole('button', { name: /Open Transcript: A very long title/ })).not.toBeInTheDocument();
+  });
+
+  it('recovers from a library search with no matching artifacts', async () => {
+    render(LibraryView, { props: { items: libraryItems(3), onOpen: vi.fn() } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Search library' }), {
+      target: { value: 'not-present-library-qa' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getAllByRole('button', { name: /^Open (Transcript|Research|AI run):/ })).toHaveLength(3);
   });
 
   it('filters by type, supports text search and preserves the correct artifact identity', async () => {

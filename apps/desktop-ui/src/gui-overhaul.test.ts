@@ -30,6 +30,20 @@ async function chooseArabicInterface() {
 }
 
 describe('Creator Control Room GUI', () => {
+  it('uses Studio as the single primary writing destination while keeping legacy AI tools available', async () => {
+    await ready();
+    expect(document.querySelectorAll('.primary-nav [data-view-id="studio"]')).toHaveLength(1);
+    expect(document.querySelector('.primary-nav [data-view-id="ai"]')).toBeNull();
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = screen.getByRole('dialog', { name: 'Command palette' });
+    await fireEvent.input(within(palette).getByRole('textbox', { name: 'Search workspace and commands' }), {
+      target: { value: 'Open AI Studio' }
+    });
+    const legacy = within(palette).getByRole('button', { name: /Open AI Studio/ });
+    await fireEvent.click(legacy);
+    expect(document.querySelector('.primary-nav [data-view-id="studio"]')).toHaveAttribute('aria-current', 'page');
+  });
+
   it('persists the compact sidebar preference', async () => {
     await ready();
 
