@@ -5,7 +5,7 @@
   import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption, StudyScriptReview } from '../studio/contract';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption, StudyScriptReview, StudyWritingBatch } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { evidencePromptContext } from '../studio/evidencePrompt';
@@ -35,6 +35,9 @@
   let refs: StudySourceRef[] = [];
   let draft = '';
   let previewVersion: DraftSnapshot | null = null;
+  let writingBatches: StudyWritingBatch[] = [];
+  let writingBatchError = '';
+  let writingBatchEpoch = 0;
   let renameDraftOpen = false;
   let renameDraftTitle = '';
   let draftSearch = '';
@@ -149,6 +152,7 @@
   });
   onDestroy(() => {
     currentRequest++;
+    writingBatchEpoch++;
     sourceRequest++;
     promptRequest++;
     historyEpoch++;
@@ -249,10 +253,37 @@
       reviewReason = '';
       void loadEvidence(id);
       void loadInspections(id);
+      void loadWritingBatches(id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorLoad);
     } finally {
       if (epoch === currentRequest) loading = false;
+    }
+  }
+
+  async function loadWritingBatches(id: string): Promise<void> {
+    const epoch = ++writingBatchEpoch;
+    writingBatches = [];
+    writingBatchError = '';
+    if (!gateway?.listStudyWritingBatches) return;
+    try {
+      const result = await gateway.listStudyWritingBatches(projectId, id);
+      if (epoch !== writingBatchEpoch || record?.id !== id || studyId !== id) return;
+      // A read-only history response must never turn another project's
+      // receipt or a malformed/fourth-draft record into clickable candidates.
+      if (!Array.isArray(result) || result.length > 50 || result.some((batch) =>
+        batch.projectId !== projectId || batch.studyId !== id ||
+        !batch.runId || !Array.isArray(batch.draftIds) ||
+        batch.draftIds.length !== 3 ||
+        batch.draftIds.some((draftId) => typeof draftId !== 'string' || !draftId) ||
+        new Set(batch.draftIds).size !== 3)) {
+        throw new Error(t.invalidStudy);
+      }
+      writingBatches = result;
+    } catch (cause) {
+      if (epoch === writingBatchEpoch && studyId === id) {
+        writingBatchError = message(cause, t.errorLoad);
+      }
     }
   }
 
@@ -295,6 +326,7 @@
       studies = [...studies, { id: created.id, projectId, brief: created.brief, revision: created.revision }];
       if (changed()) queueSave();
       void loadEvidence(created.id);
+      void loadWritingBatches(created.id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorCreate);
     } finally {
@@ -1255,6 +1287,35 @@
             disabled={busy || saving || loading || importingSavedResult}
             on:click={() => void restoreArchivedDraft()}>{t.restoreDraft}</button>
         </div>
+      {/if}
+      {#if gateway?.listStudyWritingBatches && record}
+        <section class="writing-batch-history" aria-label={t.writingBatches}>
+          <h3>{t.writingBatches}</h3>
+          <p>{t.writingBatchesPrivacy}</p>
+          {#if writingBatchError}
+            <p role="alert" class="error">{writingBatchError}</p>
+          {:else if writingBatches.length === 0}
+            <p>{t.noWritingBatches}</p>
+          {:else}
+            {#each writingBatches as batch (batch.runId)}
+              <div class="writing-batch-entry">
+                <div><strong>{t.writingBatch}</strong> <code>{batch.runId}</code>
+                  <small>{batch.committedAt}</small></div>
+                <div class="draft-actions">
+                  {#each batch.draftIds as candidateId, index (candidateId)}
+                    <button type="button" class="button secondary"
+                      disabled={busy || saving || loading || importingSavedResult ||
+                        !record.drafts?.some((item) => item.id === candidateId)}
+                      on:click={() => void openDraft(candidateId)}>
+                      {record.drafts?.find((item) => item.id === candidateId)?.title ||
+                        (t.writingCandidate + ' ' + (index + 1))}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </section>
       {/if}
       <StudioCandidateCompare study={record} {gateway} {projectId}
         pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />

@@ -20,16 +20,38 @@ The Windows probe is currently **initial native discovery and Studio invocation 
 
 Workflow: .github/workflows/installed-webview-acceptance.yml. Trigger by opening/updating a PR with paths under this directory, or start workflow_dispatch for a specific commit/ref after merging this workflow into an accessible branch.
 
-For an independently packaged Linux binary, invoke on a graphical test host:
+For an independently packaged Linux binary, run under a **real X11 window manager**.
+Bare Xvfb has no window manager and cannot certify graphical Alt+F4 quit. Install
+`openbox`, `xvfb`, `dbus-x11`, `xdotool`, `scrot`, `python3-pyatspi` and
+AT-SPI support, then run from the exact source checkout:
 
-    xvfb-run -a dbus-run-session -- env NO_AT_BRIDGE=0 GTK_A11Y=1 \
-      /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
-      --executable /usr/bin/scriptotar-desktop --package /path/to/installed.deb \
-      --source-sha FULL_40_CHAR_SHA \
-      --run-url https://github.com/MousaXD/scriptotar/actions/runs/RUN_ID \
-      --output native-evidence/linux
+```bash
+export APP_BIN=/usr/bin/scriptotar-desktop
+export PACKAGE=/path/to/installed.deb
+export SOURCE_SHA=FULL_40_CHAR_SHA
+export RUN_URL=https://github.com/MousaXD/scriptotar/actions/runs/RUN_ID
+export EVIDENCE=native-evidence/linux
+mkdir -p "$EVIDENCE"
+xvfb-run -a -s '-screen 0 1440x900x24' dbus-run-session -- bash -euo pipefail -c '
+  openbox --sm-disable > "$EVIDENCE/openbox.log" 2>&1 &
+  wm_pid=$!
+  trap "kill $wm_pid 2>/dev/null || true" EXIT
+  sleep 1
+  NO_AT_BRIDGE=0 GTK_A11Y=1 GTK_MODULES=atk-bridge \
+    /usr/bin/python3 tests/defragmentation/native-e2e/linux_webkit.py \
+    --executable "$APP_BIN" --package "$PACKAGE" \
+    --source-sha "$SOURCE_SHA" --run-url "$RUN_URL" \
+    --output "$EVIDENCE"
+'
+```
 
-Use the *actual* dpkg-installed executable path; /usr/bin/scriptotar-desktop above is only an example, not an asserted path. Do not pass a Vite preview binary, browser runner, backend smoke executable, or user profile. The workflow discovers the correct path with dpkg -L.
+Replace each placeholder with the actual installed package, exact commit SHA,
+and real run metadata. The run URL is an evidence reference, not proof a manual
+machine execution ran in GitHub Actions. The installed binary must be discovered
+from the real package (the workflow uses `dpkg -L`) and hashes preserved.
+
+**Windows packaging gotcha exposed by native UIA:** [exact run #43897349298](https://github.com/MousaXD/scriptotar/actions/runs/43897349298) showed a *live* WebView2 Document with `ERR_CONNECTION_REFUSED` from localhost instead of the Scriptotar UI. The previous job used plain `cargo build --release` plus `tauri bundle`, which can package a binary configured for `build.devUrl`. The harness workflow now invokes `tauri build --bundles nsis -- --locked` to build production-mode frontend assets, following the same procedure as Linux. Do not bypass this by starting a dev server; a packaged release must render offline.
+
 
 ## Run against a real interactive Windows desktop
 
@@ -56,3 +78,25 @@ If the WebView2 provider remains absent, inspect descendant HWND class names and
 ## Evidence authenticity and review
 
 Keep screenshots and exact run artifacts; the JSON is a **machine-generated claim**, not independent human visual approval. A native PASS also requires a matching source commit, installed binary provenance, reviewed screenshots, verified source fixtures, accessibility audit, and release owner signoff. Issue #100 and #116 remain release blockers; Agent 00 owns merging. No release flags are changed here.
+
+## 2026-11-17 evidence-based fixes
+
+The actual installed Linux dashboard renders its h1 as AT-SPI `document frame` and the topbar project selector as `PROJECT`. Match only exact-name semantic heading/document frame roles and also require the real dashboard New project button; a chooser option alone is insufficient. Pending new native-run proof, project persistence and downstream cases are NOT TESTED.
+
+Npm Tauri 2.11.2 rejects `tauri build --bundles nsis -- --locked`. Validate `cargo metadata --locked` before/after the genuine production `tauri build --bundles nsis`, and assert no tracked lockfile diff. Do not return to bare `cargo build --release` + bundle: integrated run 43956319863 showed a localhost error page. Classify the exact app-owned browser error UIA pane as FAIL.
+
+## Installed Linux option role and actual project database
+
+Exact native run 44091975817 created and displayed both project dashboards, then failed when a displayed project option was found in AT-SPI as role `list item` rather than `option`. Choose by exact accessible name and the observed role; continue requiring the real switch and active dashboard. Independently read the installed app's own `SCRIPTOTAR_DATA_DIR/scriptotar.sqlite3` in SQLite read-only mode to verify both project rows exist before marking `canonical_project_persistence` PASS. Unit tests for the probe or selectors **are not** native acceptance.
+
+## Windows Cargo.lock ordering-only rewrite on the actual NSIS build
+
+Exact run 44091975817 built the true NSIS production installer, but the workflow's Git byte-diff detected only `scriptotar-agent` being reordered within the `scriptotar-desktop` package dependency list. Windows Cargo 1.97 normalizes order. Do not weaken reproducibility by ignoring arbitrary `Cargo.lock` differences: canonicalize parsed TOML to stable JSON and compare SHA-256 before and after the production `tauri build --bundles nsis`, with `cargo metadata --locked` pre/post. A real checksum/version/graph change still fails. Installed WebView2 requires its own later exact-commit run and UIA proof.
+
+The lockfile fingerprint is a standalone, regression-tested `cargo_lock_fingerprint.py`. TOML dictionary key sorting is insufficient: it must normalize `[[package]].dependencies` order, while retaining all identities, versions and checksums. The workflow hashes the full normalized parsed lockfile, not just package count or dependency names.
+
+The Linux workflow runs unit/contract tests with pinned Python **3.12** because Cargo.lock fingerprinting uses stdlib `tomllib`. The real AT-SPI WebKit acceptance still executes `/usr/bin/python3` with `python3-pyatspi`; test interpreter separation never substitutes mocked UI for installed GUI.
+
+Run #44095877399 showed Linux project B remained active after a generic AT-SPI list-item action for A. The option activation now uses the actual option's PID-owned AT-SPI rectangle and X11 pointer event, with exact-name matching and subsequent strict A/B dashboard checks. Windows independently rendered the genuine installed Studio via WebView2 UIA; deeper Windows cases remain NOT TESTED.
+
+Run 44100162447: Linux verified A/B graphical switching PASS after using real pointer on an exact AT-SPI option, then failed when WebKit exposed Study name input as `embedded: Study name e.g. Launch video` rather than exact label. Use `edit_field` restricting to input-like roles and stable label prefix. Windows built genuine NSIS and created two projects, but UIA pointer option selection left B active. New Windows native keyboard navigation derives option index from exact UIA popup element bounds/names, then requires actual dashboard switch; still NOT PASS until installed rerun.

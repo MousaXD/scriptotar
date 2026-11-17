@@ -204,6 +204,10 @@ impl SqlitePaidEffectFence {
             || context.idempotency_key.is_empty()
             || provider.is_empty()
             || provider.len() > 64
+            // The durable v12 identity namespace must not be fragmentable
+            // by case aliases (for example, openai vs OpenAI). Only the host's
+            // canonical lowercase provider ID may reach the SQLite fence.
+            || provider.bytes().any(|c| c.is_ascii_uppercase())
             || !provider
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.'))
@@ -383,6 +387,59 @@ pub(super) trait CertifiedWireTransport: Send + Sync {
         config: &ProviderConfig,
         reply: &scriptotar_ai::provider_consent::MeteredReply,
     ) -> bool;
+}
+
+/// The actual OpenAI Responses wire implementation owns HTTPS transport,
+/// immutable request-byte validation, response limits and one-use authenticated
+/// usage evidence. Implementing this private bridge does NOT authorize egress:
+/// there is still no trusted production pricing catalog, v12 receipt-identity
+/// migration, or public Tauri dispatch command.
+impl CertifiedWireTransport for scriptotar_ai::provider_openai_wire::OpenAiResponsesWire {
+    fn serialize_exact_request(
+        &self,
+        config: &ProviderConfig,
+        request: &scriptotar_ai::AiRequest,
+        max_output_tokens: u64,
+    ) -> Result<Vec<u8>, ConsentError> {
+        scriptotar_ai::provider_openai_wire::OpenAiResponsesWire::serialize_exact_request(
+            self,
+            config,
+            request,
+            max_output_tokens,
+        )
+    }
+
+    fn supports_hard_bounds(&self, config: &ProviderConfig) -> bool {
+        scriptotar_ai::provider_openai_wire::OpenAiResponsesWire::supports_hard_bounds(self, config)
+    }
+
+    fn send_prepared_once(
+        &self,
+        config: &ProviderConfig,
+        api_key: &str,
+        exact_bytes: &[u8],
+        max_output_tokens: u64,
+        deadline_ms: u64,
+    ) -> Result<scriptotar_ai::provider_consent::MeteredReply, ConsentError> {
+        scriptotar_ai::provider_openai_wire::OpenAiResponsesWire::send_prepared_once(
+            self,
+            config,
+            api_key,
+            exact_bytes,
+            max_output_tokens,
+            deadline_ms,
+        )
+    }
+
+    fn authenticates_receipt(
+        &self,
+        config: &ProviderConfig,
+        reply: &scriptotar_ai::provider_consent::MeteredReply,
+    ) -> bool {
+        scriptotar_ai::provider_openai_wire::OpenAiResponsesWire::authenticates_receipt(
+            self, config, reply,
+        )
+    }
 }
 
 /// The policy invokes BoundedProvider after the durable pre-send CAS. This
@@ -672,6 +729,44 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn production_openai_wire_can_only_prepare_bounded_sealed_bytes_without_egress() {
+        use scriptotar_ai::{provider_openai_wire::OpenAiResponsesWire, AiRequest, ProviderKind};
+
+        let transport = OpenAiResponsesWire::new().unwrap();
+        let guarded: &dyn CertifiedWireTransport = &transport;
+        let config = ProviderConfig {
+            provider: ProviderKind::OpenAi,
+            model: "test-model".into(),
+            base_url: None,
+        };
+        let request = AiRequest {
+            prompt: "Canonical Study prompt".into(),
+        };
+        assert!(guarded.supports_hard_bounds(&config));
+        let bytes = guarded
+            .serialize_exact_request(&config, &request, 128)
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["input"], "Canonical Study prompt");
+        assert_eq!(json["max_output_tokens"], 128);
+        assert_eq!(json["store"], false);
+        assert_eq!(json["tools"], serde_json::json!([]));
+        assert_eq!(sha256_hex(&bytes).len(), 64);
+        assert!(guarded
+            .serialize_exact_request(&config, &request, 0)
+            .is_err());
+        let foreign_endpoint = ProviderConfig {
+            base_url: Some("https://untrusted.example".into()),
+            ..config
+        };
+        assert!(!guarded.supports_hard_bounds(&foreign_endpoint));
+        assert!(guarded
+            .serialize_exact_request(&foreign_endpoint, &request, 128)
+            .is_err());
+        // No token, request, permission or payment is dispatched in this test.
+    }
+
+    #[test]
     fn dispatch_scope_guard_serializes_project_switch_and_rechecks_snapshot() {
         use std::{sync::mpsc, thread, time::Duration};
 
@@ -927,6 +1022,34 @@ mod tests {
             deadline_ms: current_ms() + 30_000,
             estimate,
         };
+        let limit = ExternalEffectLimits {
+            tokens: 50_000,
+            cost_microusd: 20_000,
+        };
+        let digest = "a".repeat(64);
+        let wire = "b".repeat(64);
+        // The production host must never create a second provider identity
+        // namespace using only a case variant. Agent 02 also enforces this
+        // independently at the actual database storage boundary.
+        assert!(SqlitePaidEffectFence::from_approved_context(
+            services.store.clone(),
+            &context,
+            &digest,
+            &wire,
+            "OpenAI",
+            limit,
+        )
+        .is_err());
+        assert!(SqlitePaidEffectFence::from_approved_context(
+            services.store.clone(),
+            &context,
+            &digest,
+            &wire,
+            "openai",
+            limit,
+        )
+        .is_ok());
+
         let intent = ProviderIntent {
             run_id: run_id.clone(),
             scope,

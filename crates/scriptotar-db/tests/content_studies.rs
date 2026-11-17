@@ -566,7 +566,7 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
     store.insert_job(&job).unwrap();
     drop(store);
 
-    // Strip only the unmerged v6 additions to model a genuine 1.4.1 v5 file.
+    // Strip all post-v5 schema objects to model a genuine 1.4.1 v5 file.
     // A fake v5 user_version over an existing v6 schema is not a valid fixture.
     let path = temp.path().join("scriptotar.sqlite");
     let conn = Connection::open(&path).unwrap();
@@ -588,7 +588,13 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
             .unwrap();
     }
     conn.execute_batch(
-        "DROP TABLE study_writing_revisions;
+        "DROP TRIGGER external_provider_identity_on_insert;
+         DROP TRIGGER external_provider_identity_on_update;
+         DROP INDEX idx_external_provider_request_unique;
+         DROP INDEX idx_external_provider_receipt_unique;
+         DROP TABLE agent_external_provider_identities;
+         DELETE FROM schema_migrations WHERE version=12;
+         DROP TABLE study_writing_revisions;
          DROP TABLE study_writing_batches;
          DELETE FROM schema_migrations WHERE version=11;
          DROP TABLE agent_external_attempt_history;
@@ -748,6 +754,12 @@ fn writing_v10_upgrade_and_schema_collision_rollback_preserve_existing_studies()
     let conn = Connection::open(&path).unwrap();
     conn.execute_batch(
         "PRAGMA foreign_keys=ON;
+         DROP TRIGGER external_provider_identity_on_insert;
+         DROP TRIGGER external_provider_identity_on_update;
+         DROP INDEX idx_external_provider_request_unique;
+         DROP INDEX idx_external_provider_receipt_unique;
+         DROP TABLE agent_external_provider_identities;
+         DELETE FROM schema_migrations WHERE version=12;
          DROP TRIGGER study_writing_batches_scope_insert;
          DROP TRIGGER study_writing_batches_immutable_delete;
          DROP TRIGGER study_writing_batches_immutable_update;

@@ -14,15 +14,17 @@ import os
 from pathlib import Path
 import platform
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 
 
 CASES = (
-    "installed_webview", "create_switch_projects", "create_study",
+    "installed_webview", "create_switch_projects", "canonical_project_persistence", "create_study",
     "edit_save_duplicate_candidate", "quit_relaunch_persistence",
     "wrong_project_ui_isolation", "wrong_project_ipc_denial",
     "multi_source_transcript", "source_revocation",
@@ -42,6 +44,134 @@ def sha256(path: Path) -> str:
 
 def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
+
+
+def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -> str:
+    """Read only the REAL installed app's SQLite after GUI project creation."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing after native project creation: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as connection:
+            rows = connection.execute(
+                "SELECT id, name FROM projects WHERE name IN (?, ?) AND archived_at IS NULL",
+                expected_names,
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Could not read canonical project rows: {exc}") from exc
+    if (len(rows) != 2 or {name for _id, name in rows} != set(expected_names)
+            or len({id for id, _name in rows}) != 2):
+        raise NativeFailure(
+            f"Canonical SQLite does not hold two distinct created projects; "
+            f"expected={expected_names}, actual_names={[name for _id, name in rows]}"
+        )
+    try:
+        for project_id, _name in rows:
+            uuid.UUID(project_id)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Canonical SQLite contains invalid created project ID") from exc
+    return "Two distinct nonarchived real project rows persisted in installed application SQLite"
+
+
+
+def verify_canonical_saved_draft(
+    data_dir: Path, project_name: str, study_name: str, expected_body: str
+) -> str:
+    """Read only canonical Study/draft/version rows after installed GUI save."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing after Study save: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as connection:
+            rows = connection.execute(
+                """
+                SELECT d.id, d.revision, d.body, v.version, v.body
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                  JOIN draft_versions v ON v.draft_id=d.id
+                       AND v.version=(SELECT MAX(latest.version) FROM draft_versions latest
+                                      WHERE latest.draft_id=d.id)
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                """,
+                (project_name, study_name),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Cannot read real persisted Study draft and version: {exc}") from exc
+    if len(rows) != 1:
+        raise NativeFailure(
+            f"Expected one active draft in Study {study_name!r} before duplication; "
+            f"found {len(rows)}"
+        )
+    draft_id, revision, body, saved_version, saved_body = rows[0]
+    try:
+        uuid.UUID(draft_id)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Persisted draft has invalid canonical ID") from exc
+    if revision < 2 or saved_version < 2 or body != expected_body or saved_body != expected_body:
+        raise NativeFailure(
+            "Saved GUI draft did not persist the exact expected body in both canonical "
+            f"creative_drafts and latest immutable draft_versions (revision={revision}, "
+            f"version={saved_version}, expected_len={len(expected_body)}, "
+            f"persisted_len={len(body) if body is not None else None})"
+        )
+    return f"Canonical SQLite stores exact GUI draft body and immutable version {saved_version}"
+
+
+
+def verify_canonical_reopened_candidates(
+    data_dir: Path, project_name: str, study_name: str,
+    expected_body: str, expected_copy_title: str,
+) -> str:
+    """Independently prove BOTH renamed and original drafts survived restart.
+
+    The pre-duplication save check expects one draft. Reusing that assertion
+    after duplication would incorrectly fail correctly persisted data.
+    """
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing on Study relaunch: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as con:
+            rows = con.execute(
+                """
+                SELECT d.id, d.title, d.body, d.revision, v.version, v.body
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                  JOIN draft_versions v ON v.draft_id=d.id
+                       AND v.version=(SELECT MAX(latest.version) FROM draft_versions latest
+                                      WHERE latest.draft_id=d.id)
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                """,
+                (project_name, study_name),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Cannot read restored canonical candidates: {exc}") from exc
+    if len(rows) != 2 or {row[1] for row in rows} != {study_name, expected_copy_title}:
+        raise NativeFailure(
+            "Installed Study relaunch must retain exactly the original and "
+            f"renamed duplicate candidates, actual titles={[row[1] for row in rows]}"
+        )
+    try:
+        ids = {uuid.UUID(row[0]) for row in rows}
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Restored candidate has invalid canonical UUID") from exc
+    if len(ids) != 2:
+        raise NativeFailure("Restored original and duplicate share an invalid draft identity")
+    for _id, title, body, revision, version, saved_body in rows:
+        min_version = 2 if title == study_name else 1
+        if (revision < min_version or version < min_version
+                or body != expected_body or saved_body != expected_body):
+            raise NativeFailure(
+                f"Restored candidate {title!r} does not preserve exact immutable "
+                "GUI-authored body and version"
+            )
+    return "Two distinct original/renamed candidates and immutable versions restored from canonical SQLite"
 
 
 class NativeUnavailable(RuntimeError):
@@ -208,8 +338,33 @@ class AxWebKit:
             pass
         raise NativeFailure(f"Cannot activate accessible control {name!r}")
 
+    def edit_field(self, label: str, timeout: float = 12):
+        """Find an actual input/textarea, not a coincidental text label.
+
+        On real WebKitGTK the Svelte label + HTML placeholder are combined
+        into one accessible name, e.g. 'Study name e.g. Launch video'.
+        The role remains 'embedded'; exact 'Study name' is NOT exposed.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                for node in self.nodes():
+                    try:
+                        accessible_name = (node.name or "").strip()
+                        role = node.getRoleName().lower()
+                        if (role in ("embedded", "entry", "text entry", "text field")
+                                and (accessible_name == label
+                                     or accessible_name.startswith(label + " "))):
+                            return node
+                    except Exception:
+                        continue
+            except NativeUnavailable:
+                pass
+            time.sleep(0.3)
+        raise NativeFailure(f"AT-SPI editable field not found for label {label!r}")
+
     def type_into(self, name: str, value: str) -> None:
-        node = self.find(name)
+        node = self.edit_field(name)
         try:
             focused = node.queryComponent().grabFocus()
             if focused is False:
@@ -223,26 +378,121 @@ class AxWebKit:
             raise NativeFailure(f"Cannot input into field {name!r}: {exc}") from exc
 
     def read_text(self, name: str) -> str:
-        node = self.find(name)
+        # The semantic section heading and textarea can share this name.
+        # Read the editable AT-SPI node, never the similarly named h2.
+        node = self.edit_field(name)
         try:
             return node.queryText().getText(0, -1)
         except Exception as exc:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def choose(self, label: str, option: str) -> None:
-        self.click(label, "combo")
-        self.click(option, "option")
+        """Activate exact-name, PID-owned WebKit option using its AT-SPI bounds.
 
-    def heading(self, text: str) -> None:
-        self.find(text, "heading")
-
-    def escape_custom_select(self, label: str) -> None:
+        Prior AT-SPI list-item action/focus+Return closed the popup without
+        switching B to A (run #44095877399). Use a real pointer click on
+        the accessible option; caller must still prove the new dashboard.
+        """
         self.click(label, "combo")
-        self.find(label, "list")
-        command("xdotool", "key", "Escape")
+        node = self.find(option, "list item", timeout=5)
+        try:
+            bounds = node.queryComponent().getExtents(
+                getattr(self.atspi, "DESKTOP_COORDS", 0)
+            )
+            if bounds.width < 2 or bounds.height < 2:
+                raise NativeFailure(f"AT-SPI option has no clickable bounds: {option!r}")
+            x = int(bounds.x + bounds.width / 2)
+            y = int(bounds.y + bounds.height / 2)
+            if x < 0 or y < 0:
+                raise NativeFailure(f"Invalid option coordinates for {option!r}: {(x, y)}")
+            command("xdotool", "mousemove", str(x), str(y))
+            command("xdotool", "click", "--clearmodifiers", "1")
+            time.sleep(0.8)
+        except NativeFailure:
+            raise
+        except Exception as exc:
+            raise NativeFailure(
+                f"Cannot pointer-activate native AT-SPI option {option!r}: {exc}"
+            ) from exc
+
+    def heading(self, text: str, timeout: float = 12) -> None:
+        """Require an exact semantic heading in the installed WebKit AT-SPI tree.
+
+        WebKitGTK 4.1 maps actual dashboard h1 to 'document frame'. Never
+        accept a similarly named button or arbitrary static label.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                for node in self.nodes():
+                    try:
+                        if ((node.name or "").strip() == text and
+                                node.getRoleName().lower() in ("heading", "document frame")):
+                            return
+                    except Exception:
+                        continue
+            except NativeUnavailable:
+                pass
+            time.sleep(0.4)
+        raise NativeFailure(
+            f"AT-SPI semantic page heading not found (heading/document frame): {text!r}"
+        )
+
+    def heading_available(self, text: str) -> bool:
+        try:
+            self.heading(text, timeout=1)
+            return True
+        except (NativeFailure, NativeUnavailable):
+            return False
+
+    def escape_custom_select(self, label: str, expected_option: str) -> None:
+        """Certify native popup opens and Escape closes it (WebKit AT-SPI).
+
+        The actual installed WebKitGTK tree in run #44114536688 exposes
+        the rendered candidate popup as a *comment* named Script candidates,
+        with list item children. Searching for role='list' was a QA harness
+        mistake, not a failed WebView interaction. Both the wrapper and a
+        concrete expected option must exist before the Escape keystroke.
+        """
+        self.click(label, "combo")
+        self.find(label, "comment", timeout=5)
+        self.find(expected_option, "list item", timeout=5)
+        command("xdotool", "key", "--clearmodifiers", "Escape")
         time.sleep(0.3)
-        if self.available(label, "list"):
-            raise NativeFailure(f"Custom combobox {label!r} ignored Escape")
+        if (self.available(label, "comment") or
+                self.available(expected_option, "list item")):
+            raise NativeFailure(
+                f"Installed WebKit custom combobox {label!r} stayed open after Escape"
+            )
+
+
+    def assert_selected_option(self, label: str, option: str) -> None:
+        """Verify an installed custom Select's actual native selected state.
+
+        A screenshot or a click alone cannot prove persisted theme settings.
+        The Svelte option has aria-selected; require AT-SPI STATE_SELECTED after
+        reopening the real popup, then send Escape as a real user would.
+        """
+        self.click(label, "combo")
+        try:
+            node = self.find(option, "list item", timeout=5)
+            try:
+                selected = node.getState().contains(self.atspi.STATE_SELECTED)
+            except Exception as exc:
+                raise NativeUnavailable(
+                    f"AT-SPI cannot expose selected state for {label!r}/{option!r}: {exc}"
+                ) from exc
+            if not selected:
+                raise NativeFailure(
+                    f"Installed native selector {label!r} does not select {option!r}"
+                )
+        finally:
+            command("xdotool", "key", "--clearmodifiers", "Escape")
+            time.sleep(0.3)
+        if self.available(label, "comment"):
+            raise NativeFailure(
+                f"Installed native selector {label!r} remained expanded after Escape"
+            )
 
 
 class Session:
@@ -252,7 +502,9 @@ class Session:
         self.proc = None
         self.ax = None
 
-    def start(self):
+    def start(self, expected_studio: str = "Studio"):
+        # Locale is persisted by the installed WebView. The Arabic restart
+        # must use the translated accessible rail name, not English Studio.
         env = dict(os.environ, SCRIPTOTAR_DATA_DIR=str(self.root / "data"))
         env["NO_AT_BRIDGE"] = "0"
         env["GTK_A11Y"] = "1"
@@ -271,8 +523,8 @@ class Session:
                 raise NativeFailure(f"Installed executable exited: {self.proc.returncode}")
             try:
                 if self.ax.web_document() and (
-                    self.ax.available("Studio", "button") or
-                    self.ax.available("Studio", "link")
+                    self.ax.available(expected_studio, "button") or
+                    self.ax.available(expected_studio, "link")
                 ):
                     return
             except NativeUnavailable:
@@ -383,22 +635,70 @@ def exercise(args, report: dict, root: Path):
         ax = session.ax
 
         def projects():
-            for name in (name_a, name_b):
-                ax.click("New project", "button")
+            # A fresh isolated installation may have no project at all.
+            # Startup exposes the Studio rail before the asynchronous workspace
+            # bootstrap is finished. Wait for a real *workspace* state instead
+            # of assuming the dashboard's New project button already exists.
+            deadline = time.monotonic() + 45
+            initial_mode = None
+            while time.monotonic() < deadline:
+                if ax.heading_available("Create your first project"):
+                    initial_mode = "first_project"
+                    break
+                if ax.available("New project", "button"):
+                    initial_mode = "dashboard"
+                    break
+            if not initial_mode:
+                raise NativeFailure(
+                    "Workspace never exposed either the first-project form or "
+                    "the dashboard New project button after native WebKit startup"
+                )
+            report["project_start_mode"] = initial_mode
+            for index, name in enumerate((name_a, name_b)):
+                if index != 0 or initial_mode == "dashboard":
+                    ax.click("New project", "button")
                 ax.type_into("Project name", name)
                 ax.click("Create project", "button")
-                ax.heading(name)
-            ax.choose("Project", name_a)
-            ax.heading(name_a)
-            ax.choose("Project", name_b)
-            ax.heading(name_b)
+                # A real dashboard h1 is required. Seeing only an option in
+                # the project chooser would not prove that creation activated it.
+                try:
+                    ax.heading(name, timeout=25)
+                    ax.find("New project", "button", timeout=4)
+                except NativeFailure as exc:
+                    screenshot = session.screenshot(f"project-{index + 1}-failure")
+                    diagnostics = ax.diagnostics()
+                    diagnostics["failure_phase"] = "project_creation_or_activation"
+                    diagnostics["expected_project"] = name
+                    diagnostics["failure_screenshot"] = screenshot
+                    (root / "a11y-diagnostics.json").write_text(
+                        json.dumps(diagnostics, indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    raise NativeFailure(
+                        f"Create project did not expose an active dashboard heading and action "
+                        f"{name!r}; screenshot={screenshot}, see a11y-diagnostics.json"
+                    ) from exc
+                session.screenshot(f"project-{index + 1}-created")
+            if not checked(
+                report, "canonical_project_persistence",
+                lambda: verify_canonical_projects(root / "data", (name_a, name_b))
+            ):
+                raise NativeFailure("Canonical project database assertion failed")
+            ax.choose("PROJECT", name_a)
+            ax.heading(name_a, timeout=25)
+            ax.find("New project", "button", timeout=4)
+            session.screenshot("project-switch-to-A")
+            ax.choose("PROJECT", name_b)
+            ax.heading(name_b, timeout=25)
+            ax.find("New project", "button", timeout=4)
+            session.screenshot("project-switch-to-B")
             session.screenshot("projects")
-            return "Created two real SQLite-backed projects and switched both directions via custom selector"
+            return "Created and activated two real projects, then switched both directions via custom selector"
         if not checked(report, "create_switch_projects", projects):
             return
 
         def new_study():
-            ax.choose("Project", name_a)
+            ax.choose("PROJECT", name_a)
             ax.click("Studio", "button")
             ax.heading("Studio")
             ax.type_into("Study name", study)
@@ -412,7 +712,7 @@ def exercise(args, report: dict, root: Path):
         def drafts():
             ax.type_into("Script draft", body)
             ax.click("Save changes", "button")
-            ax.find("Saved in this study")
+            verify_canonical_saved_draft(root / "data", name_a, study, body)
             ax.click("Duplicate current script", "button")
             ax.find("Rename script", "button")
             ax.click("Rename script", "button")
@@ -425,60 +725,147 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "edit_save_duplicate_candidate", drafts):
             return
 
-        def isolation():
-            ax.choose("Project", name_b)
-            ax.click("Studio", "button")
-            ax.heading("Studio")
-            if ax.available(study):
-                raise NativeFailure("Foreign project's Study name visible in second project's Studio")
-            ax.choose("Project", name_a)
-            ax.heading("Studio")
-            return "Foreign Study absent in second project's native Studio (UI only; not forged IPC)"
-        checked(report, "wrong_project_ui_isolation", isolation)
-
-        def keyboard():
-            ax.escape_custom_select("Script candidates")
-            command("xdotool", "key", "Escape")
-            session.screenshot("controls")
-            return "Custom candidate select opens through native interaction and closes on Escape"
-        checked(report, "keyboard_custom_controls", keyboard)
-
         def persist():
             session.stop()
             session.start()
             a = session.ax
-            a.choose("Project", name_a)
+            # The installed application must reopen the same selected
+            # project after a true graphical Alt+F4; no artificial reselect.
+            a.heading(name_a, timeout=20)
             a.click("Studio", "button")
             a.choose("Open study", study)
-            text = a.read_text("Script draft")
-            if body not in text:
-                raise NativeFailure("Script body was not restored after process quit and relaunch")
+            restored = a.read_text("Script draft")
+            if restored != body:
+                raise NativeFailure(
+                    "Script body changed after installed process quit/relaunch"
+                )
             a.choose("Script candidates", tag + "-copy")
+            if a.read_text("Script draft") != body:
+                raise NativeFailure(
+                    "Renamed duplicate candidate body changed after relaunch"
+                )
+            verify_canonical_reopened_candidates(
+                root / "data", name_a, study, body, tag + "-copy"
+            )
             session.screenshot("reopened")
-            return "Installed process closed and restarted; Study body and renamed candidate restored"
-        checked(report, "quit_relaunch_persistence", persist)
+            return (
+                "Graphical Alt+F4/relaunch kept selected project, saved Study "
+                "body, immutable version and renamed candidate"
+            )
+        if not checked(report, "quit_relaunch_persistence", persist):
+            # A failed restart can corrupt follow-on UI state: preserve the
+            # exact first failing screen and don't create cascading false FAILs.
+            return
+        ax = session.ax
 
-        def arabic():
-            a = session.ax
-            a.choose("Interface language", "ع")
-            a.heading("الاستوديو")
-            session.screenshot("arabic-locale")
-            a.choose("لغة الواجهة", "EN")
-            a.heading("Studio")
-            return "Native WebKit switched to Arabic UI and back through the real custom language control"
-        checked(report, "arabic_locale_control", arabic)
+        def isolation():
+            ax.choose("PROJECT", name_b)
+            ax.click("Studio", "button")
+            ax.heading("Studio")
+            if ax.available(study):
+                raise NativeFailure("Foreign project's Study name visible in second project's Studio")
+            ax.choose("PROJECT", name_a)
+            ax.heading("Studio")
+            return "Foreign Study absent in second project's native Studio (UI only; not forged IPC)"
+        if not checked(report, "wrong_project_ui_isolation", isolation):
+            return
+
+        def keyboard():
+            # A project switch unmounts its previous Study editor; reopen
+            # the real Study before asserting the candidate combobox exists.
+            if not ax.available("Script candidates", "combo"):
+                ax.choose("Open study", study)
+            ax.escape_custom_select("Script candidates", tag + "-copy")
+            session.screenshot("controls")
+            return (
+                "Reopened persisted Study, observed WebKitGTK native popup with "
+                "actual renamed candidate list item, and verified Escape closed it"
+            )
+        if not checked(report, "keyboard_custom_controls", keyboard):
+            return
 
         def theme():
             a = session.ax
             a.click("Settings", "button")
+            # This build exposes System and Dark; there is no explicit Light
+            # option. System cannot be called Light without observed OS state.
             a.choose("Theme", "System")
             a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "System")
             session.screenshot("system-theme")
             a.choose("Theme", "Dark")
             a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "Dark")
             session.screenshot("dark-theme")
-            return "System and dark modes selected and saved by installed GUI (not a visual judgment)"
+            session.stop()
+            session.start()
+            a = session.ax
+            a.click("Settings", "button")
+            a.assert_selected_option("Theme", "Dark")
+            session.screenshot("dark-theme-reopened")
+            return (
+                "Real Settings System/Dark selection, saved changes, installed "
+                "graphical restart and restored Theme control; screenshot evidence "
+                "requires independent visual inspection"
+            )
+        # Keep this independent of the Arabic restoration regression: test
+        # theme while the installed shell is still in a known English context.
         checked(report, "theme_mode_control", theme)
+
+        def arabic():
+            a = session.ax
+            try:
+                a.choose("Interface language", "ع")
+                # Require actual translated navigation and the semantic
+                # Arabic page heading on the installed WebKit document.
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                session.screenshot("arabic-locale")
+
+                # An application restart proves the UI locale is not merely
+                # temporary component state. A real GUI Alt+F4 and new PID are
+                # mandatory; the boot gate itself expects Arabic controls.
+                session.stop()
+                session.start(expected_studio="الاستوديو")
+                a = session.ax
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                if a.available("Studio", "button"):
+                    raise NativeFailure(
+                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
+                    )
+                session.screenshot("arabic-reopened")
+            finally:
+                # The language control's accessible name may be translated
+                # or remain English. Discover the actual visible name rather
+                # than assuming a label; do not ignore failed restoration.
+                a = session.ax
+                if a is not None:
+                    if a.available("لغة الواجهة", "combo"):
+                        a.choose("لغة الواجهة", "EN")
+                    elif a.available("Interface language", "combo"):
+                        a.choose("Interface language", "EN")
+                    else:
+                        raise NativeFailure(
+                            "Installed language combobox missing when restoring English locale"
+                        )
+            # The installed shell AND the Studio component must restore to
+            # English, not just a topbar EN marker. Mixed-locale content is a
+            # product regression, and this scenario must remain FAIL.
+            a = session.ax
+            a.find("Studio", "button", timeout=8)
+            a.heading("Studio", timeout=12)
+            if a.heading_available("الاستوديو"):
+                raise NativeFailure(
+                    "Arabic Studio heading remains mounted after restoring English"
+                )
+            session.screenshot("english-restored")
+            return (
+                "Real Arabic nav and semantic heading, native graphical relaunch "
+                "with retained Arabic locale, and complete English restoration"
+            )
+        if not checked(report, "arabic_locale_control", arabic):
+            return
 
         # This run deliberately has no fabricated downloads or media transcripts.
         # The following steps require source fixtures and dedicated adversarial UI inputs.
@@ -495,6 +882,27 @@ def exercise(args, report: dict, root: Path):
         status(report, "light_dark_visual", "NOT TESTED",
                "Native visual appearance requires independent screenshot inspection; app offers dark/system")
     finally:
+        # Preserve the first genuine *interaction* failure while the installed
+        # app is still on the exact failing screen. A boot screenshot alone
+        # cannot explain project/forms/Studio selector failures.
+        first_failed_case = next(
+            (name for name, value in report["cases"].items()
+             if value["status"] == "FAIL"), None
+        )
+        if first_failed_case and session.proc is not None:
+            report["first_failed_case"] = first_failed_case
+            report["failure_screenshot"] = session.screenshot(
+                "failed-" + first_failed_case
+            )
+            if session.ax:
+                try:
+                    (root / "a11y-diagnostics.json").write_text(
+                        json.dumps(session.ax.diagnostics(), indent=2,
+                                   ensure_ascii=False) + "\n", encoding="utf-8"
+                    )
+                    report["failure_accessibility_tree"] = "a11y-diagnostics.json"
+                except Exception as exc:
+                    report["failure_probe_error"] = f"{type(exc).__name__}: {exc}"
         if session.proc is not None:
             try:
                 session.stop()
