@@ -147,3 +147,55 @@ fn independent_v12_cross_project_legacy_receipt_collision_rollback_is_atomic() {
     ).unwrap();
     assert_eq!(partial, 0, "partial v12 table must roll back with failed migration");
 }
+
+
+#[test]
+fn independent_v12_historical_v11_retry_cleared_ack_cannot_reenable_billable_dispatch() {
+    let (dir, db, project, study, run) = setup();
+    let key = identity(&run, project, study);
+    let first = reserve(&db, &run, project, study);
+    db.mark_external_dispatched(key, first.revision, 1).unwrap();
+    db.record_external_ack(key, 1, "resp_erased_before_v12_101").unwrap();
+    let nonexecution = db
+        .reconcile_external_effect(
+            key,
+            1,
+            ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "proof_pre_v12_not_executed_101",
+            },
+        )
+        .unwrap();
+    let second = db.prepare_external_retry(key, nonexecution.revision).unwrap();
+    assert_eq!(second.attempt, 2);
+    assert!(second.provider_request_id.is_none());
+    drop(db);
+
+    // A real historical v11 database has no v12 tombstone. On retry, v10
+    // cleared the current provider ID and old attempt history contains only
+    // a nonexecution evidence token, not its original request identity.
+    // A v12 backfill cannot prove global identity ownership by reading the
+    // current-row NULL. An upgraded app must quarantine the ambiguous retry,
+    // or fail database open; it must not grant a new billable dispatch permit.
+    let path = dir.path().join("external.sqlite3");
+    independent_v12_recreate_v11_schema(&path);
+    match SqliteStore::open(&path) {
+        Err(_) => {
+            let connection = rusqlite::Connection::open(&path).unwrap();
+            let version: i64 = connection
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(version, 11, "failed upgrade must leave v11 intact");
+        }
+        Ok(upgraded) => {
+            assert!(
+                upgraded.mark_external_dispatched(key, second.revision, 2).is_err(),
+                "v11 retry with erased provider ACK gained another send permit after v12 upgrade"
+            );
+            assert_ne!(
+                upgraded.get_external_effect(key).unwrap().unwrap().status,
+                ExternalEffectStatus::Dispatched,
+                "quarantined historical effect may not silently redispatch"
+            );
+        }
+    }
+}
