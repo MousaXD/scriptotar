@@ -404,6 +404,21 @@ impl<T: CertifiedWireTransport> scriptotar_ai::provider_consent::BoundedProvider
         config == &self.intent.provider && self.transport.supports_hard_bounds(config)
     }
 
+    fn prepared_request_sha256(
+        &self,
+        config: &ProviderConfig,
+        request: &scriptotar_ai::AiRequest,
+        max_output_tokens: u64,
+    ) -> Option<String> {
+        if config != &self.intent.provider
+            || request.prompt != self.intent.prompt
+            || max_output_tokens != self.intent.max_output_tokens
+        {
+            return None;
+        }
+        Some(sha256_hex(&self.wire_bytes))
+    }
+
     fn verified_usage_receipt(
         &self,
         config: &ProviderConfig,
@@ -485,6 +500,52 @@ impl AppServices {
         boundary
             .decide(run_id, fingerprint, approve, self, current_ms())
             .map_err(consent_error)
+    }
+
+    /// Prepare a preview that includes the SHA-256 of the *exact* bytes the
+    /// approved transport will later send. The user must be shown the returned
+    /// sealed fingerprint; the original unbound preview is never approval.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub(super) fn prepare_provider_angle_consent_sealed<T: CertifiedWireTransport>(
+        &self,
+        boundary: &ConsentBoundary,
+        project: Uuid,
+        study: Uuid,
+        run_id: &str,
+        provider: ProviderConfig,
+        max_output_tokens: u64,
+        limits: RunBudget,
+        pricing: &dyn scriptotar_ai::provider_consent::TrustedPricing,
+        transport: &T,
+    ) -> RepositoryResult<(ProviderIntent, ConsentPreview)> {
+        if !transport.supports_hard_bounds(&provider) {
+            return Err(consent_error(ConsentError::EffectFenceUnavailable));
+        }
+        let prompt = self.prepare_studio_angle_prompt(project, study)?.prompt;
+        let scope = self.current_scope(&project.to_string(), &study.to_string())
+            .map_err(consent_error)?;
+        let intent = ProviderIntent {
+            run_id: run_id.to_owned(),
+            scope,
+            provider,
+            prompt,
+            max_output_tokens,
+            limits,
+        };
+        let request = scriptotar_ai::AiRequest { prompt: intent.prompt.clone() };
+        let bytes = transport.serialize_exact_request(
+            &intent.provider, &request, intent.max_output_tokens
+        ).map_err(consent_error)?;
+        if bytes.is_empty() || bytes.len() > 524_288 {
+            return Err(consent_error(ConsentError::InvalidRequest));
+        }
+        // No paid network access and no reservation during preparation.
+        let unsealed = boundary.prepare(intent.clone(), self, pricing, current_ms())
+            .map_err(consent_error)?;
+        let sealed = boundary.bind_exact_wire_request(
+            run_id, &unsealed.fingerprint, &sha256_hex(&bytes)
+        ).map_err(consent_error)?;
+        Ok((intent, sealed))
     }
 
     /// An executable but NOT publicly registered authorization path. Only a
@@ -875,9 +936,20 @@ mod tests {
         let boundary = ConsentBoundary::default();
         let prices = ControlledPrices;
         let transport = ControlledTransport(AtomicUsize::new(0));
-        let preview = boundary
-            .prepare(intent.clone(), &services, &prices, current_ms())
+        let (sealed_intent, preview) = services
+            .prepare_provider_angle_consent_sealed(
+                &boundary,
+                project,
+                study_id,
+                &run_id,
+                intent.provider.clone(),
+                intent.max_output_tokens,
+                intent.limits,
+                &prices,
+                &transport,
+            )
             .unwrap();
+        assert_eq!(sealed_intent, intent);
         assert!(preview.worst_case_cost_microusd.is_some());
         assert!(services
             .dispatch_provider_angle_consent_sealed(
@@ -948,9 +1020,20 @@ mod tests {
             .is_err());
         // A fresh in-memory approval must not replay a completed durable claim.
         let restarted_consent = ConsentBoundary::default();
-        let same_preview = restarted_consent
-            .prepare(intent.clone(), &services, &prices, current_ms())
+        let (reopened_intent, same_preview) = services
+            .prepare_provider_angle_consent_sealed(
+                &restarted_consent,
+                project,
+                study_id,
+                &run_id,
+                intent.provider.clone(),
+                intent.max_output_tokens,
+                intent.limits,
+                &prices,
+                &transport,
+            )
             .unwrap();
+        assert_eq!(reopened_intent, intent);
         restarted_consent
             .decide(
                 &run_id,
