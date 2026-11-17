@@ -73,6 +73,8 @@ case "$gate:$pr" in
     # A missing module is a release-blocking FAIL, not a skipped test.
     for file in \
       target/crates/scriptotar-ai/src/provider_consent.rs \
+      target/crates/scriptotar-ai/src/provider_openai_wire.rs \
+      target/apps/desktop/src-tauri/src/services/provider_openai_wire.rs \
       target/crates/scriptotar-ai/src/writing/verification/mod.rs \
       target/apps/desktop/src-tauri/src/services/study_writing_persistence.rs \
       target/apps/desktop/src-tauri/src/services/study_verification.rs \
@@ -95,6 +97,10 @@ case "$gate:$pr" in
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
       cargo test --locked -p scriptotar-ai provider_consent
+      # Exercise the REAL compiled HTTPS wire parser, fixed endpoint, hard output
+      # caps, exact serialized body and one-use authenticated response proof.
+      # This is local/no-network; it is NOT proof of billable HTTP integration.
+      cargo test --locked -p scriptotar-ai provider_openai_wire
       cargo test --locked -p scriptotar-db
       # Compile/test the actual Tauri host, not only path-included feature modules.
       cargo test --locked -p scriptotar-desktop --lib
