@@ -977,13 +977,7 @@ mod tests {
         assert!(preview.prompt.contains("Source-grounded factual notes"));
         assert_eq!(preview.worst_case_cost_microusd, None);
         assert!(services
-            .decide_openai_provider_consent(
-                project,
-                study_id,
-                &run_id,
-                &preview.fingerprint,
-                true,
-            )
+            .decide_openai_provider_consent(project, study_id, &run_id, &preview.fingerprint, true,)
             .is_err());
         assert!(services
             .execute_openai_provider_consent(
