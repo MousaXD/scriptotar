@@ -307,6 +307,43 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
         self.assertIn('session.screenshot("arabic-reopened")', source)
 
+    def test_linux_arabic_relaunch_keeps_original_native_failure(self):
+        import inspect
+        source = inspect.getsource(native.exercise)
+        arabic = source.split("        def arabic():", 1)[1].split(
+            '        if not checked(report, "arabic_locale_control", arabic):', 1
+        )[0]
+        # A cleanup-only finally must not override a failed installed Alt+F4,
+        # a startup SIGSEGV, or an Arabic AT-SPI assertion.
+        self.assertNotIn("finally:", arabic)
+        self.assertIn("session.stop()", arabic)
+        self.assertIn('session.start(expected_studio="الاستوديو")', arabic)
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', arabic)
+        self.assertLess(
+            arabic.index('session.start(expected_studio="الاستوديو")'),
+            arabic.index('a.choose(a.global_locale_control(), "EN")'),
+        )
+
+    def test_windows_reopened_study_waits_for_exact_native_draft_body(self):
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn(
+            "Wait-InstalledDraftBody $restoredHwnd $draftBody 15", script
+        )
+        helper = script.split("function Wait-InstalledDraftBody(", 1)[1].split(
+            "function Verify-InstalledCanonicalDb(", 1
+        )[0]
+        self.assertIn("Read-InstalledEdit $hwnd 'Script draft'", helper)
+        self.assertIn("$current -ceq $expected", helper)
+        self.assertIn("UtcNow.AddSeconds($timeoutSec)", helper)
+        self.assertIn("throw \"Installed Study draft failed exact UIA restore", helper)
+        self.assertNotIn("SetValue", helper)
+        self.assertNotIn("UPDATE ", helper)
+        self.assertNotIn("INSERT ", helper)
+        self.assertIn(
+            "Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle",
+            script,
+        )
+
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
