@@ -13,17 +13,16 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use crate::{
+    provider_consent::{sha256_hex, ActualUsage, ConsentError, MeteredReply},
+    AiRequest, ProviderConfig, ProviderKind,
+};
 use reqwest::{
     blocking::Client,
     header::{ACCEPT, CONTENT_TYPE},
     redirect::Policy,
 };
-use crate::{
-    provider_consent::{sha256_hex, ActualUsage, ConsentError, MeteredReply},
-    AiRequest, ProviderConfig, ProviderKind,
-};
 use serde_json::{json, Value};
-
 
 const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
 const MAX_WIRE_BYTES: usize = 524_288;
