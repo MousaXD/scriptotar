@@ -3004,10 +3004,9 @@ name = "scriptotar-desktop"
 version = "1.4.1"
 dependencies = [
  "chrono",
- "keyring",
- "reqwest",
- "rusqlite",
  "scriptotar-agent",
+ "keyring",
+ "rusqlite",
  "scriptotar-ai",
  "scriptotar-core",
  "scriptotar-db",
