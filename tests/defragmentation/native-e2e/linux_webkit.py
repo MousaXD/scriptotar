@@ -675,9 +675,29 @@ class Session:
                 if key.returncode != 0:
                     raise NativeFailure(f"Alt+F4 could not be delivered to {target}")
                 try:
-                    proc.wait(timeout=8)
+                    exit_code = proc.wait(timeout=8)
                 except subprocess.TimeoutExpired as exc:
                     raise NativeFailure("Installed app did not quit via graphical Alt+F4") from exc
+                if exit_code != 0:
+                    signal_name = None
+                    if exit_code < 0:
+                        try:
+                            signal_name = signal.Signals(-exit_code).name
+                        except ValueError:
+                            signal_name = f"signal {-exit_code}"
+                    crash = {
+                        "pid": proc.pid,
+                        "returncode": exit_code,
+                        "signal": signal_name,
+                        "stage": "installed native graphical Alt+F4 shutdown",
+                    }
+                    (self.root / "process-exit.json").write_text(
+                        json.dumps(crash, indent=2) + "\n", encoding="utf-8"
+                    )
+                    raise NativeFailure(
+                        f"Installed native graphical shutdown exited abnormally: "
+                        f"{exit_code}" + (f" ({signal_name})" if signal_name else "")
+                    )
         except Exception:
             # A failed graphical quit stays FAIL, but must not leak a process
             # or interfere with the installed package uninstall.
