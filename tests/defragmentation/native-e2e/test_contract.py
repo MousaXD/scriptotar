@@ -121,6 +121,30 @@ class NativeEvidenceContractTests(unittest.TestCase):
             ("xdotool", "click", "--clearmodifiers", "1"), calls
         )
 
+    def test_webkit_popup_mapped_as_comment_requires_real_option_and_escape(self):
+        # Run #44114536688 exposed the genuine opened listbox as an AT-SPI
+        # comment with two list item children, NOT as role='list'.
+        # Require both the popup and its exact named option, then require
+        # their disappearance after a native keyboard Escape.
+        ax = object.__new__(native.AxWebKit)
+        events = []
+        ax.click = lambda name, role: events.append(("click", name, role))
+        ax.find = lambda name, role, timeout=12: (
+            events.append(("find", name, role)) or object()
+        )
+        ax.available = lambda name, role=None: False
+        with mock.patch.object(native, "command", side_effect=lambda *args: events.append(args)):
+            with mock.patch.object(native.time, "sleep"):
+                ax.escape_custom_select("Script candidates", "QA-copy")
+        self.assertIn(("find", "Script candidates", "comment"), events)
+        self.assertIn(("find", "QA-copy", "list item"), events)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "Escape"), events)
+        ax.available = lambda name, role=None: role == "comment"
+        with mock.patch.object(native, "command"):
+            with mock.patch.object(native.time, "sleep"):
+                with self.assertRaises(native.NativeFailure):
+                    ax.escape_custom_select("Script candidates", "QA-copy")
+
     def test_webkit_pointer_does_not_use_stalling_mousemove_sync(self):
         # A real installed restart left the correct project already active,
         # while xdotool mousemove --sync hung for 15s (run #44107946419).

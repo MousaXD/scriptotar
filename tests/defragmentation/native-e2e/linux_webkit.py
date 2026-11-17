@@ -445,13 +445,25 @@ class AxWebKit:
         except (NativeFailure, NativeUnavailable):
             return False
 
-    def escape_custom_select(self, label: str) -> None:
+    def escape_custom_select(self, label: str, expected_option: str) -> None:
+        """Certify native popup opens and Escape closes it (WebKit AT-SPI).
+
+        The actual installed WebKitGTK tree in run #44114536688 exposes
+        the rendered candidate popup as a *comment* named Script candidates,
+        with list item children. Searching for role='list' was a QA harness
+        mistake, not a failed WebView interaction. Both the wrapper and a
+        concrete expected option must exist before the Escape keystroke.
+        """
         self.click(label, "combo")
-        self.find(label, "list")
-        command("xdotool", "key", "Escape")
+        self.find(label, "comment", timeout=5)
+        self.find(expected_option, "list item", timeout=5)
+        command("xdotool", "key", "--clearmodifiers", "Escape")
         time.sleep(0.3)
-        if self.available(label, "list"):
-            raise NativeFailure(f"Custom combobox {label!r} ignored Escape")
+        if (self.available(label, "comment") or
+                self.available(expected_option, "list item")):
+            raise NativeFailure(
+                f"Installed WebKit custom combobox {label!r} stayed open after Escape"
+            )
 
 
 class Session:
@@ -732,10 +744,12 @@ def exercise(args, report: dict, root: Path):
             # the real Study before asserting the candidate combobox exists.
             if not ax.available("Script candidates", "combo"):
                 ax.choose("Open study", study)
-            ax.escape_custom_select("Script candidates")
-            command("xdotool", "key", "Escape")
+            ax.escape_custom_select("Script candidates", tag + "-copy")
             session.screenshot("controls")
-            return "Opened saved Study and closed its native custom selector with Escape"
+            return (
+                "Reopened persisted Study, observed WebKitGTK native popup with "
+                "actual renamed candidate list item, and verified Escape closed it"
+            )
         if not checked(report, "keyboard_custom_controls", keyboard):
             return
 
