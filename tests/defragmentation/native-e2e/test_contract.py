@@ -164,7 +164,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         )[0]
         self.assertIn("TreeWalker]::ControlViewWalker.GetParent($ancestor)", choose)
         self.assertIn("ControlType]::List", choose)
-        self.assertIn("$list.SetFocus()", choose)
+        self.assertIn("[NativeWebViewWindow]::NativeClick", choose)
+        self.assertIn("Wait-InstalledPopupClosed $hwnd $name", choose)
+        self.assertNotIn("$list.SetFocus()", choose)
         self.assertNotIn("Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List)", choose)
 
     def test_windows_candidate_switch_requires_rendered_selected_label(self):
@@ -179,7 +181,20 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("if ($selected -and -not $stillOpen) { return }", script)
         self.assertIn("Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
-        self.assertIn("$list.SetFocus()", script)
+        self.assertIn("Wait-InstalledPopupClosed $hwnd $name", script)
+        self.assertNotIn("$list.SetFocus()", script)
+
+    def test_webkit_arabic_restart_is_native_and_english_restore_fail_closed(self):
+        # The installed Arabic screenshot in #44118342637 shows real RTL,
+        # and the later English shell still retained an Arabic Studio heading.
+        # Never accept the language switch until both regions restore.
+        source = (Path(__file__).resolve().parent / "linux_webkit.py").read_text()
+        self.assertIn('session.start(expected_studio="الاستوديو")', source)
+        self.assertIn('a.heading("الاستوديو")', source)
+        self.assertIn('a.heading("Studio", timeout=12)', source)
+        self.assertIn('"Arabic Studio heading remains mounted after restoring English"', source)
+        self.assertIn('a.choose("Interface language", "EN")', source)
+        self.assertIn('session.screenshot("arabic-reopened")', source)
 
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
