@@ -466,6 +466,35 @@ class AxWebKit:
             )
 
 
+    def assert_selected_option(self, label: str, option: str) -> None:
+        """Verify an installed custom Select's actual native selected state.
+
+        A screenshot or a click alone cannot prove persisted theme settings.
+        The Svelte option has aria-selected; require AT-SPI STATE_SELECTED after
+        reopening the real popup, then send Escape as a real user would.
+        """
+        self.click(label, "combo")
+        try:
+            node = self.find(option, "list item", timeout=5)
+            try:
+                selected = node.getState().contains(self.atspi.STATE_SELECTED)
+            except Exception as exc:
+                raise NativeUnavailable(
+                    f"AT-SPI cannot expose selected state for {label!r}/{option!r}: {exc}"
+                ) from exc
+            if not selected:
+                raise NativeFailure(
+                    f"Installed native selector {label!r} does not select {option!r}"
+                )
+        finally:
+            command("xdotool", "key", "--clearmodifiers", "Escape")
+            time.sleep(0.3)
+        if self.available(label, "comment"):
+            raise NativeFailure(
+                f"Installed native selector {label!r} remained expanded after Escape"
+            )
+
+
 class Session:
     def __init__(self, args, root: Path):
         self.args = args
@@ -762,15 +791,17 @@ def exercise(args, report: dict, root: Path):
             # option. System cannot be called Light without observed OS state.
             a.choose("Theme", "System")
             a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "System")
             session.screenshot("system-theme")
             a.choose("Theme", "Dark")
             a.click("Save changes", "button")
+            a.assert_selected_option("Theme", "Dark")
             session.screenshot("dark-theme")
             session.stop()
             session.start()
             a = session.ax
             a.click("Settings", "button")
-            a.find("Theme", "combo")
+            a.assert_selected_option("Theme", "Dark")
             session.screenshot("dark-theme-reopened")
             return (
                 "Real Settings System/Dark selection, saved changes, installed "
