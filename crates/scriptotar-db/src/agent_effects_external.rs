@@ -1000,7 +1000,13 @@ mod tests {
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute_batch(
-                "DROP TRIGGER study_writing_batches_scope_insert;
+                "DROP TRIGGER external_provider_identity_on_insert;
+                 DROP TRIGGER external_provider_identity_on_update;
+                 DROP INDEX idx_external_provider_request_unique;
+                 DROP INDEX idx_external_provider_receipt_unique;
+                 DROP TABLE agent_external_provider_identities;
+                 DELETE FROM schema_migrations WHERE version = 12;
+                 DROP TRIGGER study_writing_batches_scope_insert;
                  DROP TRIGGER study_writing_batches_immutable_delete;
                  DROP TRIGGER study_writing_batches_immutable_update;
                  DROP TRIGGER study_writing_revisions_immutable_delete;
@@ -1043,7 +1049,13 @@ mod tests {
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute_batch(
-                "DROP TRIGGER study_writing_batches_scope_insert;
+                "DROP TRIGGER external_provider_identity_on_insert;
+                 DROP TRIGGER external_provider_identity_on_update;
+                 DROP INDEX idx_external_provider_request_unique;
+                 DROP INDEX idx_external_provider_receipt_unique;
+                 DROP TABLE agent_external_provider_identities;
+                 DELETE FROM schema_migrations WHERE version = 12;
+                 DROP TRIGGER study_writing_batches_scope_insert;
                  DROP TRIGGER study_writing_batches_immutable_delete;
                  DROP TRIGGER study_writing_batches_immutable_update;
                  DROP TRIGGER study_writing_revisions_immutable_delete;
