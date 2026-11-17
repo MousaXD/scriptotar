@@ -344,6 +344,53 @@ class NativeEvidenceContractTests(unittest.TestCase):
             script,
         )
 
+    def test_linux_graphical_quit_requires_real_focus_without_blocking_sync(self):
+        # The hosted Openbox/WebKit X11 activation may deadlock under --sync.
+        # A nonblocking request is not enough: actual focus must be observed
+        # before dispatching the genuine native Alt+F4.
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.proc = proc
+        seen = []
+
+        def installed_command(*argv, **_kwargs):
+            seen.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="4196049\\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="4196049\\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=installed_command):
+            session.stop()
+        self.assertIsNone(session.proc)
+        self.assertIn(("xdotool", "windowactivate", "4196049"), seen)
+        self.assertIn(("xdotool", "getactivewindow"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+        self.assertLess(
+            seen.index(("xdotool", "getactivewindow")),
+            seen.index(("xdotool", "key", "--clearmodifiers", "alt+F4")),
+        )
+        proc.terminate.assert_not_called()
+
+        session.proc = proc
+        seen.clear()
+        def unfocused_command(*argv, **_kwargs):
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\\n")
+            return installed_command(*argv, **_kwargs)
+        with mock.patch.object(native, "command", side_effect=unfocused_command), \\
+             mock.patch.object(native.time, "monotonic", side_effect=[0, 5]):
+            with self.assertRaisesRegex(native.NativeFailure, "refusing Alt\\+F4"):
+                session.stop()
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        proc.terminate.assert_called()
+
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
