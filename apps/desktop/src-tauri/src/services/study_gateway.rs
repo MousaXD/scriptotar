@@ -1317,7 +1317,9 @@ mod tests {
                 request: &AiRequest,
             ) -> WriteResult<StepAdmission> {
                 if !self.approved {
-                    return Err(WritingWorkflowError::Denied("explicit approval required".into()));
+                    return Err(WritingWorkflowError::Denied(
+                        "explicit approval required".into(),
+                    ));
                 }
                 let key = format!(
                     "{run_id}:{step}:{}",
@@ -1356,14 +1358,19 @@ mod tests {
         impl WritingTextProvider for NoCostProvider {
             fn generate(&mut self, _request: &AiRequest) -> Result<AiResponse, ()> {
                 self.calls += 1;
-                self.responses.pop_front().map(|text| AiResponse { text }).ok_or(())
+                self.responses
+                    .pop_front()
+                    .map(|text| AiResponse { text })
+                    .ok_or(())
             }
         }
 
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let created = services.create_studio_study(project, example_brief()).unwrap();
+        let created = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
         let study = Uuid::parse_str(&created.id).unwrap();
         let conn = rusqlite::Connection::open(services.store.path()).unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
@@ -1375,37 +1382,61 @@ mod tests {
             conn.execute(
                 "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
                  VALUES(?1,?2,NULL,'url',?3,'2026-11-17T00:00:00Z')",
-                rusqlite::params![source.to_string(), project.to_string(),
-                    format!("https://example.org/controlled-writing/{index}")],
-            ).unwrap();
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("https://example.org/controlled-writing/{index}")
+                ],
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO media(id,source_id,local_path,created_at)
                  VALUES(?1,?2,?3,'2026-11-17T00:00:00Z')",
-                rusqlite::params![media.to_string(), source.to_string(),
-                    format!("/tmp/controlled-writing-{index}.mp4")],
-            ).unwrap();
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/tmp/controlled-writing-{index}.mp4")
+                ],
+            )
+            .unwrap();
             conn.execute(
                 "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
                  VALUES(?1,?2,?3,'2026-11-17T00:00:00Z','2026-11-17T00:00:00Z')",
-                rusqlite::params![transcript.to_string(), media.to_string(),
-                    format!("Authentic controlled source excerpt {index}")],
-            ).unwrap();
+                rusqlite::params![
+                    transcript.to_string(),
+                    media.to_string(),
+                    format!("Authentic controlled source excerpt {index}")
+                ],
+            )
+            .unwrap();
             attached.push(UiStudioSourceRef {
                 kind: "transcript".into(),
                 id: transcript.to_string(),
             });
         }
-        services.save_studio_study(project, study, created.revision, UiStudioStudyPatch {
-            brief: None,
-            sources: Some(attached),
-            draft: None,
-            draft_id: None,
-            draft_revision: None,
-        }).unwrap();
+        services
+            .save_studio_study(
+                project,
+                study,
+                created.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(attached),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
         let plan: GenerationPlan = services
             .prepare_three_writing_plan(project, study, "controlled-four-step")
             .unwrap();
-        let ids = plan.context.evidence.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        let ids = plan
+            .context
+            .evidence
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>();
         assert_eq!(ids.len(), 3);
         let angles = serde_json::json!({ "angles": [
             { "id":"contrast", "approach":"contrast two options",
@@ -1423,7 +1454,8 @@ mod tests {
               "promise":"Actionable practical tips",
               "outline":[{"role":"hook","intent":"guide","estimated_seconds":9}],
               "evidence_ids":[ids[2]] }
-        ]}).to_string();
+        ]})
+        .to_string();
         let script = |index: usize, angle: &str, evidence: &str, narration: &str| {
             serde_json::json!({
                 "id":format!("draft-{index}"), "angle_id":angle,
@@ -1441,14 +1473,30 @@ mod tests {
                 "claims":[{"id":"claim-a","beat_id":"hook",
                            "assertion":"A source discusses this theme",
                            "status":"unverified","evidence_ids":[evidence]}]
-            }).to_string()
+            })
+            .to_string()
         };
         let mut provider = NoCostProvider {
             responses: VecDeque::from([
                 angles,
-                script(1, "contrast", &ids[0], "Two routes lead to very different community stories."),
-                script(2, "journey", &ids[1], "I followed a personal diary and discovered a quiet path."),
-                script(3, "guide", &ids[2], "First gather evidence, then compare it, then share advice."),
+                script(
+                    1,
+                    "contrast",
+                    &ids[0],
+                    "Two routes lead to very different community stories.",
+                ),
+                script(
+                    2,
+                    "journey",
+                    &ids[1],
+                    "I followed a personal diary and discovered a quiet path.",
+                ),
+                script(
+                    3,
+                    "guide",
+                    &ids[2],
+                    "First gather evidence, then compare it, then share advice.",
+                ),
             ]),
             calls: 0,
         };
@@ -1460,28 +1508,38 @@ mod tests {
         };
         assert!(matches!(
             services.generate_three_writing_with_boundary(
-                &plan, &mut permit, &mut provider, &NeverStop),
+                &plan,
+                &mut permit,
+                &mut provider,
+                &NeverStop
+            ),
             Err(WritingWorkflowError::Denied(_))
         ));
         assert_eq!(provider.calls, 0);
         permit.approved = true;
-        let stored = services.generate_three_writing_with_boundary(
-            &plan, &mut permit, &mut provider, &NeverStop
-        ).unwrap();
+        let stored = services
+            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
         assert_eq!(stored.len(), 3);
         assert_eq!(stored.iter().copied().collect::<HashSet<_>>().len(), 3);
-        let batches: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM study_writing_batches WHERE run_id='controlled-four-step'",
-            [], |r| r.get(0)
-        ).unwrap();
+        let batches: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM study_writing_batches WHERE run_id='controlled-four-step'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
         assert_eq!(batches, 1);
         for id in stored {
-            let versions: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM draft_versions WHERE draft_id=?1 AND version=1",
-                rusqlite::params![id.to_string()], |r| r.get(0)
-            ).unwrap();
+            let versions: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM draft_versions WHERE draft_id=?1 AND version=1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
             assert_eq!(versions, 1);
         }
         drop(conn);
@@ -1497,11 +1555,17 @@ mod tests {
             steps: 0,
         };
         let mut no_provider = NoCostProvider {
-            responses: VecDeque::new(), calls: 0,
+            responses: VecDeque::new(),
+            calls: 0,
         };
-        let recovered = reopened.generate_three_writing_with_boundary(
-            &plan, &mut no_approval, &mut no_provider, &NeverStop
-        ).unwrap();
+        let recovered = reopened
+            .generate_three_writing_with_boundary(
+                &plan,
+                &mut no_approval,
+                &mut no_provider,
+                &NeverStop,
+            )
+            .unwrap();
         assert_eq!(recovered, stored);
         assert_eq!(no_approval.steps, 0);
         assert_eq!(no_provider.calls, 0);
