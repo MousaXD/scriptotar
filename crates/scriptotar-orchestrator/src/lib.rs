@@ -993,6 +993,49 @@ mod tests {
     }
 
     #[test]
+    fn source_persistence_waits_for_host_dispatch_gate_after_sidecar_result() {
+        let temp = TempDir::new().unwrap();
+        let store = SqliteStore::open(temp.path().join("gated.sqlite3")).unwrap();
+        store.run_integration_migrations().unwrap();
+        let project = Project::new("Gated source");
+        store.create_project(&project).unwrap();
+        let mut settings = store.load_settings().unwrap();
+        settings.output_directory = Some(temp.path().join("output").to_string_lossy().into_owned());
+        store.save_settings(&settings).unwrap();
+
+        let (sidecar, fake_worker) = paths();
+        let config = RuntimeConfig::new("python3", sidecar, temp.path().join("output"))
+            .with_environment(
+                "SCRIPTOTAR_SIDECAR_ENGINE_WORKER",
+                fake_worker.to_string_lossy().into_owned(),
+            );
+        let host_gate = Arc::new(std::sync::Mutex::new(()));
+        let held_by_dispatch = host_gate.lock().unwrap();
+        let (attempted_tx, attempted_rx) = mpsc::channel();
+        let callback_gate = Arc::clone(&host_gate);
+        let guarded_persist: ContentWriteGate = Arc::new(move |commit| {
+            // A real worker has completed, and is about to write Source,
+            // Media and Transcript rows. Signal before trying the lock so
+            // the test does not depend on a sleep or an event race.
+            let _ = attempted_tx.send(());
+            let _scope_guard = callback_gate.lock().map_err(|_| {
+                OrchestratorError::Unavailable("authorization mutex poisoned".into())
+            })?;
+            commit()
+        });
+        let worker = JobOrchestrator::start_with_notifier_and_content_gate(
+            store.clone(), config, Arc::new(|_| {}), guarded_persist,
+        );
+        let job = enqueue_file(&store, &worker, &temp.path().join("normal.mp4"));
+        attempted_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(store.get_job(job.id).unwrap().state, JobState::Processing);
+        assert!(store.list_transcripts(Some(job.project_id)).unwrap().is_empty());
+        drop(held_by_dispatch);
+        assert_eq!(wait_for_terminal(&store, job.id).state, JobState::Completed);
+        assert_eq!(store.list_transcripts(Some(job.project_id)).unwrap().len(), 1);
+    }
+
+    #[test]
     fn failed_job_does_not_stall_the_next_job() {
         let (temp, store, orchestrator) = setup();
         let failed = enqueue_file(&store, &orchestrator, &temp.path().join("fail.mp4"));
