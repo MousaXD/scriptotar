@@ -77,13 +77,33 @@ function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess)
           $element = $entry[0]
           $depth = [int]$entry[1]
           try {
-            $probe.child_webview_provider_nodes += @{
+            $info = @{
               hwnd = $hwnd.ToInt64()
               host_class = $className
               depth = $depth
               control_type = $element.Current.ControlType.ProgrammaticName
               name = [string]$element.Current.Name
             }
+            # Diagnostic-only UIA evidence: these properties explain why a
+            # List rejects SetFocus while a pointer or real keyboard route
+            # might still be supported. They NEVER count as an interaction.
+            try {
+              $info.keyboard_focusable = [bool]$element.Current.IsKeyboardFocusable
+              $info.has_keyboard_focus = [bool]$element.Current.HasKeyboardFocus
+            } catch { $info.focusability_error = $_.Exception.Message }
+            try {
+              $bounds = $element.Current.BoundingRectangle
+              $info.bounds = @{
+                x = $bounds.X; y = $bounds.Y
+                width = $bounds.Width; height = $bounds.Height
+              }
+            } catch { $info.bounds_error = $_.Exception.Message }
+            try {
+              $info.supported_patterns = @($element.GetSupportedPatterns() | ForEach-Object {
+                $_.ProgrammaticName
+              })
+            } catch { $info.patterns_error = $_.Exception.Message }
+            $probe.child_webview_provider_nodes += $info
             if ($depth -lt 8) {
               $child = $walker.GetFirstChild($element)
               while ($child -and $webQueue.Count -lt 180) {
