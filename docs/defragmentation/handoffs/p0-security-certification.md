@@ -1,3 +1,9 @@
+# Agent 10 — newest exact integration SHA `9b249e2`, 2026-11-17
+
+**Current owner HEAD at final refresh:** `9b249e2ba3dbab17113388039f2e854eafbc686b`. This is a **rustfmt-only change** to `services/provider_consent.rs` over the sealed controlled-host path at `eaefeb7`; it does **not** add a production HTTP transport or registered Tauri paid-consent command. Agent 00 corrected the [earlier rustfmt failure #44091887127](https://github.com/MousaXD/scriptotar/actions/runs/44091887127) by pushing the formatting commit. Exact-head [security #44092349962](https://github.com/MousaXD/scriptotar/actions/runs/44092349962), [Rust foundation #44092350051](https://github.com/MousaXD/scriptotar/actions/runs/44092350051) and [installed native #44092349958](https://github.com/MousaXD/scriptotar/actions/runs/44092349958) were **IN PROGRESS at this review**. Older combined-v11 PASS at `eaefeb7` and native failure at `46cb36e` must not be silently transferred to this SHA. Keep paid dispatch disabled and security/release **NO-GO** until completed current exact-head evidence exists. The more detailed source findings in the next section remain applicable because the intervening diff is formatting only.
+
+---
+
 # Agent 10 — updated live owner HEAD `eaefeb7`, 2026-11-17 (CERTIFICATION STILL NO-GO)
 
 **Owner #114 moved during this review** from `46cb36efe2ca4e6ec3f9dd51b7b99c2d59804583` to **`eaefeb7746ee0e9f0856fa800caa3dda656e7e0f`** (two later commits, both confined to `apps/desktop/src-tauri/src/services/provider_consent.rs`). The six-gate 5-PASS/1-FAIL matrix below remains true *historical evidence at the old SHA*, not a verdict on the newest commit. [New exact-head independent run #44091887252](https://github.com/MousaXD/scriptotar/actions/runs/44091887252) was **IN PROGRESS at review**; await completed tests and inspect final exact SHA. Do not claim the old missing-constructor failure persists in the new implementation.
