@@ -142,14 +142,20 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
+        // Every foreground Studio mutation and in-process research-origin
+        // writer must share this host authorization gate with paid admission.
+        let active_project_gate = Arc::new(Mutex::new(active_project));
         let orchestrator = JobOrchestrator::start_with_notifier(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
             notifier,
         );
         let research_command = YtDlpCommand::from_environment();
-        let watchlist_refresher =
-            spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher = spawn_watchlist_refresher(
+            store.clone(),
+            research_command.clone(),
+            Arc::clone(&active_project_gate),
+        );
 
         if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
             eprintln!(
@@ -165,7 +171,7 @@ impl AppServices {
         Ok(Self {
             store,
             orchestrator,
-            active_project: Arc::new(Mutex::new(active_project)),
+            active_project: active_project_gate,
             legacy_path,
             research_command,
             _watchlist_refresher: watchlist_refresher,
@@ -454,6 +460,7 @@ impl AppServices {
         let result = scan_and_persist_research(
             &self.store,
             &self.research_command,
+            &self.active_project,
             active_project,
             &canonical_url,
             query.limit,
@@ -855,6 +862,7 @@ impl AppServices {
 fn scan_and_persist_research(
     store: &SqliteStore,
     command: &YtDlpCommand,
+    scope_gate: &Arc<Mutex<Uuid>>,
     project_id: Uuid,
     profile_url: &str,
     limit: u16,
@@ -871,22 +879,35 @@ fn scan_and_persist_research(
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
     let canonical_url = validated.as_url().to_string();
-    let creator = store
-        .upsert_creator(&Creator {
-            id: Uuid::new_v4(),
-            project_id,
-            platform: source_platform(&canonical_url, SourceType::Url),
-            profile_url: canonical_url.clone(),
-            display_name: Some(profile_label(validated.as_url())),
-            created_at: now_rfc3339(),
-        })
-        .map_err(|error| error.to_string())?;
+    let creator = {
+        // This direct SqliteStore writer previously bypassed the same
+        // process-wide guard that protects canonical Study consent snapshots.
+        let _scope_guard = scope_gate
+            .lock()
+            .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+        store
+            .upsert_creator(&Creator {
+                id: Uuid::new_v4(),
+                project_id,
+                platform: source_platform(&canonical_url, SourceType::Url),
+                profile_url: canonical_url.clone(),
+                display_name: Some(profile_label(validated.as_url())),
+                created_at: now_rfc3339(),
+            })
+            .map_err(|error| error.to_string())?
+    };
     let provider = YtDlpProvider::new(command.clone())
         .with_cookie_browser(cookie_browser)
         .map_err(|error| error.to_string())?;
     let items = ResearchService::new(provider)
         .scan(project_id, Some(creator.id), &canonical_url, limit)
         .map_err(|error| error.to_string())?;
+    // Run network collection with no lock, then serialize the actual research
+    // origin mutations with Studio edits, consent revocation and the final
+    // pre-send CAS. No SQLite write transaction spans network I/O.
+    let _scope_guard = scope_gate
+        .lock()
+        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
     let persisted = store
         .upsert_research_items(&items)
         .map_err(|error| error.to_string())?;
@@ -936,7 +957,11 @@ fn safe_watchlist_error(error: &str) -> String {
     }
 }
 
-fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+fn spawn_watchlist_refresher(
+    store: SqliteStore,
+    command: YtDlpCommand,
+    scope_gate: Arc<Mutex<Uuid>>,
+) -> WatchlistRefresher {
     let (stop, receiver) = mpsc::channel();
     let handle = thread::spawn(move || loop {
         match receiver.recv_timeout(WATCHLIST_TICK) {
@@ -1002,6 +1027,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             match scan_and_persist_research(
                 &store,
                 &command,
+                &scope_gate,
                 watchlist.project_id,
                 &watchlist.profile_url,
                 watchlist.limit_count.min(200) as u16,
