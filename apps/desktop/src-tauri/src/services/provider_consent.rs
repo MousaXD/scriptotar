@@ -755,6 +755,16 @@ impl AppServices {
     ) -> RepositoryResult<ConsentPreview> {
         Uuid::parse_str(run_id)
             .map_err(|_| RepositoryError::Validation("invalid provider run id".into()))?;
+        let mut prepared = self
+            .provider_session
+            .prepared
+            .lock()
+            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?;
+        // Check capacity BEFORE creating a ConsentBoundary record. A rejected
+        // client cannot leak unbounded denied records through repeated previews.
+        if prepared.len() >= 64 {
+            return Err(consent_error(ConsentError::EffectFenceUnavailable));
+        }
         let transport =
             super::provider_openai_wire::HostOpenAiResponsesWire::new().map_err(consent_error)?;
         let provider = ProviderConfig {
@@ -773,16 +783,6 @@ impl AppServices {
             &NoTrustedPricing,
             &transport,
         )?;
-        let mut prepared = self
-            .provider_session
-            .prepared
-            .lock()
-            .map_err(|_| consent_error(ConsentError::EffectFenceUnavailable))?;
-        // Bound in-memory pending consent, even for hostile IPC callers.
-        if prepared.len() >= 64 {
-            let _ = self.provider_session.boundary.cancel(run_id);
-            return Err(consent_error(ConsentError::EffectFenceUnavailable));
-        }
         prepared.insert(run_id.to_owned(), (intent, preview.clone()));
         Ok(preview)
     }
