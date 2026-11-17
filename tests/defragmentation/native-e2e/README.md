@@ -84,3 +84,7 @@ Keep screenshots and exact run artifacts; the JSON is a **machine-generated clai
 The actual installed Linux dashboard renders its h1 as AT-SPI `document frame` and the topbar project selector as `PROJECT`. Match only exact-name semantic heading/document frame roles and also require the real dashboard New project button; a chooser option alone is insufficient. Pending new native-run proof, project persistence and downstream cases are NOT TESTED.
 
 Npm Tauri 2.11.2 rejects `tauri build --bundles nsis -- --locked`. Validate `cargo metadata --locked` before/after the genuine production `tauri build --bundles nsis`, and assert no tracked lockfile diff. Do not return to bare `cargo build --release` + bundle: integrated run 43956319863 showed a localhost error page. Classify the exact app-owned browser error UIA pane as FAIL.
+
+## Installed Linux option role and actual project database
+
+Exact native run 44091975817 created and displayed both project dashboards, then failed when a displayed project option was found in AT-SPI as role `list item` rather than `option`. Choose by exact accessible name and the observed role; continue requiring the real switch and active dashboard. Independently read the installed app's own `SCRIPTOTAR_DATA_DIR/scriptotar.sqlite3` in SQLite read-only mode to verify both project rows exist before marking `canonical_project_persistence` PASS. Unit tests for the probe or selectors **are not** native acceptance.

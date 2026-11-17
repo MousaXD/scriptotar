@@ -61,6 +61,31 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ax.nodes = lambda: iter([FakeNode("scroll pane"), FakeNode("document web")])
         self.assertTrue(ax.web_document())
 
+    def test_webkit_option_uses_observed_list_item_role(self):
+        # Contract only: actual installed GUI interaction is a separate gate.
+        calls = []
+        ax = object.__new__(native.AxWebKit)
+        ax.click = lambda name, role=None: calls.append((name, role))
+        ax.choose("PROJECT", "NativeQA-sample-A")
+        self.assertEqual(calls, [
+            ("PROJECT", "combo"), ("NativeQA-sample-A", "list item")
+        ])
+
+    def test_canonical_project_probe_reads_real_sqlite_without_writing(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            db = data / "scriptotar.sqlite3"
+            with sqlite3.connect(db) as con:
+                con.execute("CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT, archived_at TEXT)")
+                con.executemany("INSERT INTO projects VALUES (?, ?, NULL)", [
+                    ("11111111-1111-4111-8111-111111111111", "QA-A"),
+                    ("22222222-2222-4222-8222-222222222222", "QA-B")
+                ])
+            self.assertIn("Two distinct", native.verify_canonical_projects(data, ("QA-A", "QA-B")))
+            with self.assertRaises(native.NativeFailure):
+                native.verify_canonical_projects(data, ("QA-A", "Missing"))
+
     def test_webkit_heading_requires_semantic_role_not_arbitrary_button(self):
         # Exact installed QA AT-SPI tree maps dashboard h1 to document frame.
         class FakeNode:

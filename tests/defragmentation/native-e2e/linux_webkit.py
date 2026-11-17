@@ -14,15 +14,17 @@ import os
 from pathlib import Path
 import platform
 import re
+import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 
 
 CASES = (
-    "installed_webview", "create_switch_projects", "create_study",
+    "installed_webview", "create_switch_projects", "canonical_project_persistence", "create_study",
     "edit_save_duplicate_candidate", "quit_relaunch_persistence",
     "wrong_project_ui_isolation", "wrong_project_ipc_denial",
     "multi_source_transcript", "source_revocation",
@@ -42,6 +44,33 @@ def sha256(path: Path) -> str:
 
 def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
+
+
+def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -> str:
+    """Read only the REAL installed app's SQLite after GUI project creation."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure(f"Canonical SQLite missing after native project creation: {database}")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as connection:
+            rows = connection.execute(
+                "SELECT id, name FROM projects WHERE name IN (?, ?) AND archived_at IS NULL",
+                expected_names,
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Could not read canonical project rows: {exc}") from exc
+    if (len(rows) != 2 or {name for _id, name in rows} != set(expected_names)
+            or len({id for id, _name in rows}) != 2):
+        raise NativeFailure(
+            f"Canonical SQLite does not hold two distinct created projects; "
+            f"expected={expected_names}, actual_names={[name for _id, name in rows]}"
+        )
+    try:
+        for project_id, _name in rows:
+            uuid.UUID(project_id)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Canonical SQLite contains invalid created project ID") from exc
+    return "Two distinct nonarchived real project rows persisted in installed application SQLite"
 
 
 class NativeUnavailable(RuntimeError):
@@ -230,8 +259,11 @@ class AxWebKit:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def choose(self, label: str, option: str) -> None:
+        # Captured WebKitGTK 4.1 AT-SPI tree exposes role=option
+        # Svelte buttons as role='list item' under the native popup.
+        # Require an exact accessible option name, never choose by index.
         self.click(label, "combo")
-        self.click(option, "option")
+        self.click(option, "list item")
 
     def heading(self, text: str, timeout: float = 12) -> None:
         """Require an exact semantic heading in the installed WebKit AT-SPI tree.
@@ -454,6 +486,11 @@ def exercise(args, report: dict, root: Path):
                         f"{name!r}; screenshot={screenshot}, see a11y-diagnostics.json"
                     ) from exc
                 session.screenshot(f"project-{index + 1}-created")
+            if not checked(
+                report, "canonical_project_persistence",
+                lambda: verify_canonical_projects(root / "data", (name_a, name_b))
+            ):
+                raise NativeFailure("Canonical project database assertion failed")
             ax.choose("PROJECT", name_a)
             ax.heading(name_a)
             ax.choose("PROJECT", name_b)
