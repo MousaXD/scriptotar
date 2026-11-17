@@ -1110,4 +1110,201 @@ mod tests {
         assert_eq!(got.status, ExternalEffectStatus::Dispatched);
     }
 
+
+    fn second_approved_run(
+        db: &SqliteStore,
+        original: &RunSnapshot,
+        project: Uuid,
+        study: Uuid,
+    ) -> RunSnapshot {
+        let mut second = original.clone();
+        second.plan.id = Uuid::new_v4().to_string();
+        second.steps[0].idempotency_key = format!("{}:0:draft", second.plan.id);
+        second.revision = 0;
+        second.state = RunState::Planned;
+        second.steps[0].state = StepState::Pending;
+        second.steps[0].attempts = 0;
+        second.steps[0].approved = false;
+        second.usage = Usage::default();
+        second.events.clear();
+        second.event(100, AuditKind::Created);
+        let checkpoints = db.scoped_agent_checkpoints(project, study).unwrap();
+        checkpoints.create(second.clone()).unwrap();
+        second.revision = 1;
+        second.state = RunState::Running;
+        second.steps[0].state = StepState::Running;
+        second.steps[0].attempts = 1;
+        second.steps[0].approved = true;
+        second.usage.tool_calls = 1;
+        second.event(101, AuditKind::Dispatched);
+        checkpoints.compare_and_swap(0, second.clone()).unwrap();
+        second
+    }
+
+    #[test]
+    fn provider_ack_tombstone_survives_retry_and_rejects_another_run() {
+        let (_dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        let a = identity(&first, project, study);
+        let b = identity(&peer, project, study);
+        let ar = reserve(&db, &first, project, study);
+        let br = reserve(&db, &peer, project, study);
+        db.mark_external_dispatched(a, ar.revision, 1).unwrap();
+        db.mark_external_dispatched(b, br.revision, 1).unwrap();
+
+        let ack = db.record_external_ack(a, 1, "ack_forever_12").unwrap();
+        assert_eq!(db.record_external_ack(a, 1, "ack_forever_12").unwrap(), ack);
+        assert!(db.record_external_ack(b, 1, "ack_forever_12").is_err());
+        assert_eq!(db.get_external_effect(b).unwrap().unwrap().status, ExternalEffectStatus::Dispatched);
+        let proven = db.reconcile_external_effect(
+            a,
+            1,
+            ExternalResolution::VerifiedNotExecuted { evidence_id: "nonexecution_proof_12" },
+        ).unwrap();
+        let retried = db.prepare_external_retry(a, proven.revision).unwrap();
+        assert_eq!(retried.attempt, 2);
+        assert!(retried.provider_request_id.is_none());
+        // Clearing a per-attempt column must never release an authentic provider identity.
+        assert!(db.record_external_ack(b, 1, "ack_forever_12").is_err());
+        assert!(db.get_external_effect(b).unwrap().unwrap().provider_request_id.is_none());
+    }
+
+    #[test]
+    fn provider_receipt_collision_rolls_back_settlement_across_connections() {
+        let (dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        let a = identity(&first, project, study);
+        let b = identity(&peer, project, study);
+        let ar = reserve(&db, &first, project, study);
+        let br = reserve(&db, &peer, project, study);
+        db.mark_external_dispatched(a, ar.revision, 1).unwrap();
+        db.mark_external_dispatched(b, br.revision, 1).unwrap();
+        db.reconcile_external_effect(
+            a, 1, ExternalResolution::Completed {
+                provider_request_id: Some("request_unique_A"),
+                receipt_id: "same_provider_receipt_12",
+                tokens: 100, cost_microusd: 250,
+            },
+        ).unwrap();
+        drop(db);
+        let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert!(reopened.reconcile_external_effect(
+            b, 1, ExternalResolution::Completed {
+                provider_request_id: Some("request_unique_B"),
+                receipt_id: "same_provider_receipt_12",
+                tokens: 100, cost_microusd: 250,
+            },
+        ).is_err());
+        let unchanged = reopened.get_external_effect(b).unwrap().unwrap();
+        assert_eq!(unchanged.status, ExternalEffectStatus::Dispatched);
+        assert_eq!(unchanged.actual_cost_microusd, 0);
+        assert!(unchanged.provider_request_id.is_none());
+    }
+
+    #[test]
+    fn distinct_trusted_provider_can_use_same_response_identifier() {
+        let (_dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        let a = identity(&first, project, study);
+        let b = identity(&peer, project, study);
+        let ar = reserve(&db, &first, project, study);
+        let br = match db.reserve_external_effect(b, fp(), "anthropic", limits()).unwrap() {
+            ExternalReservation::Fresh(value) => value,
+            ExternalReservation::Existing(_) => panic!("expected new provider reservation"),
+        };
+        db.mark_external_dispatched(a, ar.revision, 1).unwrap();
+        db.mark_external_dispatched(b, br.revision, 1).unwrap();
+        for key in [a, b] {
+            db.record_external_ack(key, 1, "same_scoped_request").unwrap();
+            db.reconcile_external_effect(
+                key, 1, ExternalResolution::Completed {
+                    provider_request_id: Some("same_scoped_request"),
+                    receipt_id: "same_scoped_receipt",
+                    tokens: 100, cost_microusd: 250,
+                },
+            ).unwrap();
+        }
+        assert_eq!(db.get_external_effect(a).unwrap().unwrap().status, ExternalEffectStatus::Completed);
+        assert_eq!(db.get_external_effect(b).unwrap().unwrap().status, ExternalEffectStatus::Completed);
+    }
+
+    #[test]
+    fn racing_sqlite_connections_have_exactly_one_receipt_owner() {
+        let (dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        for snap in [&first, &peer] {
+            let key = identity(snap, project, study);
+            let r = reserve(&db, snap, project, study);
+            db.mark_external_dispatched(key, r.revision, 1).unwrap();
+        }
+        drop(db);
+        let gate = Arc::new(Barrier::new(3));
+        let jobs = [first, peer].into_iter().map(|snap| {
+            let path = dir.path().join("external.sqlite3");
+            let gate = gate.clone();
+            thread::spawn(move || {
+                let worker = SqliteStore::open(path).unwrap();
+                gate.wait();
+                worker.reconcile_external_effect(
+                    identity(&snap, project, study), 1, ExternalResolution::Completed {
+                        provider_request_id: Some("race_ack_12"),
+                        receipt_id: "race_receipt_12",
+                        tokens: 100, cost_microusd: 250,
+                    },
+                )
+            })
+        }).collect::<Vec<_>>();
+        gate.wait();
+        let results = jobs.into_iter().map(|job| job.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
+        assert_eq!(results.iter().filter(|r| r.is_err()).count(), 1);
+    }
+
+    #[test]
+    fn historical_duplicate_receipts_fail_v12_upgrade_without_data_loss() {
+        let (dir, db, project, study, first) = setup();
+        let peer = second_approved_run(&db, &first, project, study);
+        reserve(&db, &first, project, study);
+        reserve(&db, &peer, project, study);
+        drop(db);
+        let path = dir.path().join("external.sqlite3");
+        // Construct a valid legacy v11 file with duplicate provider acknowledgements.
+        // Only the v12 infrastructure is removed; historical v10/v11 migrations stay intact.
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch(
+            "DROP TRIGGER external_provider_identity_on_insert;
+             DROP TRIGGER external_provider_identity_on_update;
+             DROP INDEX idx_external_provider_request_unique;
+             DROP INDEX idx_external_provider_receipt_unique;
+             DROP TABLE agent_external_provider_identities;
+             DELETE FROM schema_migrations WHERE version = 12;
+             PRAGMA user_version = 11;",
+        ).unwrap();
+        for key in [
+            first.steps[0].idempotency_key.as_str(),
+            peer.steps[0].idempotency_key.as_str(),
+        ] {
+            connection.execute(
+                "UPDATE agent_external_effects SET provider_request_id='historical_duplicate_12'
+                 WHERE idempotency_key=?1",
+                params![key],
+            ).unwrap();
+        }
+        drop(connection);
+        assert!(SqliteStore::open(&path).is_err(), "ambiguous historical identity must block upgrade");
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
+        let preserved: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM agent_external_effects WHERE provider_request_id='historical_duplicate_12'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(version, 11);
+        assert_eq!(preserved, 2);
+        let no_partial_table: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_external_provider_identities'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(no_partial_table, 0);
+    }
+
 }
