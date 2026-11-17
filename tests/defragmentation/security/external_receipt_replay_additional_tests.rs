@@ -438,3 +438,85 @@ fn independent_v10_old_attempt_ack_cannot_be_reclaimed_after_proven_retry() {
     assert_eq!(losing.status, ExternalEffectStatus::Dispatched);
     assert!(losing.provider_request_id.is_none());
 }
+
+
+#[test]
+fn independent_v12_provider_case_alias_cannot_double_credit() {
+    let (_dir, db, project, study, run) = setup();
+    let peer = independent_v10_approved_peer(&db, &run, project, study);
+    let first_key = identity(&run, project, study);
+    let peer_key = identity(&peer, project, study);
+    let first = reserve(&db, &run, project, study);
+    // The production API presently accepts any bounded provider string.
+    // "OpenAI" and "openai" are not two separate billing authorities.
+    let alias = db
+        .reserve_external_effect(peer_key, fp(), "OpenAI", limits())
+        .unwrap();
+    let ExternalReservation::Fresh(peer_first) = alias else {
+        panic!("distinct approved run must have its own reservation");
+    };
+    db.mark_external_dispatched(first_key, first.revision, 1).unwrap();
+    db.mark_external_dispatched(peer_key, peer_first.revision, 1).unwrap();
+    db.reconcile_external_effect(
+        first_key,
+        1,
+        ExternalResolution::Completed {
+            provider_request_id: Some("req_provider_alias_101"),
+            receipt_id: "receipt_provider_alias_202",
+            tokens: 30,
+            cost_microusd: 200,
+        },
+    )
+    .unwrap();
+
+    assert!(
+        db.reconcile_external_effect(
+            peer_key,
+            1,
+            ExternalResolution::Completed {
+                provider_request_id: Some("req_provider_alias_101"),
+                receipt_id: "receipt_provider_alias_202",
+                tokens: 30,
+                cost_microusd: 200,
+            },
+        )
+        .is_err(),
+        "case-alias provider namespace allowed the same OpenAI receipt to bill a second effect"
+    );
+    let losing = db.get_external_effect(peer_key).unwrap().unwrap();
+    assert_eq!(losing.status, ExternalEffectStatus::Dispatched);
+    assert!(losing.receipt_id.is_none());
+}
+
+#[test]
+fn independent_v12_retry_cannot_claim_same_provider_request_from_older_attempt() {
+    let (_dir, db, project, study, run) = setup();
+    let key = identity(&run, project, study);
+    let first = reserve(&db, &run, project, study);
+    db.mark_external_dispatched(key, first.revision, 1).unwrap();
+    db.record_external_ack(key, 1, "req_previous_attempt_101").unwrap();
+    let proof = db
+        .reconcile_external_effect(
+            key,
+            1,
+            ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "proof_previous_attempt_nonexecution",
+            },
+        )
+        .unwrap();
+    let next = db.prepare_external_retry(key, proof.revision).unwrap();
+    assert_eq!(next.attempt, 2);
+    db.mark_external_dispatched(key, next.revision, 2).unwrap();
+    // Equal effect_id is not enough: request IDs are single-attempt proofs.
+    // Reassigning attempt-1 ACK to attempt 2 could falsely reconcile a
+    // different billable dispatch from a delayed prior provider callback.
+    assert!(
+        db.record_external_ack(key, 2, "req_previous_attempt_101")
+            .is_err(),
+        "stale provider request from attempt 1 was accepted as a new attempt-2 ACK"
+    );
+    let after = db.get_external_effect(key).unwrap().unwrap();
+    assert_eq!(after.attempt, 2);
+    assert_eq!(after.status, ExternalEffectStatus::Dispatched);
+    assert!(after.provider_request_id.is_none());
+}
