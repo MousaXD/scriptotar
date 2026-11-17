@@ -412,6 +412,42 @@ class AxWebKit:
         except Exception as exc:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
+    def global_locale_control(self) -> str:
+        """Discover the real top-bar language combo via AT-SPI geometry.
+
+        The Arabic shell can retain an English aria-label for this control.
+        Never guess that the localized Settings combobox is mounted on Studio,
+        and never infer success from a bare language badge.
+        """
+        project = self.find("PROJECT", "combo")
+        try:
+            project_bounds = project.queryComponent().getExtents(
+                getattr(self.atspi, "DESKTOP_COORDS", 0)
+            )
+        except Exception as exc:
+            raise NativeFailure(f"Cannot locate native project toolbar: {exc}") from exc
+        matches = []
+        for node in self.nodes():
+            try:
+                if node is project or "combo" not in node.getRoleName().lower():
+                    continue
+                name = (node.name or "").strip()
+                bounds = node.queryComponent().getExtents(
+                    getattr(self.atspi, "DESKTOP_COORDS", 0)
+                )
+                if (name and name != "PROJECT" and bounds.width >= 15
+                        and bounds.height >= 15
+                        and abs(bounds.y - project_bounds.y) <= 36):
+                    matches.append(name)
+            except Exception:
+                continue
+        if len(matches) != 1:
+            raise NativeFailure(
+                f"Expected exactly one native toolbar language combo next to "
+                f"project selector; observed {matches!r}"
+            )
+        return matches[0]
+
     def choose(self, label: str, option: str) -> None:
         """Activate exact-name, PID-owned WebKit option using its AT-SPI bounds.
 
@@ -814,6 +850,61 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "keyboard_custom_controls", keyboard):
             return
 
+        def arabic():
+            a = session.ax
+            try:
+                a.choose(a.global_locale_control(), "ع")
+                # Require actual translated navigation and the semantic
+                # Arabic page heading on the installed WebKit document.
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                session.screenshot("arabic-locale")
+
+                # An application restart proves the UI locale is not merely
+                # temporary component state. A real GUI Alt+F4 and new PID are
+                # mandatory; the boot gate itself expects Arabic controls.
+                session.stop()
+                session.start(expected_studio="الاستوديو")
+                a = session.ax
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                if a.available("Studio", "button"):
+                    raise NativeFailure(
+                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
+                    )
+                session.screenshot("arabic-reopened")
+            finally:
+                # The global toolbar is present on Studio in both languages.
+                # Discover its native control beside the project selector;
+                # Settings may not be mounted, and aria-label is not necessarily
+                # translated. This is a GUI action, never a persisted-value edit.
+                a = session.ax
+                if a is None or session.proc is None or session.proc.poll() is not None:
+                    raise NativeFailure(
+                        "Installed process unavailable during graphical English restoration"
+                    )
+                a.choose(a.global_locale_control(), "EN")
+            # The installed shell AND the Studio component must restore to
+            # English, not just a topbar EN marker. Mixed-locale content is a
+            # product regression, and this scenario must remain FAIL.
+            a = session.ax
+            a.find("Studio", "button", timeout=8)
+            a.heading("Studio", timeout=12)
+            if a.heading_available("الاستوديو"):
+                raise NativeFailure(
+                    "Arabic Studio heading remains mounted after restoring English"
+                )
+            session.screenshot("english-restored")
+            return (
+                "Real Arabic nav and semantic heading, native graphical relaunch "
+                "with retained Arabic locale, and complete English restoration"
+            )
+        if not checked(report, "arabic_locale_control", arabic):
+            return
+
+        # Run Arabic first: an independently observed Linux SIGSEGV during
+        # dark-theme relaunch otherwise leaves the native UI inaccessible and
+        # masks the real locale result with an unrelated missing-combo error.
         def theme():
             a = session.ax
             a.click("Settings", "button")
@@ -838,63 +929,8 @@ def exercise(args, report: dict, root: Path):
                 "graphical restart and restored Theme control; screenshot evidence "
                 "requires independent visual inspection"
             )
-        # Keep this independent of the Arabic restoration regression: test
-        # theme while the installed shell is still in a known English context.
-        checked(report, "theme_mode_control", theme)
-
-        def arabic():
-            a = session.ax
-            try:
-                a.choose("Interface language", "ع")
-                # Require actual translated navigation and the semantic
-                # Arabic page heading on the installed WebKit document.
-                a.click("الاستوديو", "button")
-                a.heading("الاستوديو")
-                session.screenshot("arabic-locale")
-
-                # An application restart proves the UI locale is not merely
-                # temporary component state. A real GUI Alt+F4 and new PID are
-                # mandatory; the boot gate itself expects Arabic controls.
-                session.stop()
-                session.start(expected_studio="الاستوديو")
-                a = session.ax
-                a.click("الاستوديو", "button")
-                a.heading("الاستوديو")
-                if a.available("Studio", "button"):
-                    raise NativeFailure(
-                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
-                    )
-                session.screenshot("arabic-reopened")
-            finally:
-                # The language control's accessible name may be translated
-                # or remain English. Discover the actual visible name rather
-                # than assuming a label; do not ignore failed restoration.
-                a = session.ax
-                if a is not None:
-                    if a.available("لغة الواجهة", "combo"):
-                        a.choose("لغة الواجهة", "EN")
-                    elif a.available("Interface language", "combo"):
-                        a.choose("Interface language", "EN")
-                    else:
-                        raise NativeFailure(
-                            "Installed language combobox missing when restoring English locale"
-                        )
-            # The installed shell AND the Studio component must restore to
-            # English, not just a topbar EN marker. Mixed-locale content is a
-            # product regression, and this scenario must remain FAIL.
-            a = session.ax
-            a.find("Studio", "button", timeout=8)
-            a.heading("Studio", timeout=12)
-            if a.heading_available("الاستوديو"):
-                raise NativeFailure(
-                    "Arabic Studio heading remains mounted after restoring English"
-                )
-            session.screenshot("english-restored")
-            return (
-                "Real Arabic nav and semantic heading, native graphical relaunch "
-                "with retained Arabic locale, and complete English restoration"
-            )
-        if not checked(report, "arabic_locale_control", arabic):
+        # An actual process crash remains FAIL and must not be retried away.
+        if not checked(report, "theme_mode_control", theme):
             return
 
         # This run deliberately has no fabricated downloads or media transcripts.
