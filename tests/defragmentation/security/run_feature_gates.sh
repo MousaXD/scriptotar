@@ -20,6 +20,32 @@ case "$gate:$pr" in
       cargo test --locked -p scriptotar-ai provider_consent
     )
     ;;
+  receipt-v12:128)
+    # Independently test Agent 02's NEW v12 recovery BEFORE owner integration.
+    # This writes only the disposable 'target' CI checkout, never #128.
+    test -f target/crates/scriptotar-db/src/agent_effects_external.rs
+    python3 - <<'PY'
+from pathlib import Path
+target = Path('target/crates/scriptotar-db/src/agent_effects_external.rs')
+source = target.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in source, 'cannot find actual v12 DB test fixture'
+closing = source.rfind('}')
+assert closing > source.index(marker), 'bad real DB fixture boundary'
+assert not source[closing + 1:].strip(), 'DB test module is not last'
+extras = [
+    Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text(),
+    Path('audit/tests/defragmentation/security/external_v12_upgrade_additional_tests.rs').read_text(),
+]
+target.write_text(source[:closing] + '\n' + '\n'.join(extras) + '\n' + source[closing:])
+PY
+    (
+      cd target
+      # All original five regressions plus new adversarial and positive
+      # provider-scoping, retry, ACK, migration and restart tests.
+      cargo test --locked -p scriptotar-db
+    )
+    ;;
   migration:119)
     test -f target/crates/scriptotar-db/src/agent_effects_external.rs
     (
@@ -73,6 +99,8 @@ case "$gate:$pr" in
     # A missing module is a release-blocking FAIL, not a skipped test.
     for file in \
       target/crates/scriptotar-ai/src/provider_consent.rs \
+      target/crates/scriptotar-ai/src/provider_openai_wire.rs \
+      target/apps/desktop/src-tauri/src/services/provider_openai_wire.rs \
       target/crates/scriptotar-ai/src/writing/verification/mod.rs \
       target/apps/desktop/src-tauri/src/services/study_writing_persistence.rs \
       target/apps/desktop/src-tauri/src/services/study_verification.rs \
@@ -82,23 +110,72 @@ case "$gate:$pr" in
     mkdir -p target/tests/defragmentation/security/tests
     cp audit/tests/defragmentation/security/Cargo.toml target/tests/defragmentation/security/Cargo.toml
     cp audit/tests/defragmentation/security/tests/provider_context_race.rs target/tests/defragmentation/security/tests/
+    cp audit/tests/defragmentation/security/tests/provider_wire_boundary.rs target/tests/defragmentation/security/tests/
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
     cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
     # Assert production wiring, not merely that feature files exist on disk.
-    (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v)
+    # Collect the structural authorization failure without skipping Rust host,
+    # database and canonical-v11 tests. The final gate MUST stay nonzero.
+    combined_host_static_status=0
+    (cd target && python3 -m unittest discover -s tests/defragmentation/security -p 'test_combined_host_wiring.py' -v) || combined_host_static_status=$?
     cat audit/tests/defragmentation/security/canonical_writing_additional_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
     cat audit/tests/defragmentation/security/canonical_v11_integrity_tests.rs >> target/apps/desktop/src-tauri/tests/study_writing.rs
+    # Add one independent v10 cross-run receipt replay test inside the REAL
+    # database's existing Rust test fixture. This modifies only CI's checkout;
+    # never persist any changes into PR #114 or the production source tree.
+    python3 - <<'PY'
+from pathlib import Path
+target = Path('target/crates/scriptotar-db/src/agent_effects_external.rs')
+source = target.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in source, 'cannot find real v10 test fixture'
+closing = source.rfind('}')
+assert closing > source.index(marker)
+assert not source[closing + 1:].strip(), 'v10 test fixture is not last in file'
+extras = [
+    Path('audit/tests/defragmentation/security/external_receipt_replay_additional_tests.rs').read_text(),
+]
+schema = Path('target/crates/scriptotar-db/src/lib.rs').read_text()
+if 'pub const LATEST_SCHEMA_VERSION: u32 = 12;' in schema:
+    extras.append(
+        Path('audit/tests/defragmentation/security/external_v12_upgrade_additional_tests.rs').read_text()
+    )
+target.write_text(source[:closing] + '\n' + '\n'.join(extras) + '\n' + source[closing:])
+PY
     (
       cd target
       cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_context_race -- --nocapture
+      # Network is forbidden: independent public wire API assertions all pass
+      # an already-expired deadline and use a placeholder key.
+      wire_security_status=0
+      cargo test --manifest-path tests/defragmentation/security/Cargo.toml --test provider_wire_boundary -- --nocapture || wire_security_status=$?
       cargo test --locked -p scriptotar-ai provider_consent
-      cargo test --locked -p scriptotar-db
+      # Exercise the REAL compiled HTTPS wire parser, fixed endpoint, hard output
+      # caps, exact serialized body and one-use authenticated response proof.
+      # This is local/no-network; it is NOT proof of billable HTTP integration.
+      cargo test --locked -p scriptotar-ai provider_openai_wire
+      # A newly surfaced cross-run receipt replay may be a security FAIL.
+      # Preserve host, verification, and canonical-writing evidence anyway.
+      db_security_status=0
+      cargo test --locked -p scriptotar-db || db_security_status=$?
       # Compile/test the actual Tauri host, not only path-included feature modules.
       cargo test --locked -p scriptotar-desktop --lib
       cargo test --locked -p scriptotar-ai verification
       python3 -m unittest discover -s tests/defragmentation/security -p 'test_*.py' -v
       cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test study_writing --locked -- --nocapture
+      if [ "$db_security_status" -ne 0 ]; then
+        echo "FAIL: independent v10 database/receipt replay gate (exit $db_security_status)" >&2
+        exit "$db_security_status"
+      fi
+      if [ "$wire_security_status" -ne 0 ]; then
+        echo "FAIL: independent exact-wire transport authorization gate (exit $wire_security_status)" >&2
+        exit "$wire_security_status"
+      fi
     )
+    if [ "$combined_host_static_status" -ne 0 ]; then
+      echo "FAIL: combined host authorization remains a release blocker (exit $combined_host_static_status)" >&2
+      exit "$combined_host_static_status"
+    fi
     ;;
   *)
     echo "ERROR: unsupported PR/gate mapping: $gate:$pr" >&2

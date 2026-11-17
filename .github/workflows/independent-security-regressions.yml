@@ -7,6 +7,11 @@ on:
       - 'tests/defragmentation/security/**'
       - 'docs/defragmentation/handoffs/p0-security-certification.md'
   workflow_dispatch:
+    inputs:
+      integration_sha:
+        description: 'Exact 40-character PR #114 commit SHA for both combined gates'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +27,8 @@ jobs:
         include:
           - { gate: provider, pr: 118 }
           - { gate: migration, pr: 119 }
+          # Verify proposed v12 receipt repair against the entire independent red suite.
+          - { gate: receipt-v12, pr: 128 }
           - { gate: writing, pr: 121 }
           - { gate: verification, pr: 117 }
           # Integrated v11 checks should execute even while paid egress is disabled.
@@ -35,10 +42,15 @@ jobs:
         with:
           path: audit
           persist-credentials: false
-      - name: Checkout latest feature PR head
+      # Pin PR #114 once per event so concurrent Agent 00 pushes cannot split
+      # combined and combined-v11 across different integration commits.
+      # PR #124 uses its captured base SHA; PR #114 uses its event head SHA.
+      # Manual reruns require an explicit integration SHA; other feature PRs
+      # continue checking their own feature heads.
+      - name: Checkout exact target feature source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
-          ref: refs/pull/${{ matrix.pr }}/head
+          ref: ${{ matrix.pr == 114 && (inputs.integration_sha || (github.event.pull_request.number == 124 && github.event.pull_request.base.sha) || (github.event.pull_request.number == 114 && github.event.pull_request.head.sha)) || format('refs/pull/{0}/head', matrix.pr) }}
           path: target
           persist-credentials: false
       - name: Set up Rust
