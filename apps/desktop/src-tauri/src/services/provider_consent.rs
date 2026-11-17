@@ -204,6 +204,10 @@ impl SqlitePaidEffectFence {
             || context.idempotency_key.is_empty()
             || provider.is_empty()
             || provider.len() > 64
+            // The durable v12 identity namespace must not be fragmentable
+            // by case aliases (for example, openai vs OpenAI). Only the host's
+            // canonical lowercase provider ID may reach the SQLite fence.
+            || provider.bytes().any(|c| c.is_ascii_uppercase())
             || !provider
                 .bytes()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.'))
@@ -1018,6 +1022,34 @@ mod tests {
             deadline_ms: current_ms() + 30_000,
             estimate,
         };
+        let limit = ExternalEffectLimits {
+            tokens: 50_000,
+            cost_microusd: 20_000,
+        };
+        let digest = "a".repeat(64);
+        let wire = "b".repeat(64);
+        // The production host must never create a second provider identity
+        // namespace using only a case variant. Agent 02 also enforces this
+        // independently at the actual database storage boundary.
+        assert!(SqlitePaidEffectFence::from_approved_context(
+            services.store.clone(),
+            &context,
+            &digest,
+            &wire,
+            "OpenAI",
+            limit,
+        )
+        .is_err());
+        assert!(SqlitePaidEffectFence::from_approved_context(
+            services.store.clone(),
+            &context,
+            &digest,
+            &wire,
+            "openai",
+            limit,
+        )
+        .is_ok());
+
         let intent = ProviderIntent {
             run_id: run_id.clone(),
             scope,
