@@ -519,7 +519,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
                     timeout_seconds=1.0,
                 )
         import inspect
-        source = inspect.getsource(native.run)
+        source = inspect.getsource(native.exercise)
         self.assertIn('ax.read_text("Script draft") != body', source)
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
