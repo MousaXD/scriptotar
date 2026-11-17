@@ -243,3 +243,45 @@ The first Windows UIA gate genuinely PASSED on exact source `cede4c86`, but all 
 Windows exact source: installed NSIS + real WebView2 Document + Studio invocation **PASS**, two projects **created through actual UIA** and their dashboard screenshots captured, but `create_switch_projects=FAIL` because A activation did not replace B. `failed-create_switch_projects.png` SHA-256 `1401b9560d1414e94bd0e5ca8662cf117425cf467ebc84f9b936b1263bc76ef9`; UIA still names B as active. Windows harness tried list-item pointer but failed to change page. Corrective test now derives the exact target option's keyboard position from accessible on-screen UIA list item order, then sends native Home/ArrowDown/Enter to the actual focused Svelte listbox; it **still requires** the visible target dashboard to PASS and fails closed otherwise. Windows NSIS SHA-256 `39861edba6d1acf6411d328f7804f6e952e7e733e248435c8363826b90d2ae72`, installed exe `c714c8a54a54c5425f8c5ca6ede9a0b6b7744e5d0a13067215d0e3f03d1e71ab`.
 
 **Both corrections are source-level hypotheses until a fresh exact-source installed run.** Linux draft/restart/RTL and Windows Study/draft beyond first failed switch remain NOT TESTED. Release NO-GO, PR DRAFT.
+
+
+## 2026-11-17 — exact-source Arabic/Windows focus recovery (Agent 07)
+
+**Last inspected native run:** [#44118342637](https://github.com/MousaXD/scriptotar/actions/runs/44118342637), immutable installed source `ffe1e8282df4d2e3bde695926b866d9d18ec7b08`. Both platform jobs FAIL overall. Review ZIPs: Linux artifact `14344164393`, Windows artifact `14344259372` (these contain screenshots, native accessibility tree and per-case JSON). Do not confuse previously passing Linux cases with an overall native-acceptance PASS.
+
+### Actual case evidence at ffe1e828
+
+| Scenario | Installed Linux .deb / WebKitGTK | Installed Windows NSIS / WebView2 |
+| --- | --- | --- |
+| Native app document + Studio | PASS | PASS |
+| Real project A/B create and bidirectional switch | PASS | FAIL at unsupported UIA List `SetFocus()` before switch |
+| Two canonical SQLite project rows | PASS | NOT TESTED |
+| Real Study creation through GUI | PASS | NOT TESTED |
+| Draft edit/save, copy, rename and immutable latest versions | PASS | NOT TESTED |
+| Graphical quit/relaunch, selected project and two candidates | PASS | NOT TESTED |
+| Wrong-project UI isolation | PASS | NOT TESTED |
+| Custom candidate keyboard Escape | PASS | NOT TESTED |
+| Arabic semantic heading, locale change, return to English | FAIL at mixed-language **English restoration**, not Arabic entry | NOT TESTED |
+| System/Dark theme settings and persistence | NOT TESTED | NOT TESTED |
+| Full Arabic RTL, independent visual Light/Dark review | NOT CERTIFIED (Arabic screenshot manually inspected; automated end-to-end RTL and Light mode unavailable) | NOT TESTED |
+| Three-original-script UI, real source/media/transcript, source revocation, forged IPC refusal | NOT TESTED | NOT TESTED |
+
+Linux package SHA-256: `d44b0c986efdcbf378f4d141ab541ba7dad7da8b21ae3d83d7346862fd7be2dc`; installed executable SHA-256: `e4ee295cec72dbb0c2fe5e54c06f91bb704cb7d3521bce2ab9951c3410ce77a4`. Windows NSIS SHA-256: `c7bdf41926d73d3aa6b9a03e866bcfebd1803e79615f9d03136cae008e587478`; installed executable SHA-256: `22583632d0369a724da5de447bf4dcd70ba0b5892405e6da6f283b41d2dae027`.
+
+**Arabic forensic evidence:** `arabic-locale.png` SHA-256 `f85efe97e917d1729a31230779caceb869482b38d29dfd0d999d8ec254db573e` visibly shows Arabic Studio, Arabic right-hand navigation and right-to-left layout. After selecting English, `failed-arabic_locale_control.png` SHA-256 `7c5404cbc6b3098edd08a25b63bf5df5120c88fc4ace13614d3c280efa36ad99` shows English navigation with `EN` but Arabic Studio content/heading. The native tree simultaneously exposes English `Studio` navigation and Arabic semantic `الاستوديو` heading. Treat as an observed mixed-locale product regression; investigate Svelte locale re-render versus the global `i18n.ts` DOM translation observer, without assuming root cause. Reported directly to Agent 00 in [PR #114 comment](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6955022253).
+
+**Windows forensic evidence:** `failed-create_switch_projects.png` SHA-256 `f88ee5c9b3fea2386f2d88bd8d3f6a611032b25b0c78693a420e582211b385e0` retains the B dashboard; actual UIA error is `Exception calling "SetFocus" ... "Unrecognized error."`. The control hierarchy is real WebView2 `ComboBox 'PROJECT'` → popup `List 'Project'` → concrete `ListItem`. No native switch PASS can be inferred from having created B.
+
+### Subsequent QA-only commits (new native run required)
+
+- `76a5e2a`: remove unsupported popup List `SetFocus()`, target the verified native List-owned option with actual pointer coordinates and require popup closure and existing exact dashboard/candidate assertions.
+- `47cd5d5`: Arabic locale case verifies translated native Studio nav and heading, quits via real Alt+F4, relaunches Arabic, then requires both shell and Studio return to English. Mixed-locale remains FAIL, never normalized.
+- `2de4da3`: update fail-closed contract checks for pointer selection and Arabic restart.
+- `f3430c8`: require closed popup for both ListItem and Button-typed UIA options.
+- `adcdc63`: execute actual System/Dark Settings controls with save and graphical restart before the independent Arabic regression. This version of Settings exposes only `system` and `dark`, **no `light` option**; do not invent a Light control or certify visual contrast based solely on a settings label.
+
+These commits have been pushed to the existing PR #126 branch, targeting integration PR #114. **No new exact-source installed CI result was observed as of this handoff**; green CI/security from `ffe1e828` does not validate these edits. Both installed platform gates remain **NO-GO** pending fresh screenshots/reports and actual Linux and Windows installed jobs. PR #126 must stay DRAFT. Do not merge or publish.
+
+### Next actions
+
+Dispatch `Independent Installed WebView Acceptance` on the QA branch and inspect its *exact* source SHA before assigning any PASS. Check Linux System/Dark screenshot and real theme restore, then Arabic semantic nav/RTL after restart and English restoration; coordinate any reproducible mixed-locale defect fix with Agent 00 (QA must not silently correct it). Check Windows project switch, canonical DB, Study, independent original/copy candidate selection, true quit/relaunch and wrong-project UI. Keep real multi-source transcript, source revocation, forged wrong-project IPC and three-original-script interaction NOT TESTED until their production commands and deterministic non-paid fixtures exist. Save installer and installed-executable hashes, screenshot/tree paths, verified source and exact case statuses at every attempt.
