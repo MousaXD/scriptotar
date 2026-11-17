@@ -925,6 +925,66 @@ try {
         Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
+    if ($cases.keyboard_custom_controls.status -eq 'PASS') {
+      try {
+        Click-InstalledControl $restoredHwnd 'Settings' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) 12 | Out-Null
+        # SettingsView in this exact app source offers System and Dark only.
+        # A Light label is not invented or accepted as evidence.
+        foreach ($choice in @('System', 'Dark')) {
+          Choose-InstalledOption $restoredHwnd 'Theme' $choice
+          Wait-InstalledComboValue $restoredHwnd 'Theme' $choice
+          $saveTheme = Find-ExactInstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+          if ($saveTheme.Current.IsEnabled) {
+            Click-InstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+          }
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir ("windows-theme-" + $choice.ToLowerInvariant() + ".png"))
+        }
+        # Certify saved theme state across a SECOND genuine installed process
+        # shutdown/relaunch. A visual selector click in one process is not enough.
+        if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
+          throw 'Cannot activate installed WebView2 window for theme persistence restart'
+        }
+        Start-Sleep -Milliseconds 250
+        [System.Windows.Forms.SendKeys]::SendWait('%{F4}')
+        if (-not $proc.WaitForExit(12000)) {
+          throw 'Installed Windows app did not close with Alt+F4 during theme persistence check'
+        }
+        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $themeProbe = $null
+        $themeDeadline = [DateTime]::UtcNow.AddSeconds(45)
+        do {
+          $proc.Refresh()
+          if ($proc.HasExited) { throw 'Installed app exited during theme persistence relaunch' }
+          if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
+            $themeProbe = Find-InstalledDocumentAndStudio $proc
+            if ($themeProbe.document -and $themeProbe.studio) { break }
+          }
+          Start-Sleep -Milliseconds 550
+        } while ([DateTime]::UtcNow -lt $themeDeadline)
+        if (-not $themeProbe -or -not $themeProbe.document -or -not $themeProbe.studio) {
+          throw 'Relaunched WebView2 failed native document/Studio gate for theme persistence'
+        }
+        $themeHwnd = [IntPtr]$themeProbe.hwnd
+        Click-InstalledControl $themeHwnd 'Settings' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-theme-dark-reopened.png')
+        $cases.theme_mode_control = @{
+          status='PASS'
+          reason='Real installed WebView2 Settings System/Dark selection and Save, Alt+F4/relaunch, Dark still selected; screenshots require separate visual review'
+        }
+      } catch {
+        $cases.theme_mode_control = @{
+          status='FAIL'
+          reason="Windows native Settings theme and persistence: $($_.Exception.Message)"
+        }
+        if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-theme_mode_control.png')
+          Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+        }
+      }
+    }
   }
 } catch {
   $message = $_.Exception.Message
