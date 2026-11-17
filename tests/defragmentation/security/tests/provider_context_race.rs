@@ -499,7 +499,7 @@ fn concurrent_single_use_dispatch_has_only_one_pre_send_cas_winner() {
                     // fail-closed variants reproducible without logging keys,
                     // prompts, response bodies or user data.
                     assert!(
-                        matches!(result, Err(ConsentError::AlreadyUsed)),
+                        matches!(&result, Err(ConsentError::AlreadyUsed)),
                         "losing concurrent claim returned {:?}; sends={}, reservations={}, dispatch_CAS={}, receipts={}",
                         result.as_ref().err(),
                         provider.0.load(Ordering::SeqCst),
