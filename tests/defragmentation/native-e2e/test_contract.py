@@ -550,6 +550,57 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertFalse(details["coredumpctl_available"])
         self.assertFalse(details["gdb_available"])
 
+    def test_linux_graphical_quit_sigsegv_records_real_process_exit(self):
+        import json
+        import inspect
+
+        class FakeProc:
+            pid = 4321
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -11
+                return self.returncode
+
+        def fake_xdotool(*arguments, **_kwargs):
+            if arguments[1] == "search":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
+            if arguments[1] == "getwindowname":
+                return SimpleNamespace(stdout="Scriptotar\n", returncode=0)
+            return SimpleNamespace(stdout="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = object.__new__(native.Session)
+            session.proc = FakeProc()
+            session.root = Path(tmp)
+            with mock.patch.object(native, "command", side_effect=fake_xdotool), \
+                 mock.patch.object(native, "native_crash_context",
+                                   return_value={"pid": 4321}):
+                with self.assertRaisesRegex(
+                        native.NativeFailure, "graphical shutdown crashed"):
+                    session.stop()
+            self.assertIsNone(session.proc)
+            proof = json.loads((Path(tmp) / "process-exit.json").read_text())
+            self.assertEqual(proof["pid"], 4321)
+            self.assertEqual(proof["returncode"], -11)
+            self.assertEqual(proof["signal"], "SIGSEGV")
+            self.assertEqual(
+                proof["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+
+        source = inspect.getsource(native.exercise)
+        self.assertIn("original_error = exc", source)
+        self.assertIn('"original_error"', source)
+        self.assertIn('"restoration_error"', source)
+        self.assertIn('"failed_phase"', source)
+        self.assertIn('root / "arabic-transition.json"', source)
+        main = inspect.getsource(native.main)
+        self.assertIn('"native_arabic_transition_evidence"', main)
+        self.assertIn('args.output / "arabic-transition.json"', main)
+
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
         # Native Arabic accessibility may expose localized project and language
         # names. Read actual EN/ع options in the top bar, close each popup
