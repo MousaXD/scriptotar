@@ -396,12 +396,22 @@ function Wait-InstalledPopupClosed([IntPtr]$hwnd, [string]$name) {
       $matches = $provider.FindAll([System.Windows.Automation.TreeScope]::Subtree, $match)
       $popupVisible = $false
       foreach ($element in $matches) {
-        if ($element.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { continue }
+        $kind = $element.Current.ControlType
+        if ($kind -notin @(
+            [System.Windows.Automation.ControlType]::ListItem,
+            [System.Windows.Automation.ControlType]::Button)) { continue }
         $rect = $element.Current.BoundingRectangle
-        if ($rect.Width -gt 2 -and $rect.Height -gt 2) {
-          $popupVisible = $true
-          break
+        if ($rect.Width -le 2 -or $rect.Height -le 2) { continue }
+        $ancestor = $element
+        for ($depth=0; $depth -lt 12; $depth++) {
+          $ancestor = [System.Windows.Automation.TreeWalker]::ControlViewWalker.GetParent($ancestor)
+          if (-not $ancestor) { break }
+          if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::List) {
+            $popupVisible = $true
+            break
+          }
         }
+        if ($popupVisible) { break }
       }
       if (-not $popupVisible) { return }
     } catch {

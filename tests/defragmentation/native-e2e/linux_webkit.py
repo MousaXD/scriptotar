@@ -473,7 +473,9 @@ class Session:
         self.proc = None
         self.ax = None
 
-    def start(self):
+    def start(self, expected_studio: str = "Studio"):
+        # Locale is persisted by the installed WebView. The Arabic restart
+        # must use the translated accessible rail name, not English Studio.
         env = dict(os.environ, SCRIPTOTAR_DATA_DIR=str(self.root / "data"))
         env["NO_AT_BRIDGE"] = "0"
         env["GTK_A11Y"] = "1"
@@ -492,8 +494,8 @@ class Session:
                 raise NativeFailure(f"Installed executable exited: {self.proc.returncode}")
             try:
                 if self.ax.web_document() and (
-                    self.ax.available("Studio", "button") or
-                    self.ax.available("Studio", "link")
+                    self.ax.available(expected_studio, "button") or
+                    self.ax.available(expected_studio, "link")
                 ):
                     return
             except NativeUnavailable:
@@ -757,17 +759,54 @@ def exercise(args, report: dict, root: Path):
             a = session.ax
             try:
                 a.choose("Interface language", "ع")
-                # The translated sidebar button must truly navigate; merely
-                # changing a global language label is insufficient.
+                # Require actual translated navigation and the semantic
+                # Arabic page heading on the installed WebKit document.
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
                 session.screenshot("arabic-locale")
+
+                # An application restart proves the UI locale is not merely
+                # temporary component state. A real GUI Alt+F4 and new PID are
+                # mandatory; the boot gate itself expects Arabic controls.
+                session.stop()
+                session.start(expected_studio="الاستوديو")
+                a = session.ax
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                if a.available("Studio", "button"):
+                    raise NativeFailure(
+                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
+                    )
+                session.screenshot("arabic-reopened")
             finally:
-                # Don't poison subsequent English accessibility assertions.
-                if a.available("لغة الواجهة", "combo"):
-                    a.choose("لغة الواجهة", "EN")
-            a.heading("Studio")
-            return "Real native Arabic Studio route and restored English UI"
+                # The language control's accessible name may be translated
+                # or remain English. Discover the actual visible name rather
+                # than assuming a label; do not ignore failed restoration.
+                a = session.ax
+                if a is not None:
+                    if a.available("لغة الواجهة", "combo"):
+                        a.choose("لغة الواجهة", "EN")
+                    elif a.available("Interface language", "combo"):
+                        a.choose("Interface language", "EN")
+                    else:
+                        raise NativeFailure(
+                            "Installed language combobox missing when restoring English locale"
+                        )
+            # The installed shell AND the Studio component must restore to
+            # English, not just a topbar EN marker. Mixed-locale content is a
+            # product regression, and this scenario must remain FAIL.
+            a = session.ax
+            a.find("Studio", "button", timeout=8)
+            a.heading("Studio", timeout=12)
+            if a.heading_available("الاستوديو"):
+                raise NativeFailure(
+                    "Arabic Studio heading remains mounted after restoring English"
+                )
+            session.screenshot("english-restored")
+            return (
+                "Real Arabic nav and semantic heading, native graphical relaunch "
+                "with retained Arabic locale, and complete English restoration"
+            )
         if not checked(report, "arabic_locale_control", arabic):
             return
 
