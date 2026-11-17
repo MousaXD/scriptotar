@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import platform
 import re
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -22,6 +23,11 @@ import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
+
+try:
+    import resource  # Unix-only; Windows probe imports shared read-only SQLite helpers.
+except ImportError:
+    resource = None
 
 
 CASES = (
@@ -45,6 +51,43 @@ def sha256(path: Path) -> str:
 
 def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
+
+
+def native_crash_context(pid: int) -> dict:
+    """Read bounded Linux crash metadata after a real installed-process exit.
+
+    Never retries the app, injects a signal, changes SQLite or turns a
+    crashed installed WebView into PASS. A missing coredump is evidence too.
+    """
+    details = {"pid": pid}
+    try:
+        details["core_pattern"] = Path("/proc/sys/kernel/core_pattern").read_text(
+            encoding="utf-8"
+        ).strip()
+    except (OSError, UnicodeError) as exc:
+        details["core_pattern_error"] = type(exc).__name__
+    if resource is not None:
+        try:
+            soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+            details["core_limit_bytes"] = {"soft": soft, "hard": hard}
+        except (OSError, ValueError) as exc:
+            details["core_limit_error"] = type(exc).__name__
+    else:
+        details["core_limit_error"] = "UnavailableOnThisPlatform"
+    coredumpctl = shutil.which("coredumpctl")
+    details["coredumpctl_available"] = bool(coredumpctl)
+    details["gdb_available"] = bool(shutil.which("gdb"))
+    if coredumpctl:
+        try:
+            probe = subprocess.run(
+                [coredumpctl, "--no-pager", "info", str(pid)],
+                capture_output=True, text=True, timeout=12, check=False,
+            )
+            details["coredumpctl_returncode"] = probe.returncode
+            details["coredumpctl_tail"] = (probe.stdout + probe.stderr)[-12000:]
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            details["coredumpctl_error"] = type(exc).__name__
+    return details
 
 
 def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -> str:
@@ -414,35 +457,49 @@ class AxWebKit:
             raise NativeUnavailable(f"Field {name!r} does not expose AT-SPI Text: {exc}") from exc
 
     def global_locale_control(self) -> str:
-        """Find the genuine visible Studio toolbar locale combobox by native role.
+        """Find the real toolbar language selector by its native options.
 
-        AppShell renders the exact accessible label "Interface language" or
-        "لغة الواجهة"; project selector labels also change across locales,
-        so a hardcoded English PROJECT anchor breaks Arabic -> English restore.
-        Require one real PID-owned AT-SPI combo with positive bounds, never
-        infer success from the language badge or a screenshot.
+        Neither PROJECT nor Interface language is guaranteed to retain an
+        English accessible name after switching locale. Inspect only bounded
+        top-bar comboboxes and require both UI options through real AT-SPI.
+        Opening + Escape must not change the selected language or project.
         """
-        names = {"Interface language", "لغة الواجهة"}
-        matches = []
+        candidates = []
         for node in self.nodes():
             try:
                 if "combo" not in node.getRoleName().lower():
                     continue
-                name = (node.name or "").strip()
-                if name not in names:
-                    continue
-                bounds = node.queryComponent().getExtents(
+                label = (node.name or "").strip()
+                rect = node.queryComponent().getExtents(
                     getattr(self.atspi, "DESKTOP_COORDS", 0)
                 )
-                if (bounds.width >= 15 and bounds.height >= 15
-                        and bounds.x >= 0 and bounds.y >= 0):
-                    matches.append(name)
+                # Installed Xvfb/Openbox top bar: content controls occur
+                # substantially below y=190. Never infer from text/DOM.
+                if (label and 30 <= rect.y <= 190
+                        and rect.width >= 20 and rect.height >= 15):
+                    candidates.append(label)
             except Exception:
                 continue
+        observed = []
+        matches = []
+        for label in dict.fromkeys(candidates):
+            try:
+                self.click(label, "combo")
+                has_en = self.available("EN", "list item")
+                has_ar = self.available("ع", "list item")
+                observed.append((label, has_en, has_ar))
+                if has_en and has_ar:
+                    matches.append(label)
+            except (NativeFailure, NativeUnavailable) as exc:
+                observed.append((label, type(exc).__name__))
+            finally:
+                # ESC only closes a native popup; it never selects a value.
+                command("xdotool", "key", "--clearmodifiers", "Escape")
+                time.sleep(0.2)
         if len(matches) != 1:
             raise NativeFailure(
-                f"Expected exactly one visible native Studio toolbar language "
-                f"combobox; observed {matches!r}"
+                "Expected exactly one native top-bar language combo with both "
+                f"EN/ع options, observed {observed!r}"
             )
         return matches[0]
 
@@ -593,6 +650,8 @@ class Session:
                     "signal": signal_name,
                     "startup_expected_studio": expected_studio,
                     "stage": "installed native application startup after launch/relaunch",
+                    "native_crash_context": native_crash_context(self.proc.pid)
+                    if exit_code < 0 else None,
                 }
                 (self.root / "process-exit.json").write_text(
                     json.dumps(crash, indent=2) + "\n", encoding="utf-8"
@@ -649,27 +708,44 @@ class Session:
                     raise NativeFailure(
                         f"No visible Scriptotar window for graphical quit (XIDs={ids})"
                     )
-                # xdotool --sync may hang on a genuine WebKitGTK toplevel
-                # even after Openbox has focused it. Request activation without
-                # synchronization, then independently observe the active X11
-                # window before sending the real Alt+F4. Never send a key to
-                # an unverified different application.
                 target = titled[0]
+                # Nonblocking X11 activation: --sync can hang on a real
+                # WebKitGTK top-level after the Arabic toolbar changes.
+                # Confirm the active native window before dispatching Alt+F4.
                 focus = command("xdotool", "windowactivate", target, check=False)
                 if focus.returncode != 0:
-                    raise NativeFailure(f"Window manager could not request Scriptotar activation {target}")
+                    raise NativeFailure(
+                        f"Window manager could not request Scriptotar activation {target}"
+                    )
                 focused = False
-                until = time.monotonic() + 4
-                while time.monotonic() < until:
+                deadline = time.monotonic() + 4
+                while time.monotonic() < deadline:
                     active = command("xdotool", "getactivewindow", check=False)
                     if active.returncode == 0 and active.stdout.strip() == target:
                         focused = True
                         break
                     time.sleep(0.2)
                 if not focused:
+                    # Openbox/WebKitGTK can leave _NET_ACTIVE_WINDOW unchanged
+                    # after an Arabic toolbar transition. Request real X11
+                    # *keyboard* focus for this exact installed application
+                    # window, then independently observe that X focus moved.
+                    # A focus request alone never licenses sending Alt+F4.
+                    requested = command("xdotool", "windowfocus", target, check=False)
+                    if requested.returncode == 0:
+                        keyboard_deadline = time.monotonic() + 4
+                        while time.monotonic() < keyboard_deadline:
+                            keyboard = command("xdotool", "getwindowfocus", check=False)
+                            if (keyboard.returncode == 0
+                                    and keyboard.stdout.strip() == target):
+                                focused = True
+                                break
+                            time.sleep(0.2)
+                if not focused:
                     raise NativeFailure(
-                        f"Installed Scriptotar window {target} never became the active "
-                        "native X11 window; refusing Alt+F4"
+                        f"Installed Scriptotar window {target} never acquired "
+                        "verified native X11 active-window or keyboard focus; "
+                        "refusing Alt+F4"
                     )
                 key = command("xdotool", "key", "--clearmodifiers", "alt+F4", check=False)
                 if key.returncode != 0:
@@ -678,25 +754,23 @@ class Session:
                     exit_code = proc.wait(timeout=8)
                 except subprocess.TimeoutExpired as exc:
                     raise NativeFailure("Installed app did not quit via graphical Alt+F4") from exc
-                if exit_code != 0:
-                    signal_name = None
-                    if exit_code < 0:
-                        try:
-                            signal_name = signal.Signals(-exit_code).name
-                        except ValueError:
-                            signal_name = f"signal {-exit_code}"
+                if exit_code < 0:
+                    try:
+                        signal_name = signal.Signals(-exit_code).name
+                    except ValueError:
+                        signal_name = f"signal {-exit_code}"
                     crash = {
-                        "pid": proc.pid,
-                        "returncode": exit_code,
+                        "pid": proc.pid, "returncode": exit_code,
                         "signal": signal_name,
                         "stage": "installed native graphical Alt+F4 shutdown",
+                        "native_crash_context": native_crash_context(proc.pid),
                     }
                     (self.root / "process-exit.json").write_text(
                         json.dumps(crash, indent=2) + "\n", encoding="utf-8"
                     )
                     raise NativeFailure(
-                        f"Installed native graphical shutdown exited abnormally: "
-                        f"{exit_code}" + (f" ({signal_name})" if signal_name else "")
+                        f"Installed native graphical shutdown crashed: "
+                        f"{exit_code} ({signal_name})"
                     )
         except Exception:
             # A failed graphical quit stays FAIL, but must not leak a process
@@ -907,39 +981,98 @@ def exercise(args, report: dict, root: Path):
             return
 
         def arabic():
+            # Separate a genuine Arabic/relaunch failure from an attempted
+            # English restoration. The latter must never mask the former.
             a = session.ax
-            # Preserve the first native failure. A finally-block which tries to
-            # restore English after a failed graphical restart can overwrite a
-            # genuine Alt+F4, AT-SPI, or SIGSEGV diagnosis with a generic
-            # "process unavailable" error. This isolated run fails closed on
-            # the first exception; no subsequent scenario depends on cleanup.
-            a.choose(a.global_locale_control(), "ع")
-            a.click("الاستوديو", "button")
-            a.heading("الاستوديو")
-            session.screenshot("arabic-locale")
+            phase = "select_arabic"
+            original_error = None
+            restore_error = None
+            trace = {
+                "steps": [], "source_sha": args.source_sha,
+                "run_url": args.run_url,
+            }
 
-            # Real Alt+F4 quit and a new installed PID are mandatory.
-            session.stop()
-            session.start(expected_studio="الاستوديو")
+            def reached(step):
+                nonlocal phase
+                phase = step
+                trace["steps"].append(step)
+
+            try:
+                a.choose(a.global_locale_control(), "ع")
+                reached("arabic_selected")
+                # Observe actual native translated navigation and page heading.
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                session.screenshot("arabic-locale")
+                reached("arabic_studio_observed")
+
+                # Real Alt+F4, then a new PID; do not write settings or
+                # replace graphical actions with a process restart shortcut.
+                old_pid = session.proc.pid
+                reached("graphical_arabic_quit")
+                session.stop()
+                reached("arabic_process_exited_graphically")
+                session.start(expected_studio="الاستوديو")
+                trace["old_pid"] = old_pid
+                trace["new_pid"] = session.proc.pid
+                if old_pid == session.proc.pid:
+                    raise NativeFailure(
+                        "Arabic restart reused the previous installed PID"
+                    )
+                reached("arabic_relaunch_native_document")
+                a = session.ax
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                if a.available("Studio", "button"):
+                    raise NativeFailure(
+                        "Arabic persisted-relaunch shell still exposes English Studio navigation"
+                    )
+                session.screenshot("arabic-reopened")
+                reached("arabic_heading_after_relaunch")
+            except Exception as exc:
+                original_error = exc
+                trace["original_error"] = f"{type(exc).__name__}: {exc}"
+                trace["failed_phase"] = phase
+                raise
+            finally:
+                proc = session.proc
+                trace["restore_attempted_with_live_process"] = (
+                    proc is not None and proc.poll() is None
+                )
+                trace["process_pid_at_restore"] = proc.pid if proc else None
+                trace["process_returncode_at_restore"] = (
+                    proc.returncode if proc else None
+                )
+                if proc is None or proc.poll() is not None:
+                    restore_error = NativeFailure(
+                        "Installed process unavailable during graphical English restoration"
+                    )
+                else:
+                    try:
+                        a = session.ax
+                        a.choose(a.global_locale_control(), "EN")
+                        trace["english_gui_selector_restored"] = True
+                    except Exception as exc:
+                        restore_error = exc
+                if restore_error:
+                    trace["restoration_error"] = (
+                        f"{type(restore_error).__name__}: {restore_error}"
+                    )
+                trace["last_completed_phase"] = phase
+                (root / "arabic-transition.json").write_text(
+                    json.dumps(trace, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+                # Preserve the original (often a stopped process or SIGSEGV)
+                # rather than replacing it with a less useful cleanup error.
+                if original_error is None and restore_error is not None:
+                    raise NativeFailure(
+                        "Arabic GUI restoration failed: " + str(restore_error)
+                    ) from restore_error
+
+            # Both native shell and page heading must return to English.
+            reached("verify_english_studio")
             a = session.ax
-            a.click("الاستوديو", "button")
-            a.heading("الاستوديو")
-            if a.available("Studio", "button"):
-                raise NativeFailure(
-                    "Arabic persisted-relaunch shell still exposes English Studio navigation"
-                )
-            session.screenshot("arabic-reopened")
-
-            # Restore English only after all Arabic native assertions pass.
-            # Any failed restoration is still an acceptance FAIL, and never
-            # obscures an earlier native application crash.
-            if a is None or session.proc is None or session.proc.poll() is not None:
-                exit_code = None if session.proc is None else session.proc.returncode
-                raise NativeFailure(
-                    f"Installed process unavailable during graphical English restoration "
-                    f"(exit={exit_code})"
-                )
-            a.choose(a.global_locale_control(), "EN")
             a.find("Studio", "button", timeout=8)
             a.heading("Studio", timeout=12)
             if a.heading_available("الاستوديو"):
@@ -947,6 +1080,12 @@ def exercise(args, report: dict, root: Path):
                     "Arabic Studio heading remains mounted after restoring English"
                 )
             session.screenshot("english-restored")
+            trace["english_heading_restored"] = True
+            trace["last_completed_phase"] = "english_heading_verified"
+            (root / "arabic-transition.json").write_text(
+                json.dumps(trace, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
             return (
                 "Real Arabic nav and semantic heading, native graphical relaunch "
                 "with retained Arabic locale, and complete English restoration"
@@ -1075,6 +1214,11 @@ def main() -> int:
                 (root / "process-exit.json").read_bytes()
             )
             report["native_process_exit_evidence"] = "process-exit.json"
+        if (root / "arabic-transition.json").exists():
+            (args.output / "arabic-transition.json").write_bytes(
+                (root / "arabic-transition.json").read_bytes()
+            )
+            report["native_arabic_transition_evidence"] = "arabic-transition.json"
         if (root / "a11y-diagnostics.json").exists():
             (args.output / "a11y-diagnostics.json").write_bytes(
                 (root / "a11y-diagnostics.json").read_bytes()

@@ -610,25 +610,24 @@ function Read-InstalledEdit([IntPtr]$hwnd, [string]$name) {
   return [string]$field.GetCurrentPattern(
     [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
 }
-function Wait-InstalledDraftBody([IntPtr]$hwnd, [string]$expected, [int]$timeoutSec=15) {
-  # Project switching/reopening a Study loads the draft asynchronously.
-  # Observe real installed UIA ValuePattern until exact body renders;
-  # never set a field, mutate SQLite, or pass on a transient blank.
-  $deadline = [DateTime]::UtcNow.AddSeconds($timeoutSec)
-  $lastLength = -1
+function Wait-InstalledEditExact([IntPtr]$hwnd, [string]$name, [string]$expected, [int]$seconds=12) {
+  # The installed WebView2 Studio can expose an existing Study and Scripts 2
+  # while the editor's asynchronous value is still settling after A->B->A.
+  # Require exact native UIA ValuePattern text, never a screenshot or DB-only
+  # substitute. Keep a bounded wait and fail closed with content length only.
+  $deadline = [DateTime]::UtcNow.AddSeconds($seconds)
+  $actual = ''
   $lastError = ''
   do {
     try {
-      $current = Read-InstalledEdit $hwnd 'Script draft'
-      $lastLength = $current.Length
-      $lastError = ''
-      if ($current -ceq $expected) { return }
+      $actual = Read-InstalledEdit $hwnd $name
+      if ($actual -ceq $expected) { return }
     } catch {
       $lastError = $_.Exception.Message
     }
     Start-Sleep -Milliseconds 350
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw "Installed Study draft failed exact UIA restore after ${timeoutSec}s (expected length=$($expected.Length), last visible length=$lastLength, last UIA error=$lastError)"
+  throw "Installed UIA edit '$name' did not restore exact expected content (expected length $($expected.Length), actual length $($actual.Length), last UIA error: $lastError)"
 }
 function Verify-InstalledCanonicalDb([string]$kind, [string]$first, [string]$second, [string]$third, [string]$fourth='') {
   # Windows CI has Python 3.12, and this imports only standard library code.
@@ -1043,7 +1042,12 @@ try {
         Choose-InstalledProject $restoredHwnd $first
         Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
-        Wait-InstalledDraftBody $restoredHwnd $draftBody 15
+        # Integration #44176696340 showed the exact Study title and Scripts 2
+        # visibly restored, but an immediate single UIA read was not the
+        # expected body. Navigate the real editor link, then poll the actual
+        # installed ValuePattern for bounded asynchronous hydration.
+        Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+        Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody
         $isolationProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         $cases.wrong_project_ui_isolation = @{
           status='PASS'
@@ -1060,6 +1064,50 @@ try {
     }
     if ($cases.wrong_project_ui_isolation.status -eq 'PASS') {
       try {
+        # Actual artifact #14378911964 shows the real candidate ComboBox at
+        # y=80, partially hidden behind the fixed Studio toolbar (bottom=111),
+        # after the wrong-project isolation navigation. Clicking its UIA
+        # rectangle center would hit the toolbar, not the candidate menu.
+        # Scroll the genuine installed WebView2 Document upward via its native
+        # UI Automation ScrollPattern, then require the entire ComboBox below
+        # the fixed toolbar before any pointer action. No injected DOM/JS.
+        $candidateReady = $false
+        for ($attempt=0; $attempt -lt 5; $attempt++) {
+          $frame = [System.Windows.Automation.AutomationElement]::FromHandle($restoredHwnd)
+          if (-not $frame) { throw 'Installed native WebView2 HWND missing while locating candidate' }
+          $document = $frame.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree,
+            [System.Windows.Automation.PropertyCondition]::new(
+              [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+              [System.Windows.Automation.ControlType]::Document))
+          if (-not $document) { throw 'Installed WebView2 document unavailable during candidate navigation' }
+          $candidate = $frame.FindFirst(
+            [System.Windows.Automation.TreeScope]::Subtree,
+            [System.Windows.Automation.AndCondition]::new(
+              [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::NameProperty, 'Script candidates'),
+              [System.Windows.Automation.PropertyCondition]::new(
+                [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+                [System.Windows.Automation.ControlType]::ComboBox)))
+          if (-not $candidate) { throw 'Installed Script candidates ComboBox absent after project restoration' }
+          $rect = $candidate.Current.BoundingRectangle
+          $viewport = $frame.Current.BoundingRectangle
+          if ($candidate.Current.IsEnabled -and $rect.Width -gt 3 -and
+              $rect.Height -gt 3 -and $rect.Y -ge ($viewport.Y + 90) -and
+              $rect.Bottom -le ($viewport.Bottom - 5)) {
+            $candidateReady = $true
+            break
+          }
+          $scroll = $document.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+          if (-not $scroll) { throw 'Installed document has no native UIA ScrollPattern to reveal Script candidates' }
+          $scroll.Scroll(
+            [System.Windows.Automation.ScrollAmount]::NoAmount,
+            [System.Windows.Automation.ScrollAmount]::SmallDecrement)
+          Start-Sleep -Milliseconds 350
+        }
+        if (-not $candidateReady) {
+          throw 'Native Script candidates ComboBox remained obscured by fixed toolbar after bounded UIA scroll'
+        }
         # Actually open the Svelte custom listbox and send a native Escape
         # keystroke to the installed foreground WebView2 window.
         Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle

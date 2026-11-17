@@ -141,6 +141,8 @@ jobs:
           path: |
             native-evidence/linux/result.json
             native-evidence/linux/a11y-diagnostics.json
+            native-evidence/linux/process-exit.json
+            native-evidence/linux/arabic-transition.json
             native-evidence/linux/desktop.log
             native-evidence/linux/openbox.log
             native-evidence/linux/SHA256SUMS.txt

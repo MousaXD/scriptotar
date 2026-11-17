@@ -302,117 +302,10 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('a.heading("الاستوديو")', source)
         self.assertIn('a.heading("Studio", timeout=12)', source)
         self.assertIn('"Arabic Studio heading remains mounted after restoring English"', source)
-        # The current EN/AR restore discovers the real translated native
-        # toolbar control; an English-only fixed label is unsafe after RTL.
         self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
+        self.assertNotIn('a.choose("Interface language", "EN")', source)
         self.assertIn('session.screenshot("arabic-reopened")', source)
-
-    def test_linux_arabic_relaunch_keeps_original_native_failure(self):
-        import inspect
-        source = inspect.getsource(native.exercise)
-        arabic = source.split("        def arabic():", 1)[1].split(
-            '        if not checked(report, "arabic_locale_control", arabic):', 1
-        )[0]
-        # A cleanup-only finally must not override a failed installed Alt+F4,
-        # a startup SIGSEGV, or an Arabic AT-SPI assertion.
-        self.assertNotIn("finally:", arabic)
-        self.assertIn("session.stop()", arabic)
-        self.assertIn('session.start(expected_studio="الاستوديو")', arabic)
-        self.assertIn('a.choose(a.global_locale_control(), "EN")', arabic)
-        self.assertLess(
-            arabic.index('session.start(expected_studio="الاستوديو")'),
-            arabic.index('a.choose(a.global_locale_control(), "EN")'),
-        )
-
-    def test_windows_reopened_study_waits_for_exact_native_draft_body(self):
-        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
-        self.assertIn(
-            "Wait-InstalledDraftBody $restoredHwnd $draftBody 15", script
-        )
-        helper = script.split("function Wait-InstalledDraftBody(", 1)[1].split(
-            "function Verify-InstalledCanonicalDb(", 1
-        )[0]
-        self.assertIn("Read-InstalledEdit $hwnd 'Script draft'", helper)
-        self.assertIn("$current -ceq $expected", helper)
-        self.assertIn("UtcNow.AddSeconds($timeoutSec)", helper)
-        self.assertIn("throw \"Installed Study draft failed exact UIA restore", helper)
-        self.assertNotIn("SetValue", helper)
-        self.assertNotIn("UPDATE ", helper)
-        self.assertNotIn("INSERT ", helper)
-        self.assertIn(
-            "Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle",
-            script,
-        )
-
-    def test_linux_graphical_quit_requires_real_focus_without_blocking_sync(self):
-        # The hosted Openbox/WebKit X11 activation may deadlock under --sync.
-        # A nonblocking request is not enough: actual focus must be observed
-        # before dispatching the genuine native Alt+F4.
-        session = native.Session(SimpleNamespace(), Path("/unused"))
-        proc = mock.Mock(pid=1234)
-        proc.poll.return_value = None
-        proc.wait.return_value = 0
-        session.proc = proc
-        seen = []
-
-        def installed_command(*argv, **_kwargs):
-            seen.append(argv)
-            if argv[1] == "search":
-                return SimpleNamespace(returncode=0, stdout="4196049\n")
-            if argv[1] == "getwindowname":
-                return SimpleNamespace(returncode=0, stdout="Scriptotar")
-            if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="4196049\n")
-            return SimpleNamespace(returncode=0, stdout="")
-
-        with mock.patch.object(native, "command", side_effect=installed_command):
-            session.stop()
-        self.assertIsNone(session.proc)
-        self.assertIn(("xdotool", "windowactivate", "4196049"), seen)
-        self.assertIn(("xdotool", "getactivewindow"), seen)
-        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
-        self.assertFalse(any("--sync" in call for call in seen))
-        self.assertLess(
-            seen.index(("xdotool", "getactivewindow")),
-            seen.index(("xdotool", "key", "--clearmodifiers", "alt+F4")),
-        )
-        proc.terminate.assert_not_called()
-
-        # A SIGSEGV on real Alt+F4 must never be accepted as normal quit.
-        # Preserve the signal for independent installed-run diagnostics.
-        with tempfile.TemporaryDirectory() as temp_dir:
-            session.root = Path(temp_dir)
-            session.proc = proc
-            proc.wait.return_value = -11
-            with mock.patch.object(native, "command", side_effect=installed_command):
-                with self.assertRaisesRegex(
-                    native.NativeFailure, "graphical shutdown exited abnormally"
-                ):
-                    session.stop()
-            import json
-            crash = json.loads((Path(temp_dir) / "process-exit.json").read_text())
-            self.assertEqual(crash["pid"], 1234)
-            self.assertEqual(crash["returncode"], -11)
-            self.assertEqual(crash["signal"], "SIGSEGV")
-            self.assertEqual(
-                crash["stage"], "installed native graphical Alt+F4 shutdown"
-            )
-        proc.wait.return_value = 0
-
-        session.proc = proc
-        seen.clear()
-        def unfocused_command(*argv, **_kwargs):
-            if argv[1] == "getactivewindow":
-                return SimpleNamespace(returncode=0, stdout="999999\n")
-            return installed_command(*argv, **_kwargs)
-        with (
-            mock.patch.object(native, "command", side_effect=unfocused_command),
-            mock.patch.object(native.time, "monotonic", side_effect=[0, 5]),
-        ):
-            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
-                session.stop()
-        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
-        proc.terminate.assert_called()
 
     def test_webkit_option_rejects_zero_size_bounds(self):
         ax = object.__new__(native.AxWebKit)
@@ -632,49 +525,266 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('ax.read_text("Script draft") != body', source)
         self.assertIn("wait_for_canonical_saved_draft(", source)
 
+    def test_linux_sigsegv_forensics_keep_native_failure_and_no_db_writes(self):
+        # An exit code -11 must preserve core/journal availability and remain
+        # FAIL; coredumpctl is optional on GitHub's actual hosted runner.
+        import inspect
+        probe = inspect.getsource(native.native_crash_context)
+        start = inspect.getsource(native.Session.start)
+        main = inspect.getsource(native.main)
+        self.assertIn("resource.RLIMIT_CORE", probe)
+        module = (Path(__file__).resolve().parent / "linux_webkit.py").read_text()
+        self.assertIn("except ImportError:", module)
+        self.assertIn("resource = None", module)
+        self.assertIn('shutil.which("coredumpctl")', probe)
+        self.assertIn('["coredumpctl_tail"]', probe)
+        self.assertIn('signal.Signals(-exit_code)', start)
+        self.assertIn('native_crash_context(self.proc.pid)', start)
+        self.assertIn('raise NativeFailure(', start)
+        self.assertIn('root / "process-exit.json"', main)
+        self.assertNotIn("UPDATE creative_drafts", probe)
+        self.assertNotIn("INSERT INTO", probe)
+        with mock.patch.object(native.shutil, "which", return_value=None):
+            details = native.native_crash_context(1234)
+        self.assertEqual(details["pid"], 1234)
+        self.assertFalse(details["coredumpctl_available"])
+        self.assertFalse(details["gdb_available"])
+
+    def test_linux_graphical_quit_sigsegv_records_real_process_exit(self):
+        import json
+        import inspect
+
+        class FakeProc:
+            pid = 4321
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -11
+                return self.returncode
+
+        def fake_xdotool(*arguments, **_kwargs):
+            if arguments[1] == "search":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
+            if arguments[1] == "getwindowname":
+                return SimpleNamespace(stdout="Scriptotar\n", returncode=0)
+            if arguments[1] == "getactivewindow":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
+            return SimpleNamespace(stdout="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = object.__new__(native.Session)
+            session.proc = FakeProc()
+            session.root = Path(tmp)
+            with mock.patch.object(native, "command", side_effect=fake_xdotool), \
+                 mock.patch.object(native, "native_crash_context",
+                                   return_value={"pid": 4321}):
+                with self.assertRaisesRegex(
+                        native.NativeFailure, "graphical shutdown crashed"):
+                    session.stop()
+            self.assertIsNone(session.proc)
+            proof = json.loads((Path(tmp) / "process-exit.json").read_text())
+            self.assertEqual(proof["pid"], 4321)
+            self.assertEqual(proof["returncode"], -11)
+            self.assertEqual(proof["signal"], "SIGSEGV")
+            self.assertEqual(
+                proof["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+
+        source = inspect.getsource(native.exercise)
+        self.assertIn("original_error = exc", source)
+        self.assertIn('"original_error"', source)
+        self.assertIn('"restoration_error"', source)
+        self.assertIn('"failed_phase"', source)
+        self.assertIn('root / "arabic-transition.json"', source)
+        main = inspect.getsource(native.main)
+        self.assertIn('"native_arabic_transition_evidence"', main)
+        self.assertIn('args.output / "arabic-transition.json"', main)
+
+    def test_linux_graphical_quit_requires_real_focus_without_blocking_sync(self):
+        # The hosted Openbox/WebKit X11 activation may deadlock under --sync.
+        # A nonblocking request is not enough: actual focus must be observed
+        # before dispatching the genuine native Alt+F4.
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.proc = proc
+        seen = []
+
+        def installed_command(*argv, **_kwargs):
+            seen.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=installed_command):
+            session.stop()
+        self.assertIsNone(session.proc)
+        self.assertIn(("xdotool", "windowactivate", "4196049"), seen)
+        self.assertIn(("xdotool", "getactivewindow"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+        self.assertLess(
+            seen.index(("xdotool", "getactivewindow")),
+            seen.index(("xdotool", "key", "--clearmodifiers", "alt+F4")),
+        )
+        proc.terminate.assert_not_called()
+
+        # A SIGSEGV on real Alt+F4 must never be accepted as normal quit.
+        # Preserve the signal for independent installed-run diagnostics.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session.root = Path(temp_dir)
+            session.proc = proc
+            proc.wait.return_value = -11
+            with mock.patch.object(native, "command", side_effect=installed_command):
+                with self.assertRaisesRegex(
+                    native.NativeFailure, r"Installed native graphical shutdown crashed: -11 \(SIGSEGV\)"
+                ):
+                    session.stop()
+            import json
+            crash = json.loads((Path(temp_dir) / "process-exit.json").read_text())
+            self.assertEqual(crash["pid"], 1234)
+            self.assertEqual(crash["returncode"], -11)
+            self.assertEqual(crash["signal"], "SIGSEGV")
+            self.assertEqual(
+                crash["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+        proc.wait.return_value = 0
+
+        session.proc = proc
+        seen.clear()
+        keyboard_requested = [False]
+        def keyboard_focused_command(*argv, **_kwargs):
+            if argv[1] in ("getactivewindow", "windowfocus", "getwindowfocus"):
+                seen.append(argv)
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\n")
+            if argv[1] == "windowfocus":
+                keyboard_requested[0] = True
+                return SimpleNamespace(returncode=0, stdout="")
+            if argv[1] == "getwindowfocus":
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="4196049\n" if keyboard_requested[0] else "999999\n",
+                )
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=keyboard_focused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 7]),
+        ):
+            session.stop()
+        self.assertIn(("xdotool", "windowfocus", "4196049"), seen)
+        self.assertIn(("xdotool", "getwindowfocus"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+
+        session.proc = proc
+        seen.clear()
+        def unfocused_command(*argv, **_kwargs):
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\n")
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=unfocused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 11]),
+        ):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
+                session.stop()
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        proc.terminate.assert_called()
+
     def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
-        # AppShell provides translated exact labels; native AT-SPI must find
-        # either without relying on a separately localized project selector.
+        # Native Arabic accessibility may expose localized project and language
+        # names. Read actual EN/ع options in the top bar, close each popup
+        # with Escape and never select project/script language by position alone.
         class Rect:
-            def __init__(self, y, width=90, height=40):
-                self.x, self.y, self.width, self.height = 20, y, width, height
+            def __init__(self, y):
+                self.y, self.width, self.height = y, 90, 40
 
         class Node:
-            def __init__(self, name, role, y, width=90, height=40):
-                self.name, self.role = name, role
-                self.rect = Rect(y, width, height)
+            def __init__(self, name, role, y):
+                self.name, self.role, self.y = name, role, y
 
             def getRoleName(self):
                 return self.role
 
             def queryComponent(self):
-                return SimpleNamespace(getExtents=lambda _coord: self.rect)
+                return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
 
         project = Node("المشروع", "combo box", 77)
-        locale_ar = Node("لغة الواجهة", "combo box", 81)
-        locale_en = Node("Interface language", "combo box", 81)
+        locale = Node("لغة الواجهة", "combo box", 81)
         script_language = Node("لغة النص", "combo box", 620)
         ax = object.__new__(native.AxWebKit)
         ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
-        ax.nodes = lambda: iter([project, locale_ar, script_language])
-        self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
-        ax.nodes = lambda: iter([Node("Project", "combo box", 77), locale_en])
-        self.assertEqual(ax.global_locale_control(), "Interface language")
-        ax.nodes = lambda: iter([project, script_language])
-        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
-            ax.global_locale_control()
-        ax.nodes = lambda: iter([project, locale_ar, locale_en])
-        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
-            ax.global_locale_control()
-        ax.nodes = lambda: iter([project, Node("لغة الواجهة", "combo box", 81, width=0)])
-        with self.assertRaisesRegex(native.NativeFailure, "exactly one"):
-            ax.global_locale_control()
+        ax.nodes = lambda: iter([project, locale, script_language])
+        active = [None]
+        clicked = []
+        def native_click(label, role):
+            self.assertEqual(role, "combo")
+            active[0] = label
+            clicked.append(label)
+        ax.click = native_click
+        ax.available = lambda name, role: (
+            role == "list item" and name in ("EN", "ع")
+            and active[0] == "لغة الواجهة"
+        )
+        with mock.patch.object(native, "command") as commands, \
+             mock.patch.object(native.time, "sleep"):
+            self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+            self.assertEqual(clicked, ["المشروع", "لغة الواجهة"])
+            self.assertEqual(commands.call_count, 2)
+            ax.nodes = lambda: iter([project, script_language])
+            with self.assertRaisesRegex(native.NativeFailure, "both EN/ع"):
+                ax.global_locale_control()
+
         import inspect
+        helper = inspect.getsource(native.AxWebKit.global_locale_control)
         source = inspect.getsource(native.exercise)
+        self.assertNotIn('self.find("PROJECT"', helper)
+        self.assertIn('self.available("EN", "list item")', helper)
+        self.assertIn('self.available("ع", "list item")', helper)
         self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
         self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
         self.assertLess(source.index('def arabic():'), source.index('def theme():'))
         self.assertNotIn('a.choose("Interface language"', source)
+
+    def test_windows_project_switch_requires_eventual_exact_native_draft(self):
+        # Real installed integration #44176696340 already showed Project A,
+        # the correct Study and Scripts 2, but immediate ValuePattern content
+        # mismatched. Poll actual UIA text, not a DB-only/screenshot shortcut.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        waiter = source.split("function Wait-InstalledEditExact(", 1)[1].split(
+            "function Verify-InstalledCanonicalDb(", 1
+        )[0]
+        isolation = source.split(
+            "if ($cases.quit_relaunch_persistence.status -eq 'PASS')", 1
+        )[1].split(
+            "if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", 1
+        )[0]
+        self.assertIn("Read-InstalledEdit $hwnd $name", waiter)
+        self.assertIn("$actual -ceq $expected", waiter)
+        self.assertIn("Start-Sleep -Milliseconds 350", waiter)
+        self.assertIn("throw \"Installed UIA edit", waiter)
+        self.assertNotIn("SetValue(", waiter)
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle",
+            isolation,
+        )
 
     def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
         # Actual restored screenshot at run #44150090373 was scrolled above
