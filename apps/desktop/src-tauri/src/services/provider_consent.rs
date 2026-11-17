@@ -728,9 +728,7 @@ mod tests {
 
     #[test]
     fn production_openai_wire_can_only_prepare_bounded_sealed_bytes_without_egress() {
-        use scriptotar_ai::{
-            provider_openai_wire::OpenAiResponsesWire, AiRequest, ProviderKind,
-        };
+        use scriptotar_ai::{provider_openai_wire::OpenAiResponsesWire, AiRequest, ProviderKind};
 
         let transport = OpenAiResponsesWire::new().unwrap();
         let guarded: &dyn CertifiedWireTransport = &transport;
