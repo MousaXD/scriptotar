@@ -120,6 +120,32 @@ def verify_canonical_saved_draft(
     return f"Canonical SQLite stores exact GUI draft body and immutable version {saved_version}"
 
 
+def wait_for_canonical_saved_draft(
+    data_dir: Path, project_name: str, study_name: str, expected_body: str,
+    timeout_seconds: float = 20.0,
+) -> str:
+    """Wait for the real installed GUI save; never mutate canonical SQLite.
+
+    WebKitGTK's Save changes action may still show "Saving..." after the
+    accessibility click returns. An empty version-1 row is not evidence of a
+    failed save until the in-flight action has been allowed to finish.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "No canonical draft checked yet"
+    while time.monotonic() < deadline:
+        try:
+            return verify_canonical_saved_draft(
+                data_dir, project_name, study_name, expected_body
+            )
+        except NativeFailure as exc:
+            last_error = str(exc)
+        time.sleep(0.35)
+    raise NativeFailure(
+        f"Installed GUI draft did not finish its canonical immutable save "
+        f"within {timeout_seconds:g}s; last SQLite evidence: {last_error}"
+    )
+
+
 
 def verify_canonical_reopened_candidates(
     data_dir: Path, project_name: str, study_name: str,
@@ -711,8 +737,12 @@ def exercise(args, report: dict, root: Path):
 
         def drafts():
             ax.type_into("Script draft", body)
+            if ax.read_text("Script draft") != body:
+                raise NativeFailure(
+                    "Installed WebKitGTK editor did not contain exact native typed body"
+                )
             ax.click("Save changes", "button")
-            verify_canonical_saved_draft(root / "data", name_a, study, body)
+            wait_for_canonical_saved_draft(root / "data", name_a, study, body)
             ax.click("Duplicate current script", "button")
             ax.find("Rename script", "button")
             ax.click("Rename script", "button")

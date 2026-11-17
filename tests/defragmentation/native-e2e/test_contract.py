@@ -491,6 +491,53 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(native.NativeFailure):
             ax.heading("NativeQA-abc-A", timeout=0.01)
 
+    def test_webkit_waits_for_canonical_immutable_save_without_writing_db(self):
+        # Native screenshot in run #44150090373 showed the actual draft text
+        # while Save changes was still "Saving..."; version 1 was still empty.
+        # A bounded read-only wait must retry and never downgrade DB proof.
+        expected = "Canonical SQLite stores exact GUI draft body and immutable version 2"
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=[native.NativeFailure("revision=1, persisted_len=0"), expected],
+        ) as verify, mock.patch.object(native.time, "sleep") as sleeper:
+            actual = native.wait_for_canonical_saved_draft(
+                Path("/unused"), "QA-A", "QA-Study", "Exact typed body"
+            )
+        self.assertEqual(actual, expected)
+        self.assertEqual(verify.call_count, 2)
+        sleeper.assert_called_once()
+
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=native.NativeFailure("revision=1, persisted_len=0"),
+        ), mock.patch.object(native.time, "monotonic",
+                             side_effect=[0.0, 0.0, 2.0]), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(native.NativeFailure, "persisted_len=0"):
+                native.wait_for_canonical_saved_draft(
+                    Path("/unused"), "QA-A", "QA-Study", "Exact typed body",
+                    timeout_seconds=1.0,
+                )
+        import inspect
+        source = inspect.getsource(native.run)
+        self.assertIn('ax.read_text("Script draft") != body', source)
+        self.assertIn("wait_for_canonical_saved_draft(", source)
+
+    def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
+        # Actual restored screenshot at run #44150090373 was scrolled above
+        # the script candidate editor. A real UIA ScrollItemPattern is allowed,
+        # but no invisible-element click, direct DOM injection or skipped proof.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = source.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1)[0]
+        self.assertIn("[System.Windows.Automation.ScrollItemPattern]::Pattern", click)
+        self.assertIn("$scrollItem.ScrollIntoView()", click)
+        self.assertIn("$owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)", click)
+        self.assertIn("-not $candidate.Current.IsOffscreen", click)
+        self.assertIn("No visible, enabled, bounded UIA control", click)
+        self.assertNotIn("SetValue(", click)
+        self.assertNotIn("return # skip", click)
+
     def test_document_alone_cannot_satisfy_startup(self):
         # Exercise Session.start's actual fail-closed gate, not an obsolete
         # English source-code literal. This is a mocked *contract* test only;
