@@ -848,6 +848,83 @@ try {
         }
       }
     }
+    # The following two scenarios are downstream of a fully validated
+    # production Study, saved draft and genuine graphical restart. A failure
+    # above cannot be compensated by success here.
+    if ($cases.quit_relaunch_persistence.status -eq 'PASS') {
+      try {
+        # Real project switch and UIA screenshot, not a forged IPC call.
+        Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledDashboard $restoredHwnd $first
+        Choose-InstalledProject $restoredHwnd $second
+        Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $restoredHwnd 'Study name' ([System.Windows.Automation.ControlType]::Edit) 12 | Out-Null
+        $match = [System.Windows.Automation.PropertyCondition]::new(
+          [System.Windows.Automation.AutomationElement]::NameProperty, $studyTitle)
+        $rootB = [System.Windows.Automation.AutomationElement]::FromHandle($restoredHwnd)
+        $foreign = $rootB.FindAll([System.Windows.Automation.TreeScope]::Subtree, $match)
+        foreach ($element in $foreign) {
+          $rect = $element.Current.BoundingRectangle
+          if ($rect.Width -gt 2 -and $rect.Height -gt 2 -and
+              -not $element.Current.IsOffscreen) {
+            throw "Foreign Study '$studyTitle' visible within project B's native Studio"
+          }
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'wrong-project-ui-isolation.png')
+        # Return to A through real GUI and independently verify its saved data
+        # still exists. Seeing an empty page alone is not isolation proof.
+        Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledDashboard $restoredHwnd $second
+        Choose-InstalledProject $restoredHwnd $first
+        Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Project A Study disappeared after native wrong-project UI isolation probe'
+        }
+        $isolationProof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
+        $cases.wrong_project_ui_isolation = @{
+          status='PASS'
+          reason="Installed UIA project A->B, no visible foreign Study in B, returned to A with original Study and $isolationProof"
+        }
+      } catch {
+        $cases.wrong_project_ui_isolation = @{
+          status='FAIL'
+          reason="Windows installed wrong-project UI isolation: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-wrong_project_ui_isolation.png')
+        Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
+    if ($cases.wrong_project_ui_isolation.status -eq 'PASS') {
+      try {
+        # Actually open the Svelte custom listbox and send a native Escape
+        # keystroke to the installed foreground WebView2 window.
+        Choose-InstalledOption $restoredHwnd 'Script candidates' $copyTitle
+        Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle
+        Click-InstalledControl $restoredHwnd 'Script candidates' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+        if (-not (Test-InstalledPopupOptionVisible $restoredHwnd $studyTitle)) {
+          throw 'Installed WebView2 candidate list did not open with original option'
+        }
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Wait-InstalledPopupClosed $restoredHwnd $studyTitle
+        Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle
+        if ((Read-InstalledEdit $restoredHwnd 'Script draft') -ne $draftBody) {
+          throw 'Escape changed the actual installed selected candidate draft body'
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'keyboard-custom-controls.png')
+        $cases.keyboard_custom_controls = @{
+          status='PASS'
+          reason='Installed WebView2 custom option opened, native Escape closed popup, selected candidate and body remained unchanged'
+        }
+      } catch {
+        $cases.keyboard_custom_controls = @{
+          status='FAIL'
+          reason="Windows installed custom keyboard control: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-keyboard_custom_controls.png')
+        Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
   }
 } catch {
   $message = $_.Exception.Message
