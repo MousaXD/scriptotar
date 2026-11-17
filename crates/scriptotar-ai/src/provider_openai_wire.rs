@@ -91,13 +91,20 @@ impl OpenAiResponsesWire {
 
     /// Strictly decode one provider-issued response. Never invent a request ID,
     /// derive token usage from text, or accept an interrupted/incomplete result.
-    fn decode_response(value: &[u8], elapsed_ms: u64) -> Result<MeteredReply, ConsentError> {
+    fn decode_response(value: &[u8], config: &ProviderConfig, elapsed_ms: u64) -> Result<MeteredReply, ConsentError> {
         if value.len() > MAX_RESPONSE_BYTES as usize {
             return Err(ConsentError::UncertainEffect);
         }
         let body: Value =
             serde_json::from_slice(value).map_err(|_| ConsentError::UncertainEffect)?;
         if body.get("status").and_then(Value::as_str) != Some("completed") {
+            return Err(ConsentError::UncertainEffect);
+        }
+        // A correct token meter is insufficient if a different model actually
+        // answered. Charge/reconciliation may use different model pricing.
+        if !Self::model_allowed(config)
+            || body.get("model").and_then(Value::as_str) != Some(config.model.as_str())
+        {
             return Err(ConsentError::UncertainEffect);
         }
         let id = body
@@ -292,7 +299,7 @@ impl OpenAiResponsesWire {
         if elapsed > remaining {
             return Err(ConsentError::Expired);
         }
-        let reply = Self::decode_response(&bytes, elapsed)?;
+        let reply = Self::decode_response(&bytes, config, elapsed)?;
         let proof = Self::receipt_proof(config, &reply).ok_or(ConsentError::UncertainEffect)?;
         let mut authenticated = self
             .authenticated
@@ -329,6 +336,7 @@ mod tests {
     fn completed() -> Vec<u8> {
         serde_json::to_vec(&json!({
             "id": "resp_1234",
+            "model": "test-model",
             "status": "completed",
             "output": [{
                 "type": "message",
@@ -396,7 +404,7 @@ mod tests {
 
     #[test]
     fn response_requires_provider_id_completed_status_and_exact_metering() {
-        let reply = OpenAiResponsesWire::decode_response(&completed(), 35).unwrap();
+        let reply = OpenAiResponsesWire::decode_response(&completed(), &model(), 35).unwrap();
         assert_eq!(reply.provider_request_id, "resp_1234");
         assert_eq!(reply.text, "Original script");
         assert_eq!(reply.usage.input_tokens, 11);
@@ -406,29 +414,32 @@ mod tests {
         for bad in [
             ("status", json!("incomplete")),
             ("id", Value::Null),
+            ("model", Value::Null),
+            ("model", json!("wrong-priced-model")),
             ("usage", Value::Null),
             ("output", json!([])),
         ] {
             let before = value[bad.0].clone();
             value[bad.0] = bad.1;
             assert!(
-                OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35)
+                OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35)
                     .is_err()
             );
             value[bad.0] = before;
         }
         value["usage"]["total_tokens"] = json!(16);
         assert!(
-            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err()
+            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35).is_err()
         );
         value["usage"]["total_tokens"] = json!(17);
         value["output"][0]["type"] = json!("function_call");
         assert!(
-            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), 35).is_err()
+            OpenAiResponsesWire::decode_response(&serde_json::to_vec(&value).unwrap(), &model(), 35).is_err()
         );
-        assert!(OpenAiResponsesWire::decode_response(&completed(), MAX_ELAPSED_MS + 1).is_err());
+        assert!(OpenAiResponsesWire::decode_response(&completed(), &model(), MAX_ELAPSED_MS + 1).is_err());
         assert!(OpenAiResponsesWire::decode_response(
             &vec![b'x'; MAX_RESPONSE_BYTES as usize + 1],
+            &model(),
             1
         )
         .is_err());
@@ -437,7 +448,7 @@ mod tests {
     #[test]
     fn receipt_proof_is_single_use_and_binds_exact_response_fields() {
         let provider = OpenAiResponsesWire::new().unwrap();
-        let reply = OpenAiResponsesWire::decode_response(&completed(), 4).unwrap();
+        let reply = OpenAiResponsesWire::decode_response(&completed(), &model(), 4).unwrap();
         let original = OpenAiResponsesWire::receipt_proof(&model(), &reply).unwrap();
         provider.authenticated.lock().unwrap().insert(original);
         let altered = MeteredReply {
