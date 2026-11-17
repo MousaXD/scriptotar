@@ -1024,15 +1024,24 @@ mod tests {
             commit()
         });
         let worker = JobOrchestrator::start_with_notifier_and_content_gate(
-            store.clone(), config, Arc::new(|_| {}), guarded_persist,
+            store.clone(),
+            config,
+            Arc::new(|_| {}),
+            guarded_persist,
         );
         let job = enqueue_file(&store, &worker, &temp.path().join("normal.mp4"));
         attempted_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(store.get_job(job.id).unwrap().state, JobState::Processing);
-        assert!(store.list_transcripts(Some(job.project_id)).unwrap().is_empty());
+        assert!(store
+            .list_transcripts(Some(job.project_id))
+            .unwrap()
+            .is_empty());
         drop(held_by_dispatch);
         assert_eq!(wait_for_terminal(&store, job.id).state, JobState::Completed);
-        assert_eq!(store.list_transcripts(Some(job.project_id)).unwrap().len(), 1);
+        assert_eq!(
+            store.list_transcripts(Some(job.project_id)).unwrap().len(),
+            1
+        );
     }
 
     #[test]
