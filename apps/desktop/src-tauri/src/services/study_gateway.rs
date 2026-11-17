@@ -421,6 +421,34 @@ impl AppServices {
         super::study_writing::prepare_three(run_id, current)
     }
 
+    /// Production service orchestration seam: canonical CurrentStudy +
+    /// four independently authorized provider steps + atomic v11 persistence.
+    /// The caller-supplied boundary MUST enforce signed approval, exact
+    /// provider bytes and the v10 durable effect claim for EACH step.
+    /// A caller cannot substitute browser-provided source data: all fresh
+    /// dispatches recheck plan/context against this AppServices instance.
+    /// This is deliberately private until a certified provider, pricing
+    /// and complete four-step consent lifecycle are registered in Tauri.
+    #[allow(dead_code)]
+    pub(super) fn generate_three_writing_with_boundary<B, P, S>(
+        &self,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+    }
+
     /// Private production v11 sink: three new drafts, immutable versions,
     /// canonical source links and one receipt in a single SQLite transaction.
     /// This MUST NOT be surfaced as a client-controlled direct-save command.
