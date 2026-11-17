@@ -562,3 +562,46 @@ fn independent_v12_openai_response_id_cannot_cross_request_receipt_roles() {
     assert_eq!(losing.status, ExternalEffectStatus::Dispatched);
     assert!(losing.receipt_id.is_none());
 }
+
+
+#[test]
+fn independent_v12_provider_identity_claims_are_append_only_under_raw_sqlite() {
+    let (dir, db, project, study, run) = setup();
+    let key = identity(&run, project, study);
+    let fresh = reserve(&db, &run, project, study);
+    db.mark_external_dispatched(key, fresh.revision, 1).unwrap();
+    db.record_external_ack(key, 1, "resp_claimed_forever_101").unwrap();
+
+    // The v12 registry is the only surviving proof after a legitimate
+    // verified-not-executed retry has cleared the current v10 ACK field.
+    // It must not be possible to modify/delete a tombstone using ordinary
+    // application-level SQLite statements.
+    let connection = rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+    let original: String = connection.query_row(
+        "SELECT idempotency_key FROM agent_external_provider_identities
+         WHERE provider='openai' AND identity='resp_claimed_forever_101'",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(original, key.idempotency_key);
+    let erase = connection.execute(
+        "DELETE FROM agent_external_provider_identities
+         WHERE provider='openai' AND identity='resp_claimed_forever_101'",
+        [],
+    );
+    assert!(erase.is_err(), "a provider identity tombstone can be deleted");
+    let steal = connection.execute(
+        "UPDATE agent_external_provider_identities
+         SET idempotency_key='forged_other_effect'
+         WHERE provider='openai' AND identity='resp_claimed_forever_101'",
+        [],
+    );
+    assert!(steal.is_err(), "a provider identity tombstone can be reassigned");
+    let after: String = connection.query_row(
+        "SELECT idempotency_key FROM agent_external_provider_identities
+         WHERE provider='openai' AND identity='resp_claimed_forever_101'",
+        [],
+        |r| r.get(0),
+    ).unwrap();
+    assert_eq!(after, original, "failed tampering must preserve the original owner");
+}
