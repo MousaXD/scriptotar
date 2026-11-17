@@ -27,7 +27,8 @@ impl CertifiedWireTransport for HostOpenAiResponsesWire {
         request: &AiRequest,
         max_output_tokens: u64,
     ) -> Result<Vec<u8>, ConsentError> {
-        self.0.serialize_exact_request(config, request, max_output_tokens)
+        self.0
+            .serialize_exact_request(config, request, max_output_tokens)
     }
 
     fn supports_hard_bounds(&self, config: &ProviderConfig) -> bool {
@@ -42,7 +43,8 @@ impl CertifiedWireTransport for HostOpenAiResponsesWire {
         max_output_tokens: u64,
         deadline_ms: u64,
     ) -> Result<MeteredReply, ConsentError> {
-        self.0.send_prepared_once(config, api_key, exact_bytes, max_output_tokens, deadline_ms)
+        self.0
+            .send_prepared_once(config, api_key, exact_bytes, max_output_tokens, deadline_ms)
     }
 
     fn authenticates_receipt(&self, config: &ProviderConfig, reply: &MeteredReply) -> bool {
