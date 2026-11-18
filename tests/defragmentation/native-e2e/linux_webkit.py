@@ -2046,12 +2046,22 @@ def exercise(args, report: dict, root: Path):
                             break
                     time.sleep(0.35)
                 after = canonical_records_snapshot(root / "data")
+                # Verify the attempted foreign read did not populate Project B's
+                # empty unsaved editor or disclose Project A's Study heading.
+                # The exact private strings are used only for native comparison,
+                # never published as evidence or included in error messages.
+                foreign_title_absent = not active.available(study)
+                foreign_draft_absent = active.read_text("Script draft") == ""
+                protected = foreign_title_absent and foreign_draft_absent
                 report["foreign_study_reference_probe"] = {
-                    "status": "PARTIAL" if found_error and before == after else "FAIL",
+                    "status": ("PARTIAL" if found_error and before == after and protected
+                               else "FAIL"),
                     "source": "installed UI A reference while B active",
                     "canonical_before": before,
                     "canonical_after": after,
                     "unchanged": before == after,
+                    "foreign_study_title_absent": foreign_title_absent,
+                    "foreign_draft_text_absent": foreign_draft_absent,
                     "visible_new_native_denial": found_error,
                     "preexisting_exact_denial": expected_error in before_alerts,
                     "postclick_exact_denial": bool(fresh_native_alerts),
@@ -2062,10 +2072,11 @@ def exercise(args, report: dict, root: Path):
                                 else "host request identity and forged mutating IPC"),
                 }
                 session.screenshot("foreign-study-reference-denial")
-                if after != before or not found_error:
+                if after != before or not found_error or not protected:
                     raise NativeFailure(
                         "Installed foreign reference lacked fresh host-correlated "
-                        "native denial or rewrote canonical data; forged mutation "
+                        "native denial, rewrote canonical data or disclosed "
+                        "foreign Study content in Project B; forged mutation "
                         "authorization remains NOT TESTED"
                     )
                 active.choose("PROJECT", name_a)
