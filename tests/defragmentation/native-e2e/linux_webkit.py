@@ -310,7 +310,8 @@ def native_host_log_offset(log_path: Path) -> int:
 def native_host_denial_ids(log_path: Path, offset: int, code: str) -> list[str]:
     """Read only new Rust stderr, never trust a test-supplied 'host replied' bit."""
     if not isinstance(offset, int) or offset < 0 or code not in (
-        "INVALID_STUDY_ANGLES", "INVALID_MEDIA_URL"
+        "INVALID_STUDY_ANGLES", "INVALID_MEDIA_URL",
+        "FOREIGN_STUDY_REFERENCE",
     ):
         return []
     if not log_path.is_file() or log_path.stat().st_size < offset:
@@ -1999,6 +2000,8 @@ def exercise(args, report: dict, root: Path):
                     active, ("study reference", "active project")
                 )
                 before = canonical_records_snapshot(root / "data")
+                host_log = root / "desktop.log"
+                host_offset = native_host_log_offset(host_log)
                 # Persist authentic pre-dispatch evidence before any possible
                 # UIA/AT-SPI, screenshot or post-click failure can throw.
                 report["foreign_study_reference_probe"] = {
@@ -2010,14 +2013,28 @@ def exercise(args, report: dict, root: Path):
                 }
                 active.click("Open reference", "button")
                 found_error = False
+                reference_host_proof = None
+                fresh_native_alerts = []
                 deadline = time.monotonic() + 12
                 while time.monotonic() < deadline:
                     alerts = native_named_alerts(
                         active, ("study reference", "active project")
                     )
-                    if expected_error in alerts and expected_error not in before_alerts:
-                        found_error = True
-                        break
+                    # The named native alert must have the exact generic
+                    # production denial + a genuine fresh 128-bit host ID.
+                    # A plain error, stale name or arbitrary image map cannot
+                    # stand in for authenticated Tauri authorization.
+                    fresh_native_alerts = [label for label in alerts
+                        if label not in before_alerts and
+                        production_native_error_id(label, expected_error) is not None]
+                    if len(fresh_native_alerts) == 1:
+                        reference_host_proof = observed_host_denial(
+                            host_log, host_offset, "FOREIGN_STUDY_REFERENCE",
+                            fresh_native_alerts, expected_error,
+                        )
+                        if reference_host_proof is not None:
+                            found_error = True
+                            break
                     time.sleep(0.35)
                 after = canonical_records_snapshot(root / "data")
                 report["foreign_study_reference_probe"] = {
@@ -2028,7 +2045,8 @@ def exercise(args, report: dict, root: Path):
                     "unchanged": before == after,
                     "visible_new_native_denial": found_error,
                     "preexisting_exact_denial": expected_error in before_alerts,
-                    "postclick_exact_denial": expected_error in alerts,
+                    "postclick_exact_denial": bool(fresh_native_alerts),
+                    "host_request_correlation": reference_host_proof,
                     "native_input_readback": "exact AT-SPI Text verified",
                     "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
                     "missing": "forged mutating IPC + authoritative backend request ID",
@@ -2036,8 +2054,9 @@ def exercise(args, report: dict, root: Path):
                 session.screenshot("foreign-study-reference-denial")
                 if after != before or not found_error:
                     raise NativeFailure(
-                        "Installed foreign reference lacked fresh native denial or "
-                        "rewrote canonical data; no IPC authorization PASS possible"
+                        "Installed foreign reference lacked fresh host-correlated "
+                        "native denial or rewrote canonical data; forged mutation "
+                        "authorization remains NOT TESTED"
                     )
                 active.choose("PROJECT", name_a)
                 active.heading("Studio")
