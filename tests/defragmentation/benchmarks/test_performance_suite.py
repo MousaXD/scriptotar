@@ -241,6 +241,8 @@ class NativeUiTraceContractTests(unittest.TestCase):
             "evidence_kind": UI_KIND,
             "source_sha": SHA, "package_sha256": HASH,
             "executable_sha256": HASH, "fixture_sha256": "b" * 64,
+            "host_evidence_sha256": "c" * 64,
+            "native_qa_run_url": "https://github.com/MousaXD/scriptotar/actions/runs/44333456021",
             "session_id": f"session-native-{index:02}",
             "trial_id": f"trial-native-{index:02}",
             "native_provider": "linux-webkitgtk-atspi",
@@ -286,6 +288,8 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 ([{**baseline, "action": ["study_open"]}], "Study count"),
                 ([{**baseline, "native_provider": ["fake"]}], "provider"),
                 ([{**baseline, "fixture_sha256": "fake"}], "fixture"),
+                ([{**baseline, "host_evidence_sha256": "fake"}], "host metadata"),
+                ([{**baseline, "native_qa_run_url": "https://untrusted.example"}], "native QA"),
             )
             for events, message in bad_cases:
                 with self.subTest(expected=message):
@@ -302,6 +306,21 @@ class NativeUiTraceContractTests(unittest.TestCase):
             trace.write_text("\n".join(json.dumps(e) for e in events))
             report = summarize_ui_trace(trace, SHA, HASH, HASH)
             self.assertEqual(len(report["groups"]), 2)
+            self.assertTrue(all(x["status"] == "INSUFFICIENT_TRIALS" for x in report["groups"]))
+
+
+
+    def test_distinct_host_runtime_evidence_or_qa_run_cannot_be_pooled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external.jsonl"
+            events = [self.event(i) for i in range(10)]
+            for event in events[5:]:
+                event["host_evidence_sha256"] = "d" * 64
+                event["native_qa_run_url"] = "https://github.com/MousaXD/scriptotar/actions/runs/44313593525"
+            trace.write_text("\n".join(json.dumps(e) for e in events))
+            report = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(len(report["groups"]), 2)
+            self.assertTrue(all(x["p95_ms_nearest_rank"] is None for x in report["groups"]))
             self.assertTrue(all(x["status"] == "INSUFFICIENT_TRIALS" for x in report["groups"]))
 
 
