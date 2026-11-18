@@ -510,6 +510,31 @@ class NativeEvidenceContractTests(unittest.TestCase):
             source.index("if (-not $deniedError)"),
         )
 
+    def test_linux_optional_foreign_reference_denial_runs_after_core_installed_proof(self):
+        # Genuine source f34ae367/ec807a54: WebKitGTK shows an error but
+        # exposes no nameable AT-SPI denial. Keep the failure veto; gather
+        # unrelated core native observations BEFORE running this preflight.
+        # This is a source ordering assertion, NOT installed GUI PASS.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        for core_case in (
+            'if not checked(report, "keyboard_custom_controls", keyboard):',
+            'if not checked(report, "arabic_locale_control", arabic):',
+            'if not checked(report, "theme_mode_control", theme):',
+            'if not checked(report, "error_recovery", error_recovery):',
+        ):
+            self.assertLess(source.index(core_case),
+                            source.index('if ax.available("Open Study reference"):'))
+        self.assertIn('        ax = session.ax\\n', source)
+        self.assertIn(
+            'status(report, "wrong_project_ipc_denial", "FAIL"', source
+        )
+        self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"',
+                      source)
+        self.assertIn('if after != before or not found_error:', source)
+        self.assertIn('read-only foreign Study', source)
+        self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
+
     def test_installed_foreign_reference_is_partial_not_forged_write_ipc_pass(self):
         # Future PR #138 offers genuine installed-host read-only get_study via
         # a normal UI. Never confuse that with forged mutating IPC denial.

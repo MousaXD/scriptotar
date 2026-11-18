@@ -1418,93 +1418,6 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "wrong_project_ui_isolation", isolation):
             return
 
-        # Candidate PR #138 introduces a normal, production-authorized
-        # read-only foreign-reference path. It is NOT a write IPC forgery:
-        # record a separate optional observation, preserving the mandatory
-        # wrong_project_ipc_denial NOT TESTED until all required commands run.
-        report["foreign_study_reference_probe"] = {
-            "status": "NOT TESTED",
-            "reason": "Open Study reference is not exposed in this installed source",
-        }
-        if ax.available("Open Study reference"):
-            def foreign_study_reference_probe():
-                active = session.ax
-                project_id, study_id, draft_id = canonical_study_reference_ids(
-                    root / "data", name_a, study
-                )
-                reference = (
-                    f"scriptotar://study/{project_id}/{study_id}?draft={draft_id}"
-                )
-                # We are in A following isolation(); activate B for a genuine
-                # foreign A reference attempted through the installed UI.
-                active.choose("PROJECT", name_b)
-                active.heading("Studio")
-                active.click("Open Study reference")
-                active.type_into("Paste Study reference", reference)
-                if active.read_text("Paste Study reference") != reference:
-                    raise NativeFailure(
-                        "Foreign Study reference native input did not match canonical IDs"
-                    )
-                expected_error = (
-                    "This Study reference cannot be opened in the active project."
-                )
-                before_alerts = native_named_alerts(
-                    active, ("study reference", "active project")
-                )
-                before = canonical_records_snapshot(root / "data")
-                active.click("Open reference", "button")
-                found_error = False
-                deadline = time.monotonic() + 12
-                while time.monotonic() < deadline:
-                    alerts = native_named_alerts(
-                        active, ("study reference", "active project")
-                    )
-                    if expected_error in alerts and expected_error not in before_alerts:
-                        found_error = True
-                        break
-                    time.sleep(0.35)
-                after = canonical_records_snapshot(root / "data")
-                report["foreign_study_reference_probe"] = {
-                    "status": "PARTIAL" if found_error and before == after else "FAIL",
-                    "source": "installed UI A reference while B active",
-                    "canonical_before": before,
-                    "canonical_after": after,
-                    "unchanged": before == after,
-                    "visible_new_native_denial": found_error,
-                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
-                    "missing": "forged mutating IPC + authoritative backend request ID",
-                }
-                session.screenshot("foreign-study-reference-denial")
-                if after != before or not found_error:
-                    raise NativeFailure(
-                        "Installed foreign reference lacked fresh native denial or "
-                        "rewrote canonical data; no IPC authorization PASS possible"
-                    )
-                active.choose("PROJECT", name_a)
-                active.heading("Studio")
-                active.choose("Open study", study)
-                verify_canonical_reopened_candidates(
-                    root / "data", name_a, study, body, tag + "-copy"
-                )
-                # Restore Project A so subsequent native keyboard/locale
-                # tests continue with the original real Study.
-                return "Partial real installed foreign Study read denial; write IPC not tested"
-            try:
-                detail = foreign_study_reference_probe()
-                report["foreign_study_reference_probe"]["detail"] = detail
-            except (NativeFailure, NativeUnavailable, Exception) as exc:
-                report["foreign_study_reference_probe"] = {
-                    "status": "FAIL",
-                    "reason": f"{type(exc).__name__}: {exc}",
-                }
-                # This is a genuine native probe failure, never silently PASS.
-                status(report, "wrong_project_ipc_denial", "FAIL",
-                       f"Installed foreign-reference preflight failed: {exc}")
-                return
-        status(report, "wrong_project_ipc_denial", "NOT TESTED",
-               "Read-only foreign Study navigation is not forged mutating "
-               "Tauri IPC; exact write-denial and backend-ID evidence absent")
-
         def keyboard():
             # A project switch unmounts its previous Study editor; reopen
             # the real Study before asserting the candidate combobox exists.
@@ -2036,6 +1949,95 @@ def exercise(args, report: dict, root: Path):
                "AT-SPI labels alone cannot certify document direction, mixed-text order or visual RTL")
         status(report, "light_dark_visual", "NOT TESTED",
                "Native visual appearance requires independent screenshot inspection; app offers dark/system")
+
+        # This optional, read-only foreign Study reference is deliberately
+        # exercised LAST. A real AT-SPI/production accessibility failure still
+        # FAILS the total installed run, but cannot hide independent native
+        # keyboard, locale, theme and error-recovery evidence. Never promote a
+        # read denial into the required forged mutating Tauri IPC PASS.
+        ax = session.ax
+        report["foreign_study_reference_probe"] = {
+            "status": "NOT TESTED",
+            "reason": "Open Study reference is not exposed in this installed source",
+        }
+        if ax.available("Open Study reference"):
+            def foreign_study_reference_probe():
+                active = session.ax
+                project_id, study_id, draft_id = canonical_study_reference_ids(
+                    root / "data", name_a, study
+                )
+                reference = (
+                    f"scriptotar://study/{project_id}/{study_id}?draft={draft_id}"
+                )
+                # We are in A following isolation(); activate B for a genuine
+                # foreign A reference attempted through the installed UI.
+                active.choose("PROJECT", name_b)
+                active.heading("Studio")
+                active.click("Open Study reference")
+                active.type_into("Paste Study reference", reference)
+                if active.read_text("Paste Study reference") != reference:
+                    raise NativeFailure(
+                        "Foreign Study reference native input did not match canonical IDs"
+                    )
+                expected_error = (
+                    "This Study reference cannot be opened in the active project."
+                )
+                before_alerts = native_named_alerts(
+                    active, ("study reference", "active project")
+                )
+                before = canonical_records_snapshot(root / "data")
+                active.click("Open reference", "button")
+                found_error = False
+                deadline = time.monotonic() + 12
+                while time.monotonic() < deadline:
+                    alerts = native_named_alerts(
+                        active, ("study reference", "active project")
+                    )
+                    if expected_error in alerts and expected_error not in before_alerts:
+                        found_error = True
+                        break
+                    time.sleep(0.35)
+                after = canonical_records_snapshot(root / "data")
+                report["foreign_study_reference_probe"] = {
+                    "status": "PARTIAL" if found_error and before == after else "FAIL",
+                    "source": "installed UI A reference while B active",
+                    "canonical_before": before,
+                    "canonical_after": after,
+                    "unchanged": before == after,
+                    "visible_new_native_denial": found_error,
+                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+                    "missing": "forged mutating IPC + authoritative backend request ID",
+                }
+                session.screenshot("foreign-study-reference-denial")
+                if after != before or not found_error:
+                    raise NativeFailure(
+                        "Installed foreign reference lacked fresh native denial or "
+                        "rewrote canonical data; no IPC authorization PASS possible"
+                    )
+                active.choose("PROJECT", name_a)
+                active.heading("Studio")
+                active.choose("Open study", study)
+                verify_canonical_reopened_candidates(
+                    root / "data", name_a, study, body, tag + "-copy"
+                )
+                # Restore Project A so subsequent native keyboard/locale
+                # tests continue with the original real Study.
+                return "Partial real installed foreign Study read denial; write IPC not tested"
+            try:
+                detail = foreign_study_reference_probe()
+                report["foreign_study_reference_probe"]["detail"] = detail
+            except (NativeFailure, NativeUnavailable, Exception) as exc:
+                report["foreign_study_reference_probe"] = {
+                    "status": "FAIL",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+                # This is a genuine native probe failure, never silently PASS.
+                status(report, "wrong_project_ipc_denial", "FAIL",
+                       f"Installed foreign-reference preflight failed: {exc}")
+                return
+        status(report, "wrong_project_ipc_denial", "NOT TESTED",
+               "Read-only foreign Study navigation is not forged mutating "
+               "Tauri IPC; exact write-denial and backend-ID evidence absent")
     finally:
         # Preserve the first genuine *interaction* failure while the installed
         # app is still on the exact failing screen. A boot screenshot alone
