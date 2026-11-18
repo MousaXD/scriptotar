@@ -390,6 +390,7 @@ class StageInstalledFixtureSafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "v12 schema mismatch"):
                 stage_fixture(fixture, manifest, dest, 100, SHA, dest / "proof.json")
             meta["schema_version"] = 12
+            meta["db_sha256"] = "f" * 64
             manifest.write_text(json.dumps(meta))
             with self.assertRaisesRegex(ValueError, "checksum/size"):
                 # Tamper manifest hash even if schema v12 is declared.
