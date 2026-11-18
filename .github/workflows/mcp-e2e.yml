@@ -4,6 +4,7 @@ on:
     branches: [main]
   pull_request:
     paths:
+      - 'tests/defragmentation/security/**'
       - 'crates/scriptotar-mcp/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
