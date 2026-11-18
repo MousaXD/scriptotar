@@ -2037,6 +2037,34 @@ mod tests {
             // leave canonical Study, draft versions and evidence unchanged.
             let before_rejection = services.get_studio_study(project_id, study_id).unwrap();
             let before_evidence = services.list_studio_evidence(project_id, study_id).unwrap();
+            let effects_db = rusqlite::Connection::open(services.store.path()).unwrap();
+            // Read-only validation must never create approvals/runs, ledger
+            // claims, external attempts or canonical three-script receipts.
+            let ledger_snapshot = || -> [i64; 6] {
+                effects_db
+                    .query_row(
+                        "SELECT
+                            (SELECT COUNT(*) FROM agent_runs),
+                            (SELECT COUNT(*) FROM agent_audit_events),
+                            (SELECT COUNT(*) FROM agent_effects),
+                            (SELECT COUNT(*) FROM agent_external_effects),
+                            (SELECT COUNT(*) FROM agent_external_attempt_history),
+                            (SELECT COUNT(*) FROM study_writing_batches)",
+                        [],
+                        |row| {
+                            Ok([
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ])
+                        },
+                    )
+                    .unwrap()
+            };
+            let before_effects = ledger_snapshot();
             let malformed = serde_json::json!({
                 "angles": [{
                     "id": "only-one-angle", "approach": "Invalid",
@@ -2068,6 +2096,7 @@ mod tests {
                     .len(),
                 before_evidence.len()
             );
+            assert_eq!(ledger_snapshot(), before_effects);
             let reviewed = services
                 .interpret_studio_angles(
                     project_id,
