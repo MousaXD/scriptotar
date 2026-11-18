@@ -7,6 +7,7 @@ on:
     paths:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/package.json'
       - 'apps/desktop-ui/package-lock.json'
       - '.github/workflows/agent11-picomatch-evidence.yml'
@@ -160,3 +161,47 @@ jobs:
         run: |
           echo 'EXPERIMENT ONLY: npm package version and lockfile remain advisory-affected.'
           echo 'Do not label this patched, accept an npm audit waiver, or release.'
+
+  upstream-pr274-experiment:
+    # Independent, experimental candidate comparison. No npm lockfile or build pipeline mutation.
+    name: Unmerged upstream PR274 comparison (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Install published original with reproducible lockfile
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Apply pinned PR274 parser experiment to transient node_modules
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch > scripts/experimental/.ci-pr274-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr274-lf.patch)" = 9314177918b9d5b9a2d1e70bade7c2c9bc574bc8
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr274-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr274-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Mandatory bounded original and extended attack corpus
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Experimental Svelte, Vitest and build compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Do not promote advisory-affected graph
+        run: |
+          echo 'Unmerged upstream experimental diff only. Package 4.0.7 and original lockfile remain advisory-affected.'
+          echo 'Original unfiltered npm audit MUST remain failing; do NOT ship this experiment.'
