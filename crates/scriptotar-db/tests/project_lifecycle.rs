@@ -416,7 +416,7 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     settings.active_project_id = Some(project.id);
     store.save_settings(&settings).unwrap();
 
-    // Reconstruct a real v4 shape by removing only the additive v6 objects,
+    // Reconstruct a real v4 shape by removing post-v4 objects,
     // then v5 triggers/ledger. Existing project/job data remains untouched.
     let connection = Connection::open(&path).unwrap();
 
@@ -442,7 +442,19 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     }
     connection
         .execute_batch(
-            "DROP TABLE evidence_reviews;
+            "DROP TRIGGER external_provider_identity_on_insert;
+         DROP TRIGGER external_provider_identity_on_update;
+         DROP INDEX idx_external_provider_request_unique;
+         DROP INDEX idx_external_provider_receipt_unique;
+         DROP TABLE agent_external_provider_identities;
+         DELETE FROM schema_migrations WHERE version=12;
+         DROP TABLE study_writing_revisions;
+         DROP TABLE study_writing_batches;
+         DELETE FROM schema_migrations WHERE version=11;
+         DROP TABLE agent_external_attempt_history;
+         DROP TABLE agent_external_effects;
+         DELETE FROM schema_migrations WHERE version=10;
+         DROP TABLE evidence_reviews;
          DELETE FROM schema_migrations WHERE version=9;
          DROP TABLE agent_effects;
          DELETE FROM schema_migrations WHERE version=8;

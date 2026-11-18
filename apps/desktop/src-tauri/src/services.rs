@@ -1,8 +1,30 @@
 mod agent_inspection;
+// Private-only provider fence: compile in the real desktop host without IPC/egress.
+// The source is included inside a module until Agent 00 normalizes formatting.
+#[allow(dead_code)]
+mod agent_effect_driver {
+    include!("services/agent_effect_driver.rs");
+}
 mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
+// Compiled host consent policy; paid egress stays disabled until shared dispatch fencing.
+#[allow(dead_code)]
+mod provider_consent;
+// Wire-ready transport is private; no reviewed price catalog or public paid IPC yet.
+#[allow(dead_code)]
+mod provider_openai_wire;
 mod study_gateway;
+// Compile the scoped offline research adapter privately before exposing IPC.
+pub(super) mod study_research;
+// Fail-closed, read-only claim verification; no public certification endpoint yet.
+mod study_verification;
+// Compile the original-writing engine and canonical atomic sink privately.
+// Paid provider/egress and public generation IPC remain explicitly disabled.
+#[allow(dead_code)]
+mod study_writing;
+#[allow(dead_code)]
+mod study_writing_persistence;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,9 +39,8 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use scriptotar_ai::{
-    AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind,
-};
+#[cfg(test)]
+use scriptotar_ai::{EndpointPolicy, ProviderConfig, ProviderKind};
 use scriptotar_core::{
     now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository,
     Creator, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, RepositoryError,
@@ -72,6 +93,7 @@ pub struct AppServices {
     store: SqliteStore,
     orchestrator: JobOrchestrator<SqliteStore>,
     active_project: Arc<Mutex<Uuid>>,
+    provider_session: Arc<provider_consent::HostProviderSession>,
     legacy_path: PathBuf,
     research_command: YtDlpCommand,
     _watchlist_refresher: WatchlistRefresher,
@@ -120,14 +142,32 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
-        let orchestrator = JobOrchestrator::start_with_notifier(
+        // Every foreground Studio mutation and in-process research-origin
+        // writer must share this host authorization gate with paid admission.
+        let active_project_gate = Arc::new(Mutex::new(active_project));
+        let transcription_write_guard = Arc::clone(&active_project_gate);
+        let orchestrator = JobOrchestrator::start_with_notifier_and_content_gate(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
             notifier,
+            Arc::new(move |commit| {
+                // The sidecar can run without this lock. Only its final
+                // Source/Media/Transcript transaction must serialize with
+                // Studio source changes and the provider pre-send CAS.
+                let _guard = transcription_write_guard.lock().map_err(|_| {
+                    scriptotar_orchestrator::OrchestratorError::Unavailable(
+                        "host source authorization gate unavailable".into(),
+                    )
+                })?;
+                commit()
+            }),
         );
         let research_command = YtDlpCommand::from_environment();
-        let watchlist_refresher =
-            spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher = spawn_watchlist_refresher(
+            store.clone(),
+            research_command.clone(),
+            Arc::clone(&active_project_gate),
+        );
 
         if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
             eprintln!(
@@ -143,7 +183,8 @@ impl AppServices {
         Ok(Self {
             store,
             orchestrator,
-            active_project: Arc::new(Mutex::new(active_project)),
+            active_project: active_project_gate,
+            provider_session: Arc::new(provider_consent::HostProviderSession::default()),
             legacy_path,
             research_command,
             _watchlist_refresher: watchlist_refresher,
@@ -378,6 +419,13 @@ impl AppServices {
     }
 
     pub fn import_legacy_data(&self) -> RepositoryResult<scriptotar_core::LegacyImportReport> {
+        // Legacy import can change canonical sources, research and Studio
+        // records. Never allow an import to race a scope-locked pre-send CAS.
+        // The import is local SQLite I/O; no network runs under this mutex.
+        let _scope_guard = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
         self.store.import_legacy_database(&self.legacy_path)
     }
 
@@ -432,6 +480,7 @@ impl AppServices {
         let result = scan_and_persist_research(
             &self.store,
             &self.research_command,
+            &self.active_project,
             active_project,
             &canonical_url,
             query.limit,
@@ -568,75 +617,36 @@ impl AppServices {
         Ok(ai_run_detail(&run))
     }
 
+    /// Legacy AI Studio compatibility. Never dispatch a raw BYOK request:
+    /// this path has no per-request scope approval, v10 effect reservation,
+    /// trusted model pricing or authenticated bounded usage receipt. The
+    /// sealed provider adapter remains private until all release gates pass.
     pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
-        let prompt = self.build_ai_prompt(input)?;
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
-        if !input.mode.eq_ignore_ascii_case("byok") {
-            self.store
-                .insert_ai_run(&AiRun {
-                    id: Uuid::new_v4(),
-                    project_id: active_project,
-                    task: input.task.trim().to_owned(),
-                    mode: AiRunMode::CopyPrompt,
-                    provider: None,
-                    model: None,
-                    prompt: prompt.clone(),
-                    result: None,
-                    created_at: now_rfc3339(),
-                })
-                .map_err(|error| error.to_string())?;
-            return Ok(prompt);
+        if input.mode.eq_ignore_ascii_case("byok") {
+            return Err("Direct BYOK execution is disabled until explicit provider approval, trusted pricing and durable usage accounting are certified. Use Copy Prompt instead.".to_owned());
         }
 
-        let api_key = input
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|key| !key.is_empty())
-            .ok_or_else(|| "an API key is required for BYOK mode".to_owned())?;
-        let provider = provider_kind(&input.provider)?;
-        if provider == ProviderKind::Local {
-            return Err("local AI provider execution is not enabled yet".to_owned());
-        }
-        let config = ProviderConfig {
-            provider,
-            model: input.model.trim().to_owned(),
-            base_url: input
-                .base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
-        };
-        EndpointPolicy
-            .endpoint_for(&config)
-            .map_err(|error| error.to_string())?;
-        let provider_client = HttpAiProvider::new(provider).map_err(|error| error.to_string())?;
-        let response = AiService::new(provider_client)
-            .generate(
-                &config,
-                api_key,
-                &AiRequest {
-                    prompt: prompt.clone(),
-                },
-            )
-            .map_err(|error| error.to_string())?;
+        // Preserve the historical prompt-only behavior. Serialize the write
+        // against project switching and final provider scope admission.
+        let prompt = self.build_ai_prompt(input)?;
+        let active_project = self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
         self.store
             .insert_ai_run(&AiRun {
                 id: Uuid::new_v4(),
-                project_id: active_project,
+                project_id: *active_project,
                 task: input.task.trim().to_owned(),
-                mode: AiRunMode::Byok,
-                provider: Some(input.provider.clone()),
-                model: Some(config.model),
-                prompt,
-                result: Some(response.text.clone()),
+                mode: AiRunMode::CopyPrompt,
+                provider: None,
+                model: None,
+                prompt: prompt.clone(),
+                result: None,
                 created_at: now_rfc3339(),
             })
             .map_err(|error| error.to_string())?;
-        Ok(response.text)
+        Ok(prompt)
     }
 
     fn require_active_project(&self, project_id: Uuid) -> RepositoryResult<()> {
@@ -830,9 +840,23 @@ impl AppServices {
     }
 }
 
+/// Every in-process research origin mutation must pass the *same* mutex as
+/// ScopeDispatchGuard, including automatic watchlist and manual scans. Never
+/// hold it while yt-dlp or other network collection is running.
+fn with_research_origin_gate<T>(
+    scope_gate: &Arc<Mutex<Uuid>>,
+    mutation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = scope_gate
+        .lock()
+        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+    mutation()
+}
+
 fn scan_and_persist_research(
     store: &SqliteStore,
     command: &YtDlpCommand,
+    scope_gate: &Arc<Mutex<Uuid>>,
     project_id: Uuid,
     profile_url: &str,
     limit: u16,
@@ -849,30 +873,37 @@ fn scan_and_persist_research(
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
     let canonical_url = validated.as_url().to_string();
-    let creator = store
-        .upsert_creator(&Creator {
-            id: Uuid::new_v4(),
-            project_id,
-            platform: source_platform(&canonical_url, SourceType::Url),
-            profile_url: canonical_url.clone(),
-            display_name: Some(profile_label(validated.as_url())),
-            created_at: now_rfc3339(),
-        })
-        .map_err(|error| error.to_string())?;
+    let creator = with_research_origin_gate(scope_gate, || {
+        store
+            .upsert_creator(&Creator {
+                id: Uuid::new_v4(),
+                project_id,
+                platform: source_platform(&canonical_url, SourceType::Url),
+                profile_url: canonical_url.clone(),
+                display_name: Some(profile_label(validated.as_url())),
+                created_at: now_rfc3339(),
+            })
+            .map_err(|error| error.to_string())
+    })?;
     let provider = YtDlpProvider::new(command.clone())
         .with_cookie_browser(cookie_browser)
         .map_err(|error| error.to_string())?;
     let items = ResearchService::new(provider)
         .scan(project_id, Some(creator.id), &canonical_url, limit)
         .map_err(|error| error.to_string())?;
-    let persisted = store
-        .upsert_research_items(&items)
-        .map_err(|error| error.to_string())?;
-    let scanned_at = now_rfc3339();
-    store
-        .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
-        .map_err(|error| error.to_string())?;
-    Ok(persisted.len())
+    // Run network collection with no lock, then serialize the actual research
+    // origin mutations with Studio edits, consent revocation and the final
+    // pre-send CAS. No SQLite write transaction spans network I/O.
+    with_research_origin_gate(scope_gate, || {
+        let persisted = store
+            .upsert_research_items(&items)
+            .map_err(|error| error.to_string())?;
+        let scanned_at = now_rfc3339();
+        store
+            .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
+            .map_err(|error| error.to_string())?;
+        Ok(persisted.len())
+    })
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
@@ -914,7 +945,11 @@ fn safe_watchlist_error(error: &str) -> String {
     }
 }
 
-fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+fn spawn_watchlist_refresher(
+    store: SqliteStore,
+    command: YtDlpCommand,
+    scope_gate: Arc<Mutex<Uuid>>,
+) -> WatchlistRefresher {
     let (stop, receiver) = mpsc::channel();
     let handle = thread::spawn(move || loop {
         match receiver.recv_timeout(WATCHLIST_TICK) {
@@ -980,6 +1015,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             match scan_and_persist_research(
                 &store,
                 &command,
+                &scope_gate,
                 watchlist.project_id,
                 &watchlist.profile_url,
                 watchlist.limit_count.min(200) as u16,
@@ -1626,17 +1662,6 @@ fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<S
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
-fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
-    match provider {
-        "OpenAI" => Ok(ProviderKind::OpenAi),
-        "Anthropic" => Ok(ProviderKind::Anthropic),
-        "Gemini" => Ok(ProviderKind::Gemini),
-        "OpenAI-compatible" => Ok(ProviderKind::OpenAiCompatible),
-        "Local (coming later)" => Ok(ProviderKind::Local),
-        _ => Err("unsupported AI provider".to_owned()),
-    }
-}
-
 fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
     let value = value.trim();
     if !value.is_empty() {
@@ -1649,6 +1674,58 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
+
+    #[test]
+    fn legacy_import_waits_for_authorization_guard_before_mutating_sources() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let held_by_dispatch = services.active_project.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_services = services.clone();
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            // The fixture has no legacy snapshot. The result itself is not the
+            // assertion: import must not even inspect/write while scope is held.
+            let result = worker_services.import_legacy_data();
+            finished_tx.send(result.is_ok()).unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn background_research_origin_writer_respects_host_authorization_gate() {
+        // The controlled writer performs no network activity; it tests the
+        // shared lock that both creator scans and paid scope guards use.
+        let gate = Arc::new(Mutex::new(Uuid::new_v4()));
+        let held_by_dispatch = gate.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+        let writer_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            with_research_origin_gate(&writer_gate, || {
+                written_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            written_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+    }
 
     fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
@@ -1673,6 +1750,34 @@ mod tests {
 
     fn database_path(temp: &TempDir) -> PathBuf {
         temp.path().join("scriptotar.sqlite3")
+    }
+
+    #[test]
+    fn legacy_byok_host_command_fails_closed_without_receipt_or_network() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let prior = services.store.list_ai_runs(Some(project_id)).unwrap().len();
+
+        // Deliberately supply credentials and a custom endpoint. Neither
+        // may trigger legacy HTTP execution, spending, or a false AI receipt.
+        let mut request = prompt_input("Hook ideas");
+        request.provider = "OpenAI-compatible".to_owned();
+        request.base_url = Some("https://example.com/v1".to_owned());
+        let refusal = services.run_ai(&request).unwrap_err();
+        assert!(refusal.contains("Direct BYOK execution is disabled"));
+        assert!(!refusal.contains("super-secret"));
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            prior
+        );
+
+        request.mode = "copy_prompt".to_owned();
+        let preview = services.run_ai(&request).unwrap();
+        assert!(preview.contains("10 distinct hooks"));
+        let runs = services.store.list_ai_runs(Some(project_id)).unwrap();
+        assert_eq!(runs.len(), prior + 1);
+        assert_eq!(runs.last().unwrap().mode, AiRunMode::CopyPrompt);
     }
 
     #[test]

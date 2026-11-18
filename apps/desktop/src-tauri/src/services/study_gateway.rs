@@ -326,6 +326,85 @@ impl AppServices {
             .collect()
     }
 
+    /// Read-only, active-project-scoped listing of genuine v11 three-script
+    /// commit receipts. This does not reconstruct approval, invoke any
+    /// provider, or expose historical raw source excerpts after revocation.
+    /// Each tuple is rechecked against immutable initial draft versions and
+    /// structured provenance before it reaches the frontend.
+    pub fn list_studio_writing_batches(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> RepositoryResult<Vec<crate::dto::UiStudioWritingBatch>> {
+        use rusqlite::{params, Connection, TransactionBehavior};
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let study = self.store.get_study(project_id, study_id)?;
+        if study.archived_at.is_some() {
+            return Err(RepositoryError::NotFound("active Study".into()));
+        }
+        let storage_failure = || RepositoryError::Storage("writing receipt read failed".into());
+        let corrupt_receipt =
+            || RepositoryError::Storage("writing receipt failed integrity check".into());
+        let mut db = Connection::open(self.store.path()).map_err(|_| storage_failure())?;
+        db.pragma_update(None, "query_only", true)
+            .map_err(|_| storage_failure())?;
+        let snapshot = db
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(|_| storage_failure())?;
+        let mut rows = Vec::new();
+        {
+            let mut statement = snapshot
+                .prepare(
+                    "SELECT run_id,draft_ids_json,committed_at
+                     FROM study_writing_batches
+                     WHERE project_id=?1 AND study_id=?2
+                     ORDER BY committed_at DESC,run_id DESC LIMIT 50",
+                )
+                .map_err(|_| storage_failure())?;
+            let mut cursor = statement
+                .query(params![project_id.to_string(), study_id.to_string()])
+                .map_err(|_| storage_failure())?;
+            while let Some(row) = cursor.next().map_err(|_| storage_failure())? {
+                let run_id: String = row.get(0).map_err(|_| corrupt_receipt())?;
+                let serialized: String = row.get(1).map_err(|_| corrupt_receipt())?;
+                let committed_at: String = row.get(2).map_err(|_| corrupt_receipt())?;
+                let ids: [String; 3] =
+                    serde_json::from_str(&serialized).map_err(|_| corrupt_receipt())?;
+                let distinct = ids.iter().collect::<std::collections::HashSet<_>>();
+                if distinct.len() != 3 || run_id.is_empty() {
+                    return Err(corrupt_receipt());
+                }
+                for id in &ids {
+                    Uuid::parse_str(id).map_err(|_| corrupt_receipt())?;
+                    let valid: i64 = snapshot
+                        .query_row(
+                            "SELECT COUNT(*) FROM creative_drafts d
+                             JOIN draft_versions v
+                               ON v.draft_id=d.id AND v.version=1
+                             JOIN study_writing_revisions sr
+                               ON sr.draft_id=d.id AND sr.version=1
+                             WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                            params![id, project_id.to_string(), study_id.to_string()],
+                            |row| row.get(0),
+                        )
+                        .map_err(|_| corrupt_receipt())?;
+                    if valid != 1 {
+                        return Err(corrupt_receipt());
+                    }
+                }
+                rows.push(crate::dto::UiStudioWritingBatch {
+                    run_id,
+                    project_id: project_id.to_string(),
+                    study_id: study_id.to_string(),
+                    draft_ids: ids,
+                    committed_at,
+                });
+            }
+        }
+        snapshot.commit().map_err(|_| storage_failure())?;
+        Ok(rows)
+    }
+
     pub fn get_studio_study(
         &self,
         project_id: Uuid,
@@ -406,6 +485,66 @@ impl AppServices {
         }
     }
 
+    /// Private production entrypoint: reconstruct canonical request material
+    /// directly from the active Study, never from a browser-supplied context.
+    /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_writing_plan(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        run_id: &str,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let current = CurrentStudy::load(self, project_id, study_id)?;
+        super::study_writing::prepare_three(run_id, current)
+    }
+
+    /// Production service orchestration seam: canonical CurrentStudy +
+    /// four independently authorized provider steps + atomic v11 persistence.
+    /// The caller-supplied boundary MUST enforce signed approval, exact
+    /// provider bytes and the v10 durable effect claim for EACH step.
+    /// A caller cannot substitute browser-provided source data: all fresh
+    /// dispatches recheck plan/context against this AppServices instance.
+    /// This is deliberately private until a certified provider, pricing
+    /// and complete four-step consent lifecycle are registered in Tauri.
+    #[allow(dead_code)]
+    pub(super) fn generate_three_writing_with_boundary<B, P, S>(
+        &self,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+    }
+
+    /// Private production v11 sink: three new drafts, immutable versions,
+    /// canonical source links and one receipt in a single SQLite transaction.
+    /// This MUST NOT be surfaced as a client-controlled direct-save command.
+    /// A future caller must prove consent/effect/receipt identity first.
+    #[allow(dead_code)]
+    pub(super) fn persist_three_writing_candidates(
+        &self,
+        batch: &super::study_writing::GeneratedBatch,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]> {
+        use super::study_writing::AtomicCandidateStore;
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        sink.commit_three(batch)
+    }
+
     /// P1 writing bridge: scoped, bounded, no provider call and no side effects.
     /// Real transcript excerpts are attributed, not fact-checked. User notes
     /// are unverified, and disputed observations never enter the prompt.
@@ -419,7 +558,7 @@ impl AppServices {
     }
 
     /// Caller must hold the project lock throughout validation and any write.
-    fn scoped_writing_input_locked(
+    pub(super) fn scoped_writing_input_locked(
         &self,
         project_id: Uuid,
         study_id: Uuid,
@@ -1015,6 +1154,86 @@ impl AppServices {
     }
 }
 
+/*
+ * Production CurrentStudy loader. This intentionally reuses the same bounded,
+ * Study-scoped writing bridge as Copy Prompt; no untrusted DTO, provider call,
+ * or synthetic source fixture can populate the generation context.
+ *
+ * The active-project mutex excludes project switches while this snapshot is
+ * built. SQLite's batch sink independently reloads this context under its
+ * IMMEDIATE write transaction before committing any of the three drafts.
+ *
+ * NOTE: This is NOT a paid-egress authorization epoch. Source mutation and
+ * transport admission still need Agent 01's host-wide shared guard.
+ */
+impl super::study_writing::CurrentStudy for AppServices {
+    fn load(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+        use super::study_writing::{StudyWritingContext, WritingWorkflowError};
+
+        let _project_guard = self
+            .lock_studio_project(project_id)
+            .map_err(|_| WritingWorkflowError::Denied("project is not active".into()))?;
+        let study = self
+            .store
+            .get_study(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study is not accessible".into()))?;
+        if study.archived_at.is_some() {
+            return Err(WritingWorkflowError::Denied("Study is archived".into()));
+        }
+
+        let canonical_sources = self
+            .store
+            .list_study_sources(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study sources are unavailable".into()))?;
+        let (input, _, _, _, _) = self
+            .scoped_writing_input_locked(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::Denied("Study evidence is unavailable".into()))?;
+
+        // The gateway uses multiple repository reads. Refuse a changing Study
+        // snapshot rather than signing a mixed revision/source selection.
+        let latest = self
+            .store
+            .get_study(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if latest.revision != study.revision || latest.archived_at.is_some() {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let latest_sources = self
+            .store
+            .list_study_sources(project_id, study_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let signature = |rows: &[StudySource]| {
+            rows.iter()
+                .map(|source| {
+                    (
+                        source.id,
+                        source.reference_id,
+                        source.available,
+                        source.fingerprint.clone(),
+                        source.source_revision.clone(),
+                        source.collected_at.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        if signature(&canonical_sources) != signature(&latest_sources) {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+
+        StudyWritingContext::from_scoped_study(
+            project_id,
+            study_id,
+            study.revision,
+            &canonical_sources,
+            input,
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,6 +1249,477 @@ mod tests {
             duration: "40".into(),
             style: "Clear".into(),
         }
+    }
+
+    #[test]
+    fn current_writing_context_uses_real_scoped_sources_and_rejects_revocation() {
+        use super::super::study_writing::{prepare_three, CurrentStudy};
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let conn = rusqlite::Connection::open(services.store.path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        let mut references = Vec::new();
+        for index in 0..3 {
+            let source = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            conn.execute(
+                "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+                 VALUES(?1,?2,NULL,'url',?3,'2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("https://example.org/current-study/{index}"),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO media(id,source_id,local_path,created_at)
+                 VALUES(?1,?2,?3,'2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/tmp/scriptotar-current-study-{index}.mp4"),
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+                 VALUES(?1,?2,?3,'2026-11-16T00:00:00Z','2026-11-16T00:00:00Z')",
+                rusqlite::params![
+                    transcript.to_string(),
+                    media.to_string(),
+                    format!("Distinct attributable source excerpt number {index}"),
+                ],
+            )
+            .unwrap();
+            references.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+
+        let saved = services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(references.clone()),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+
+        let current = CurrentStudy::load(&services, project, study_id).unwrap();
+        assert_eq!(current.study_revision, saved.revision);
+        assert_eq!(current.sources.len(), 3);
+        assert_eq!(current.evidence.len(), 3);
+        assert!(current.sources.iter().all(|source| {
+            !source.fingerprint.is_empty()
+                && references
+                    .iter()
+                    .any(|reference| reference.id == source.origin_id.to_string())
+        }));
+        let plan = services
+            .prepare_three_writing_plan(project, study_id, "canonical-study-1")
+            .unwrap();
+        assert_eq!(plan.context, current);
+        assert!(prepare_three("canonical-study-1", current.clone()).is_ok());
+        assert!(CurrentStudy::load(&services, Uuid::new_v4(), study_id).is_err());
+
+        let first_origin = Uuid::parse_str(&references[0].id).unwrap();
+        conn.execute(
+            "UPDATE transcripts SET text=?1, updated_at=?2 WHERE id=?3",
+            rusqlite::params![
+                "A revised source excerpt that replaces original text",
+                "2026-11-16T00:01:00Z",
+                first_origin.to_string(),
+            ],
+        )
+        .unwrap();
+        let edited = CurrentStudy::load(&services, project, study_id).unwrap();
+        assert_eq!(edited.study_revision, current.study_revision);
+        assert_ne!(edited, current);
+
+        services
+            .save_studio_study(
+                project,
+                study_id,
+                saved.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(references[..2].to_vec()),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        assert!(CurrentStudy::load(&services, project, study_id).is_err());
+    }
+
+    /// Genuine AppServices + canonical transcripts + four controlled no-cost
+    /// provider steps + v11 atomic three-draft receipt. No public Tauri
+    /// handler, API keys, network or synthetic persisted Study context.
+    #[test]
+    fn host_generates_three_original_candidates_atomically_and_reopens_without_replay() {
+        use super::super::study_writing::{
+            DurablePermissionBoundary, GenerationPlan, NeverStop, StepAdmission,
+            StudyWritingContext, WriteResult, WritingTextProvider, WritingWorkflowError,
+        };
+        use scriptotar_ai::{AiRequest, AiResponse};
+        use std::collections::{HashMap, HashSet, VecDeque};
+
+        struct TestPermit {
+            approved: bool,
+            pending: HashSet<String>,
+            saved: HashMap<String, String>,
+            steps: usize,
+        }
+        impl DurablePermissionBoundary for TestPermit {
+            fn begin(
+                &mut self,
+                run_id: &str,
+                _context: &StudyWritingContext,
+                step: &str,
+                request: &AiRequest,
+            ) -> WriteResult<StepAdmission> {
+                if !self.approved {
+                    return Err(WritingWorkflowError::Denied(
+                        "explicit approval required".into(),
+                    ));
+                }
+                let key = format!(
+                    "{run_id}:{step}:{}",
+                    scriptotar_ai::provider_consent::sha256_hex(request.prompt.as_bytes())
+                );
+                if let Some(response_json) = self.saved.get(&key) {
+                    return Ok(StepAdmission::Recorded {
+                        response_json: response_json.clone(),
+                    });
+                }
+                if !self.pending.insert(key.clone()) {
+                    return Err(WritingWorkflowError::UncertainEffect);
+                }
+                self.steps += 1;
+                Ok(StepAdmission::Dispatch { effect_key: key })
+            }
+            fn record_response(&mut self, key: &str, value: &str) -> WriteResult<()> {
+                if !self.pending.remove(key) {
+                    return Err(WritingWorkflowError::UncertainEffect);
+                }
+                self.saved.insert(key.into(), value.into());
+                Ok(())
+            }
+            fn mark_uncertain(&mut self, _key: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+            fn abandon_before_dispatch(&mut self, key: &str) -> WriteResult<()> {
+                self.pending.remove(key);
+                Ok(())
+            }
+        }
+        struct NoCostProvider {
+            responses: VecDeque<String>,
+            calls: usize,
+        }
+        impl WritingTextProvider for NoCostProvider {
+            fn generate(&mut self, _request: &AiRequest) -> Result<AiResponse, ()> {
+                self.calls += 1;
+                self.responses
+                    .pop_front()
+                    .map(|text| AiResponse { text })
+                    .ok_or(())
+            }
+        }
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let created = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study = Uuid::parse_str(&created.id).unwrap();
+        let conn = rusqlite::Connection::open(services.store.path()).unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let mut attached = Vec::new();
+        for index in 0..3 {
+            let source = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            conn.execute(
+                "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+                 VALUES(?1,?2,NULL,'url',?3,'2026-11-17T00:00:00Z')",
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("https://example.org/controlled-writing/{index}")
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO media(id,source_id,local_path,created_at)
+                 VALUES(?1,?2,?3,'2026-11-17T00:00:00Z')",
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/tmp/controlled-writing-{index}.mp4")
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+                 VALUES(?1,?2,?3,'2026-11-17T00:00:00Z','2026-11-17T00:00:00Z')",
+                rusqlite::params![
+                    transcript.to_string(),
+                    media.to_string(),
+                    format!("Authentic controlled source excerpt {index}")
+                ],
+            )
+            .unwrap();
+            attached.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+        services
+            .save_studio_study(
+                project,
+                study,
+                created.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(attached),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        let plan: GenerationPlan = services
+            .prepare_three_writing_plan(project, study, "controlled-four-step")
+            .unwrap();
+        let ids = plan
+            .context
+            .evidence
+            .iter()
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(ids.len(), 3);
+        let angles = serde_json::json!({ "angles": [
+            { "id":"contrast", "approach":"contrast two options",
+              "hook":"One neighborhood, two different paths",
+              "promise":"See an unexpected choice",
+              "outline":[{"role":"hook","intent":"contrast","estimated_seconds":10}],
+              "evidence_ids":[ids[0]] },
+            { "id":"journey", "approach":"first person diary",
+              "hook":"The notebook changed my walking route",
+              "promise":"A grounded human journey",
+              "outline":[{"role":"hook","intent":"journey","estimated_seconds":12}],
+              "evidence_ids":[ids[1]] },
+            { "id":"guide", "approach":"practical how to",
+              "hook":"A useful three-step preparation checklist",
+              "promise":"Actionable practical tips",
+              "outline":[{"role":"hook","intent":"guide","estimated_seconds":9}],
+              "evidence_ids":[ids[2]] }
+        ]})
+        .to_string();
+        let script = |index: usize, angle: &str, evidence: &str, narration: &str| {
+            serde_json::json!({
+                "id":format!("draft-{index}"), "angle_id":angle,
+                "title":format!("Original content angle {index}"), "language":"Arabic",
+                "beats":[
+                    {"id":"hook","role":"hook","narration":narration,
+                     "on_screen_text":null,"shots":[],"evidence_ids":[evidence],
+                     "manually_edited":true},
+                    {"id":"cta","role":"cta",
+                     "narration":"Invite viewers to discuss their own experiences.",
+                     "on_screen_text":null,"shots":[],"evidence_ids":[],
+                     "manually_edited":false}
+                ],
+                "cta":"Discuss your own ideas", "caption":"An original controlled script",
+                "claims":[{"id":"claim-a","beat_id":"hook",
+                           "assertion":"A source discusses this theme",
+                           "status":"unverified","evidence_ids":[evidence]}]
+            })
+            .to_string()
+        };
+        let mut provider = NoCostProvider {
+            responses: VecDeque::from([
+                angles,
+                script(
+                    1,
+                    "contrast",
+                    &ids[0],
+                    "Two routes lead to very different community stories.",
+                ),
+                script(
+                    2,
+                    "journey",
+                    &ids[1],
+                    "I followed a personal diary and discovered a quiet path.",
+                ),
+                script(
+                    3,
+                    "guide",
+                    &ids[2],
+                    "First gather evidence, then compare it, then share advice.",
+                ),
+            ]),
+            calls: 0,
+        };
+        let mut permit = TestPermit {
+            approved: false,
+            pending: HashSet::new(),
+            saved: HashMap::new(),
+            steps: 0,
+        };
+        assert!(matches!(
+            services.generate_three_writing_with_boundary(
+                &plan,
+                &mut permit,
+                &mut provider,
+                &NeverStop
+            ),
+            Err(WritingWorkflowError::Denied(_))
+        ));
+        assert_eq!(provider.calls, 0);
+        permit.approved = true;
+        let stored = services
+            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .unwrap();
+        assert_eq!(provider.calls, 4);
+        assert_eq!(permit.steps, 4);
+        assert_eq!(stored.len(), 3);
+        assert_eq!(stored.iter().copied().collect::<HashSet<_>>().len(), 3);
+        let batches: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM study_writing_batches WHERE run_id='controlled-four-step'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(batches, 1);
+        let receipts = services
+            .list_studio_writing_batches(project, study)
+            .unwrap();
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].run_id, "controlled-four-step");
+        assert_eq!(
+            receipts[0].draft_ids,
+            std::array::from_fn(|index| stored[index].to_string())
+        );
+        assert!(services
+            .list_studio_writing_batches(Uuid::new_v4(), study)
+            .is_err());
+        for id in stored {
+            let versions: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM draft_versions WHERE draft_id=?1 AND version=1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(versions, 1);
+            let lineage: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM study_writing_revisions WHERE draft_id=?1 AND version=1",
+                    rusqlite::params![id.to_string()],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                lineage, 1,
+                "generated candidate must retain structured provenance"
+            );
+        }
+        let chosen = services
+            .get_studio_study_draft(project, study, stored[0])
+            .unwrap();
+        // Creating a Study may already create a manual candidate. The atomic
+        // batch must add exactly its own three drafts without deleting it.
+        assert!(chosen.drafts.len() >= 3);
+        assert!(stored
+            .iter()
+            .all(|id| { chosen.drafts.iter().any(|draft| draft.id == id.to_string()) }));
+        let edited_body = format!(
+            "{}\\n\\nReviewer manual edit: preserve this wording after restart.",
+            chosen.draft
+        );
+        let edited = services
+            .save_studio_study(
+                project,
+                study,
+                chosen.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: None,
+                    draft: Some(edited_body.clone()),
+                    draft_id: Some(stored[0].to_string()),
+                    draft_revision: chosen.draft_revision,
+                },
+            )
+            .unwrap();
+        assert_eq!(edited.draft, edited_body);
+        assert!(services
+            .get_studio_study_draft(Uuid::new_v4(), study, stored[0])
+            .is_err());
+        drop(conn);
+        drop(services);
+
+        // A restart with NO provider responses and NO approval must recover
+        // exactly the committed receipt. Never bill or generate again.
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let mut no_approval = TestPermit {
+            approved: false,
+            pending: HashSet::new(),
+            saved: HashMap::new(),
+            steps: 0,
+        };
+        let mut no_provider = NoCostProvider {
+            responses: VecDeque::new(),
+            calls: 0,
+        };
+        let recovered = reopened
+            .generate_three_writing_with_boundary(
+                &plan,
+                &mut no_approval,
+                &mut no_provider,
+                &NeverStop,
+            )
+            .unwrap();
+        assert_eq!(recovered, stored);
+        let after_restart = reopened
+            .list_studio_writing_batches(project, study)
+            .unwrap();
+        assert_eq!(after_restart.len(), 1);
+        assert_eq!(after_restart[0].draft_ids, receipts[0].draft_ids);
+        assert_eq!(no_approval.steps, 0);
+        assert_eq!(no_provider.calls, 0);
+        let manual = reopened
+            .get_studio_study_draft(project, study, stored[0])
+            .unwrap();
+        assert_eq!(
+            manual.draft, edited_body,
+            "recovery must not overwrite a manual edit"
+        );
+        assert!(manual.draft_versions.len() >= 2);
+        let untouched = reopened
+            .get_studio_study_draft(project, study, stored[1])
+            .unwrap();
+        assert_eq!(untouched.draft_versions.len(), 1);
+        assert!(untouched.draft.contains("personal diary"));
     }
 
     #[test]

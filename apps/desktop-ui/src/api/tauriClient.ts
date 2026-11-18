@@ -1,6 +1,6 @@
-import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
-import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput } from '../studio/contract';
-import type { LocalInspectionRun } from '../studio/agent';
+import type { AiPromptInput, ResearchQuery, ScriptotarApi, ProviderConsentPreview } from './client';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput, StudyWritingBatch } from '../studio/contract';
+import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type {
   AiRunDetail,
   ResearchItemDetail,
@@ -56,6 +56,8 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
     getStudy: (projectId, studyId, draftId) => invoke<ContentStudy>('get_study',
       draftId ? { projectId, studyId, draftId } : { projectId, studyId }),
+    listStudyWritingBatches: (projectId, studyId) =>
+      invoke<StudyWritingBatch[]>('list_study_writing_batches', { projectId, studyId }),
     duplicateStudyDraft: (projectId, studyId, draftId, expectedDraftRevision) =>
       invoke<ContentStudy>('duplicate_study_draft', { projectId, studyId, draftId, expectedDraftRevision }),
     renameStudyDraft: (projectId, studyId, draftId, expectedDraftRevision, title) =>
@@ -88,12 +90,34 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
         projectId, studyId, evidenceId, expectedCertainty: input.expectedCertainty,
         action: input.action, note: input.note
       }),
+    prepareProviderConsentSealed: (projectId, studyId, runId, model, maxOutputTokens, limits) =>
+      invoke<ProviderConsentPreview>('prepare_provider_consent_sealed', {
+        projectId, studyId, runId, model, maxOutputTokens, limits
+      }),
+    decideProviderConsentSealed: (projectId, studyId, runId, fingerprint, approve) =>
+      invoke<void>('decide_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, approve
+      }),
+    executeProviderConsentSealed: (projectId, studyId, runId, fingerprint, requestTimeApiKey) =>
+      invoke<string>('execute_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, requestTimeApiKey
+      }),
     startLocalInspection: (projectId, studyId, transcriptId) =>
       invoke<LocalInspectionRun>('start_local_inspection', { projectId, studyId, transcriptId }),
     listLocalInspections: (projectId, studyId) =>
       invoke<LocalInspectionRun[]>('list_local_inspections', { projectId, studyId }),
     decideLocalInspection: (projectId, studyId, runId, action) =>
       invoke<LocalInspectionRun>('decide_local_inspection', { projectId, studyId, runId, action }),
+    listStudyResearchSources: (projectId, studyId) =>
+      invoke<StudyResearchSource[]>('list_study_research_sources', { projectId, studyId }),
+    startStudyResearch: (projectId, studyId, sourceIds) =>
+      invoke<StudyResearchRun>('start_study_research', { projectId, studyId, sourceIds }),
+    listStudyResearchRuns: (projectId, studyId) =>
+      invoke<StudyResearchRun[]>('list_study_research_runs', { projectId, studyId }),
+    decideStudyResearch: (projectId, studyId, runId, action) =>
+      invoke<StudyResearchRun>('decide_study_research', { projectId, studyId, runId, action }),
+    readStudyResearchReport: (projectId, studyId, artifactId) =>
+      invoke<StudyResearchReport>('read_study_research_report', { projectId, studyId, artifactId }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))

@@ -47,6 +47,43 @@ describe('Arabic interface localization', () => {
     expect(option.value).toBe('Arabic');
   });
 
+  it('does not restore stale Arabic over new Svelte English text or accessible labels', async () => {
+    document.body.innerHTML = '<main><h1>Studio</h1><button aria-label="Settings">Settings</button></main>';
+    initializeLocalization();
+    const heading = document.querySelector('h1')!;
+    const text = heading.firstChild as Text;
+    const button = document.querySelector('button')!;
+
+    setLocale('ar');
+    // Simulate real Svelte reactive bindings while Arabic is active.
+    text.data = 'الاستوديو';
+    button.setAttribute('aria-label', 'الإعدادات');
+    await Promise.resolve();
+    expect(text.data).toBe('الاستوديو');
+
+    setLocale('en');
+    // Svelte replaces the Arabic text node data and accessible name after
+    // the store update; the MutationObserver must not reapply cached Arabic.
+    text.data = 'Studio';
+    button.setAttribute('aria-label', 'Settings');
+    await Promise.resolve();
+    expect(text.data).toBe('Studio');
+    expect(button.getAttribute('aria-label')).toBe('Settings');
+    expect(document.documentElement.dir).toBe('ltr');
+
+    // The next RTL/LTR cycle also remains stable, even with the same nodes.
+    setLocale('ar');
+    text.data = 'الاستوديو';
+    button.setAttribute('aria-label', 'الإعدادات');
+    await Promise.resolve();
+    setLocale('en');
+    text.data = 'Studio';
+    button.setAttribute('aria-label', 'Settings');
+    await Promise.resolve();
+    expect(text.data).toBe('Studio');
+    expect(button.getAttribute('aria-label')).toBe('Settings');
+  });
+
   it('persists the selected interface language locally', () => {
     setLocale('ar');
     expect(getLocale()).toBe('ar');

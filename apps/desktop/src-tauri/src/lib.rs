@@ -677,6 +677,25 @@ async fn get_study(
     .await
 }
 
+/// Recovery/readback only. This command cannot approve AI, create an
+/// external effect, or recover a missing usage receipt as a new dispatch.
+#[tauri::command]
+async fn list_study_writing_batches(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<crate::dto::UiStudioWritingBatch>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_writing_batches(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn duplicate_study_draft(
     project_id: String,
@@ -897,6 +916,87 @@ async fn review_study_evidence(
     .await
 }
 
+/// Preview the authoritative Study prompt and exact sealed OpenAI wire.
+/// Preview does not approve spending and cannot perform network I/O.
+#[tauri::command]
+async fn prepare_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    model: String,
+    max_output_tokens: u64,
+    limits: scriptotar_ai::provider_consent::RunBudget,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_ai::provider_consent::ConsentPreview, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .preview_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                model,
+                max_output_tokens,
+                limits,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// A fingerprint alone is not authority: price must also be verified by the
+/// trusted host and the Study/source snapshot must remain unchanged.
+#[tauri::command]
+async fn decide_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    approve: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .decide_openai_provider_consent(project, study, &run_id, &fingerprint, approve)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Actual sealed host dispatch entrypoint. It delegates to the durable v12
+/// provider fence and genuine OpenAI Responses transport, but is intentionally
+/// unavailable for live egress until pricing and end-to-end certification.
+#[tauri::command]
+async fn execute_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    request_time_api_key: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .execute_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                &fingerprint,
+                &request_time_api_key,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
 /// A read-only plan. Nothing executes before explicit approval.
 #[tauri::command]
 async fn start_local_inspection(
@@ -954,6 +1054,109 @@ async fn decide_local_inspection(
     on_blocking_worker(move || {
         service
             .decide_local_inspection(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_research_sources(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<services::study_research::StudyResearchSource>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_sources(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_study_research(
+    project_id: String,
+    study_id: String,
+    source_ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    if source_ids.is_empty() || source_ids.len() > 8 {
+        return Err("select one to eight Study sources".into());
+    }
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let source_ids = source_ids
+        .iter()
+        .map(|id| artifact_uuid(id, "Study source id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .start_study_research(project_id, study_id, source_ids)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_research_runs(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<RunSnapshot>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_runs(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn decide_study_research(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    action: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    if !scriptotar_agent::valid_id(&run_id) {
+        return Err("invalid research run ID".into());
+    }
+    if !matches!(action.as_str(), "approve" | "deny" | "cancel" | "recover") {
+        return Err("unsupported research action".into());
+    }
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .decide_study_research(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_study_research_report(
+    project_id: String,
+    study_id: String,
+    artifact_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_research::study_intelligence::StudyResearchReport, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let artifact_id = artifact_uuid(&artifact_id, "research artifact id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .read_study_research_report(project_id, study_id, artifact_id)
             .map_err(command_error)
     })
     .await
@@ -1381,6 +1584,7 @@ pub fn run() {
             list_studies,
             create_study,
             get_study,
+            list_study_writing_batches,
             duplicate_study_draft,
             rename_study_draft,
             set_study_draft_archived,
@@ -1391,9 +1595,17 @@ pub fn run() {
             list_study_evidence,
             add_study_evidence,
             review_study_evidence,
+            prepare_provider_consent_sealed,
+            decide_provider_consent_sealed,
+            execute_provider_consent_sealed,
             start_local_inspection,
             list_local_inspections,
             decide_local_inspection,
+            list_study_research_sources,
+            start_study_research,
+            list_study_research_runs,
+            decide_study_research,
+            read_study_research_report,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,

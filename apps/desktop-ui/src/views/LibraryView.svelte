@@ -111,13 +111,17 @@
 
   <div class="library-result-bar">
     <span aria-live="polite">{$translator(visible.length === 1 ? 'library.oneResult' : 'library.manyResults', { count: visible.length })}</span>
-    {#if query.trim()}<span class="query-context">{$translator('library.matching', { query: query.trim() })}</span>{/if}
   </div>
 
   {#if visible.length === 0}
     <div class="library-empty">
       <strong>{$translator('library.emptyTitle')}</strong>
       <p>{$translator('library.emptyMessage')}</p>
+      {#if items.length > 0 && (query.trim() || kind !== 'All')}
+        <button type="button" class="button secondary clear-filters" on:click={() => { updateQuery(''); chooseKind('All'); }}>
+          {isArabic ? 'مسح عوامل التصفية' : 'Clear filters'}
+        </button>
+      {/if}
     </div>
   {:else}
     <div class="library-list">
@@ -156,6 +160,7 @@
 {#if actionError}<p class="status-copy library-error" role="alert" data-i18n-ignore>{actionError}</p>{/if}
 
 <style>
+  .library-empty .clear-filters { margin-block-start: var(--space-3); }
   .library-head { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
   .library-head h1 { margin: 0; }
   .library-total { color: var(--color-text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }

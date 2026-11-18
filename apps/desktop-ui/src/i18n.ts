@@ -438,8 +438,15 @@ function renderText(node: Text, captureOriginal = false) {
     const source = originalText.get(node) ?? node.data;
     node.data = translateUiText(source);
   } else {
-    const source = originalText.get(node);
-    if (source !== undefined) node.data = source;
+    if (captureOriginal) {
+      // Svelte has just changed this mounted text node while English is
+      // active. The fresh English copy is authoritative; an Arabic value
+      // captured by a previous locale mutation must not overwrite it.
+      originalText.set(node, node.data);
+    } else {
+      const source = originalText.get(node);
+      if (source !== undefined) node.data = source;
+    }
   }
 }
 
@@ -461,8 +468,14 @@ function renderAttribute(element: Element, name: string, captureOriginal = false
     const source = values.get(name) ?? current;
     element.setAttribute(name, translateUiText(source));
   } else {
-    const source = values.get(name);
-    if (source !== undefined) element.setAttribute(name, source);
+    if (captureOriginal) {
+      // A live Svelte aria-label/title/placeholder update has priority over
+      // any localized attribute remembered during the Arabic session.
+      values.set(name, current);
+    } else {
+      const source = values.get(name);
+      if (source !== undefined) element.setAttribute(name, source);
+    }
   }
 }
 
@@ -515,9 +528,12 @@ export function initializeLocalization() {
     withObserverPaused(() => {
       for (const mutation of mutations) {
         if (mutation.type === 'characterData') {
-          renderText(mutation.target as Text, currentLocale === 'ar');
+          // Observe live Svelte updates in BOTH locales. In English, these
+          // mutations replace stale Arabic cached originals, rather than
+          // restoring them over the just-rendered English UI.
+          renderText(mutation.target as Text, true);
         } else if (mutation.type === 'attributes' && mutation.target instanceof Element && mutation.attributeName) {
-          renderAttribute(mutation.target, mutation.attributeName, currentLocale === 'ar');
+          renderAttribute(mutation.target, mutation.attributeName, true);
         } else if (mutation.type === 'childList') {
           for (const node of mutation.addedNodes) renderSubtree(node);
         }

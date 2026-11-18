@@ -5,12 +5,16 @@
   import Checkbox from '../components/ui/Checkbox.svelte';
   import type { ScriptotarApi } from '../api/client';
   import type { AiRun, Job, ResearchItem, Transcript, TranscriptSummary, ViewId } from '../types';
-  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption, StudyScriptReview } from '../studio/contract';
+  import type { ContentStudy, CreativeBrief, DraftSnapshot, HistoricalAiArtifact, StudioGateway, StudySourceRef, StudyEvidence, StudyAngleOption, StudyScriptReview, StudyWritingBatch } from '../studio/contract';
   import type { LocalInspectionRun } from '../studio/agent';
   import { emptyBrief } from '../studio/contract';
   import { evidencePromptContext } from '../studio/evidencePrompt';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
+  import StudioAgentReview from '../studio/StudioAgentReview.svelte';
+  import StudioCandidateCompare from '../studio/StudioCandidateCompare.svelte';
+  import StudioResearchReview from '../studio/StudioResearchReview.svelte';
+  import { workflowStrings } from '../studio/workflowStrings';
 
   export let api: ScriptotarApi;
   export let projectId: string;
@@ -31,6 +35,11 @@
   let refs: StudySourceRef[] = [];
   let draft = '';
   let previewVersion: DraftSnapshot | null = null;
+  let writingBatches: StudyWritingBatch[] = [];
+  let writingBatchError = '';
+  let batchExportError = '';
+  let exportingBatchId = '';
+  let writingBatchEpoch = 0;
   let renameDraftOpen = false;
   let renameDraftTitle = '';
   let draftSearch = '';
@@ -94,6 +103,7 @@
   let consumedIncoming = '';
 
   $: t = studioStrings[$locale];
+  $: flowT = workflowStrings[$locale];
   // An edited brief, changed Study, or revised evidence must invalidate
   // old pasted model proposals even when no Study revision was written.
   $: if (angleScopeEpoch !== promptRequest) {
@@ -144,6 +154,7 @@
   });
   onDestroy(() => {
     currentRequest++;
+    writingBatchEpoch++;
     sourceRequest++;
     promptRequest++;
     historyEpoch++;
@@ -244,10 +255,38 @@
       reviewReason = '';
       void loadEvidence(id);
       void loadInspections(id);
+      void loadWritingBatches(id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorLoad);
     } finally {
       if (epoch === currentRequest) loading = false;
+    }
+  }
+
+  async function loadWritingBatches(id: string): Promise<void> {
+    const epoch = ++writingBatchEpoch;
+    writingBatches = [];
+    writingBatchError = '';
+    batchExportError = '';
+    if (!gateway?.listStudyWritingBatches) return;
+    try {
+      const result = await gateway.listStudyWritingBatches(projectId, id);
+      if (epoch !== writingBatchEpoch || record?.id !== id || studyId !== id) return;
+      // A read-only history response must never turn another project's
+      // receipt or a malformed/fourth-draft record into clickable candidates.
+      if (!Array.isArray(result) || result.length > 50 || result.some((batch) =>
+        batch.projectId !== projectId || batch.studyId !== id ||
+        !batch.runId || !Array.isArray(batch.draftIds) ||
+        batch.draftIds.length !== 3 ||
+        batch.draftIds.some((draftId) => typeof draftId !== 'string' || !draftId) ||
+        new Set(batch.draftIds).size !== 3)) {
+        throw new Error(t.invalidStudy);
+      }
+      writingBatches = result;
+    } catch (cause) {
+      if (epoch === writingBatchEpoch && studyId === id) {
+        writingBatchError = message(cause, t.errorLoad);
+      }
     }
   }
 
@@ -290,6 +329,7 @@
       studies = [...studies, { id: created.id, projectId, brief: created.brief, revision: created.revision }];
       if (changed()) queueSave();
       void loadEvidence(created.id);
+      void loadWritingBatches(created.id);
     } catch (cause) {
       if (epoch === currentRequest) error = message(cause, t.errorCreate);
     } finally {
@@ -984,6 +1024,72 @@
     }
   }
 
+  /** Export only the exact three existing v11 receipt-linked drafts.
+   * This is a read-only local action, never a writing/provider dispatch. */
+  async function exportWritingBatch(batch: StudyWritingBatch): Promise<void> {
+    const source = gateway;
+    const current = record;
+    if (!source || !current || exportingBatchId || busy || saving ||
+        loading || dirty || importingSavedResult) return;
+    const ownerProject = projectId;
+    const ownerStudy = current.id;
+    const ownerEpoch = writingBatchEpoch;
+    const ids = batch.draftIds;
+    const validReceipt = batch.projectId === ownerProject &&
+      batch.studyId === ownerStudy && current.projectId === ownerProject &&
+      writingBatches.includes(batch) && Array.isArray(ids) &&
+      ids.length === 3 && ids.every(id => typeof id === 'string' && !!id) &&
+      new Set(ids).size === 3;
+    const candidates = validReceipt
+      ? ids.map(id => current.drafts?.find(candidate => candidate.id === id))
+      : [];
+    if (!validReceipt || candidates.length !== 3 || candidates.some(item => !item)) {
+      batchExportError = t.invalidStudy;
+      return;
+    }
+    exportingBatchId = batch.runId;
+    batchExportError = '';
+    try {
+      const snapshots = await Promise.all(ids.map(id => source.getStudy(ownerProject, ownerStudy, id)));
+      // A project switch, a different Study, or a refreshed receipt list
+      // invalidates an in-flight read; never download another project's text.
+      if (ownerEpoch !== writingBatchEpoch || projectId !== ownerProject ||
+          studyId !== ownerStudy || record?.id !== ownerStudy ||
+          record?.revision !== current.revision ||
+          !writingBatches.includes(batch)) return;
+      if (snapshots.some((item, index) =>
+        item.id !== ownerStudy || item.projectId !== ownerProject ||
+        item.revision !== current.revision ||
+        item.draftId !== ids[index] ||
+        item.draftRevision !== candidates[index]?.revision ||
+        !item.drafts?.some(candidate => candidate.id === ids[index]) ||
+        typeof item.draft !== 'string' || !item.draft.trim() ||
+        item.draft.length > 100_000)) {
+        throw new Error(t.invalidStudy);
+      }
+      const sections = snapshots.map((item, index) => {
+        const title = (candidates[index]?.title || (t.writingCandidate + ' ' + (index + 1)))
+          .replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
+        return '## ' + (index + 1) + '. ' + title + '\n\n' + item.draft;
+      });
+      const content = '# ' + current.brief.title.replace(/[\r\n]+/g, ' ') +
+        '\n\n> ' + t.mixedWarning + '\n\n' + sections.join('\n\n---\n\n') + '\n';
+      const basename = (current.brief.title || 'study')
+        .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]+/g, '-').slice(0, 60) || 'study';
+      const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = basename + '-three-scripts.md';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) {
+      if (ownerEpoch === writingBatchEpoch && projectId === ownerProject &&
+          studyId === ownerStudy) batchExportError = message(cause, t.errorLoad);
+    } finally {
+      if (exportingBatchId === batch.runId) exportingBatchId = '';
+    }
+  }
+
   function exportDraft(extension: 'txt' | 'md') {
     if (!draft.trim()) { error = t.emptyDraft; return; }
     const basename = (brief.title || 'script').replace(/[^a-zA-Z0-9\u0600-\u06FF_-]+/g, '-').slice(0, 60) || 'script';
@@ -1011,6 +1117,13 @@
     <button type="button" class="button secondary" on:click={() => onNavigate('ai')}>{t.openAi}</button>
   </div>
 </section>
+<nav class="studio-progress" aria-label={flowT.workflow} dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
+  <a href="#studio-sources"><span>{flowT.sources}</span><strong>{refs.length}</strong></a>
+  <a href="#studio-evidence"><span>{flowT.evidence}</span><strong>{evidence.length}</strong></a>
+  <a href="#studio-execution"><span>{flowT.execution}</span><strong>{anglePromptSource ? flowT.prepared : '—'}</strong></a>
+  <a href="#studio-scripts"><span>{flowT.scripts}</span><strong>{record?.drafts?.length ?? 0}</strong></a>
+  <a href="#studio-export"><span>{flowT.export}</span><strong>{draft.trim() ? flowT.ready : '—'}</strong></a>
+</nav>
 {#if error}<p role="alert" class="studio-error">{error}</p>{/if}
 {#if !gateway}<p class="studio-warning" role="status">{t.notConnected}</p>{/if}
 <div class="studio-workspace">
@@ -1027,7 +1140,7 @@
       {/if}
     </section>
 
-    <section class="panel studio-sources">
+    <section id="studio-sources" class="panel studio-sources">
       <h2>{t.sources} <small>{refs.length}</small></h2>
       {#if refs.length}
         <ul class="source-list">
@@ -1091,6 +1204,11 @@
         {#if inspectionError}<p role="alert" class="studio-error">{inspectionError}</p>{/if}
       </section>
     {/if}
+    {#if record}
+      {#key projectId + ':' + record.id}
+        <StudioResearchReview {api} {projectId} studyId={record.id} />
+      {/key}
+    {/if}
     <section class="panel studio-history">
       <h2>{t.history}</h2>
       {#each savedRuns.slice(0, 15) as run (run.id)}
@@ -1121,7 +1239,7 @@
         {/if}
       </div>
       <div class="brief-grid">
-        <label class="wide">{t.studyName}<input bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" /></label>
+        <label class="wide">{t.studyName}<input aria-label={t.studyName} bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" /></label>
         <label class="wide">{t.goal}<textarea bind:value={brief.goal} on:input={queueSave} placeholder={t.goalPlaceholder} rows="2" dir="auto"></textarea></label>
         <label>{t.audience}<input bind:value={brief.audience} on:input={queueSave} placeholder={t.audiencePlaceholder} dir="auto" /></label>
         <Select label={t.platform} value={brief.platform} options={['TikTok', 'Instagram Reels', 'YouTube Shorts', 'Other'].map((value) => ({ value, label: value }))} onChange={(value) => { brief.platform = value; queueSave(); }} />
@@ -1132,6 +1250,11 @@
         <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]+" maxlength="3" bind:value={brief.duration} on:input={queueSave} /></label>
         <label class="wide">{t.style}<input bind:value={brief.style} on:input={queueSave} dir="auto" placeholder={t.stylePlaceholder} /></label>
       </div>
+    </section>
+
+    <section id="studio-execution" class="panel studio-provider-review">
+      <StudioAgentReview {projectId} study={record} {gateway} prompt={anglePromptSource}
+        dirty={dirty || saving || loading || importingSavedResult} />
     </section>
 
     {#if historical}
@@ -1156,11 +1279,11 @@
         {/if}
       </section>
     {/if}
-    <section class="panel studio-editor">
+    <section id="studio-scripts" class="panel studio-editor">
       <div class="section-heading">
         <h2>{t.script}</h2>
         <div class="draft-actions">
-          <button type="button" class="button secondary" on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
+          <button id="studio-export" type="button" class="button secondary" on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
           <button type="button" class="button secondary" on:click={() => exportDraft('md')}>{t.exportMd}</button>
           {#if gateway && record}
             <button type="button" class="button primary" disabled={!dirty || saving || !!previewVersion}
@@ -1234,6 +1357,42 @@
             on:click={() => void restoreArchivedDraft()}>{t.restoreDraft}</button>
         </div>
       {/if}
+      {#if gateway?.listStudyWritingBatches && record}
+        <section class="writing-batch-history" aria-label={t.writingBatches}>
+          <h3>{t.writingBatches}</h3>
+          <p>{t.writingBatchesPrivacy}</p>
+          {#if batchExportError}<p role="alert" class="error">{batchExportError}</p>{/if}
+          {#if writingBatchError}
+            <p role="alert" class="error">{writingBatchError}</p>
+          {:else if writingBatches.length === 0}
+            <p>{t.noWritingBatches}</p>
+          {:else}
+            {#each writingBatches as batch (batch.runId)}
+              <div class="writing-batch-entry">
+                <div><strong>{t.writingBatch}</strong> <code>{batch.runId}</code>
+                  <small>{batch.committedAt}</small></div>
+                <div class="draft-actions">
+                  {#each batch.draftIds as candidateId, index (candidateId)}
+                    <button type="button" class="button secondary"
+                      disabled={busy || saving || loading || importingSavedResult ||
+                        !record.drafts?.some((item) => item.id === candidateId)}
+                      on:click={() => void openDraft(candidateId)}>
+                      {record.drafts?.find((item) => item.id === candidateId)?.title ||
+                        (t.writingCandidate + ' ' + (index + 1))}
+                    </button>
+                  {/each}
+                  <button type="button" class="button secondary"
+                    disabled={!!exportingBatchId || busy || saving || dirty || loading || importingSavedResult ||
+                      !batch.draftIds.every(id => record?.drafts?.some(candidate => candidate.id === id))}
+                    on:click={() => void exportWritingBatch(batch)}>{t.exportAllThree}</button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </section>
+      {/if}
+      <StudioCandidateCompare study={record} {gateway} {projectId}
+        pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
           <button type="button" class:chosen={!previewVersion} on:click={() => previewVersion = null}>{t.currentDraft}</button>
@@ -1351,7 +1510,7 @@
     </section>
   </div>
 
-  <aside class="panel studio-evidence">
+  <aside id="studio-evidence" class="panel studio-evidence">
     <h2>{t.evidence}</h2>
     {#if selectedResearch}
       <h3 dir="auto">{selectedResearch.title}</h3>
@@ -1454,6 +1613,10 @@
 </div>
 
 <style>
+  .studio-progress { display: flex; flex-wrap: wrap; gap: 0; border-block-end: 1px solid var(--color-border); margin-block: 0 14px; }
+  .studio-progress a { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--color-text); text-decoration: none; font-size: var(--text-xs); }
+  .studio-progress a:hover, .studio-progress a:focus-visible { background: var(--color-surface-raised); text-decoration: underline; }
+  .studio-progress strong { font-weight: 700; color: var(--color-text-muted); }
   .studio-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }

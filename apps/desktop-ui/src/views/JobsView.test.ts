@@ -18,6 +18,14 @@ function setup(jobs: Job[] = []) {
 beforeEach(() => { window.localStorage.clear(); setLocale('en'); delete (window as Window & { __TAURI__?: unknown }).__TAURI__; });
 
 describe('jobs workspace', () => {
+  it('offers a direct recovery action when a status filter has no matching jobs', async () => {
+    const { container } = setup([job('finished', 'completed')]);
+    await fireEvent.click(screen.getByRole('button', { name: /Needs attention/ }));
+    expect(screen.getByText('No jobs in this filter')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show all jobs' }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(1);
+  });
+
   it('handles safe native picker selection and queues the exact selected path', async () => {
     const { onChooseLocal, onEnqueueLocal } = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Choose video' }));
