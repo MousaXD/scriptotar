@@ -1382,7 +1382,15 @@ def exercise(args, report: dict, root: Path):
             a.type_into("Audience", "People learning video editing")
             a.click("Prepare 3 creative angles", "button")
             a.edit_field("Paste three-angle JSON response", timeout=12)
-            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}')
+            malformed_angle_json = '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+            a.type_into("Paste three-angle JSON response", malformed_angle_json)
+            observed_angle_json = a.read_text("Paste three-angle JSON response")
+            if observed_angle_json != malformed_angle_json:
+                raise NativeFailure(
+                    "Real WebKitGTK paste editor did not receive exact malformed JSON "
+                    f"(expected length={len(malformed_angle_json)}, "
+                    f"observed length={len(observed_angle_json)})"
+                )
             # Bind visual proof to the installed AT-SPI button before the
             # malformed action: a screenshot alone is never validation.
             control = a.find("Validate 3 angles", "button")
@@ -1441,7 +1449,15 @@ def exercise(args, report: dict, root: Path):
                     f"Malformed response retained {cards_after_rejection} "
                     "interactive angle cards after native rejection"
                 )
-            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}')
+            valid_angle_json = '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}'
+            a.type_into("Paste three-angle JSON response", valid_angle_json)
+            observed_angle_json = a.read_text("Paste three-angle JSON response")
+            if observed_angle_json != valid_angle_json:
+                raise NativeFailure(
+                    "Real WebKitGTK paste editor did not receive exact corrected JSON "
+                    f"(expected length={len(valid_angle_json)}, "
+                    f"observed length={len(observed_angle_json)})"
+                )
             a.click("Validate 3 angles", "button")
             # Actual installed WebKitGTK AT-SPI does not expose <strong>
             # card titles as names; run #44299491028 *rendered all three*
@@ -1455,7 +1471,36 @@ def exercise(args, report: dict, root: Path):
                     break
                 time.sleep(0.3)
             if count != 3:
+                # Preserve real, bounded AT-SPI surface information before
+                # raising. The top-of-page screenshot cannot establish
+                # whether the validation region rendered below the fold.
+                review_nodes = []
+                for node in a.nodes():
+                    try:
+                        name = (node.name or "").strip()
+                        role = node.getRoleName()
+                        if any(word in name.lower() for word in (
+                                "angle", "invalid", "validation", "script")):
+                            review_nodes.append({
+                                "name": name[:160], "role": role,
+                            })
+                    except Exception:
+                        continue
+                report["angle_recovery_native_diagnostics"] = {
+                    "observed_action_count": count,
+                    "related_atspi_nodes": review_nodes[:45],
+                    "exact_json_input_prechecked": True,
+                }
                 session.screenshot("failed-valid-three-angles-not-mounted")
+                try:
+                    # Pointer-wheel scrolling is native screenshot collection
+                    # only; it does not reclassify a failure as PASS.
+                    command("xdotool", "mousemove", "1100", "650")
+                    for _ in range(4):
+                        command("xdotool", "click", "5")
+                    session.screenshot("failed-valid-three-angles-scrolled")
+                except Exception as exc:
+                    report["angle_failure_capture_warning"] = type(exc).__name__
                 raise NativeFailure(
                     f"Valid three-angle response did not mount exactly "
                     f"three native AT-SPI card actions (observed {count})"
