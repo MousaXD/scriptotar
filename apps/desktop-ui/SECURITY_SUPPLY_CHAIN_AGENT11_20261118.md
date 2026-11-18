@@ -74,3 +74,32 @@ Transitive versions resolved in `package-lock.json`: `picomatch@4.0.7`; `fdir@6.
 4. Keep this PR **draft and unmerged** until the full audit passes with no suppression. Notify Agent 00 with the upstream blocker and report link.
 
 **No version changes have been made:** rewriting the lockfile without an upstream patch would be misleading, and blindly forcing a breaking downgrade would not constitute verified remediation.
+
+
+## Independent Agent 11 exact-head CI follow-up (2026-11-18)
+
+The first Agent 11 PR head is `94092d99370bd3101a7fdf7b92369a215e27369b` (one report-file-only commit relative to baseline). The **unmodified** [Tauri migration integration run 44297361807](https://github.com/MousaXD/scriptotar/actions/runs/44297361807) independently reproduced the problem on the Agent 11 branch:
+
+| Exact-head GitHub job/step | Verified outcome |
+| --- | --- |
+| Rust workspace | PASS |
+| Rust ↔ sidecar integration | PASS |
+| Python sidecar | PASS (normal sidecar tests; **not** pip-audit) |
+| Svelte frontend: Install/Check/Test/Build | PASS across all four steps |
+| Supply chain: Rust advisories | PASS command, **10 allowed warnings** |
+| Supply chain: npm advisories | **FAIL** — `npm ci` installed 127 packages and audited 128; `npm audit --audit-level=high` reports 8 high findings and exit 1 |
+| Supply chain: Python advisories | **SKIPPED** because npm failed |
+| Integrated Tauri build | IN PROGRESS when this report section was written; check the run for its final result |
+
+The second independent audit output reproduces the exact same root advisory `GHSA-fc5q-39xc-vjpf` and same eight affected-path findings. No improved after-audit count can be reported without a patch. **Do not infer a green audit** from the passing frontend, Rust or sidecar jobs.
+
+### Upstream mitigation status
+
+- [picomatch GitHub releases](https://github.com/micromatch/picomatch/releases): most recent release was `4.0.7` published 2026-08-24. The current GHSA still covers through `4.0.7`.
+- [Upstream issue #247](https://github.com/micromatch/picomatch/issues/247) discusses delayed fixes and whether the advisory should be disputed. One proposed [fix PR #235](https://github.com/micromatch/picomatch/pull/235) was **closed without merge**. There are other proposals, but **no released, independently verified patch** at this checkpoint.
+- The upstream dispute does not itself retract GitHub's published advisory or change the mandatory `npm audit` outcome. A public issue thread also contains a bounded reproduction suggesting exponential slowdown; assess claims independently rather than treating a dispute as mitigation.
+- No direct or transitive package manifest was altered, and the existing security workflow has not been suppressed or rewritten.
+
+### Handoff
+
+Agent 00 was notified in [integration PR #114](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6977582294). This draft PR is a technical security assessment, **not a patch**. Keep it draft until a release-grade patched graph and exact-head audit are available; do not merge it as a fix or clear the production gate.
