@@ -261,6 +261,8 @@ jobs:
           echo 'Mandatory strict npm audit remains a known fail; release NO-GO.'
 
   upstream-pr260-experiment:
+    # Both candidate proposals failed the 19-case Linux/Windows corpus; retain manually only.
+    if: github.event_name == 'workflow_dispatch'
     # Active upstream experimental proposal, no production dependency change or audit exception.
     name: Active upstream PR260 parser trial (${{ matrix.os }}) — NOT RELEASE
     runs-on: ${{ matrix.os }}
@@ -306,6 +308,8 @@ jobs:
           echo 'Never claim this test proves a released/advisory-cleared remediation.'
 
   upstream-pr264-experiment:
+    # Both candidate proposals failed the 19-case Linux/Windows corpus; retain manually only.
+    if: github.event_name == 'workflow_dispatch'
     # A genuinely open upstream parser proposal, applied only in ephemeral CI node_modules.
     # This is NOT a lockfile change, supported distribution or audit remediation.
     name: Active upstream PR264 parser trial (${{ matrix.os }}) — NOT RELEASE
