@@ -110,7 +110,7 @@ fn independent_host_denied_foreign_study_read_preserves_private_draft_and_canoni
             audience: "Project A".into(),
             platform: "reels".into(),
             language: "en".into(),
-            duration: "45 seconds".into(),
+            duration: "45".into(),
             style: "factual".into(),
         },
     ).unwrap();
