@@ -135,6 +135,18 @@ jobs:
           git apply --check -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
           git apply -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
           echo 'Experimental candidate based on unmerged micromatch/picomatch PR #237; NOT a published patch'
+      - name: Inspect actual patched parser and emitted regex (debug-only)
+        run: |
+          git hash-object node_modules/picomatch/lib/parse.js
+          grep -n 'isSelfRepeatingStarBranch\|analysis.collapse' node_modules/picomatch/lib/parse.js
+          node - <<'NODE'
+          const path = require.resolve('picomatch');
+          const pm = require('picomatch');
+          console.log('Loaded matcher entry:', path);
+          for (const pattern of ['+(*a)', '*(*a)', '+(a*b)']) {
+            console.log(pattern, pm.makeRe(pattern).source);
+          }
+          NODE
       - name: Exercise candidate with bounded exploit probes
         run: node scripts/probe-picomatch-redos.mjs --assert-patched
       - name: Check frontend compatibility on experimental candidate
