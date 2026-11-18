@@ -292,6 +292,72 @@ PRODUCTION_ERROR_LABELS = frozenset({
 })
 
 
+def production_native_error_id(label: str, localized_text: str) -> str | None:
+    """Only exact production text plus its real 128-bit accessible request ID."""
+    if not isinstance(label, str) or localized_text not in PRODUCTION_ERROR_LABELS:
+        return None
+    match = re.fullmatch(
+        re.escape(localized_text) + r" · request ([a-f0-9]{32})", label
+    )
+    return match.group(1) if match else None
+
+
+def native_host_log_offset(log_path: Path) -> int:
+    """Record byte offset BEFORE clicking a real installed Tauri action."""
+    return log_path.stat().st_size if log_path.is_file() else 0
+
+
+def native_host_denial_ids(log_path: Path, offset: int, code: str) -> list[str]:
+    """Read only new Rust stderr, never trust a test-supplied 'host replied' bit."""
+    if not isinstance(offset, int) or offset < 0 or code not in (
+        "INVALID_STUDY_ANGLES", "INVALID_MEDIA_URL"
+    ):
+        return []
+    if not log_path.is_file() or log_path.stat().st_size < offset:
+        return []
+    with log_path.open("rb") as stream:
+        stream.seek(offset)
+        tail = stream.read(65537)
+    if len(tail) > 65536:
+        return []  # unbounded native log is not a certificate
+    prefix = r"\[scriptotar-native-denial\] code=" + re.escape(code)
+    marker = re.compile(r"^" + prefix + r" request_id=([a-f0-9]{32})$")
+    return [
+        match.group(1) for line in tail.decode("utf-8", errors="replace").splitlines()
+        if (match := marker.fullmatch(line.strip()))
+    ]
+
+
+def observed_host_denial(
+    log_path: Path, offset: int, code: str, names: list[str],
+    localized_text: str,
+) -> dict | None:
+    """Correlate two *independent* real installed surfaces by the same nonce.
+
+    Rust writes the typed denial ID on its own process stderr, while the
+    Svelte alert's AT-SPI accessible name must expose that exact ID. Both must
+    arise only after the native click. A screenshot-only or unrelated alert
+    can never manufacture this return value. This is request-correlation
+    evidence, not additional authorization or provider consent.
+    """
+    from_host = native_host_denial_ids(log_path, offset, code)
+    from_accessibility = [
+        proof for text in names
+        if (proof := production_native_error_id(text, localized_text))
+    ]
+    if (len(from_host) != 1 or len(from_accessibility) != 1
+            or from_host[0] != from_accessibility[0]):
+        return None
+    return {
+        "submitted_request_id": from_accessibility[0],
+        "tauri_denial_request_id": from_host[0],
+        "native_alert_request_id": from_accessibility[0],
+        "error_code": code,
+        "host_source": "installed-process-stderr",
+        "accessibility_source": "installed-AT-SPI-alert",
+    }
+
+
 def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
     """Find current installed semantic alert names, including strict WebKit mapping.
 
@@ -309,7 +375,12 @@ def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
                     label = node.queryText().getText(0, -1).strip()
                 except Exception:
                     continue
-            if role == "image map" and label not in PRODUCTION_ERROR_LABELS:
+            if role == "image map" and (
+                label not in PRODUCTION_ERROR_LABELS and not any(
+                    production_native_error_id(label, localized) is not None
+                    for localized in PRODUCTION_ERROR_LABELS
+                )
+            ):
                 continue
             if "alert" not in role and role != "image map":
                 continue
@@ -352,15 +423,18 @@ def valid_native_angle_request_binding(proof: object) -> bool:
             and host_receipt.get("error_code") == "INVALID_STUDY_ANGLES"):
         return False
     return (
-        isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
+        host_receipt.get("host_source") == "installed-process-stderr"
+        and host_receipt.get("accessibility_source") == "installed-AT-SPI-alert"
+        and isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
         and binding.get("native_readback_sha256") == payload
         and binding.get("native_action") == "Validate 3 angles"
         and binding.get("prior_alerts") == []
         and isinstance(binding.get("new_alerts"), list)
-        and len(binding["new_alerts"]) > 0
-        and all(isinstance(x, str) and
-                x.strip() == "The angle response is invalid or its Study evidence changed."
-                for x in binding["new_alerts"])
+        and len(binding["new_alerts"]) == 1
+        and production_native_error_id(
+            binding["new_alerts"][0],
+            "The angle response is invalid or its Study evidence changed."
+        ) == opaque_id
         and type(binding.get("action_monotonic_ns")) is int
         and type(binding.get("observed_monotonic_ns")) is int
         and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
