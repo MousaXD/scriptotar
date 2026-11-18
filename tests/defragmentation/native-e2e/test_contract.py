@@ -458,6 +458,51 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ]:
             self.assertFalse(native.valid_native_url_request_binding(bad))
 
+    def test_canonical_snapshot_is_one_real_wal_read_transaction(self):
+        # Deterministic real SQLite concurrency; unit evidence only, never an
+        # installed native PASS. A torn two-table fingerprint must be rejected.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            filename = root / "scriptotar.sqlite3"
+            with sqlite3.connect(filename) as writer:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.executescript("""
+                    CREATE TABLE content_studies (id INTEGER PRIMARY KEY, value TEXT);
+                    CREATE TABLE jobs (id INTEGER PRIMARY KEY, value TEXT);
+                    INSERT INTO content_studies VALUES (1, 'old');
+                    INSERT INTO jobs VALUES (1, 'old');
+                """)
+            initial = native.canonical_records_snapshot(root)
+            real_connect = sqlite3.connect
+            injected = []
+
+            class ConcurrentReader:
+                def __init__(self, conn):
+                    self.conn = conn
+                def __enter__(self):
+                    self.conn.__enter__()
+                    return self
+                def __exit__(self, *args):
+                    return self.conn.__exit__(*args)
+                def execute(self, statement, *args):
+                    if 'SELECT * FROM "jobs"' in statement and not injected:
+                        injected.append(True)
+                        with real_connect(filename) as writer:
+                            writer.execute("UPDATE content_studies SET value='new'")
+                            writer.execute("UPDATE jobs SET value='new'")
+                    return self.conn.execute(statement, *args)
+
+            def wrapped_connect(*args, **kwargs):
+                return ConcurrentReader(real_connect(*args, **kwargs))
+
+            with mock.patch.object(native.sqlite3, "connect", side_effect=wrapped_connect):
+                observed = native.canonical_records_snapshot(root)
+            latest = native.canonical_records_snapshot(root)
+            self.assertTrue(injected, "Real WAL writer was not interleaved")
+            self.assertNotEqual(initial["digest"], latest["digest"])
+            self.assertEqual(observed, initial)
+            self.assertNotEqual(observed, latest)
+
     def test_canonical_snapshot_detects_rewrites_and_appended_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             dbfile = Path(tmp) / "scriptotar.sqlite3"
