@@ -70,7 +70,7 @@ function collectFirstPartySources(dir) {
       problems.push(`Unexpected source symlink: ${relative(uiRoot, full)}`);
     } else if (entry.isDirectory()) {
       collectFirstPartySources(full);
-    } else if (entry.isFile() && /\\.(?:ts|tsx|js|jsx|mjs|svelte)$/.test(entry.name)) {
+    } else if (entry.isFile() && /\.(?:ts|tsx|js|jsx|mjs|svelte)$/.test(entry.name)) {
       reviewedSourcePaths.push(full);
     }
   }
