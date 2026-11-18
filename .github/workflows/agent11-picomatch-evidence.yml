@@ -10,6 +10,7 @@ on:
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch'
       - 'apps/desktop-ui/package.json'
       - 'apps/desktop-ui/package-lock.json'
       - '.github/workflows/agent11-picomatch-evidence.yml'
@@ -258,3 +259,48 @@ jobs:
         run: |
           echo 'Unreleased unreviewed upstream comparison only; npm package-lock unchanged.'
           echo 'Mandatory strict npm audit remains a known fail; release NO-GO.'
+
+  upstream-pr260-experiment:
+    # Active upstream experimental proposal, no production dependency change or audit exception.
+    name: Active upstream PR260 parser trial (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Validate original registry-installed parser and graph
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Verify upstream PR260 source provenance and apply ephemeral parser patch
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch > scripts/experimental/.ci-pr260-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr260-lf.patch)" = dabd989017e6bf0f1decc2d7b49184920ea753cd
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Require actual expanded bounded ReDoS corpus to pass
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Require Svelte, all Vitest and production build compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Retain release veto on unmerged source-only experiment
+        run: |
+          echo 'PR260 source is unmerged and not in npm lockfile or build output.'
+          echo 'Unfiltered npm audit remains mandatory and FAILED on the original unpatched graph.'
+          echo 'Never claim this test proves a released/advisory-cleared remediation.'
