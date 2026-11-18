@@ -237,3 +237,23 @@ The official [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf
 - Existing Tauri migration integration continues to **FAIL** at npm audit. The isolated reproduction workflow **also fails**, deliberately and correctly.
 - No manifests, lockfiles, production files, native acceptance tests or mandatory security workflows were changed by this follow-up.
 - **Decision for Agent 00:** wait for upstream fixed release plus successful clean reproducible audit and compatibility validation, or separately authorize a formal reviewed security-fork experiment. A time-boxed risk acceptance is a distinct policy exception, not remediation; it must never be silently applied to this release gate.
+
+
+## Separate Python audit and isolated upstream patch experiment (2026-11-18)
+
+**Python audit independently completed, not blocked by npm:** [Agent 11 workflow run 44332583902](https://github.com/MousaXD/scriptotar/actions/runs/44332583902), Python 3.12, pip-audit 2.10.1, with the original unmodified command:
+
+    pip-audit -r sidecars/transcription/requirements-engine.txt
+
+Exit code **0**, output **"No known vulnerabilities found"**, requirements SHA-256:
+a701d7587be07615a5e9562c3cfc5e2bf9176d2322494c65ab482155827be1da.
+
+This is a real independent audit of the specified Python requirements on an installed networked GitHub runner. It does **not** turn the mandatory npm stage green, inspect every Python package at desktop runtime, or imply that the combined original workflow completed its sequential Python step. The separate job has no dependency on npm and uses ordinary fail-on-nonzero command behavior; the original .github/workflows/integration.yml and its exact unfiltered npm audit --audit-level=high remain intact.
+
+**Track A:** [npm public versions](https://www.npmjs.com/package/picomatch?activeTab=versions) still mark 4.0.7 as latest, and [GitHub's GHSA](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) still lists affected <=4.0.7, **Patched versions: None**. Because Vite, Vitest and tinyglobby directly require the 4.x package, updating only these consumers without replacing/removing those dependency edges does not create a secure graph. Do not run npm audit fix --force, hide a vulnerable package under another name, or manufacture a clear audit.
+
+**Track B, laboratory candidate only:** scripts/experimental/picomatch-4.0.7-pr237.patch contains a small upstream-derived candidate from [unmerged micromatch/picomatch PR #237](https://github.com/micromatch/picomatch/pull/237), observed upstream HEAD 1bf0d04563cb9ce568cf36efc5f6b7187d9911d5. Its exact committed patch SHA-256 is 10862a65fefb1466c91774f2517b4ce7fd3a7f433b91ac2aa5f360ebf49b7933. Before the experiment, the CI script runs npm ci, checks picomatch@4.0.7 and validates that its installed lib/parse.js matches official upstream tag 4.0.7 Git blob 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd. It then applies the candidate **only to temporary GitHub-runner node_modules**, verifies the file changed, and executes the bounded exploit probe and frontend check/test/build on Linux and Windows.
+
+The candidate is **not published, advisory-cleared, independently security reviewed, or installed through a supported npm dependency graph**. A partial regex performance improvement cannot make the unchanged package-lock.json secure; npm audit still correctly fails. The CI experiment may fail for patch application, semantic compatibility or additional unmitigated exploit patterns. The strict existing audit job independently fails on the unchanged published package. Require a code-owner and independent Agent 10 security review of any proposed final patch, broader hostile glob corpus, supported reproducible packaging and full advisory-clean npm resolution before release consideration.
+
+**No release permission:** This PR stays draft; main and integration production code remain untouched by these experiments. Preserve the hard npm failure.
