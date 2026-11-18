@@ -653,7 +653,11 @@ describe('Content Study Studio', () => {
     await fireEvent.input(textbox, { target: { value: rejected } });
     await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
     const denial = 'The angle response is invalid or its Study evidence changed.';
-    expect(await screen.findByRole('alert', { name: denial })).toHaveTextContent(denial);
+    const visibleDenial = await screen.findByRole('alert', { name: denial });
+    expect(visibleDenial).toHaveTextContent(denial);
+    expect(textbox).toHaveAttribute('aria-invalid', 'true');
+    expect(textbox).toHaveAttribute('aria-describedby', 'studio-angle-error');
+    await waitFor(() => expect(visibleDenial).toHaveFocus());
     expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
 
     await fireEvent.input(textbox, { target: { value: rejected + ' ' } });
@@ -672,7 +676,9 @@ describe('Content Study Studio', () => {
     interpret.mockRejectedValueOnce('invalid angle response');
     await fireEvent.click(screen.getByRole('button', { name: 'التحقق من الزوايا الثلاث' }));
     const arabicDenial = 'استجابة الزوايا غير صالحة أو تغير دليل الدراسة.';
-    expect(await screen.findByRole('alert', { name: arabicDenial })).toHaveTextContent(arabicDenial);
+    const arabicAlert = await screen.findByRole('alert', { name: arabicDenial });
+    expect(arabicAlert).toHaveTextContent(arabicDenial);
+    await waitFor(() => expect(arabicAlert).toHaveFocus());
     expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
     expect(provider).not.toHaveBeenCalled();
 
@@ -698,6 +704,46 @@ describe('Content Study Studio', () => {
     expect((await api.getStudy('p-creator-lab', study.id))).toEqual(original);
     expect(provider).not.toHaveBeenCalled();
     expect(save).not.toHaveBeenCalled();
+  });
+
+  it('correlates an accessible Studio rejection to its actual host nonce, not another request', async () => {
+    const api = createMockClient();
+    const study = await api.createStudy('p-creator-lab', {
+      ...emptyBrief(), title: 'Native request binding',
+      goal: 'Explain original editing', audience: 'People learning editing'
+    });
+    const before = await api.getStudy('p-creator-lab', study.id);
+    const provider = vi.spyOn(api, 'runAi');
+    const interpret = vi.spyOn(api, 'interpretStudyAngles');
+    interpret.mockImplementationOnce(async (...args) => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:' + args[6]);
+    });
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Native request binding' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
+    const textbox = await screen.findByRole('textbox', { name: 'Paste three-angle JSON response' });
+    await fireEvent.input(textbox, { target: { value: '{"angles":[{"id":"bad"}]}' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    const id = interpret.mock.calls[0]?.[6];
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Request ID: ' + id);
+    expect(alert).toHaveAttribute('aria-label',
+      'The angle response is invalid or its Study evidence changed. · request ' + id);
+    await waitFor(() => expect(alert).toHaveFocus());
+
+    interpret.mockImplementationOnce(async () => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:ffffffffffffffffffffffffffffffff');
+    });
+    await fireEvent.input(textbox, { target: { value: '{"angles":[]}' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    const unbound = await screen.findByRole('alert');
+    expect(unbound).not.toHaveTextContent('Request ID:');
+    expect(await api.getStudy('p-creator-lab', study.id)).toEqual(before);
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it('discards stale asynchronous angle validation after the user replaces the pasted response', async () => {

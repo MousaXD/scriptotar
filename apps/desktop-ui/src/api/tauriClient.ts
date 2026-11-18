@@ -66,10 +66,11 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<ContentStudy>('set_study_draft_archived', { projectId, studyId, draftId, expectedDraftRevision, archived }),
     prepareStudyAngles: (projectId, studyId) =>
       invoke<StudyAnglePrompt>('prepare_study_angles', { projectId, studyId }),
-    interpretStudyAngles: (projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson, selectedAngleId) =>
+    interpretStudyAngles: (projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson, selectedAngleId, requestId) =>
       invoke<StudyAngleInterpretation>('interpret_study_angles', {
         projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson,
-        selectedAngleId: selectedAngleId ?? null
+        selectedAngleId: selectedAngleId ?? null,
+        requestId: requestId ?? null
       }),
     reviewStudyScript: (projectId, studyId, expectedStudyRevision, anglePrompt,
       anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) =>
@@ -134,7 +135,9 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     chooseLocalMedia: () => invoke<string | null>('choose_local_media'),
     chooseOutputDirectory: () => invoke<string | null>('choose_output_directory'),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
-    enqueueUrl: (projectId, url) => invoke<BackendJob>('enqueue_url', { projectId, url }),
+    enqueueUrl: (projectId, url, requestId) => invoke<BackendJob>('enqueue_url', {
+      projectId, url, requestId: requestId ?? null
+    }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
     saveWatchlist: (query: ResearchQuery) =>
       hydrateBootstrap(invoke, invoke<CoreBootstrapData>('save_watchlist', { query })),
