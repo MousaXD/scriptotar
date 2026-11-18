@@ -795,7 +795,10 @@ def status(report: dict, scenario: str, state: str, reason: str, image: str | No
     report["cases"][scenario] = record
 
 
-# P0 certification guard: only authoritative installed Rust denial IDs and\n# exact new AT-SPI error labels can certify error_recovery. The older runner\n# does not yet collect these proofs; until it does, NOT TESTED is mandatory.\nPRODUCTION_ERROR_LABELS = frozenset({
+# P0 certification guard: only authoritative installed Rust denial IDs and
+# exact new AT-SPI error labels can certify error_recovery. This narrow
+# integrated runner does not yet collect these proofs; NOT TESTED is required.
+PRODUCTION_ERROR_LABELS = frozenset({
     "The angle response is invalid or its Study evidence changed.",
     "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
     "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
