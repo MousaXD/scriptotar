@@ -71,6 +71,10 @@ for (const def of definitions) {
     problems.push(`Invalid generated Tauri config in ${def.workflow}/${def.platform}: ${error.message}`);
   }
 }
+function containsForbiddenPackagePath(entry) {
+  const normalized = entry.replace(/\\/g, '/').toLowerCase();
+  return /(?:^|\/)node_modules(?:\/|$)|(?:^|\/)(?:picomatch|tinyglobby|fdir|vite|vitest)(?:\/|\.|$)/.test(normalized);
+}
 function inspectManifest(manifest, platform, findings) {
   if (!['linux', 'windows'].includes(platform)) {
     findings.push('Manifest requires --platform linux or --platform windows');
@@ -83,7 +87,7 @@ function inspectManifest(manifest, platform, findings) {
     // Linux dpkg-deb --contents starts with permission, uid/gid, size, date.
     // Windows lines may be absolute paths from Get-ChildItem -Recurse -File.
     const path = line.replace(/\\/g, '/').toLowerCase();
-    if (/(?:^|\/)node_modules(?:\/|$)|(?:^|\/)(?:picomatch|tinyglobby|fdir|vite|vitest)(?:\/|\.|$)/.test(path)) {
+    if (containsForbiddenPackagePath(line)) {
       findings.push(`Unexpected frontend parser/development module in package inventory: ${line.slice(-240)}`);
     }
     runtime ||= path.includes('transcription-runtime/');
@@ -106,22 +110,28 @@ if (idx >= 0 || pidx >= 0) {
     else inventory = inspectManifest(path, argv[pidx + 1], problems);
   }
 }
-// Always challenge the inventory matcher with negative and positive controls.
-const temp = [];
-const controls = [
-  ['linux', '-rwxr-xr-x root/root 1 2026-11-18 00:00 ./usr/share/scriptotar/transcription-runtime/RUNTIME-VERSIONS.txt\n-rwxr-xr-x root/root 1 2026-11-18 00:00 ./usr/share/scriptotar/mcp-tools/cloudflared\n-rwxr-xr-x root/root 1 2026-11-18 00:00 ./usr/share/scriptotar/node_modules/picomatch/index.js'],
-  ['windows', 'C:\\Scriptotar\\transcription-runtime\\RUNTIME-VERSIONS.txt\nC:\\Scriptotar\\mcp-tools\\cloudflared.exe\nC:\\Scriptotar\\node_modules\\picomatch\\lib\\parse.js']
+// The SAME path-detection function used against actual package inventories
+// must reject prohibited filenames, while leaving legitimate runtime files alone.
+const manifestPathControls = [
+  { name: 'Linux node_modules', value: './usr/share/scriptotar/node_modules/picomatch/index.js', forbidden: true },
+  { name: 'Linux direct parser', value: './usr/share/scriptotar/picomatch/lib/parse.js', forbidden: true },
+  { name: 'Windows node_modules', value: 'C:\\Scriptotar\\node_modules\\vite\\dist\\index.js', forbidden: true },
+  { name: 'Windows nested parser', value: 'C:\\Scriptotar\\Resources\\tinyglobby\\index.js', forbidden: true },
+  { name: 'Linux transcription runtime', value: './usr/lib/scriptotar/transcription-runtime/RUNTIME-VERSIONS.txt', forbidden: false },
+  { name: 'Linux MCP tools', value: './usr/lib/scriptotar/mcp-tools/MCP-TOOLS-PROVENANCE.json', forbidden: false },
+  { name: 'Windows transcription runtime', value: 'C:\\Scriptotar\\transcription-runtime\\scriptotar-engine.exe', forbidden: false },
+  { name: 'Windows MCP tools', value: 'C:\\Scriptotar\\mcp-tools\\cloudflared.exe', forbidden: false }
 ];
-for (const [platform, fixture] of controls) {
-  const lines = fixture.split('\n');
-  if (!lines.some(line => /(?:^|[/\\])node_modules(?:[/\\]|$)/i.test(line))) {
-    problems.push(`Bundled manifest security test fixture failed: ${platform}`);
+for (const check of manifestPathControls) {
+  if (containsForbiddenPackagePath(check.value) !== check.forbidden) {
+    problems.push(`Package manifest path scanner failed its ${check.forbidden ? 'malicious' : 'clean'} fixture: ${check.name}`);
   }
 }
 const report = {
   title: 'Tauri generated config source and optional ACTUAL package manifest security inventory',
   configSources: out,
   packageManifest: inventory,
+  pathMatcherFixtures: manifestPathControls.length,
   actualPackageManifestExamined: idx >= 0 && inventory !== null,
   issues: problems
 };
