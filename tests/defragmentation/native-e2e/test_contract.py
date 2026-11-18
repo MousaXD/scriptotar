@@ -105,7 +105,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # never to any installed runtime or QA evidence collector.
         clock = [0]
         def monotonic():
-            clock[0] += 2.5
+            # Advance inside the real two-second prefix-read deadline;
+            # the dropped first chunk must be observed before retry.
+            clock[0] += 0.5
             return clock[0]
         value = "abcdefghij" * 81
         with mock.patch.object(native, "command", side_effect=keys), \
