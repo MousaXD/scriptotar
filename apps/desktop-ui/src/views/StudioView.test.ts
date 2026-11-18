@@ -626,6 +626,85 @@ describe('Content Study Studio', () => {
     expect(provider).not.toHaveBeenCalled();
   });
 
+  it('shows a localized accessible native angle denial for string/Error IPC failures without mutating Study data', async () => {
+    const api = createMockClient();
+    const provider = vi.spyOn(api, 'runAi');
+    const save = vi.spyOn(api, 'saveStudy');
+    const study = await api.createStudy('p-creator-lab', {
+      ...emptyBrief(), title: 'Native rejection regression',
+      goal: 'Describe practical original editing tips',
+      audience: 'People learning video editing'
+    });
+    const original = await api.getStudy('p-creator-lab', study.id);
+    const interpret = vi.spyOn(api, 'interpretStudyAngles');
+    interpret.mockRejectedValueOnce('invalid angle response: expected exactly three angles');
+    interpret.mockRejectedValueOnce(new Error('invalid angle response: model returned one angle'));
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Native rejection regression' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
+    expect(await screen.findByText(/Three-angle prompt prepared locally/)).toBeInTheDocument();
+
+    const rejected = '{"angles":[{"id":"only-one","approach":"Incomplete"}]}';
+    const textbox = screen.getByRole('textbox', { name: 'Paste three-angle JSON response' });
+    await fireEvent.input(textbox, { target: { value: rejected } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    const denial = 'The angle response is invalid or its Study evidence changed.';
+    expect(await screen.findByRole('alert', { name: denial })).toHaveTextContent(denial);
+    expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
+
+    await fireEvent.input(textbox, { target: { value: rejected + ' ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    expect(await screen.findByRole('alert', { name: denial })).toHaveTextContent(denial);
+
+    expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
+    expect(save).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
+
+    setLocale('ar');
+    await fireEvent.input(screen.getByRole('textbox', {
+      name: 'الصق استجابة الزوايا الثلاث بصيغة JSON'
+    }), { target: { value: rejected } });
+    interpret.mockRejectedValueOnce('invalid angle response');
+    await fireEvent.click(screen.getByRole('button', { name: 'التحقق من الزوايا الثلاث' }));
+    const arabicDenial = 'استجابة الزوايا غير صالحة أو تغير دليل الدراسة.';
+    expect(await screen.findByRole('alert', { name: arabicDenial })).toHaveTextContent(arabicDenial);
+    expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it('discards stale asynchronous angle validation after the user replaces the pasted response', async () => {
+    const api = createMockClient();
+    const study = await api.createStudy('p-creator-lab', {
+      ...emptyBrief(), title: 'Angle cancellation regression',
+      goal: 'Create a new short reel', audience: 'Local creators'
+    });
+    let rejectPrevious: (cause: unknown) => void = () => {};
+    const interpret = vi.spyOn(api, 'interpretStudyAngles');
+    interpret.mockImplementationOnce(() => new Promise((_, reject) => {
+      rejectPrevious = reject;
+    }));
+    const original = await api.getStudy('p-creator-lab', study.id);
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Angle cancellation regression' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare 3 creative angles' }));
+    expect(await screen.findByText(/Three-angle prompt prepared locally/)).toBeInTheDocument();
+    const textbox = screen.getByRole('textbox', { name: 'Paste three-angle JSON response' });
+    await fireEvent.input(textbox, { target: { value: '{"angles":[]}' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    await fireEvent.input(textbox, { target: { value: '{"angles":[{"id":"replaced"}]}' } });
+    await act(async () => { rejectPrevious('invalid angle response for superseded JSON'); });
+    expect(screen.queryByRole('alert', { name: /angle response is invalid/i })).not.toBeInTheDocument();
+    expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
+    expect(screen.queryByText('Three angles validated locally. Choose one to prepare its script prompt.')).not.toBeInTheDocument();
+  });
+
   it('requires approval for a durable local source check and never calls a provider', async () => {
     const api = createMockClient();
     const provider = vi.spyOn(api, 'runAi');
