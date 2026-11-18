@@ -131,6 +131,42 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('denied_url_recovery()', exercise)
 
 
+    def test_webkit_image_map_can_expose_only_exact_production_error_label(self):
+        # Actual installed WebKitGTK at run #44313725742 exposed a named
+        # native image-map node for Svelte role=alert. Never accept arbitrary
+        # similarly named map controls, even with 'angle invalid' tokens.
+        class Node:
+            def __init__(self, role, name):
+                self.role, self.name = role, name
+            def getRoleName(self):
+                return self.role
+        class Ax:
+            def nodes(self):
+                return iter([
+                    Node("image map",
+                         "The angle response is invalid or its Study evidence changed."),
+                    Node("image map", "Unrelated angle invalid warning in another panel"),
+                    Node("button", "The angle response is invalid or its Study evidence changed."),
+                ])
+        labels = native.native_named_alerts(Ax(), ("angle", "invalid"))
+        self.assertEqual(labels, [
+            "The angle response is invalid or its Study evidence changed."
+        ])
+        # This is accessible text evidence, NOT the authenticated Tauri ID.
+        report = {"cases": {}}
+        def only_webkit_image_map():
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": True,
+                "request_correlation": {
+                    "new_alerts": labels,
+                    "prior_alerts": [],
+                }
+            }
+            return "a WebKit image map is still not host denial correlation"
+        self.assertFalse(native.checked(report, "error_recovery",
+                                        only_webkit_image_map))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
     def test_agent10_unreviewed_screenshot_never_autocertifies_recovery(self):
         # Mirror Agent 10's adversarial callback against the REAL QA checked
         # helper. Neither a correct-looking red border nor downstream SQLite
