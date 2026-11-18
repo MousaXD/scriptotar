@@ -5,6 +5,7 @@
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
   import { extractUrlsFromText } from '../utils/textUtils';
+  import { newNativeRequestId, matchesNativeDenial } from '../utils/nativeDenial';
   import JobRow from '../components/JobRow.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -13,7 +14,7 @@
   export let onRetry: (jobId: string) => Promise<void> | void;
   export let onChooseLocal: () => Promise<string | null> | string | null;
   export let onEnqueueLocal: (path: string) => Promise<void> | void;
-  export let onEnqueueUrl: (url: string) => Promise<void> | void;
+  export let onEnqueueUrl: (url: string, requestId?: string) => Promise<void> | void;
   export let onOpenCompleted: (job: Job) => Promise<void> | void;
 
   type QueueFilter = 'all' | 'active' | 'attention' | 'done';
@@ -26,6 +27,7 @@
   let actionError = '';
   let actionErrorElement: HTMLParagraphElement | undefined;
   let urlRejected = false;
+  let urlDenialId = '';
   let actionStatus = '';
   let busy = false;
   let dragActive = false;
@@ -56,6 +58,7 @@
     busy = true;
     actionError = '';
     urlRejected = false;
+    urlDenialId = '';
     actionStatus = '';
     try { await action(); }
     catch (error) { actionError = error instanceof Error ? error.message : String(error); }
@@ -119,11 +122,17 @@
     return run(async () => {
       const url = sourceUrl.trim();
       if (!url) return;
+      const requestId = newNativeRequestId();
       try {
         // Keep Rust as the authority for URL admission: even unsupported schemes
         // must reach the backend and must never enqueue a canonical job.
-        await onEnqueueUrl(url);
+        await onEnqueueUrl(url, requestId);
       } catch (error) {
+        if (matchesNativeDenial(error, 'INVALID_MEDIA_URL', requestId)) {
+          urlRejected = true;
+          urlDenialId = requestId;
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
         const detail = error instanceof Error ? error.message : String(error);
         if (detail.includes('research URL is invalid: only http and https are supported')) {
           urlRejected = true;
@@ -267,7 +276,7 @@
   </details>
 </section>
 
-{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError} dir="auto" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · request ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="ltr"> Request ID: {urlDenialId}</small>{/if}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>

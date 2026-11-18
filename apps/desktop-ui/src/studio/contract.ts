@@ -153,7 +153,8 @@ export interface StudioGateway {
   setStudyDraftArchived?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
   prepareStudyAngles?(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
   interpretStudyAngles?(projectId: string, studyId: string, expectedStudyRevision: number,
-    preparedPrompt: string, responseJson: string, selectedAngleId?: string): Promise<StudyAngleInterpretation>;
+    preparedPrompt: string, responseJson: string, selectedAngleId?: string,
+    requestId?: string): Promise<StudyAngleInterpretation>;
   reviewStudyScript?(projectId: string, studyId: string, expectedStudyRevision: number,
     anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
     preparedDraftPrompt: string, scriptResponseJson: string,
