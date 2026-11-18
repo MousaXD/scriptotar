@@ -532,8 +532,36 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"',
                       source)
         self.assertIn('if after != before or not found_error:', source)
+        self.assertIn('preserve_foreign_reference_failure(report, exc)', source)
+        self.assertIn('"preexisting_exact_denial": expected_error in before_alerts', source)
+        self.assertIn('"postclick_exact_denial": expected_error in alerts', source)
         self.assertIn('read-only foreign Study', source)
         self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
+
+    def test_failed_foreign_reference_preserves_original_canonical_snapshot(self):
+        # Source-only adversarial test; never asserts a real native PASS.
+        before = {"digest": "a" * 64, "tables": {"projects": {"rows": 2}}}
+        after = {"digest": "b" * 64, "tables": {"projects": {"rows": 3}}}
+        report = {"foreign_study_reference_probe": {
+            "status": "PARTIAL", "canonical_before": before,
+            "canonical_after": after, "unchanged": False,
+            "preexisting_exact_denial": False,
+            "postclick_exact_denial": False,
+            "reference_sha256": "c" * 64,
+        }}
+        native.preserve_foreign_reference_failure(
+            report, native.NativeFailure("missing fresh semantic denial")
+        )
+        proof = report["foreign_study_reference_probe"]
+        self.assertEqual(proof["status"], "FAIL")
+        self.assertEqual(proof["canonical_before"], before)
+        self.assertEqual(proof["canonical_after"], after)
+        self.assertFalse(proof["unchanged"])
+        self.assertFalse(proof["postclick_exact_denial"])
+        self.assertEqual(proof["reference_sha256"], "c" * 64)
+        self.assertIn("missing fresh", proof["reason"])
+        native.preserve_foreign_reference_failure({"foreign_study_reference_probe": None},
+                                                  ValueError("incomplete preflight"))
 
     def test_installed_foreign_reference_is_partial_not_forged_write_ipc_pass(self):
         # Future PR #138 offers genuine installed-host read-only get_study via
