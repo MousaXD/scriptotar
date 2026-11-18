@@ -147,6 +147,13 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
             memory = {"provider": platform.system(), "tree_memory_complete": False,
                       "sampling_error": type(exc).__name__}
         sample_finished_monotonic_ns = time.perf_counter_ns()
+        # The app can exit and the kernel can reuse its PID *during* the
+        # memory snapshot. Never report a sample unless both probes bracket
+        # the same executable + birth identity. Discard the ambiguous sample.
+        if (not same_image(process_image(pid), expected)
+                or process_instance_id(pid) != instance):
+            end_reason = "process_gone_or_identity_changed_during_sample"
+            break
         records.append({
             "elapsed_ms": round((clock - begin) * 1000, 3),
             "sample_started_monotonic_ns": sample_started_monotonic_ns,
