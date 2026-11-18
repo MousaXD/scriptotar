@@ -163,3 +163,76 @@ fn independent_revoked_origin_cannot_be_reselected_by_editor_bundle() {
     assert_eq!(db.get_draft(owner.id, draft.id).unwrap(), original_draft);
     assert!(db.list_draft_source_ids(owner.id, draft.id).unwrap().is_empty());
 }
+
+#[test]
+fn independent_revoked_source_cannot_gain_job_or_clone_lineage() {
+    let (_scratch, db, owner, _foreign) = fixture();
+    let (_research, _media, transcript_id) = seed_existing_origins(&db, &owner);
+    let study = db.create_study(owner.id, "Revoked provenance", "Keep history").unwrap();
+    let source = db.add_study_source(
+        owner.id, study.id,
+        &StudySourceInput {
+            kind: StudySourceKind::Transcript,
+            reference_id: Some(transcript_id),
+            locator: None,
+            manual_text: None,
+            source_revision: Some("original source v1".into()),
+            uncertainty: None,
+        },
+    ).unwrap();
+    let historic = db.create_draft(owner.id, study.id, "Pre-revoke", "Immutable text").unwrap();
+    db.attach_source_to_draft(owner.id, historic.id, source.id).unwrap();
+    let job = Job::new(
+        owner.id,
+        JobInput::Url("https://example.org/original-owned-source".into()),
+    );
+    db.insert_job(&job).unwrap();
+    let before = db.get_study(owner.id, study.id).unwrap();
+    db.revoke_study_source_access(
+        owner.id, study.id, before.revision,
+        StudySourceKind::Transcript, transcript_id,
+    ).unwrap();
+    let revoked = db.get_study(owner.id, study.id).unwrap();
+    let tombstone = db.get_study_source(owner.id, study.id, source.id).unwrap();
+    assert!(!tombstone.available, "source authorization not withdrawn");
+    assert_eq!(
+        db.list_draft_source_ids(owner.id, historic.id).unwrap(),
+        vec![source.id],
+        "historical immutable source attachment was erased",
+    );
+    assert!(db.list_study_source_job_ids(owner.id, study.id, source.id).unwrap().is_empty());
+
+    // Independent of the direct evidence and draft-link tests: both these
+    // lower-level APIs can create new provenance through a revoked tombstone.
+    assert!(
+        db.attach_job_to_study_source(owner.id, study.id, source.id, job.id).is_err(),
+        "FAIL OPEN: revoked Study source gained a NEW job association",
+    );
+    assert!(
+        db.create_reviewed_study_draft(
+            owner.id, study.id, revoked.revision,
+            "New script must not cite revoked source",
+            "Do not create candidate",
+            &[source.id],
+        ).is_err(),
+        "FAIL OPEN: reviewed candidate gained revoked provenance",
+    );
+    assert!(
+        db.duplicate_draft(owner.id, historic.id).is_err(),
+        "FAIL OPEN: legacy draft clone copied a revoked historical source link",
+    );
+    assert!(
+        db.duplicate_study_draft_checked(
+            owner.id, study.id, historic.id, historic.revision
+        ).is_err(),
+        "FAIL OPEN: scoped draft clone copied a revoked historical source link",
+    );
+    assert_eq!(db.get_study(owner.id, study.id).unwrap(), revoked);
+    assert_eq!(db.get_study_source(owner.id, study.id, source.id).unwrap(), tombstone);
+    assert_eq!(
+        db.list_draft_source_ids(owner.id, historic.id).unwrap(),
+        vec![source.id],
+        "denied new work corrupted historical provenance",
+    );
+    assert!(db.list_study_source_job_ids(owner.id, study.id, source.id).unwrap().is_empty());
+}
