@@ -40,8 +40,33 @@ jobs:
           fi
           echo "Pinning exact integration source: $current"
           echo "sha=$current" >> "$GITHUB_OUTPUT"
+  pin-features:
+    name: "Security / pin exact feature PR source set"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      shas: ${{ steps.pin.outputs.shas }}
+    steps:
+      - name: Resolve each independent feature PR once
+        id: pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo="https://github.com/MousaXD/scriptotar.git"
+          result="{"
+          separator=""
+          for pr in 131 118 119 128 121 117; do
+            sha="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot resolve PR $pr source" >&2; exit 1; }
+            printf 'Pinning feature PR #%s to %s\\n' "$pr" "$sha"
+            result+="${separator}\\\"$pr\\\":\\\"$sha\\\""
+            separator=","
+          done
+          result+="}"
+          echo "shas=$result" >> "$GITHUB_OUTPUT"
+
   feature-security:
-    needs: pin-integration
+    needs: [pin-integration, pin-features]
     name: "Security / ${{ matrix.gate }} (feature PR #${{ matrix.pr }})"
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -82,11 +107,12 @@ jobs:
           echo "Independent tests bound to $actual"
       # Resolve PR #114's current HEAD once in pin-integration. Do NOT use
       # PR #124 base.sha: that field can be stale after Agent 00 integrates.
-      # Feature gates still print their independently checked-out exact SHAs.
+      # All feature PRs are pinned to immutable hashes before jobs launch.
+      # A postcheck rejects changed PR heads so this matrix cannot certify stale source.
       - name: Checkout exact target feature source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
-          ref: ${{ matrix.pr == 114 && needs.pin-integration.outputs.sha || format('refs/pull/{0}/head', matrix.pr) }}
+          ref: ${{ matrix.pr == 114 && needs.pin-integration.outputs.sha || fromJSON(needs.pin-features.outputs.shas)[format('{0}', matrix.pr)] }}
           path: target
           persist-credentials: false
       - name: Set up Rust
@@ -106,7 +132,7 @@ jobs:
   verify-pinned-integration:
     name: "Security / exact SHA remains current after the matrix"
     if: always()
-    needs: [pin-integration, feature-security]
+    needs: [pin-integration, pin-features, feature-security]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -116,9 +142,11 @@ jobs:
           PINNED_SHA: ${{ needs.pin-integration.outputs.sha }}
           MATRIX_RESULT: ${{ needs.feature-security.result }}
           PIN_RESULT: ${{ needs.pin-integration.result }}
+          FEATURE_PIN_RESULT: ${{ needs.pin-features.result }}
+          FEATURE_SHAS: ${{ needs.pin-features.outputs.shas }}
         run: |
           set -euo pipefail
-          [[ "$PIN_RESULT" == success && "$MATRIX_RESULT" == success ]] ||
+          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success ]] ||
             { echo "One or more independent security gates did not pass"; exit 1; }
           [[ "$PINNED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             { echo "Missing exact integration SHA"; exit 1; }
@@ -126,4 +154,11 @@ jobs:
           current="$(git ls-remote --exit-code https://github.com/MousaXD/scriptotar.git "$branch" | awk '{print $1}')"
           [[ "$current" == "$PINNED_SHA" ]] ||
             { echo "Integration moved while independent matrix ran; rerun exact-head audit" >&2; exit 1; }
-          echo "Exact-head independent matrix remains valid at $PINNED_SHA"
+          repo="https://github.com/MousaXD/scriptotar.git"
+          for pr in 131 118 119 128 121 117; do
+            pinned="$(printf '%s' "$FEATURE_SHAS" | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$pr")"
+            [[ "$pinned" =~ ^[0-9a-f]{40}$ ]] || { echo "Bad pinned feature SHA for PR $pr" >&2; exit 1; }
+            current="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
+            [[ "$current" == "$pinned" ]] || { echo "Feature PR $pr moved while matrix ran; rerun" >&2; exit 1; }
+          done
+          echo "Exact-head security matrix remains valid on integration $PINNED_SHA and six immutable feature PR sources"
