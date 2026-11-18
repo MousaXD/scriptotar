@@ -130,6 +130,76 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('denied_url_recovery()', exercise)
 
 
+    def test_agent10_unreviewed_screenshot_never_autocertifies_recovery(self):
+        # Mirror Agent 10's adversarial callback against the REAL QA checked
+        # helper. Neither a correct-looking red border nor downstream SQLite
+        # success can upgrade unresolved visual adjudication to PASS.
+        report = {"cases": {}}
+
+        def screenshot_only():
+            report["angle_rejection_visual_proof"] = {
+                "proof": "new bordered error region below Validate",
+                "atspi_error_text_exposed": False,
+                "human_review_required": True,
+            }
+            return "three recovery cards; SQLite unchanged"
+
+        self.assertFalse(native.checked(report, "error_recovery", screenshot_only))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+        self.assertIn("screenshot", report["cases"]["error_recovery"]["reason"])
+
+    def test_review_flag_false_does_not_replace_native_semantic_evidence(self):
+        # A manually flipped flag is not proof that the installed Tauri IPC
+        # surfaced a named native rejection.
+        report = {"cases": {}}
+
+        def incomplete():
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": False,
+                "human_review_required": False,
+            }
+            return "unreviewed screenshot promoted by mistake"
+
+        self.assertFalse(native.checked(report, "error_recovery", incomplete))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_missing_native_rejection_evidence_cannot_pass(self):
+        report = {"cases": {}}
+        self.assertFalse(native.checked(
+            report, "error_recovery", lambda: "no rejection proof"
+        ))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_semantic_rejection_contract_accepts_explicit_native_evidence(self):
+        # Positive unit contract for the helper only, NOT an installed host PASS.
+        report = {"cases": {}}
+
+        def semantic():
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": True,
+                "proof": "named AT-SPI native validation alert",
+            }
+            return "helper accepted native evidence"
+
+        self.assertTrue(native.checked(report, "error_recovery", semantic))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "PASS")
+
+    def test_queue_no_write_proof_precedes_missing_alert_failure(self):
+        # Even on an inaccessible Queue error, retain the read-only canonical
+        # job-count observation in exact-head CI artifacts for Agent 00.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        block = source.split("def denied_url_recovery():", 1)[1].split(
+            "def error_recovery():", 1
+        )[0]
+        self.assertIn('report["denied_url_canonical_job_count"]', block)
+        self.assertLess(
+            block.index('new_count = count_canonical_jobs('),
+            block.index('if not error_text:'),
+        )
+        self.assertIn('session.screenshot("failed-denied-url-no-error")', block)
+        self.assertIn("no named", block)
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
