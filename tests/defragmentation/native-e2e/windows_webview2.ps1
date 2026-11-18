@@ -477,6 +477,20 @@ function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
     throw "Installed JSON editor '$name' did not receive exact native pasted text"
   }
 }
+function Assert-InstalledNativeInputReceipt([IntPtr]$hwnd, [string]$name, [string]$expected) {
+  # Re-read the actual installed UIA edit control immediately before dispatch.
+  # A caller-owned flag, clipboard contents or earlier paste assertion is not
+  # evidence that THIS native request used the submitted input.
+  $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  $actual = [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+  if ($actual -cne $expected) {
+    throw "Installed native input '$name' changed before dispatch (expected length $($expected.Length), observed length $($actual.Length))"
+  }
+  return [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+      [Text.Encoding]::UTF8.GetBytes($actual))).ToLowerInvariant()
+}
 function Get-InstalledBoundDenialAlerts([IntPtr]$hwnd, [string]$localizedText) {
   # Real Tauri #135 places the request nonce in role=alert's aria-label.
   # Installed WebView2 exposed only plain error in the child Text node; read
@@ -590,17 +604,25 @@ function Get-InstalledHostDenial([long]$beforeOffset, [string]$code,
       finally { $reader.Dispose() }
     } finally { $log.Dispose() }
   } catch { return $null }
-  $pattern = '^\[scriptotar-native-denial\] code=' +
-    [regex]::Escape($code) + ' request_id=([0-9a-f]{32})$'
+  # Treat ANY additional typed denial in the post-click host log as
+  # ambiguous, even when its code differs. A later unrelated request must
+  # not authenticate the malformed-angle/Queue submission.
+  $pattern = '^\[scriptotar-native-denial\] code=([A-Z_]+) request_id=([0-9a-f]{32})$'
   $markers = @()
   foreach ($line in ($fresh -split '\r?\n')) {
     $match = [regex]::Match($line.Trim(), $pattern)
-    if ($match.Success) { $markers += $match.Groups[1].Value }
+    if ($match.Success) {
+      $markers += [pscustomobject]@{
+        Code = $match.Groups[1].Value
+        Id = $match.Groups[2].Value
+      }
+    }
   }
-  if ($markers.Count -ne 1 -or $markers[0] -cne $native.Groups[1].Value) {
+  if ($markers.Count -ne 1 -or $markers[0].Code -cne $code -or
+      $markers[0].Id -cne $native.Groups[1].Value) {
     return $null
   }
-  return [string]$markers[0]
+  return [string]$markers[0].Id
 }
 
 function Get-InstalledReferenceDenials([IntPtr]$hwnd) {
@@ -1663,21 +1685,29 @@ try {
         if ($priorAngleAlerts.Count -ne 0) {
           throw 'Cannot bind installed malformed request: stale angle error already exposed'
         }
+        $angleSubmissionSha = [Convert]::ToHexString(
+          [System.Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($malformedAngleJson))).ToLowerInvariant()
+        $angleReadbackSha = Assert-InstalledNativeInputReceipt $arabicHwnd 'Paste three-angle JSON response' $malformedAngleJson
         $beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
         $angleHostLogOffset = Get-InstalledHostLogOffset
         $angleClickUtc = [DateTime]::UtcNow.ToString('o')
+        $angleClickTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
         $currentAngleError = Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts
         $angleBoundAlert = Wait-InstalledBoundDenial $arabicHwnd $angleLocalizedText $priorAngleBoundAlerts
         $angleHostId = Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $angleBoundAlert $angleLocalizedText
         $angleUiaId = if ($angleBoundAlert -match ' · request ([0-9a-f]{32})$') { $Matches[1] } else { $null }
+        $angleObservedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
         $angleErrorUtc = [DateTime]::UtcNow.ToString('o')
         $afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
         $report.angle_rejection_request_correlation = @{
-          input_sha256 = [Convert]::ToHexString(
-            [System.Security.Cryptography.SHA256]::HashData(
-              [Text.Encoding]::UTF8.GetBytes($malformedAngleJson))).ToLowerInvariant()
-          exact_native_input_readback = $true # independently asserted in Paste-InstalledJson
+          input_sha256 = $angleSubmissionSha
+          native_readback_sha256 = $angleReadbackSha
+          exact_native_input_readback = ($angleSubmissionSha -ceq $angleReadbackSha)
+          input_readback_source = 'installed-UIA-ValuePattern-immediately-before-dispatch'
+          action_stopwatch_ticks = $angleClickTicks
+          observed_stopwatch_ticks = $angleObservedTicks
           prior_alert_count = $priorAngleAlerts.Count
           fresh_alert_text = $currentAngleError
           real_native_alert_aria_label = $angleBoundAlert
@@ -1712,9 +1742,14 @@ try {
         if ($priorQueueBoundAlerts.Count -ne 0) {
           throw 'Stale installed request-bound URL alert existed BEFORE the click'
         }
+        $queueSubmissionSha = [Convert]::ToHexString(
+          [System.Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($rejectedUrl))).ToLowerInvariant()
+        $queueReadbackSha = Assert-InstalledNativeInputReceipt $arabicHwnd 'Media URL' $rejectedUrl
         $beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
         $queueHostLogOffset = Get-InstalledHostLogOffset
         $queueClickUtc = [DateTime]::UtcNow.ToString('o')
+        $queueClickTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
         Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
         $deniedError = ''
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -1750,6 +1785,7 @@ try {
         $queueBoundAlert = Wait-InstalledBoundDenial $arabicHwnd $queueLocalizedText $priorQueueBoundAlerts
         $queueHostId = Get-InstalledHostDenial $queueHostLogOffset 'INVALID_MEDIA_URL' $queueBoundAlert $queueLocalizedText
         $queueUiaId = if ($queueBoundAlert -match ' · request ([0-9a-f]{32})$') { $Matches[1] } else { $null }
+        $queueObservedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
         Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'Studio'
         Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
@@ -1775,12 +1811,48 @@ try {
           persisted_study_recovered = $recovered
           backend_angle_denial_id = $angleHostId
           backend_url_denial_id = $queueHostId
+          url_input_sha256 = $queueSubmissionSha
+          url_native_readback_sha256 = $queueReadbackSha
+          url_input_readback_source = 'installed-UIA-ValuePattern-immediately-before-dispatch'
+          queue_action_stopwatch_ticks = $queueClickTicks
+          queue_observed_stopwatch_ticks = $queueObservedTicks
           host_provenance = 'installed Windows native process stderr; not QA-generated'
         }
+        # Do not trust a semantic flag or stale alert: certify only two
+        # separately authenticated Rust/UIA request IDs, each from its own
+        # actual native input and strictly ordered, bounded installed actions.
+        $maxReceiptTicks = [long]([System.Diagnostics.Stopwatch]::Frequency * 35)
+        $nativeInputsAndTimingProven = (
+          $angleSubmissionSha -ceq $angleReadbackSha -and
+          $queueSubmissionSha -ceq $queueReadbackSha -and
+          $priorAngleAlerts.Count -eq 0 -and
+          $priorAngleBoundAlerts.Count -eq 0 -and
+          $priorQueueBoundAlerts.Count -eq 0 -and
+          $angleHostId -ceq $angleUiaId -and
+          $queueHostId -ceq $queueUiaId -and
+          $angleHostId -cne $queueHostId -and
+          $angleClickTicks -gt 0 -and
+          $angleObservedTicks -gt $angleClickTicks -and
+          ($angleObservedTicks - $angleClickTicks) -lt $maxReceiptTicks -and
+          $queueClickTicks -gt $angleObservedTicks -and
+          $queueObservedTicks -gt $queueClickTicks -and
+          ($queueObservedTicks - $queueClickTicks) -lt $maxReceiptTicks -and
+          $beforeAnglesCanonical -ceq $afterAnglesCanonical -and
+          $beforeQueueCanonical -ceq $afterQueueCanonical -and
+          $beforeJobs -eq $afterJobs
+        )
+        $report.error_recovery_observations.windows_strict_binding_valid = [bool]$nativeInputsAndTimingProven
         if ($angleHostId -and $queueHostId) {
-          $cases.error_recovery = @{
-            status='PASS'
-            reason='Real installed Tauri typed angle and Queue denial IDs matched independent new UIA alerts; exact native input, valid retry and full canonical SQLite readback verified.'
+          if ($nativeInputsAndTimingProven) {
+            $cases.error_recovery = @{
+              status='PASS'
+              reason='Two distinct, ordered installed Rust typed denial IDs matched fresh UIA alerts; exact per-action edit readback, recovery and canonical SQLite nonmutation verified.'
+            }
+          } else {
+            $cases.error_recovery = @{
+              status='NOT TESTED'
+              reason='Installed typed IDs existed, but strict distinct request identity, native input readback, timing, freshness or canonical nonmutation binding was incomplete.'
+            }
           }
         } else {
           $cases.error_recovery = @{
