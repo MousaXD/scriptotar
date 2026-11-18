@@ -122,12 +122,12 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
     def test_memory_rollup_bytes_and_fail_closed_shared_accounting(self):
         observed = parse_smaps_rollup(
-            "Rss: 50 kB\\nPss: 30 kB\\nPrivate_Clean: 7 kB\\nPrivate_Dirty: 9 kB\\n"
+            "Rss: 50 kB\nPss: 30 kB\nPrivate_Clean: 7 kB\nPrivate_Dirty: 9 kB\n"
         )
         self.assertEqual(observed, {"pss_bytes": 30 * 1024,
                                     "private_resident_bytes": 16 * 1024})
-        self.assertIsNone(parse_smaps_rollup("Rss: 10 kB\\n")["pss_bytes"])
-        self.assertIsNone(parse_smaps_rollup("Pss: 10 kB\\n")["private_resident_bytes"])
+        self.assertIsNone(parse_smaps_rollup("Rss: 10 kB\n")["pss_bytes"])
+        self.assertIsNone(parse_smaps_rollup("Pss: 10 kB\n")["private_resident_bytes"])
         pids = descendants(10, {10: 1, 11: 10, 12: 11, 88: 3})
         self.assertEqual(pids, {10, 11, 12})
         samples = {10: {"pss_bytes": 9000}, 11: {"pss_bytes": 2000},
