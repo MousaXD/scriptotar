@@ -27,7 +27,7 @@ class NativeCanonicalSnapshotAtomicity(TestCase):
         if NATIVE is None or not NATIVE.is_file():
             raise AssertionError("Missing exact source-pinned Agent 07 native runner")
         cls.native = runpy.run_path(str(NATIVE), run_name="_agent10_snapshot_audit")
-        cls.snapshot = cls.native["canonical_records_snapshot"]
+        cls.snapshot = staticmethod(cls.native["canonical_records_snapshot"])
 
     def test_canonical_snapshot_cannot_mix_two_committed_states(self):
         # WAL allows a genuine concurrent writer while a read transaction holds
