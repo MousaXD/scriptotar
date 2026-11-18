@@ -300,6 +300,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "prior_alerts": [],
             "new_alerts": [
                 "The angle response is invalid or its Study evidence changed."
+                + " · request " + "a" * 32
             ],
             "action_monotonic_ns": 1000000000,
             "observed_monotonic_ns": 1200000000,
@@ -328,6 +329,8 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "tauri_denial_request_id": "a" * 32,
             "native_alert_request_id": "a" * 32,
             "error_code": "INVALID_STUDY_ANGLES",
+            "host_source": "installed-process-stderr",
+            "accessibility_source": "installed-AT-SPI-alert",
         }
         bound = dict(correlation, authoritative_denial=host)
         self.assertTrue(native.valid_native_angle_request_binding(
@@ -353,6 +356,76 @@ class NativeEvidenceContractTests(unittest.TestCase):
             return "native error looked correct but host correlation unavailable"
         self.assertFalse(native.checked(report, "error_recovery", no_host_binding))
         self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_host_stderr_and_native_alert_identity_must_independently_agree(self):
+        # Deterministic SOURCE unit fixtures only. No native PASS is created.
+        angle_text = "The angle response is invalid or its Study evidence changed."
+        url_text = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        ident = "d" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installed-stderr.log"
+            path.write_text("unrelated host startup\n")
+            offset = native.native_host_log_offset(path)
+            alert = angle_text + " · request " + ident
+            self.assertEqual(native.native_host_denial_ids(
+                path, offset, "INVALID_STUDY_ANGLES"), [])
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text))
+            # Only actual bytes appended after the native action count.
+            with path.open("a") as f:
+                f.write("[scriptotar-native-denial] code=INVALID_STUDY_ANGLES "
+                        "request_id=" + ident + "\n")
+            self.assertEqual(native.native_host_denial_ids(
+                path, offset, "INVALID_STUDY_ANGLES"), [ident])
+            receipt = native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt["tauri_denial_request_id"], ident)
+            self.assertEqual(receipt["native_alert_request_id"], ident)
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES",
+                [angle_text + " · request " + "e" * 32], angle_text))
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES",
+                ["Unrelated angle invalid warning · request " + ident], angle_text))
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_MEDIA_URL", [url_text + " · request " + ident],
+                url_text))
+            # A new unrelated marker cannot be used as the claimed host ID.
+            with path.open("a") as f:
+                f.write("[scriptotar-native-denial] code=INVALID_STUDY_ANGLES "
+                        "request_id=" + "f" * 32 + "\n")
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text))
+
+    def test_native_queue_denial_requires_exact_real_host_and_accessibility_proof(self):
+        ident = "b" * 32
+        label = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        host = {
+            "submitted_request_id": ident,
+            "tauri_denial_request_id": ident,
+            "native_alert_request_id": ident,
+            "error_code": "INVALID_MEDIA_URL",
+            "host_source": "installed-process-stderr",
+            "accessibility_source": "installed-AT-SPI-alert",
+        }
+        example = {
+            "authoritative_denial": host,
+            "new_alert_text": label + " · request " + ident,
+            "canonical_unchanged": True,
+            "job_count_unchanged": True,
+            "native_input_readback_exact": True,
+        }
+        self.assertTrue(native.valid_native_url_request_binding(example))
+        for bad in [
+            dict(example, new_alert_text=label),
+            dict(example, new_alert_text="Unrelated invalid URL · request " + ident),
+            dict(example, canonical_unchanged=False),
+            dict(example, job_count_unchanged=False),
+            dict(example, native_input_readback_exact=False),
+            dict(example, authoritative_denial=dict(host, tauri_denial_request_id="c" * 32)),
+        ]:
+            self.assertFalse(native.valid_native_url_request_binding(bad))
 
     def test_canonical_snapshot_detects_rewrites_and_appended_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
