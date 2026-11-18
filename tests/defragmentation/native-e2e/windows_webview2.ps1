@@ -1331,7 +1331,7 @@ try {
                   $element.Current.IsOffscreen) { continue }
               $value = [string]$element.Current.Name
               if ($value.Length -gt 12 -and
-                  $value -match '(?i)(url|scheme|protocol|unsupported|invalid|blocked|not allowed|https?://)' -and
+                  $value -match '(?i)(scheme|protocol|unsupported|invalid|blocked|not allowed|denied|file:)' -and
                   $value -ne 'Supported media URL') {
                 $deniedError = $value
                 break
