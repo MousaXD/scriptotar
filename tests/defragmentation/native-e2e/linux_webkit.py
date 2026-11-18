@@ -1411,7 +1411,26 @@ def exercise(args, report: dict, root: Path):
                     report.setdefault("visual_capture_errors", {})["arabic_menu"] = (
                         f"{type(capture_error).__name__}: {capture_error}"
                     )
-                reached("arabic_studio_observed")
+                # Inspect actual Arabic native Queue and Settings navigation
+                # before relaunch, not merely a localized Studio heading.
+                # Screenshots are review artifacts; dialogs, focus order and
+                # mixed Arabic/Latin form editing remain separately untested.
+                a.click("الطابور", "button")
+                a.heading("المهام")
+                report.setdefault("visual_capture", {})["arabic_queue"] = (
+                    session.screenshot("arabic-queue")
+                )
+                a.click("الإعدادات", "button")
+                a.heading("الإعدادات")
+                report.setdefault("visual_capture", {})["arabic_settings"] = (
+                    session.screenshot("arabic-settings")
+                )
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                report.setdefault("visual_capture", {})["arabic_studio_return"] = (
+                    session.screenshot("arabic-studio-return")
+                )
+                reached("arabic_studio_queue_settings_observed")
 
                 # Real Alt+F4, then a new PID; do not write settings or
                 # replace graphical actions with a process restart shortcut.
