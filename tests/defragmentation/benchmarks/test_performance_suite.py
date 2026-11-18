@@ -390,7 +390,7 @@ class StageInstalledFixtureSafetyTests(unittest.TestCase):
             source.mkdir()
             dest.mkdir()
             for directory in (source, dest):
-                (directory / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\\n")
+                (directory / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\n")
             fixture = source / "fixture.sqlite3"
             manifest = build(base, fixture, 100, SHA)
             for suffix in ("-wal", "-shm"):
