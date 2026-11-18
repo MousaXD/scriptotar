@@ -120,6 +120,7 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
   const researchRevisions = new Map<string, number>();
   let researchCounter = 0;
   const studyEvidence = new Map<string, StudyEvidence[]>();
+  const revokedStudySources = new Map<string, Set<string>>();
   let evidenceCounter = 0;
   let inspectionCounter = 0;
   const studyInProject = (projectId: string, studyId: string): ContentStudy => {
@@ -291,6 +292,9 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       if (patch.sources) {
         const identities = patch.sources.map((ref) => `${ref.kind}:${ref.id}`);
         if (new Set(identities).size !== identities.length) throw new Error('Duplicate source');
+        if (identities.some((key) => revokedStudySources.get(studyId)?.has(key))) {
+          throw new Error('Revoked Study source cannot be silently restored');
+        }
         next.sources = structuredClone(patch.sources);
       }
       if (patch.draft !== undefined && patch.draft !== old.draft) {
@@ -314,6 +318,28 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       }
       next.revision += 1;
       studies.set(studyId, next);
+      return structuredClone(next);
+    },
+    async revokeStudySourceAccess(projectId: string, studyId: string, expectedRevision: number, source) {
+      const current = studyInProject(projectId, studyId);
+      if (current.revision !== expectedRevision) throw new Error('Study source permission changed');
+      if (source.kind !== 'research' && source.kind !== 'transcript') throw new Error('Invalid source kind');
+      if (!current.sources.some((item) => item.kind === source.kind && item.id === source.id)) {
+        throw new Error('Study source not attached or already revoked');
+      }
+      const next: ContentStudy = {
+        ...current, revision: current.revision + 1,
+        sources: current.sources.filter((item) => item.kind !== source.kind || item.id !== source.id)
+      };
+      const key = source.kind + ':' + source.id;
+      const revoked = revokedStudySources.get(studyId) ?? new Set<string>();
+      revoked.add(key);
+      revokedStudySources.set(studyId, revoked);
+      studies.set(studyId, structuredClone(next));
+      const evidence = studyEvidence.get(studyId) ?? [];
+      studyEvidence.set(studyId, evidence.map((item) =>
+        item.source?.kind === source.kind && item.source.id === source.id
+          ? { ...item, sourceAvailable: false } : item));
       return structuredClone(next);
     },
     async prepareStudyAngles(projectId: string, studyId: string) {
