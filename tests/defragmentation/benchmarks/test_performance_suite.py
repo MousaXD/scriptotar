@@ -13,7 +13,7 @@ from .query_suite import profile, percentile
 from .ipc_trace import summarize_trace
 from .native_trials import summary
 from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
-from .native_attach import attach, process_image, same_image
+from .native_attach import attach, process_image, same_image, process_instance_id
 
 SHA = "3" * 40
 HASH = "a" * 64
@@ -181,6 +181,29 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "kernel process image"):
                 attach(987654321, Path(sys.executable), sample_package, SHA,
                        1.0, 0.2, None, None)
+
+    def test_attached_memory_rejects_pid_reuse_and_missing_birth_identity(self):
+        from unittest.mock import patch
+        import os
+        import sys
+        self.assertIsNotNone(process_instance_id(os.getpid()))
+        self.assertIsNone(process_instance_id(987654321))
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "synthetic-not-installed.zip"
+            package.write_bytes(b"unit test only")
+            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+                       return_value=None):
+                with self.assertRaisesRegex(ValueError, "creation identity"):
+                    attach(os.getpid(), Path(sys.executable), package, SHA,
+                           1.0, 0.2, 100, None)
+            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+                       side_effect=["first-instance", "recycled-instance"]):
+                report = attach(os.getpid(), Path(sys.executable), package,
+                                SHA, 1.0, 0.2, 100, None)
+            self.assertEqual(report["end_reason"], "process_gone_or_identity_changed")
+            self.assertEqual(report["sample_count"], 0)
+            self.assertEqual(report["kernel_process_creation_id"], "first-instance")
+            self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
 
     def test_mock_ipc_is_rejected_and_only_declared_native_input_is_summarized(self):
         with tempfile.TemporaryDirectory() as folder:
