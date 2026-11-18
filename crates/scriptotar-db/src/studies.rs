@@ -826,10 +826,13 @@ impl SqliteStore {
         study_source_id: Uuid,
         job_id: Uuid,
     ) -> RepositoryResult<()> {
-        self.get_study_source(project_id, study_id, study_source_id)?;
-        let db = database(self)?;
-        require_active_study(&db, project_id, study_id)?;
-        let owns_job: bool = db
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        require_available_study_source(&tx, project_id, study_id, study_source_id)?;
+        let owns_job: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND project_id=?2)",
                 params![job_id.to_string(), project_id.to_string()],
@@ -839,7 +842,7 @@ impl SqliteStore {
         if !owns_job {
             return Err(RepositoryError::NotFound(format!("job {job_id}")));
         }
-        db.execute(
+        tx.execute(
             "INSERT INTO study_source_jobs(project_id,study_id,study_source_id,job_id,linked_at)
              VALUES(?1,?2,?3,?4,?5)",
             params![
@@ -851,7 +854,7 @@ impl SqliteStore {
             ],
         )
         .map_err(db_error)?;
-        Ok(())
+        tx.commit().map_err(db_error)
     }
 
     pub fn list_study_source_job_ids(

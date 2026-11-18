@@ -54,6 +54,35 @@ pub(crate) fn validate_brief(input: &CreativeBriefInput) -> RepositoryResult<Str
     Ok(constraints)
 }
 
+fn require_copyable_draft_sources(
+    db: &rusqlite::Connection,
+    project_id: Uuid,
+    study_id: Uuid,
+    draft_id: Uuid,
+) -> RepositoryResult<()> {
+    let links = {
+        let mut statement = db
+            .prepare(
+                "SELECT study_source_id FROM draft_source_links
+                 WHERE project_id=?1 AND draft_id=?2 ORDER BY study_source_id",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map(
+                params![project_id.to_string(), draft_id.to_string()],
+                |row| uuid_at(row, 0),
+            )
+            .map_err(db_error)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?
+    };
+    // Old links remain immutable historical evidence; new copies may not
+    // inherit revoked permissions, even by a stale duplicate command.
+    for source_id in links {
+        require_available_study_source(db, project_id, study_id, source_id)?;
+    }
+    Ok(())
+}
+
 fn brief_row(row: &Row<'_>) -> rusqlite::Result<CreativeBrief> {
     let raw: String = row.get(11)?;
     let constraints: Vec<String> =
@@ -331,23 +360,9 @@ impl SqliteStore {
             ));
         }
         for source_id in study_source_ids {
-            let exists: i64 = tx
-                .query_row(
-                    "SELECT COUNT(*) FROM study_sources
-                     WHERE id=?1 AND project_id=?2 AND study_id=?3",
-                    params![
-                        source_id.to_string(),
-                        project_id.to_string(),
-                        study_id.to_string()
-                    ],
-                    |row| row.get(0),
-                )
-                .map_err(db_error)?;
-            if exists != 1 {
-                return Err(RepositoryError::Conflict(
-                    "selected source no longer belongs to this Study".into(),
-                ));
-            }
+            // A tombstone is historical identity, not permission to create a
+            // new script candidate referencing revoked source material.
+            require_available_study_source(&tx, project_id, study_id, *source_id)?;
         }
         let id = Uuid::new_v4();
         let now = now_rfc3339();
@@ -589,6 +604,7 @@ impl SqliteStore {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
         require_active_study(&tx, project_id, draft.study_id)?;
+        require_copyable_draft_sources(&tx, project_id, draft.study_id, draft_id)?;
         let new_id = Uuid::new_v4();
         let now = now_rfc3339();
         tx.execute(
@@ -669,6 +685,7 @@ impl SqliteStore {
         let (title, body) = source.ok_or_else(|| {
             RepositoryError::Conflict("draft changed or is not in this active Study".into())
         })?;
+        require_copyable_draft_sources(&tx, project_id, study_id, draft_id)?;
         let copy_title: String = format!("Copy of {title}").chars().take(200).collect();
         let copy_id = Uuid::new_v4();
         let now = now_rfc3339();
