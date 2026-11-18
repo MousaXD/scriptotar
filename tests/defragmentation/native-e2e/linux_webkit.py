@@ -1986,6 +1986,15 @@ def exercise(args, report: dict, root: Path):
                     active, ("study reference", "active project")
                 )
                 before = canonical_records_snapshot(root / "data")
+                # Persist authentic pre-dispatch evidence before any possible
+                # UIA/AT-SPI, screenshot or post-click failure can throw.
+                report["foreign_study_reference_probe"] = {
+                    "status": "NOT TESTED",
+                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+                    "canonical_before": before,
+                    "native_input_readback": "exact AT-SPI Text verified",
+                    "preexisting_exact_denial": expected_error in before_alerts,
+                }
                 active.click("Open reference", "button")
                 found_error = False
                 deadline = time.monotonic() + 12
@@ -2005,6 +2014,9 @@ def exercise(args, report: dict, root: Path):
                     "canonical_after": after,
                     "unchanged": before == after,
                     "visible_new_native_denial": found_error,
+                    "preexisting_exact_denial": expected_error in before_alerts,
+                    "postclick_exact_denial": expected_error in alerts,
+                    "native_input_readback": "exact AT-SPI Text verified",
                     "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
                     "missing": "forged mutating IPC + authoritative backend request ID",
                 }
@@ -2027,10 +2039,14 @@ def exercise(args, report: dict, root: Path):
                 detail = foreign_study_reference_probe()
                 report["foreign_study_reference_probe"]["detail"] = detail
             except (NativeFailure, NativeUnavailable, Exception) as exc:
-                report["foreign_study_reference_probe"] = {
-                    "status": "FAIL",
-                    "reason": f"{type(exc).__name__}: {exc}",
-                }
+                # Do not discard the original before/after 39-table evidence
+                # when the native semantic alert is absent or a write occurs.
+                # No screenshot or read-only denial can upgrade to IPC PASS.
+                original = report.get("foreign_study_reference_probe")
+                preserved = dict(original) if isinstance(original, dict) else {}
+                preserved["status"] = "FAIL"
+                preserved["reason"] = f"{type(exc).__name__}: {exc}"
+                report["foreign_study_reference_probe"] = preserved
                 # This is a genuine native probe failure, never silently PASS.
                 status(report, "wrong_project_ipc_denial", "FAIL",
                        f"Installed foreign-reference preflight failed: {exc}")
