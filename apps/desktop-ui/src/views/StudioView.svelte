@@ -1284,7 +1284,7 @@
             <button type="submit" class="button secondary"
               disabled={!referenceInput.trim() || referenceBusy || busy || saving || loading}>{t.openStudyReference}</button>
           </form>
-          {#if referenceError}<p role="alert" class="studio-error">{referenceError}</p>{/if}
+          {#if referenceError}<p id="studio-reference-error" role="alert" aria-label={referenceError} aria-live="assertive" aria-atomic="true" class="studio-error">{referenceError}</p>{/if}
         </details>
       {:else}
         <span class="muted">{t.workNotSaved}</span>

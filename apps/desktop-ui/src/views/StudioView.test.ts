@@ -78,8 +78,14 @@ describe('Content Study Studio', () => {
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
     await waitFor(() => expect(denied).toHaveBeenCalledWith(projectA, studyA, undefined));
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    const referenceAlert = await screen.findByRole('alert', {
+      name: 'This Study reference cannot be opened in the active project.'
+    });
+    expect(referenceAlert).toHaveTextContent(
       'This Study reference cannot be opened in the active project.');
+    expect(referenceAlert).toHaveAttribute('id', 'studio-reference-error');
+    expect(referenceAlert).toHaveAttribute('aria-live', 'assertive');
+    expect(referenceAlert).toHaveAttribute('aria-atomic', 'true');
     // Studio keeps its empty unsaved editor mounted; denial must not fill it.
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
   });

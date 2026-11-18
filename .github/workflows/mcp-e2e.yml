@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - 'tests/defragmentation/security/**'
+      - 'tests/defragmentation/benchmarks/**'
       - 'crates/scriptotar-mcp/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
