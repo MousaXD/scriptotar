@@ -12,6 +12,7 @@ from .study_scale import build
 from .query_suite import profile, percentile
 from .ipc_trace import summarize_trace
 from .native_trials import summary
+from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
 
 SHA = "3" * 40
 HASH = "a" * 64
@@ -118,6 +119,33 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
     def test_percentiles_and_missing_rss_are_explicit(self):
         self.assertEqual(percentile([10, 7, 5, 3, 1], 0.95), 10.0)
         self.assertEqual(summary([None, None]), {"valid_trials": 0, "p50": None, "p95_nearest_rank": None})
+
+    def test_memory_rollup_bytes_and_fail_closed_shared_accounting(self):
+        observed = parse_smaps_rollup(
+            "Rss: 50 kB\\nPss: 30 kB\\nPrivate_Clean: 7 kB\\nPrivate_Dirty: 9 kB\\n"
+        )
+        self.assertEqual(observed, {"pss_bytes": 30 * 1024,
+                                    "private_resident_bytes": 16 * 1024})
+        self.assertIsNone(parse_smaps_rollup("Rss: 10 kB\\n")["pss_bytes"])
+        self.assertIsNone(parse_smaps_rollup("Pss: 10 kB\\n")["private_resident_bytes"])
+        pids = descendants(10, {10: 1, 11: 10, 12: 11, 88: 3})
+        self.assertEqual(pids, {10, 11, 12})
+        samples = {10: {"pss_bytes": 9000}, 11: {"pss_bytes": 2000},
+                   12: {"pss_bytes": 3000}}
+        self.assertEqual(aggregate_samples(samples, pids, "pss_bytes"), 14000)
+        samples[11]["pss_bytes"] = None
+        self.assertIsNone(aggregate_samples(samples, pids, "pss_bytes"))
+        self.assertIsNone(aggregate_samples(samples, set(), "pss_bytes"))
+
+    def test_local_process_memory_snapshot_is_not_native_evidence(self):
+        import os
+        import platform
+        record = memory_snapshot(os.getpid())
+        self.assertEqual(record["provider"].startswith("linux-") if platform.system() == "Linux"
+                         else record["provider"].startswith("windows-")
+                         if platform.system() == "Windows" else record["provider"] == "unsupported", True)
+        self.assertNotIn("certification", record)
+        self.assertNotIn("studio_ready_ms", record)
 
     def test_mock_ipc_is_rejected_and_only_declared_native_input_is_summarized(self):
         with tempfile.TemporaryDirectory() as folder:
