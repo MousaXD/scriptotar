@@ -368,6 +368,55 @@ class NativeEvidenceContractTests(unittest.TestCase):
             source.index("if (-not $deniedError)"),
         )
 
+    def test_installed_foreign_reference_is_partial_not_forged_write_ipc_pass(self):
+        # Future PR #138 offers genuine installed-host read-only get_study via
+        # a normal UI. Never confuse that with forged mutating IPC denial.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('if ax.available("Open Study reference"):', source)
+        self.assertIn('active.type_into("Paste Study reference", reference)', source)
+        self.assertIn('active.read_text("Paste Study reference") != reference', source)
+        self.assertIn('active.click("Open reference", "button")', source)
+        self.assertIn('before = canonical_records_snapshot(root / "data")', source)
+        self.assertIn('after = canonical_records_snapshot(root / "data")', source)
+        self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"', source)
+        self.assertIn('status(report, "wrong_project_ipc_denial", "NOT TESTED"', source)
+        self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
+        self.assertIn('"This Study reference cannot be opened in the active project."', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        # The exact Arabic label must match production PR #138, not a
+        # guessed sentence that would never appear as an AT-SPI name.
+        self.assertIn("لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
+                      native.PRODUCTION_ERROR_LABELS)
+
+    def test_foreign_reference_ids_derive_from_real_canonical_rows_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dbfile = Path(tmp) / "scriptotar.sqlite3"
+            p = "aaaabbbb-1111-2222-3333-444444444444"
+            st = "aaaa2222-1111-2222-3333-444444444444"
+            dr = "aaaa3333-1111-2222-3333-444444444444"
+            with sqlite3.connect(dbfile) as db:
+                db.executescript("""
+                    CREATE TABLE projects (id TEXT, name TEXT, archived_at TEXT);
+                    CREATE TABLE content_studies
+                      (id TEXT, project_id TEXT, title TEXT, archived_at TEXT);
+                    CREATE TABLE creative_drafts
+                      (id TEXT, project_id TEXT, study_id TEXT, archived_at TEXT);
+                """)
+                db.execute("INSERT INTO projects VALUES (?, ?, NULL)", (p, "Project A"))
+                db.execute("INSERT INTO content_studies VALUES (?, ?, ?, NULL)",
+                           (st, p, "Study A"))
+                db.execute("INSERT INTO creative_drafts VALUES (?, ?, ?, NULL)",
+                           (dr, p, st))
+            original = dbfile.read_bytes()
+            self.assertEqual(
+                native.canonical_study_reference_ids(Path(tmp), "Project A", "Study A"),
+                (p, st, dr),
+            )
+            self.assertEqual(dbfile.read_bytes(), original)
+            with self.assertRaises(native.NativeFailure):
+                native.canonical_study_reference_ids(Path(tmp), "Project B", "Study A")
+
     def test_windows_native_negative_case_never_auto_passes_without_host_binding(self):
         # A genuinely visible but unrelated fresh UIA warning and unchanged
         # SQLite are insufficient to identify the rejected Tauri request.
