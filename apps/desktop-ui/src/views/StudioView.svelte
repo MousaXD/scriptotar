@@ -1055,9 +1055,11 @@
       // invalidates an in-flight read; never download another project's text.
       if (ownerEpoch !== writingBatchEpoch || projectId !== ownerProject ||
           studyId !== ownerStudy || record?.id !== ownerStudy ||
+          record?.revision !== current.revision ||
           !writingBatches.includes(batch)) return;
       if (snapshots.some((item, index) =>
         item.id !== ownerStudy || item.projectId !== ownerProject ||
+        item.revision !== current.revision ||
         item.draftId !== ids[index] ||
         item.draftRevision !== candidates[index]?.revision ||
         !item.drafts?.some(candidate => candidate.id === ids[index]) ||
