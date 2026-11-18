@@ -795,9 +795,133 @@ def status(report: dict, scenario: str, state: str, reason: str, image: str | No
     report["cases"][scenario] = record
 
 
+# P0 certification guard: only authoritative installed Rust denial IDs and
+# exact new AT-SPI error labels can certify error_recovery. This narrow
+# integrated runner does not yet collect these proofs; NOT TESTED is required.
+PRODUCTION_ERROR_LABELS = frozenset({
+    "The angle response is invalid or its Study evidence changed.",
+    "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
+    "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
+    "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
+    "This Study reference cannot be opened in the active project.",
+    "لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
+})
+
+
+def production_native_error_id(label: str, localized_text: str) -> str | None:
+    """Only exact production text plus its real 128-bit accessible request ID."""
+    if not isinstance(label, str) or localized_text not in PRODUCTION_ERROR_LABELS:
+        return None
+    match = re.fullmatch(
+        re.escape(localized_text) + r" · request ([a-f0-9]{32})", label
+    )
+    return match.group(1) if match else None
+
+
+def valid_native_angle_request_binding(proof: object) -> bool:
+    """Fail closed unless installed UI exposes the exact backend rejection ID.
+
+    Temporal proximity, a correct-looking localized alert and unchanged SQLite
+    cannot authenticate WHICH Tauri invocation failed. Agent 10's unrelated
+    fresh-alert adversarial test demonstrated this distinction. The production
+    owner must expose one opaque client-request nonce echoed in the rejected
+    Tauri result and the accessible alert, not a QA-only mock or fabricated
+    semantic bit.
+    """
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("human_review_required") is True or proof.get("atspi_error_text_exposed") is not True:
+        return False
+    binding = proof.get("request_correlation")
+    if not isinstance(binding, dict):
+        return False
+    payload = binding.get("submitted_payload_sha256")
+    host_receipt = binding.get("authoritative_denial")
+    if not isinstance(host_receipt, dict):
+        return False
+    # Both values must come from the actual installed production command/UI.
+    # The current Studio IPC does not expose this contract; the runner retains
+    # NOT TESTED rather than inventing a request ID from a screenshot.
+    opaque_id = host_receipt.get("submitted_request_id")
+    if not (isinstance(opaque_id, str)
+            and bool(re.fullmatch(r"[a-f0-9]{32}", opaque_id))
+            and host_receipt.get("tauri_denial_request_id") == opaque_id
+            and host_receipt.get("native_alert_request_id") == opaque_id
+            and host_receipt.get("error_code") == "INVALID_STUDY_ANGLES"):
+        return False
+    return (
+        host_receipt.get("host_source") == "installed-process-stderr"
+        and host_receipt.get("accessibility_source") == "installed-AT-SPI-alert"
+        and isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
+        and binding.get("native_readback_sha256") == payload
+        and binding.get("native_action") == "Validate 3 angles"
+        and binding.get("prior_alerts") == []
+        and isinstance(binding.get("new_alerts"), list)
+        and len(binding["new_alerts"]) == 1
+        and production_native_error_id(
+            binding["new_alerts"][0],
+            "The angle response is invalid or its Study evidence changed."
+        ) == opaque_id
+        and type(binding.get("action_monotonic_ns")) is int
+        and type(binding.get("observed_monotonic_ns")) is int
+        and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
+        and isinstance(binding.get("canonical_before_digest"), str)
+        and bool(re.fullmatch(r"[a-f0-9]{64}", binding["canonical_before_digest"]))
+        and binding.get("canonical_after_digest") == binding["canonical_before_digest"]
+    )
+
+
+
+def valid_native_url_request_binding(proof: object) -> bool:
+    """URL denial must have real Rust stderr + exact fresh accessible request ID."""
+    if not isinstance(proof, dict):
+        return False
+    host = proof.get("authoritative_denial")
+    if not isinstance(host, dict):
+        return False
+    ident = host.get("tauri_denial_request_id")
+    return (
+        isinstance(ident, str)
+        and bool(re.fullmatch(r"[a-f0-9]{32}", ident))
+        and host.get("native_alert_request_id") == ident
+        and host.get("submitted_request_id") == ident
+        and host.get("error_code") == "INVALID_MEDIA_URL"
+        and host.get("host_source") == "installed-process-stderr"
+        and host.get("accessibility_source") == "installed-AT-SPI-alert"
+        and production_native_error_id(
+            proof.get("new_alert_text", ""),
+            "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        ) == ident
+        and proof.get("canonical_unchanged") is True
+        and proof.get("job_count_unchanged") is True
+        and proof.get("native_input_readback_exact") is True
+    )
+
+
 def checked(report: dict, key: str, fn):
     try:
         detail = fn()
+        if key == "error_recovery":
+            # A changed screenshot is evidence for human inspection, not
+            # semantic proof that public Tauri IPC rejected the bad input.
+            # This check is deliberately after the callback so all later
+            # no-write/recovery probes can execute and retain their artifacts.
+            proof = report.get("angle_rejection_visual_proof")
+            if not valid_native_angle_request_binding(proof):
+                raise NativeUnavailable(
+                    "Native angle rejection has no independent semantic "
+                    "request-correlated AT-SPI proof with an authoritative Tauri "
+                    "denial identifier exposed in the native alert, exact input "
+                    "readback and immutable SQLite records; temporal alert or "
+                    "screenshot evidence alone is insufficient"
+                )
+            if not valid_native_url_request_binding(report.get("denied_url_host_proof")):
+                raise NativeUnavailable(
+                    "Unsupported Queue URL has no independently observed Rust "
+                    "INVALID_MEDIA_URL request ID matching a newly rendered "
+                    "native AT-SPI error; unchanged SQLite counts alone cannot "
+                    "certify the denied Tauri request"
+                )
         status(report, key, "PASS", str(detail))
         return True
     except NativeUnavailable as exc:
