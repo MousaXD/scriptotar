@@ -721,14 +721,58 @@ class AxWebKit:
         raise NativeFailure(f"AT-SPI editable field not found for label {label!r}")
 
     def type_into(self, name: str, value: str) -> None:
-        node = self.edit_field(name)
+        """Native X11 input with readback; do not drop long JSON keystrokes.
+
+        A real installed WebKitGTK .deb run #44343815684 delivered only 711 of
+        801 bytes from a 2-ms xdotool burst, despite the earlier malformed
+        JSON input reaching the editor. Long text is sent in bounded native
+        keyboard chunks and each completed prefix must appear through AT-SPI.
+        On transport loss retry once at a slower *real keyboard* rate. Never
+        write through AT-SPI SetText, the DOM, JavaScript or the database.
+        """
+        if not isinstance(value, str):
+            raise NativeFailure("Installed native input must be text")
         try:
-            focused = node.queryComponent().grabFocus()
-            if focused is False:
-                raise NativeFailure(f"Cannot focus field {name!r}")
-            command("xdotool", "key", "--clearmodifiers", "ctrl+a")
-            command("xdotool", "type", "--clearmodifiers", "--delay", "2", "--", value)
-            time.sleep(0.65)
+            attempts = (12, 35) if len(value) >= 256 else (2,)
+            last = "no delivery attempted"
+            for delay in attempts:
+                node = self.edit_field(name)
+                focused = node.queryComponent().grabFocus()
+                if focused is False:
+                    raise NativeFailure(f"Cannot focus field {name!r}")
+                command("xdotool", "key", "--clearmodifiers", "ctrl+a")
+                time.sleep(0.15)
+                chunks = ([value[i:i + 64] for i in range(0, len(value), 64)]
+                          if len(value) >= 256 else [value])
+                delivered = ""
+                for chunk in chunks:
+                    command("xdotool", "type", "--clearmodifiers", "--delay",
+                            str(delay), "--", chunk)
+                    delivered += chunk
+                    if len(value) >= 256:
+                        # WebKitGTK renders asynchronously; observe the exact
+                        # native editable field, not an optimistic key count.
+                        deadline = time.monotonic() + 2
+                        observed = ""
+                        while time.monotonic() < deadline:
+                            observed = self.read_text(name)
+                            if observed == delivered:
+                                break
+                            time.sleep(0.1)
+                        if observed != delivered:
+                            last = (f"native prefix mismatch at {len(delivered)} "
+                                    f"characters (observed {len(observed)}), delay={delay}ms")
+                            break
+                else:
+                    time.sleep(0.4)
+                    actual = self.read_text(name)
+                    if actual == value:
+                        return
+                    last = (f"native final text mismatch (expected {len(value)} "
+                            f"characters, observed {len(actual)}), delay={delay}ms")
+            raise NativeFailure(
+                f"Installed WebKitGTK text transport lost exact input in {name!r}: {last}"
+            )
         except NativeFailure:
             raise
         except Exception as exc:
