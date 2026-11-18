@@ -1445,6 +1445,20 @@ try {
           Start-Sleep -Milliseconds 200
         }
 
+        # Independently traverse genuine Arabic Queue, Settings and Studio
+        # via installed UIA controls, not just the translated toolbar marker.
+        # These captures are human-review evidence; not whole-app RTL PASS.
+        Click-InstalledControl $themeHwnd 'الطابور' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'المهام'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-queue.png')
+        Click-InstalledControl $themeHwnd 'الإعدادات' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'الإعدادات'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-settings.png')
+        Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-studio-return.png')
+        $report.visual_capture['arabic_queue_settings_studio'] = 'captured-native-screens-not-RTL-certification'
+
         # Genuinely quit and relaunch with saved Arabic locale. The native
         # document/rail gate must now seek Arabic rather than English.
         if (-not [NativeWebViewWindow]::SetForegroundWindow($proc.MainWindowHandle)) {
