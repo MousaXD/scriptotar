@@ -82,9 +82,17 @@ function inspectManifest(manifest, platform, findings) {
     return { entries: 0, runtime: false, tools: false };
   }
   const raw = readFileSync(manifest, 'utf8').split(/\r?\n/).filter(Boolean);
-  if (raw.length < 8) findings.push('Unexpectedly small package manifest, cannot certify package');
+  // 7-Zip's "-slt" report mixes file paths with metadata (sizes, methods,
+  // checksums, dates). Count and scrutinize ONLY its actual "Path =" fields.
+  // A recursive installed Windows file listing and Linux dpkg --contents
+  // already consist of one file/directory record per line.
+  const sevenZip = platform === 'windows' && raw.some(line => /^Path = /i.test(line));
+  const actualPaths = sevenZip
+    ? raw.filter(line => /^Path = /i.test(line)).map(line => line.slice('Path = '.length))
+    : raw;
+  if (actualPaths.length < 8) findings.push('Unexpectedly small package path inventory, cannot certify package');
   let runtime = false, tools = false;
-  for (const line of raw) {
+  for (const line of actualPaths) {
     // Linux dpkg-deb --contents starts with permission, uid/gid, size, date.
     // Windows lines may be absolute paths from Get-ChildItem -Recurse -File.
     const path = line.replace(/\\/g, '/').toLowerCase();
@@ -96,7 +104,7 @@ function inspectManifest(manifest, platform, findings) {
   }
   if (!runtime) findings.push('Actual package manifest lacks transcription-runtime resource paths');
   if (!tools) findings.push('Actual package manifest lacks mcp-tools resource paths');
-  return { entries: raw.length, runtime, tools };
+  return { entries: actualPaths.length, rawListingLines: raw.length, format: sevenZip ? '7zip-slt' : 'path-lines', runtime, tools };
 }
 async function sha256File(file) {
   const hash = createHash('sha256');
