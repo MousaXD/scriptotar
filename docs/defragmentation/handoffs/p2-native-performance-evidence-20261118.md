@@ -9,6 +9,10 @@
 - Real installed native QA source: `9c272a92de8df42a1ecfee5211a4f7ea3bb74e44`, [Agent 07 workflow 44302808654](https://github.com/MousaXD/scriptotar/actions/runs/44302808654). Linux WebKitGTK and Windows WebView2 acceptance both concluded **FAILURE**. Its artifacts prove that installed-package GUI functional testing was attempted; they have **not** been adjudicated as independent quantitative native performance samples. Linux installed artifact ID **14427273474**, Windows installed artifact ID **14427229971**; smaller review archives **14427142757** and **14428460649**.
 - The SQL run and native QA run use **different source SHAs**. No direct package-to-package comparative speedup claim is possible. No native benchmark raw JSONL or package/executable hash-matched latency distribution has been verified here.
 
+## Independent raw SQL p50/p95 appendix (synthetic; not installed native)
+
+The original green Linux/Windows migrated SQLite artifacts are now independently downloaded, ZIP SHA-256 verified and analyzed at all 100/1,000/10,000 scales. See [SQL artifact analysis with raw p50/p95, source hashes and EXPLAIN plans](p2-sql-artifact-analysis-20261118.md). At 10,000 synthetic Studies, warm Python SQLite Study search takes **18.0529 / 18.1564 ms** Linux p50/p95 and **22.3999 / 27.4326 ms** Windows; transcript metadata **11.7849 / 12.0149 ms** Linux and **17.6649 / 18.3786 ms** Windows (11 samples/query). Both queries require temporary B-tree ORDER BY according to archived query plans. These are **not** installed GUI/IPC latencies, and OS hardware/SQLite versions are not matched.
+
 ## Independent native measurement matrix
 
 | Measurement | Linux WebKitGTK | Windows WebView2 | Missing direct hook / evidence |
