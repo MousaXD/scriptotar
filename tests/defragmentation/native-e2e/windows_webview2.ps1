@@ -1506,7 +1506,11 @@ try {
             host_request_id = $hostReferenceId
             native_bound_alert_name = $hostBoundAlert
             reference_sha256 = $referenceHash
-            missing = 'forged mutating Tauri IPC and real backend request identity'
+            missing = $(if ($hostReferenceId) {
+              'forged mutating Tauri IPC'
+            } else {
+              'host request identity and forged mutating Tauri IPC'
+            })
           }
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-foreign-study-reference-denial.png')
           if (-not $denied -or $beforeReferenceCanonical -cne $afterReferenceCanonical) {
