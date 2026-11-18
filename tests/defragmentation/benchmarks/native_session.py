@@ -13,6 +13,11 @@ import re
 import subprocess
 import time
 
+try:
+    from .native_memory import memory_snapshot
+except ImportError:
+    from native_memory import memory_snapshot
+
 def sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -90,6 +95,7 @@ def main():
     peak_process_tree_rss = None
     max_descendants = 0
     samples = 0
+    memory_observations = []
     exit_before_cleanup = None
     try:
         until = start + args.seconds
@@ -105,6 +111,13 @@ def main():
             if tree_rss is not None:
                 peak_process_tree_rss = max(peak_process_tree_rss or 0, tree_rss)
             max_descendants = max(max_descendants, descendants)
+            try:
+                memory = memory_snapshot(process.pid)
+            except (OSError, RuntimeError, ValueError) as exc:
+                memory = {"provider": platform.system(), "tree_memory_complete": False,
+                          "sampling_error": type(exc).__name__}
+            memory_observations.append({"elapsed_ms": round((now - start) * 1000, 2),
+                                        **memory})
             samples += 1
             time.sleep(0.1)
     finally:
@@ -116,6 +129,11 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=3)
+    def sampled_peak(field):
+        observed = [row[field] for row in memory_observations
+                    if isinstance(row.get(field), int) and not isinstance(row[field], bool)]
+        return max(observed) if observed else None
+
     report = {
         "scope": "native-process-sampling-only; NOT installed-app certification",
         "source_sha_operator_supplied": args.source_sha,
@@ -130,11 +148,22 @@ def main():
         "peak_main_process_rss_bytes": peak_rss,
         "peak_process_tree_rss_bytes": peak_process_tree_rss,
         "max_descendants_observed": max_descendants,
+        "memory_raw_samples": memory_observations,
+        "memory_complete_samples": sum(row.get("tree_memory_complete") is True
+                                       for row in memory_observations),
+        "peak_main_pss_bytes": sampled_peak("main_pss_bytes"),
+        "peak_tree_pss_bytes": sampled_peak("tree_pss_bytes"),
+        "peak_main_private_resident_bytes": sampled_peak("main_private_resident_bytes"),
+        "peak_tree_private_resident_bytes": sampled_peak("tree_private_resident_bytes"),
+        "peak_windows_main_private_working_set_bytes": sampled_peak("main_private_working_set_bytes"),
+        "peak_windows_tree_private_working_set_bytes": sampled_peak("tree_private_working_set_bytes"),
+        "peak_windows_main_private_commit_bytes": sampled_peak("main_private_commit_bytes"),
+        "peak_windows_tree_private_commit_bytes": sampled_peak("tree_private_commit_bytes"),
         "process_tree_rss_is_shared_memory_inclusive": True,
         "ipc_payload_bytes": None,
         "exit_code_before_cleanup": exit_before_cleanup,
         "certification": "NOT_CERTIFIED",
-        "limitations": "Linux parent/child RSS summed, shared mappings double-counted, orphans missed; no automated WebView readiness; no IPC transfer measurement; process liveness is not UI readiness."
+        "limitations": "Linux summed RSS double-counts shared mappings; new smaps_rollup PSS proportions shared resident pages, and private resident excludes shared pages. Windows EX2 private working set is resident and distinct from private commit. Both totals observe only current descendants and fail closed on unreadable children. No automated WebView readiness or IPC transfer measurement; process liveness is not UI readiness."
     }
     encoded = json.dumps(report, indent=2) + "\n"
     if args.output:

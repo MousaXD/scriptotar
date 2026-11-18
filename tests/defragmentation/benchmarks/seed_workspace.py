@@ -41,13 +41,32 @@ def assert_blank_migrated_template(conn):
     if versions != list(range(1, version + 1)):
         raise ValueError("template migration ledger and user_version disagree")
 
+    # Canonical installed-app databases also carry five integration migration
+    # ledger records. They are metadata, not user content. Validate them before
+    # exemption: a spoofed or partially migrated ledger must fail closed.
+    if version >= 12 and "integration_schema_migrations" not in names:
+        raise ValueError("v12 template must include actual integration migration ledger")
+    if "integration_schema_migrations" in names:
+        expected_integration = [
+            "legacy_import_support",
+            "job_transcript_lineage",
+            "safe_job_transcript_backfill",
+            "job_transcript_project_guard",
+            "parent_lineage_reassignment_guards",
+        ]
+        actual_integration = list(conn.execute(
+            "SELECT version, name FROM integration_schema_migrations ORDER BY version"))
+        expected_rows = list(enumerate(expected_integration, 1))
+        if actual_integration != expected_rows:
+            raise ValueError("template integration migration ledger is incomplete or inconsistent")
+
     # FTS5 shadow tables may hold internal bookkeeping even when index is empty.
     # The virtual transcript_fts table itself is tested for zero visible rows.
     shadows = {"transcript_fts_data", "transcript_fts_idx",
                "transcript_fts_content", "transcript_fts_docsize",
                "transcript_fts_config"}
     for table in sorted(names):
-        if table.startswith("sqlite_") or table == "schema_migrations" or table in shadows:
+        if table.startswith("sqlite_") or table in {"schema_migrations", "integration_schema_migrations"} or table in shadows:
             continue
         # Only table names provided by sqlite_master, not user parameters.
         escaped = table.replace('"', '""')

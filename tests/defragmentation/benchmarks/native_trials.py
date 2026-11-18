@@ -90,8 +90,16 @@ def run_trials(executable: Path, package: Path, source_sha: str, mode: str,
         "useful_workspace_operator_ack_ms": summary([x["useful_workspace_operator_ack_ms"] for x in suite]),
         "peak_main_rss_bytes": summary([x["peak_main_process_rss_bytes"] for x in suite]),
         "peak_tree_rss_bytes": summary([x["peak_process_tree_rss_bytes"] for x in suite]),
+        "peak_linux_tree_pss_bytes": summary([x["peak_tree_pss_bytes"] for x in suite]),
+        "peak_linux_tree_private_resident_bytes": summary(
+            [x["peak_tree_private_resident_bytes"] for x in suite]),
+        "peak_windows_tree_private_working_set_bytes": summary(
+            [x["peak_windows_tree_private_working_set_bytes"] for x in suite]),
+        "peak_windows_tree_private_commit_bytes": summary(
+            [x["peak_windows_tree_private_commit_bytes"] for x in suite]),
+        "memory_complete_sample_counts": [x["memory_complete_samples"] for x in suite],
         "certification": "NOT_NATIVE_CERTIFIED",
-        "limitations": "UI-ready markers are external, unauthenticated operator or driver observations. No internal WebView event/IPC measurement; Linux RSS double-counts shared mappings; cache state and package installation are operator-asserted."
+        "limitations": "Readiness marker is externally supplied and unauthenticated, not proof of useful Studio. Linux PSS and private-resident metrics exclude shared-page double counting, but process trees omit reparented browser helpers; Windows EX2 private working set/commit require supported OS and process access. Null metrics are NOT TESTED. No WebView/IPC instrumentation; cache state and installation provenance are operator assertions."
     }
 
 
