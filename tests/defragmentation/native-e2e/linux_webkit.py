@@ -1512,6 +1512,28 @@ def exercise(args, report: dict, root: Path):
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "System")
             session.screenshot("system-theme")
+            # A separately selectable Light mode is required by native release
+            # acceptance. PR #136 adds the production option; on older installed
+            # packages keep Light NOT TESTED rather than inferring it from
+            # System on a light OS.
+            light_offered = False
+            try:
+                a.click("Theme", "combo")
+                try:
+                    light_offered = a.available("Light", "list item")
+                finally:
+                    command("xdotool", "key", "--clearmodifiers", "Escape")
+                    time.sleep(0.3)
+            except (NativeFailure, NativeUnavailable):
+                raise
+            report.setdefault("visual_capture", {})["explicit_light_option"] = light_offered
+            if light_offered:
+                a.choose("Theme", "Light")
+                a.click("Save changes", "button")
+                a.assert_selected_option("Theme", "Light")
+                report.setdefault("visual_capture", {})["light_theme"] = (
+                    session.screenshot("light-theme")
+                )
             a.choose("Theme", "Dark")
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "Dark")
