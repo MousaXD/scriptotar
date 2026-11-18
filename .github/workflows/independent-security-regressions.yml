@@ -17,7 +17,31 @@ permissions:
   contents: read
 
 jobs:
+  pin-integration:
+    name: "Security / pin exact integration source"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Resolve current PR 114 source once for all matrix jobs
+        id: pin
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.integration_sha }}
+        run: |
+          set -euo pipefail
+          branch="refs/heads/integration/scriptotar-defragmentation-agent00-20261113"
+          current="$(git ls-remote --exit-code https://github.com/MousaXD/scriptotar.git "$branch" | awk '{print $1}')"
+          [[ "$current" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot authenticate exact branch source SHA" >&2; exit 1; }
+          if [[ -n "${REQUESTED_SHA:-}" && "$REQUESTED_SHA" != "$current" ]]; then
+            echo "Requested integration SHA is stale; branch moved. Refuse to certify." >&2
+            exit 1
+          fi
+          echo "Pinning exact integration source: $current"
+          echo "sha=$current" >> "$GITHUB_OUTPUT"
   feature-security:
+    needs: pin-integration
     name: "Security / ${{ matrix.gate }} (feature PR #${{ matrix.pr }})"
     runs-on: ubuntu-22.04
     timeout-minutes: 45
@@ -45,15 +69,13 @@ jobs:
         with:
           path: audit
           persist-credentials: false
-      # Pin PR #114 once per event so concurrent Agent 00 pushes cannot split
-      # combined and combined-v11 across different integration commits.
-      # PR #124 uses its captured base SHA; PR #114 uses its event head SHA.
-      # Manual reruns require an explicit integration SHA; other feature PRs
-      # continue checking their own feature heads.
+      # Resolve PR #114's current HEAD once in pin-integration. Do NOT use
+      # PR #124 base.sha: that field can be stale after Agent 00 integrates.
+      # Feature gates still print their independently checked-out exact SHAs.
       - name: Checkout exact target feature source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
         with:
-          ref: ${{ matrix.pr == 114 && (inputs.integration_sha || (github.event.pull_request.number == 124 && github.event.pull_request.base.sha) || (github.event.pull_request.number == 114 && github.event.pull_request.head.sha)) || format('refs/pull/{0}/head', matrix.pr) }}
+          ref: ${{ matrix.pr == 114 && needs.pin-integration.outputs.sha || format('refs/pull/{0}/head', matrix.pr) }}
           path: target
           persist-credentials: false
       - name: Set up Rust
@@ -69,3 +91,28 @@ jobs:
       - name: Exact-head independent regression execution
         shell: bash
         run: bash audit/tests/defragmentation/security/run_feature_gates.sh "${{ matrix.gate }}" "${{ matrix.pr }}"
+
+  verify-pinned-integration:
+    name: "Security / exact SHA remains current after the matrix"
+    if: always()
+    needs: [pin-integration, feature-security]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject stale or incomplete certification
+        shell: bash
+        env:
+          PINNED_SHA: ${{ needs.pin-integration.outputs.sha }}
+          MATRIX_RESULT: ${{ needs.feature-security.result }}
+          PIN_RESULT: ${{ needs.pin-integration.result }}
+        run: |
+          set -euo pipefail
+          [[ "$PIN_RESULT" == success && "$MATRIX_RESULT" == success ]] ||
+            { echo "One or more independent security gates did not pass"; exit 1; }
+          [[ "$PINNED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+            { echo "Missing exact integration SHA"; exit 1; }
+          branch="refs/heads/integration/scriptotar-defragmentation-agent00-20261113"
+          current="$(git ls-remote --exit-code https://github.com/MousaXD/scriptotar.git "$branch" | awk '{print $1}')"
+          [[ "$current" == "$PINNED_SHA" ]] ||
+            { echo "Integration moved while independent matrix ran; rerun exact-head audit" >&2; exit 1; }
+          echo "Exact-head independent matrix remains valid at $PINNED_SHA"
