@@ -1,5 +1,6 @@
 """Contract tests for the evidence collector, NOT native GUI certification."""
 import hashlib
+import sqlite3
 from pathlib import Path
 import tempfile
 import unittest
@@ -170,19 +171,85 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ))
         self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
 
-    def test_semantic_rejection_contract_accepts_explicit_native_evidence(self):
-        # Positive unit contract for the helper only, NOT an installed host PASS.
+    def test_agent10_stale_semantic_flag_is_not_request_correlated_proof(self):
+        # Exact independent Agent 10 adversarial shape: a stale/unrelated
+        # semantic alert must not be upgraded to a genuine host rejection.
         report = {"cases": {}}
 
-        def semantic():
+        def stale():
             report["angle_rejection_visual_proof"] = {
-                "atspi_error_text_exposed": True,
                 "proof": "named AT-SPI native validation alert",
+                "screenshot": "negative-angles-rejected.png",
+                "atspi_error_text_exposed": True,
             }
-            return "helper accepted native evidence"
+            return "fake historical semantic flag"
 
+        self.assertFalse(native.checked(report, "error_recovery", stale))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_semantic_rejection_requires_native_request_binding(self):
+        payload = hashlib.sha256(b'{"angles":[{"id":"invalid"}]}').hexdigest()
+        correlation = {
+            "native_action": "Validate 3 angles",
+            "submitted_payload_sha256": payload,
+            "native_readback_sha256": payload,
+            "prior_alerts": [],
+            "new_alerts": ["Invalid three-angle JSON response"],
+            "action_monotonic_ns": 1000000000,
+            "observed_monotonic_ns": 1200000000,
+            "canonical_before_digest": "f" * 64,
+            "canonical_after_digest": "f" * 64,
+        }
+        proof = {
+            "atspi_error_text_exposed": True,
+            "proof": "fresh named AT-SPI alert after real native action",
+            "request_correlation": correlation,
+        }
+        self.assertTrue(native.valid_native_angle_request_binding(proof))
+        # These are source helper checks, NOT installed host certification.
+        for key, bad in [
+            ("prior_alerts", ["Invalid angles from older request"]),
+            ("native_readback_sha256", "e" * 64),
+            ("new_alerts", []),
+            ("observed_monotonic_ns", 500000000),
+            ("canonical_after_digest", "e" * 64),
+            ("native_action", "unrelated button"),
+        ]:
+            with self.subTest(key=key):
+                modified = dict(correlation, **{key: bad})
+                self.assertFalse(native.valid_native_angle_request_binding(
+                    dict(proof, request_correlation=modified)
+                ))
+        report = {"cases": {}}
+        def semantic():
+            report["angle_rejection_visual_proof"] = proof
+            return "bound native evidence contract"
         self.assertTrue(native.checked(report, "error_recovery", semantic))
         self.assertEqual(report["cases"]["error_recovery"]["status"], "PASS")
+
+    def test_canonical_snapshot_detects_rewrites_and_appended_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dbfile = Path(tmp) / "scriptotar.sqlite3"
+            with sqlite3.connect(dbfile) as db:
+                db.executescript("""
+                    CREATE TABLE content_studies (id TEXT PRIMARY KEY, title TEXT);
+                    CREATE TABLE jobs (id TEXT PRIMARY KEY, state TEXT);
+                    CREATE TABLE draft_versions (id TEXT PRIMARY KEY, body TEXT);
+                    INSERT INTO content_studies VALUES ('1', 'Study A');
+                    INSERT INTO draft_versions VALUES ('v1', 'original immutable body');
+                """)
+            original = native.canonical_records_snapshot(Path(tmp))
+            self.assertEqual(original["tables"]["content_studies"]["rows"], 1)
+            with sqlite3.connect(dbfile) as db:
+                db.execute("UPDATE draft_versions SET body='tampered' WHERE id='v1'")
+            modified = native.canonical_records_snapshot(Path(tmp))
+            self.assertNotEqual(original["digest"], modified["digest"])
+            self.assertNotEqual(original["tables"]["draft_versions"],
+                                modified["tables"]["draft_versions"])
+            with sqlite3.connect(dbfile) as db:
+                db.execute("INSERT INTO jobs VALUES ('job-new', 'created')")
+            inserted = native.canonical_records_snapshot(Path(tmp))
+            self.assertNotEqual(modified["digest"], inserted["digest"])
 
     def test_queue_no_write_proof_precedes_missing_alert_failure(self):
         # Even on an inaccessible Queue error, retain the read-only canonical
