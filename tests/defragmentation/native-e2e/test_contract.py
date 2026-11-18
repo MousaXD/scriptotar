@@ -200,6 +200,50 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('session.screenshot("failed-denied-url-no-error")', block)
         self.assertIn("no named", block)
 
+    def test_linux_json_input_is_read_back_from_the_real_native_editor(self):
+        # On installed run #44308361975 corrected angles had zero AT-SPI
+        # actions. This input-readback guard distinguishes an untyped or
+        # truncated native JSON response from a real production validator bug.
+        import inspect
+        code = inspect.getsource(native.exercise)
+        self.assertIn('malformed_angle_json =', code)
+        self.assertIn('valid_angle_json =', code)
+        self.assertIn(
+            'observed_angle_json = a.read_text("Paste three-angle JSON response")',
+            code,
+        )
+        self.assertIn('if observed_angle_json != malformed_angle_json:', code)
+        self.assertIn('if observed_angle_json != valid_angle_json:', code)
+        self.assertIn('report["angle_recovery_native_diagnostics"]', code)
+        self.assertIn('failed-valid-three-angles-scrolled', code)
+        self.assertIn('if count != 3:', code)
+
+    def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
+        # A SetFocus/SendKeys-only URL entry left the actual installed
+        # WebView2 Media URL field at its placeholder in run #44308361975.
+        # Pointer and clipboard are genuine native controls, not UIA SetValue.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn('function Paste-InstalledQueueUrl(', source)
+        helper = source.split('function Paste-InstalledQueueUrl(', 1)[1].split(
+            'function Paste-InstalledJson(', 1
+        )[0]
+        self.assertIn("Click-InstalledControl $hwnd 'Media URL'", helper)
+        self.assertIn(') -pointer', helper)
+        self.assertIn('Set-Clipboard -Value $url', helper)
+        self.assertIn("SendWait('^a')", helper)
+        self.assertIn("SendWait('^v')", helper)
+        self.assertIn('ValuePattern]::Pattern).Current.Value', helper)
+        self.assertIn('if ($actual -cne $url)', helper)
+        self.assertNotIn('SetValue(', helper)
+        self.assertIn(
+            "Paste-InstalledQueueUrl $arabicHwnd 'file:///scriptotar-native-qa-denied-media.mp4'",
+            source,
+        )
+        self.assertNotIn(
+            "Type-InstalledEdit $arabicHwnd 'Media URL'",
+            source,
+        )
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
