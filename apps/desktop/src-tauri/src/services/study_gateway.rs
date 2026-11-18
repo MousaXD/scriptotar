@@ -2031,6 +2031,72 @@ mod tests {
                 ]
             })
             .to_string();
+            // The installed Linux negative path submits a syntactically valid
+            // JSON object with only one angle. This must reach the public
+            // service validator, reject as Validation (not a stale CAS), and
+            // leave canonical Study, draft versions and evidence unchanged.
+            let before_rejection = services.get_studio_study(project_id, study_id).unwrap();
+            let before_evidence = services.list_studio_evidence(project_id, study_id).unwrap();
+            let effects_db = rusqlite::Connection::open(services.store.path()).unwrap();
+            // Read-only validation must never create approvals/runs, ledger
+            // claims, external attempts or canonical three-script receipts.
+            let ledger_snapshot = || -> [i64; 6] {
+                effects_db
+                    .query_row(
+                        "SELECT
+                            (SELECT COUNT(*) FROM agent_runs),
+                            (SELECT COUNT(*) FROM agent_audit_events),
+                            (SELECT COUNT(*) FROM agent_effects),
+                            (SELECT COUNT(*) FROM agent_external_effects),
+                            (SELECT COUNT(*) FROM agent_external_attempt_history),
+                            (SELECT COUNT(*) FROM study_writing_batches)",
+                        [],
+                        |row| {
+                            Ok([
+                                row.get(0)?,
+                                row.get(1)?,
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                            ])
+                        },
+                    )
+                    .unwrap()
+            };
+            let before_effects = ledger_snapshot();
+            let malformed = serde_json::json!({
+                "angles": [{
+                    "id": "only-one-angle", "approach": "Invalid",
+                    "hook": "Incomplete", "promise": "Missing two angles",
+                    "outline": [{"role": "hook", "intent": "Should be rejected", "estimated_seconds": 7}],
+                    "evidence_ids": []
+                }]
+            }).to_string();
+            assert!(matches!(
+                services.interpret_studio_angles(
+                    project_id, study_id, saved.revision, &angles.prompt, &malformed, None
+                ),
+                Err(RepositoryError::Validation(message)) if message.contains("invalid angle response")
+            ));
+            let after_rejection = services.get_studio_study(project_id, study_id).unwrap();
+            assert_eq!(after_rejection.revision, before_rejection.revision);
+            assert_eq!(after_rejection.draft, before_rejection.draft);
+            assert_eq!(after_rejection.draft_id, before_rejection.draft_id);
+            assert_eq!(after_rejection.drafts.len(), before_rejection.drafts.len());
+            assert_eq!(
+                after_rejection.draft_versions.len(),
+                before_rejection.draft_versions.len()
+            );
+            assert_eq!(after_rejection.sources, before_rejection.sources);
+            assert_eq!(
+                services
+                    .list_studio_evidence(project_id, study_id)
+                    .unwrap()
+                    .len(),
+                before_evidence.len()
+            );
+            assert_eq!(ledger_snapshot(), before_effects);
             let reviewed = services
                 .interpret_studio_angles(
                     project_id,
