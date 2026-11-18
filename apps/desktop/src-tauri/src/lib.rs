@@ -818,6 +818,7 @@ async fn prepare_study_angles(
 }
 
 #[tauri::command]
+#[expect(clippy::too_many_arguments, reason = "Preserve the stable flat Tauri IPC argument names required by installed desktop clients")]
 async fn interpret_study_angles(
     project_id: String,
     study_id: String,
