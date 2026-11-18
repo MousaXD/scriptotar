@@ -11,8 +11,15 @@ import runpy
 import sys
 import unittest
 
-TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else
-              "target/tests/defragmentation/native-e2e/linux_webkit.py").resolve()
+# The dedicated SHA-pinned gate invokes this file directly with the Agent 07
+# checkout as argv[1]. Ordinary unittest discovery *imports* this module;
+# its argv[1] is "discover", not a file path. In that case always exercise
+# the actual in-repository native evidence helper rather than opening "discover"
+# or silently skipping these adversarial assertions.
+LOCAL_NATIVE_QA = Path(__file__).resolve().parents[1] / "native-e2e" / "linux_webkit.py"
+TARGET = (Path(sys.argv[1]).resolve()
+          if __name__ == "__main__" and len(sys.argv) > 1
+          else LOCAL_NATIVE_QA)
 
 
 class IndependentNativeVisualEvidence(unittest.TestCase):
