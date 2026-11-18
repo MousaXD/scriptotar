@@ -65,6 +65,8 @@
   let scriptError = '';
   let angleError = '';
   let angleBusy = false;
+  // Invalidate an in-flight validation when its pasted input changes.
+  let angleResponseEpoch = 0;
   let angleScopeEpoch = 0;
   let historical: HistoricalAiArtifact | null = null;
   let historyLoading = false;
@@ -873,17 +875,24 @@
 
   async function reviewPastedAngles(selectedAngleId?: string) {
     if (!gateway?.interpretStudyAngles || !record || !anglePromptSource ||
-        !angleResponseJson.trim() || angleBusy || preparing || busy || saving) return;
+        !angleResponseJson.trim()) return;
+    if (angleBusy || preparing || busy || saving) {
+      angleError = t.angleReviewBusy;
+      return;
+    }
     const ownerStudy = studyId;
     const epoch = promptRequest;
+    const responseEpoch = angleResponseEpoch;
+    const responseJson = angleResponseJson;
     angleBusy = true;
     angleError = '';
     draftAnglePrompt = '';
     try {
       const result = await gateway.interpretStudyAngles(
         projectId, ownerStudy, angleStudyRevision,
-        anglePromptSource, angleResponseJson, selectedAngleId);
-      if (studyId !== ownerStudy || epoch !== promptRequest) return;
+        anglePromptSource, responseJson, selectedAngleId);
+      if (studyId !== ownerStudy || epoch !== promptRequest ||
+          responseEpoch !== angleResponseEpoch) return;
       if (result.angles.length !== 3 ||
           result.angles.some((angle) => !angle.id || !angle.approach || !angle.hook) ||
           (selectedAngleId && (!result.draftPrompt || result.draftPrompt.length > 100_000))) {
@@ -897,9 +906,13 @@
       confirmScriptSave = false;
       scriptError = '';
       status = selectedAngleId ? t.draftAngleReady : t.anglesReviewed;
-    } catch (cause) {
-      if (studyId === ownerStudy && epoch === promptRequest) {
-        angleError = message(cause, t.invalidAngles);
+    } catch {
+      // Tauri can reject with a string or an Error. Never expose its unlocalized
+      // diagnostic as the primary native message: the installed WebView must
+      // display an accessible, stable EN/AR rejection for every invalid reply.
+      if (studyId === ownerStudy && epoch === promptRequest &&
+          responseEpoch === angleResponseEpoch) {
+        angleError = t.invalidAngles;
         reviewedAngles = [];
       }
     } finally {
@@ -1443,14 +1456,16 @@
               maxlength="100000" bind:value={angleResponseJson}
               on:input={() => { reviewedAngles = []; draftAnglePrompt = '';
                 selectedWritingAngleId = ''; reviewedScript = null;
-                scriptResponseJson = ''; confirmScriptSave = false; angleError = ''; }}
+                scriptResponseJson = ''; confirmScriptSave = false;
+                angleResponseEpoch++; angleError = ''; }}
               placeholder={t.pasteAnglesPlaceholder}></textarea>
           </label>
           <p class="muted">{t.pasteAnglesPrivacy}</p>
           <button type="button" class="button secondary"
-            disabled={angleBusy || preparing || !angleResponseJson.trim()}
+            disabled={angleBusy || preparing || busy || saving || !angleResponseJson.trim()}
             on:click={() => void reviewPastedAngles()}>{t.reviewAngles}</button>
-          {#if angleError}<p role="alert" class="studio-error">{angleError}</p>{/if}
+          {#if angleError}<p role="alert" aria-live="assertive" aria-atomic="true"
+            aria-label={angleError} class="studio-error" dir="auto">{angleError}</p>{/if}
           {#if reviewedAngles.length}
             <div class="angle-options">
               {#each reviewedAngles as angle (angle.id)}
