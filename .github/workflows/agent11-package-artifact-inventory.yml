@@ -14,6 +14,9 @@ on:
       - '.github/workflows/linux-tauri.yml'
       - '.github/workflows/windows-tauri.yml'
       - '.github/workflows/installed-webview-acceptance.yml'
+      - '.github/workflows/gui-visual-qa.yml'
+      - '.github/workflows/mcp-e2e.yml'
+      - 'tests/defragmentation/benchmarks/**'
   workflow_dispatch:
 
 permissions:
