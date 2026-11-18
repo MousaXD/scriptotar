@@ -5,7 +5,7 @@
 // source must not gain NEW evidence/draft links through other repository APIs.
 // Preexisting immutable evidence and draft provenance must remain readable.
 #[test]
-fn independent_revoked_source_cannot_acquire_new_evidence_or_draft_links() {
+fn independent_revoked_source_cannot_acquire_new_evidence() {
     let (_scratch, db, owner, _foreign) = fixture();
     let (_research, _media, transcript_id) = seed_existing_origins(&db, &owner);
     let study = db.create_study(owner.id, "Withhold source access", "Test").unwrap();
@@ -20,7 +20,6 @@ fn independent_revoked_source_cannot_acquire_new_evidence_or_draft_links() {
             uncertainty: None,
         },
     ).unwrap();
-    let draft = db.create_draft(owner.id, study.id, "Original", "Original text").unwrap();
     // Establish legitimate history before denial; it MUST survive revocation.
     let historic_evidence = db.add_evidence_reference(
         owner.id, study.id,
@@ -65,10 +64,6 @@ fn independent_revoked_source_cannot_acquire_new_evidence_or_draft_links() {
         rejected.is_err(),
         "FAIL OPEN: canonical DB created new evidence on a revoked Study source"
     );
-    assert!(
-        db.attach_source_to_draft(owner.id, draft.id, linked.id).is_err(),
-        "FAIL OPEN: canonical DB created new draft-source link after revocation"
-    );
     assert_eq!(
         db.get_study(owner.id, study.id).unwrap(), after_study,
         "rejected operation changed the Study revision",
@@ -76,7 +71,45 @@ fn independent_revoked_source_cannot_acquire_new_evidence_or_draft_links() {
     let persisted_evidence = db.list_evidence_references(owner.id, study.id).unwrap();
     assert_eq!(persisted_evidence.len(), 1);
     assert_eq!(persisted_evidence[0].id, historic_evidence.id);
-    assert!(db.list_draft_source_ids(owner.id, draft.id).unwrap().is_empty());
+}
+
+#[test]
+fn independent_revoked_source_cannot_acquire_new_draft_link() {
+    let (_scratch, db, owner, _foreign) = fixture();
+    let (_research, _media, transcript_id) = seed_existing_origins(&db, &owner);
+    let study = db.create_study(owner.id, "Withdraw draft source", "Test").unwrap();
+    let source = db.add_study_source(
+        owner.id, study.id,
+        &StudySourceInput {
+            kind: StudySourceKind::Transcript,
+            reference_id: Some(transcript_id),
+            locator: None,
+            manual_text: None,
+            source_revision: None,
+            uncertainty: None,
+        },
+    ).unwrap();
+    let historic = db.create_draft(owner.id, study.id, "Historic", "Original text").unwrap();
+    let fresh = db.create_draft(owner.id, study.id, "New link must fail", "Original text").unwrap();
+    db.attach_source_to_draft(owner.id, historic.id, source.id).unwrap();
+    let before = db.get_study(owner.id, study.id).unwrap();
+    db.revoke_study_source_access(
+        owner.id, study.id, before.revision,
+        StudySourceKind::Transcript, transcript_id,
+    ).unwrap();
+    assert!(!db.get_study_source(owner.id, study.id, source.id).unwrap().available);
+    let revoked = db.get_study(owner.id, study.id).unwrap();
+    assert_eq!(db.list_draft_source_ids(owner.id, historic.id).unwrap(), vec![source.id]);
+    assert!(db.list_draft_source_ids(owner.id, fresh.id).unwrap().is_empty());
+
+    // An immutable historic link remains readable; no new link may be created
+    // after permission withdrawal even through the direct storage API.
+    let attempted = db.attach_source_to_draft(owner.id, fresh.id, source.id);
+    assert!(attempted.is_err(),
+        "FAIL OPEN: canonical DB created new draft-source link after revocation");
+    assert_eq!(db.get_study(owner.id, study.id).unwrap(), revoked);
+    assert_eq!(db.list_draft_source_ids(owner.id, historic.id).unwrap(), vec![source.id]);
+    assert!(db.list_draft_source_ids(owner.id, fresh.id).unwrap().is_empty());
 }
 
 #[test]
