@@ -34,9 +34,9 @@ if (config.build?.beforeBuildCommand !== 'cd ../desktop-ui && npm ci && npm run 
 // this does not validate glob patterns constructed internally by third-party
 // Vite/Svelte plugins or from unreviewed files in other workspaces.
 const globApiRules = [
-  { label: 'picomatch-family module reference', test: /\\b(?:picomatch|micromatch|tinyglobby|fdir|fast-glob|globby)\\b/i },
-  { label: 'Vite import.meta.glob macro', test: /\\bimport\\s*\\.\\s*meta\\s*(?:\\.\\s*glob(?:Eager)?\\b|\\[\\s*['"`]glob(?:Eager)?['"`]\\s*\\])/i },
-  { label: 'direct glob API invocation', test: /\\b(?:glob|globSync|globStream|globIterate|fastGlob)\\s*\\(/i }
+  { label: 'picomatch-family module reference', test: /\b(?:picomatch|micromatch|tinyglobby|fdir|fast-glob|globby)\b/i },
+  { label: 'Vite import.meta.glob macro', test: /\bimport\s*\.\s*meta\s*(?:\.\s*glob(?:Eager)?\b|\[\s*['"`]glob(?:Eager)?['"`]\s*\])/i },
+  { label: 'direct glob API invocation', test: /\b(?:glob|globSync|globStream|globIterate|fastGlob)\s*\(/i }
 ];
 const attackFixtures = [
   "import picomatch from 'picomatch';",
