@@ -90,22 +90,28 @@ fn whole_database_snapshot(db: &SqliteStore) -> BTreeMap<String, Vec<String>> {
     let connection = Connection::open_with_flags(db.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
         .expect("snapshot must never open the database for writing");
     let tables = {
-        let mut statement = connection.prepare(
-            "SELECT name FROM sqlite_master WHERE type='table'
+        let mut statement = connection
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table'
              AND name NOT GLOB 'sqlite_*' ORDER BY name",
-        ).unwrap();
-        let rows = statement.query_map([], |row| row.get::<_, String>(0)).unwrap();
+            )
+            .unwrap();
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap();
         rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
     };
     let mut snapshot = BTreeMap::new();
     for name in tables {
         let sql = format!("SELECT * FROM \"{}\"", name.replace('"', "\"\""));
         let mut statement = connection.prepare(&sql).unwrap();
-        let rows = statement.query_map([], |row| {
-            (0..row.as_ref().column_count())
-                .map(|column| row.get::<_, Value>(column))
-                .collect::<rusqlite::Result<Vec<_>>>()
-        }).unwrap();
+        let rows = statement
+            .query_map([], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|column| row.get::<_, Value>(column))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap();
         let mut contents = rows
             .map(|row| format!("{:?}", row.unwrap()))
             .collect::<Vec<_>>();
@@ -199,8 +205,11 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         before_source
     );
     assert_eq!(db.get_draft(project_a.id, draft.id).unwrap(), before_draft);
-    assert_eq!(whole_database_snapshot(&db), all_rows_before,
-        "denied operations must not change any canonical approval/effect/audit row");
+    assert_eq!(
+        whole_database_snapshot(&db),
+        all_rows_before,
+        "denied operations must not change any canonical approval/effect/audit row"
+    );
 
     db.revoke_study_source_access(
         project_a.id,
@@ -246,8 +255,11 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
     let all_rows_revoked = whole_database_snapshot(&db);
     for (table, previous) in &all_rows_before {
         if table != "content_studies" && table != "study_sources" {
-            assert_eq!(all_rows_revoked.get(table), Some(previous),
-                "authorized source revocation must preserve all historical {table} rows");
+            assert_eq!(
+                all_rows_revoked.get(table),
+                Some(previous),
+                "authorized source revocation must preserve all historical {table} rows"
+            );
         }
     }
     // Even a current-revision editor write cannot reattach the tombstoned
@@ -259,22 +271,27 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         status: StudyStatus::Active,
     };
     let saved_brief = brief();
-    assert!(db.save_studio_bundle(
-        project_a.id,
-        study.id,
-        StudioBundleUpdate {
-            expected_revision: before.revision + 1,
-            edit: &edit,
-            brief: &saved_brief,
-            brief_changed: false,
-            sources: &desired,
-            draft: &before_draft.body,
-            draft_id: Some(draft.id),
-            expected_draft_revision: Some(before_draft.revision),
-        },
-    ).is_err());
-    assert_eq!(whole_database_snapshot(&db), all_rows_revoked,
-        "a failed source reattachment must roll back every canonical row");
+    assert!(db
+        .save_studio_bundle(
+            project_a.id,
+            study.id,
+            StudioBundleUpdate {
+                expected_revision: before.revision + 1,
+                edit: &edit,
+                brief: &saved_brief,
+                brief_changed: false,
+                sources: &desired,
+                draft: &before_draft.body,
+                draft_id: Some(draft.id),
+                expected_draft_revision: Some(before_draft.revision),
+            },
+        )
+        .is_err());
+    assert_eq!(
+        whole_database_snapshot(&db),
+        all_rows_revoked,
+        "a failed source reattachment must roll back every canonical row"
+    );
 
     // Revocation is not reversible by a replay or a stale new Studio save.
     assert!(db
