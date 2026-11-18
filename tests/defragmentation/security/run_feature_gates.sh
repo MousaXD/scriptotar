@@ -54,6 +54,19 @@ PY
       cargo test --locked -p scriptotar-db
     )
     ;;
+  revocation:137)
+    # Independent source-permission withdrawal security gate on Agent 00's
+    # unmerged production PR #137. Augment only a disposable checkout's real
+    # versioned SQLite fixture, not PR #137's source code or migrations.
+    test -f target/crates/scriptotar-db/tests/content_studies.rs
+    test -f target/crates/scriptotar-db/src/studies.rs
+    test -f audit/tests/defragmentation/security/source_revocation_additional_tests.rs
+    cat audit/tests/defragmentation/security/source_revocation_additional_tests.rs >> target/crates/scriptotar-db/tests/content_studies.rs
+    (
+      cd target
+      cargo test --locked -p scriptotar-db --test content_studies -- --nocapture
+    )
+    ;;
   migration:119)
     test -f target/crates/scriptotar-db/src/agent_effects_external.rs
     (
