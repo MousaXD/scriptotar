@@ -1194,7 +1194,7 @@ def exercise(args, report: dict, root: Path):
             a = session.ax
             old_count = count_canonical_jobs(root / "data", name_a)
             a.click("Queue", "button")
-            a.heading("Queue", timeout=15)
+            a.heading("Jobs", timeout=15)
             a.type_into("Media URL", "file:///scriptotar-native-qa-denied-media.mp4")
             a.click("Queue URL", "button")
             error_text = ""
