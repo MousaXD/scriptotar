@@ -1152,6 +1152,28 @@ impl AppServices {
         )?;
         self.read_studio_bundle_for(project_id, study_id, selected_id)
     }
+
+    /// Standard user-authorized Studio action; not a QA/debug command.
+    /// Keep active-project authority locked across the CAS tombstone write.
+    pub fn revoke_studio_source_access(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_revision: i64,
+        kind: &str,
+        reference_id: Uuid,
+    ) -> RepositoryResult<UiStudioStudy> {
+        let _project_guard = self.lock_studio_project(project_id)?;
+        let origin_kind = match kind {
+            "research" => StudySourceKind::ResearchItem,
+            "transcript" => StudySourceKind::Transcript,
+            _ => return Err(invalid("Study source kind")),
+        };
+        self.store.revoke_study_source_access(
+            project_id, study_id, expected_revision, origin_kind, reference_id,
+        )?;
+        self.read_studio_bundle(project_id, study_id)
+    }
 }
 
 /*

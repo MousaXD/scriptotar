@@ -845,6 +845,103 @@ impl SqliteStore {
     }
 }
 
+impl SqliteStore {
+
+    /// Revoke one Study's ability to use an attached origin. The origin itself
+    /// remains project-owned; linked evidence/drafts retain their immutable
+    /// provenance and source identity. NULLing the origin FK is the existing
+    /// fail-closed "unavailable" tombstone (not a reassignable reference).
+    ///
+    /// Study revision and tombstone commit in ONE IMMEDIATE transaction, so a
+    /// stale writer cannot consume a revision or accidentally restore access.
+    pub fn revoke_study_source_access(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        expected_revision: i64,
+        kind: StudySourceKind,
+        origin: Uuid,
+    ) -> RepositoryResult<()> {
+        if !matches!(kind, StudySourceKind::Transcript | StudySourceKind::ResearchItem) {
+            return Err(RepositoryError::Validation(
+                "unsupported Study source permission kind".into(),
+            ));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project, study)?;
+        let source: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT id, CASE WHEN kind='transcript' THEN transcript_id IS NOT NULL
+                                 WHEN kind='research_item' THEN research_id IS NOT NULL
+                                 ELSE 0 END
+                 FROM study_sources
+                 WHERE project_id=?1 AND study_id=?2 AND kind=?3 AND reference_id=?4",
+                params![
+                    project.to_string(),
+                    study.to_string(),
+                    kind.as_str(),
+                    origin.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let (source_id, available) = source.ok_or_else(|| {
+            RepositoryError::NotFound("attached Study source in active project".into())
+        })?;
+        if available == 0 {
+            return Err(RepositoryError::Conflict(
+                "Study source access was already revoked".into(),
+            ));
+        }
+        let now = now_rfc3339();
+        let revised = tx
+            .execute(
+                "UPDATE content_studies SET revision=revision+1, updated_at=?1
+                 WHERE project_id=?2 AND id=?3 AND revision=?4 AND archived_at IS NULL
+                   AND EXISTS(SELECT 1 FROM projects p
+                              WHERE p.id=?2 AND p.archived_at IS NULL)",
+                params![
+                    now,
+                    project.to_string(),
+                    study.to_string(),
+                    expected_revision
+                ],
+            )
+            .map_err(db_error)?;
+        if revised != 1 {
+            return Err(RepositoryError::Conflict(
+                "Study source permission changed; refresh this Study".into(),
+            ));
+        }
+        let revoked = tx
+            .execute(
+                "UPDATE study_sources SET research_id=NULL, transcript_id=NULL
+                 WHERE id=?1 AND project_id=?2 AND study_id=?3
+                   AND ((kind='research_item' AND research_id=?4)
+                     OR (kind='transcript' AND transcript_id=?4))",
+                params![
+                    source_id,
+                    project.to_string(),
+                    study.to_string(),
+                    origin.to_string()
+                ],
+            )
+            .map_err(db_error)?;
+        if revoked != 1 {
+            return Err(RepositoryError::Conflict(
+                "source permission changed before revocation".into(),
+            ));
+        }
+        // The unique provenance fingerprint remains: a later save cannot
+        // silently re-add the same origin to this Study after revocation.
+        tx.commit().map_err(db_error)
+    }
+}
+
 /// Do not cascade-delete linked evidence, jobs or draft attachments when the
 /// user deselects a source in Studio.
 impl SqliteStore {

@@ -852,6 +852,30 @@ async fn save_study(
     .await
 }
 
+
+#[tauri::command]
+async fn revoke_study_source_access(
+    project_id: String,
+    study_id: String,
+    expected_revision: i64,
+    kind: String,
+    reference_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let reference_id = artifact_uuid(&reference_id, "source reference id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .revoke_studio_source_access(
+                project_id, study_id, expected_revision, &kind, reference_id,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn list_study_evidence(
     project_id: String,
@@ -1592,6 +1616,7 @@ pub fn run() {
             interpret_study_angles,
             review_study_script,
             save_study,
+            revoke_study_source_access,
             list_study_evidence,
             add_study_evidence,
             review_study_evidence,
