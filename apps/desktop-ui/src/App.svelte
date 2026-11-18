@@ -37,8 +37,9 @@
       api.setStudyDraftArchived(projectId, studyId, draftId, revision, archived),
     prepareStudyAngles: (projectId: string, studyId: string) => api.prepareStudyAngles(projectId, studyId),
     interpretStudyAngles: (projectId: string, studyId: string, revision: number,
-      preparedPrompt: string, responseJson: string, selectedAngleId?: string) =>
-      api.interpretStudyAngles(projectId, studyId, revision, preparedPrompt, responseJson, selectedAngleId),
+      preparedPrompt: string, responseJson: string, selectedAngleId?: string,
+      requestId?: string) =>
+      api.interpretStudyAngles(projectId, studyId, revision, preparedPrompt, responseJson, selectedAngleId, requestId),
     reviewStudyScript: (projectId: string, studyId: string, revision: number,
       anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
       preparedDraftPrompt: string, scriptResponseJson: string, acceptAsNewCandidate: boolean) =>
@@ -460,9 +461,9 @@
     await refresh();
   }
 
-  async function enqueueUrl(url: string) {
+  async function enqueueUrl(url: string, requestId?: string) {
     if (!data) return;
-    await api.enqueueUrl(data.activeProjectId, url);
+    await api.enqueueUrl(data.activeProjectId, url, requestId);
     await refresh();
   }
 

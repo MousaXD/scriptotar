@@ -18,7 +18,12 @@ TEST = (ROOT / 'apps/desktop-ui/src/api/tauriClient.test.ts').read_text()
 
 
 def actual_commands() -> set[str]:
-    return set(re.findall(r'#\[tauri::command\]\s*(?:async\s+)?fn\s+(\w+)\s*\(', RUST))
+    # Real Tauri handlers can have additional bounded Rust attributes (for
+    # example, a checked Clippy expectation documenting stable IPC fields).
+    # Never omit the handler from the exact registered-command inventory.
+    return set(re.findall(
+        r'#\[tauri::command\]\s*(?:#\[[^\]]{0,500}\]\s*)*(?:async\s+)?fn\s+(\w+)\s*\(', RUST
+    ))
 
 
 def dispatched_commands() -> set[str]:
@@ -41,6 +46,8 @@ def methods() -> set[str]:
 
 class ApiSurfaceContractTests(unittest.TestCase):
     def test_every_rust_command_is_dispatched(self):
+        self.assertIn('interpret_study_angles', actual_commands(),
+                      'Decorated Tauri handler must remain counted')
         self.assertEqual(actual_commands(), dispatched_commands())
         self.assertEqual(len(actual_commands()), 62, "Update coverage inventory when Tauri commands change")
 

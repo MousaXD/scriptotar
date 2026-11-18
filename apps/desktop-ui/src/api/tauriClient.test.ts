@@ -32,6 +32,7 @@ describe('Tauri client command contract', () => {
     await api.chooseOutputDirectory();
     await api.enqueueLocalMedia('project-id', '/tmp/a.mp4');
     await api.enqueueUrl('project-id', 'https://www.youtube.com/watch?v=fixture');
+    await api.enqueueUrl('project-id', 'file:///denied.mp4', '0123456789abcdef0123456789abcdef');
     await api.retryJob('job-id');
     await api.saveWatchlist({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
     await api.scanCreator({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
@@ -74,6 +75,8 @@ describe('Tauri client command contract', () => {
     await api.setStudyDraftArchived('project-id', 'study-id', 'draft-id', 3, true);
     await api.prepareStudyAngles('project-id', 'study-id');
     await api.interpretStudyAngles('project-id', 'study-id', 7, 'prepared prompt', '{"angles":[]}', 'angle-1');
+    await api.interpretStudyAngles('project-id', 'study-id', 7, 'prepared prompt', '{"angles":[]}', undefined,
+      '0123456789abcdef0123456789abcdef');
     await api.reviewStudyScript('project-id', 'study-id', 7, 'angle prompt', '{"angles":[]}',
       'angle-1', 'draft prompt', '{"beats":[]}', false);
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
@@ -139,7 +142,11 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
       projectId: 'project-id',
-      url: 'https://www.youtube.com/watch?v=fixture'
+      url: 'https://www.youtube.com/watch?v=fixture', requestId: null
+    });
+    expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
+      projectId: 'project-id', url: 'file:///denied.mp4',
+      requestId: '0123456789abcdef0123456789abcdef'
     });
     expect(invokeMock).toHaveBeenCalledWith('retry_job', { jobId: 'job-id' });
     expect(invokeMock).toHaveBeenCalledWith('save_watchlist', {
@@ -186,7 +193,13 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
       projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
-      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: 'angle-1'
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}',
+      selectedAngleId: 'angle-1', requestId: null
+    });
+    expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
+      projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: null,
+      requestId: '0123456789abcdef0123456789abcdef'
     });
     expect(invokeMock).toHaveBeenCalledWith('review_study_script', {
       projectId: 'project-id', studyId: 'study-id',

@@ -25,12 +25,42 @@ use dto::{
     UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
-use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
+use scriptotar_core::{
+    LegacyImportReport, RepositoryError, SettingsRepository, WatchlistRepository,
+};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_mcp::{load_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
+
+/// Opaque, high-entropy request identity travels through real Tauri errors.
+/// Neither untrusted payloads nor credentials are ever echoed in this marker.
+fn validate_native_request_id(request_id: Option<&str>) -> Result<(), String> {
+    if let Some(value) = request_id {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("invalid native request identity".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn native_denial(code: &str, request_id: Option<&str>, fallback: String) -> String {
+    match request_id {
+        Some(id) => {
+            // CI can independently correlate an actual host denial with the
+            // native accessible alert; this logs NO source, URL, model text
+            // or provider key and grants no authority.
+            eprintln!("[scriptotar-native-denial] code={code} request_id={id}");
+            format!("SCRIPTOTAR_DENIAL:{code}:{id}")
+        }
+        None => fallback,
+    }
+}
 
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
 static MIGRATION_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
@@ -788,6 +818,10 @@ async fn prepare_study_angles(
 }
 
 #[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserve the stable flat Tauri IPC argument names required by installed desktop clients"
+)]
 async fn interpret_study_angles(
     project_id: String,
     study_id: String,
@@ -795,8 +829,10 @@ async fn interpret_study_angles(
     prepared_prompt: String,
     response_json: String,
     selected_angle_id: Option<String>,
+    request_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<crate::dto::UiStudyAngleInterpretation, String> {
+    validate_native_request_id(request_id.as_deref())?;
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
     let services = state.inner().clone();
@@ -810,7 +846,18 @@ async fn interpret_study_angles(
                 &response_json,
                 selected_angle_id.as_deref(),
             )
-            .map_err(command_error)
+            .map_err(|error| {
+                let code = match &error {
+                    RepositoryError::Validation(_) => Some("INVALID_STUDY_ANGLES"),
+                    RepositoryError::Conflict(_) => Some("STALE_STUDY_ANGLES"),
+                    _ => None,
+                };
+                let fallback = command_error(error);
+                match code {
+                    Some(code) => native_denial(code, request_id.as_deref(), fallback),
+                    None => fallback,
+                }
+            })
     })
     .await
 }
@@ -1301,11 +1348,30 @@ async fn enqueue_local_media(
 async fn enqueue_url(
     project_id: Uuid,
     url: String,
+    request_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
-    security::validate_url_argument("media URL", &url)?;
+    validate_native_request_id(request_id.as_deref())?;
+    if let Err(error) = security::validate_url_argument("media URL", &url) {
+        return Err(native_denial(
+            "INVALID_MEDIA_URL",
+            request_id.as_deref(),
+            error,
+        ));
+    }
     let services = state.inner().clone();
-    on_blocking_worker(move || services.enqueue_url(project_id, url).map_err(command_error)).await
+    on_blocking_worker(move || {
+        services.enqueue_url(project_id, url).map_err(|error| {
+            let kind = matches!(&error, RepositoryError::Validation(_));
+            let fallback = command_error(error);
+            if kind {
+                native_denial("INVALID_MEDIA_URL", request_id.as_deref(), fallback)
+            } else {
+                fallback
+            }
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1814,5 +1880,40 @@ mod tests {
         symlink(&target, temp.path().join(MIGRATION_COMPLETED_MARKER)).unwrap();
         assert!(migration_completed(temp.path()).is_err());
         assert!(mark_migration_completed(temp.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_denial_identity_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_weak_or_untrusted_request_identity_before_host_dispatch() {
+        for value in [
+            "",
+            "123",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "fffffffffffffffffffffffffffffff",
+            "fffffffffffffffffffffffffffffffff",
+            "ff?not-a-uuid",
+        ] {
+            assert!(validate_native_request_id(Some(value)).is_err());
+        }
+        assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
+        assert!(validate_native_request_id(None).is_ok());
+    }
+
+    #[test]
+    fn redacted_native_denial_never_contains_untrusted_payload() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let payload = "UNTRUSTED JSON PRIVATE BODY";
+        assert_eq!(
+            native_denial("INVALID_STUDY_ANGLES", Some(id), payload.into()),
+            format!("SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:{id}")
+        );
+        assert_eq!(
+            native_denial("INVALID_MEDIA_URL", None, payload.into()),
+            payload
+        );
     }
 }
