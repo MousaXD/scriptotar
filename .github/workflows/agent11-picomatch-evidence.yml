@@ -1,0 +1,82 @@
+name: Agent 11 picomatch exploit evidence (non-release)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-supply-chain-recovery-20261118
+    paths:
+      - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
+      - 'apps/desktop-ui/package.json'
+      - 'apps/desktop-ui/package-lock.json'
+      - '.github/workflows/agent11-picomatch-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exploit-and-audit-evidence:
+    name: Real installed dependency — expected vulnerable / NO RELEASE
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Clean reproducible install
+        run: npm ci
+      - name: Exact resolved dependency provenance
+        run: |
+          npm explain picomatch
+          npm ls picomatch fdir tinyglobby vite vitest
+          node - <<'NODE'
+          const fs = require('fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const p = lock.packages['node_modules/picomatch'];
+          console.log(JSON.stringify({ version: p.version, resolved: p.resolved, integrity: p.integrity, dev: p.dev }, null, 2));
+          NODE
+      - name: Bounded real picomatch ReDoS diagnostic (NOT remediation)
+        run: |
+          node --check scripts/probe-picomatch-redos.mjs
+          node scripts/probe-picomatch-redos.mjs --report
+      - name: Build and scan static frontend for bundled parser indicators
+        run: |
+          npm run check
+          npm run test
+          npm run build
+          if grep -RIl -E 'picomatch|tinyglobby|fdir' dist; then
+            echo 'Parser-name indicator found in frontend bundle; manual reachability review required'
+          else
+            echo 'No parser-name indicator in static dist; absence alone does not prove runtime unreachability'
+          fi
+      - name: Candidate security regression — MUST fail if vulnerable
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched
+      - name: Mandatory unfiltered npm advisory gate — NEVER masked
+        if: always()
+        run: |
+          if [ ! -d node_modules ]; then
+            echo 'Dependency install unavailable: cannot claim a passing audit'
+            exit 1
+          fi
+          set +e
+          npm audit --audit-level=high --json > /tmp/agent11-npm-audit.json
+          audit_rc=$?
+          set -e
+          node - <<'NODE'
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync('/tmp/agent11-npm-audit.json', 'utf8'));
+          const issues = Object.entries(d.vulnerabilities || {}).map(([name, v]) => ({
+            name,
+            severity: v.severity,
+            via: (v.via || []).map(x => typeof x === 'string' ? x : { name: x.name, source: x.source, url: x.url, range: x.range })
+          }));
+          console.log('AUDIT SECURITY EVIDENCE (not a waiver):');
+          console.log(JSON.stringify({ metadata: d.metadata?.vulnerabilities, issues }, null, 2));
+          NODE
+          exit "$audit_rc"
