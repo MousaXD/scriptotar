@@ -20,6 +20,7 @@ HASH = "a" * 64
 SCHEMA = """
 PRAGMA user_version=9;
 CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,applied_at TEXT);
+CREATE TABLE integration_schema_migrations(version INTEGER PRIMARY KEY,name TEXT,applied_at TEXT);
 CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL);
 CREATE TABLE creators(id TEXT PRIMARY KEY);
 CREATE TABLE sources(id TEXT PRIMARY KEY,project_id TEXT REFERENCES projects(id),source_type TEXT,locator TEXT,title TEXT,created_at TEXT);
@@ -42,6 +43,11 @@ def blank(path: Path) -> None:
         db.executescript(SCHEMA)
         db.executemany("INSERT INTO schema_migrations VALUES (?,?,?)",
                        [(i, f"migration-{i}", "2026-01-01") for i in range(1, 10)])
+        names = ("legacy_import_support", "job_transcript_lineage",
+                 "safe_job_transcript_backfill", "job_transcript_project_guard",
+                 "parent_lineage_reassignment_guards")
+        db.executemany("INSERT INTO integration_schema_migrations VALUES (?,?,?)",
+                       [(i, name, "2026-01-01") for i, name in enumerate(names, 1)])
 
 
 class StudyPerformanceSuiteTests(unittest.TestCase):
@@ -84,6 +90,20 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires actual Scriptotar v6"):
                 build(base, generated, 100, SHA)
             self.assertFalse(generated.exists())
+
+    def test_migrated_integration_ledger_is_allowed_but_forgery_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / "template.db"
+            first = Path(folder) / "first.db"
+            second = Path(folder) / "second.db"
+            blank(base)
+            result = build(base, first, 100, SHA)
+            self.assertEqual(result["schema_version"], 9)
+            with sqlite3.connect(base) as db:
+                db.execute("UPDATE integration_schema_migrations SET name='forged' WHERE version=3")
+            with self.assertRaisesRegex(ValueError, "integration migration ledger"):
+                build(base, second, 100, SHA)
+            self.assertFalse(second.exists())
 
     def test_query_refuses_nonfixture_and_bad_sha(self):
         with tempfile.TemporaryDirectory() as folder:
