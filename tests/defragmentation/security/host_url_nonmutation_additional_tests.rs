@@ -96,3 +96,62 @@ fn independent_host_denied_url_and_foreign_project_preserve_all_canonical_conten
         "foreign project URL request mutated canonical SQLite contents"
     );
 }
+
+#[test]
+fn independent_host_denied_foreign_study_read_preserves_private_draft_and_canonical_contents() {
+    let directory = TempDir::new().unwrap();
+    let services = AppServices::new(directory.path()).unwrap();
+    let project_a = services.active_project_id().unwrap();
+    let owner_study = services.create_studio_study(
+        project_a,
+        crate::dto::UiStudioBrief {
+            title: "Private project A Study".into(),
+            goal: "Private source".into(),
+            audience: "Project A".into(),
+            platform: "reels".into(),
+            language: "en".into(),
+            duration: "45 seconds".into(),
+            style: "factual".into(),
+        },
+    ).unwrap();
+    let study_a = Uuid::parse_str(&owner_study.id).unwrap();
+    let owner_draft = owner_study.draft_id.as_ref()
+        .map(|id| Uuid::parse_str(id).unwrap());
+    // Positive evidence that the canonical Study and draft actually exist.
+    assert_eq!(services.get_studio_study(project_a, study_a).unwrap().id, owner_study.id);
+
+    let project_b_bootstrap = services.create_project("Project B".into()).unwrap();
+    let project_b = Uuid::parse_str(&project_b_bootstrap.active_project_id).unwrap();
+    assert_ne!(project_a, project_b);
+    assert_eq!(services.active_project_id().unwrap(), project_b);
+    let db_path = database_path(&directory);
+    let before = independent_host_canonical_contents(&db_path);
+
+    // Exactly the IDs the ordinary Tauri get_study command parses. Both a
+    // genuine foreign project ID and a forged active project ID with Study A
+    // must be denied at the Rust host before any read of private draft text.
+    assert!(matches!(
+        services.get_studio_study(project_a, study_a),
+        Err(RepositoryError::NotFound(_)),
+    ), "foreign project Study read bypassed the active-project authority");
+    assert!(services.get_studio_study(project_b, study_a).is_err(),
+        "forged active project ID opened another project's Study");
+
+    if let Some(draft_a) = owner_draft {
+        assert!(matches!(
+            services.get_studio_study_draft(project_a, study_a, draft_a),
+            Err(RepositoryError::NotFound(_)),
+        ), "foreign project draft read bypassed active-project authority");
+        assert!(services.get_studio_study_draft(project_b, study_a, draft_a).is_err(),
+            "forged active project ID opened another project's draft");
+    }
+    assert_eq!(independent_host_canonical_contents(&db_path), before,
+        "denied foreign Study/draft read changed canonical SQLite contents");
+
+    // Restoring authorized owner access proves the rejection did not corrupt
+    // the Study while inspecting a foreign workspace.
+    services.select_project(project_a).unwrap();
+    let recovered = services.get_studio_study(project_a, study_a).unwrap();
+    assert_eq!(recovered.id, owner_study.id);
+    assert_eq!(recovered.project_id, project_a.to_string());
+}
