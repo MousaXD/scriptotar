@@ -23,9 +23,8 @@ const TIMEOUT_MS = 8000;
 
 async function childMain(caseName) {
   assert.ok(CASES.includes(caseName), 'unknown fixture');
-  const { createServer } = await import('vite');
+  const { build } = await import('vite');
   const root = mkdtempSync(join(tmpdir(), 'scriptotar-agent11-vite-'));
-  let server;
   try {
     const unusualName = 'a'.repeat(36) + 'b';
     writeFileSync(join(root, 'normal.js'), 'export default 1;\n');
@@ -36,33 +35,36 @@ async function childMain(caseName) {
     // user-input APIs, dynamic expression interpolation, or glob filenames
     // masquerading as PATTERNS are used.
     writeFileSync(join(root, 'entry.js'),
-      'export const modules = import.meta.glob(' + JSON.stringify(pattern) + ');\n');
-    server = await createServer({
-      configFile: false,
-      envFile: false,
-      root,
-      plugins: [],
+      'const modules = import.meta.glob(' + JSON.stringify(pattern) + ');\n' +
+      'globalThis.__agent11VitePatternProbe = Object.keys(modules);\n');
+    // Build the actual JS source entry, not an HTTP/dev-server URL. This
+    // exercises Vite's transform + tinyglobby pipeline in production-build
+    // mode with a temporary, controlled source tree.
+    const buildResult = await build({
+      configFile: false, envFile: false, root, plugins: [],
       logLevel: 'silent',
-      optimizeDeps: { noDiscovery: true },
-      server: { middlewareMode: true, hmr: false }
+      build: { write: false, emptyOutDir: false, minify: false,
+        rollupOptions: { input: join(root, 'entry.js') } }
     });
-    const result = await server.transformRequest('/entry.js');
-    assert.ok(result?.code, 'Vite did not transform source fixture');
-    assert.ok(!result.code.includes('import.meta.glob('),
+    const outputs = (Array.isArray(buildResult) ? buildResult : [buildResult])
+      .flatMap(item => item.output || []);
+    const builtCode = outputs.filter(item => item.type === 'chunk')
+      .map(item => item.code).join('\n');
+    assert.ok(builtCode, 'Vite build produced no JS chunks');
+    assert.ok(!builtCode.includes('import.meta.glob('),
       'Vite did not actually transform the glob macro');
     if (caseName === 'ordinary-glob') {
-      assert.ok(result.code.includes('normal.js'),
+      assert.ok(builtCode.includes('normal.js'),
         'ordinary glob control did not enumerate known source');
     }
     if (caseName === 'unusual-filename') {
-      assert.ok(result.code.includes(unusualName),
+      assert.ok(builtCode.includes(unusualName),
         'unusual-filename control was not considered by ordinary glob');
     }
     console.log(JSON.stringify({ case: caseName, outcome: 'TRANSFORM_COMPLETED',
       pattern, unusualFilenameLength: unusualName.length,
-      codeLength: result.code.length }));
+      codeLength: builtCode.length }));
   } finally {
-    if (server) await server.close();
     rmSync(root, { recursive: true, force: true });
   }
 }
