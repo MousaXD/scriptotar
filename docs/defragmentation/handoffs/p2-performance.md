@@ -24,9 +24,7 @@ Recommended one-command migration smoke from a clean checkout (requires Rust, Ca
 
 ```bash
 export SRC_SHA="$(git rev-parse HEAD)"
-mkdir -p /tmp/scriptotar-perf-qa-$(date +%s)
-# Set PERF_DIR to the freshly created absolute path.
-export PERF_DIR=/absolute/path/to/new/scriptotar-perf-qa
+export PERF_DIR="$(mktemp -d /tmp/scriptotar-perf-qa.XXXXXX)"
 printf 'SYNTHETIC_ONLY\\n' > "$PERF_DIR/.scriptotar-benchmark-only"
 python3 -m tests.defragmentation.benchmarks.run_migrated_scale \\
   --out-dir "$PERF_DIR" --source-sha "$SRC_SHA" \\
