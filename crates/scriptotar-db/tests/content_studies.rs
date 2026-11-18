@@ -1,14 +1,15 @@
 use std::{
+    collections::BTreeMap,
     sync::{Arc, Barrier},
     thread,
 };
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, types::Value, Connection, OpenFlags, OptionalExtension};
 use scriptotar_core::{
     CreativeBriefInput, EvidenceCertainty, EvidenceInput, Job, JobInput, JobRepository, Project,
     ProjectRepository, RepositoryError, StudyEdit, StudySourceInput, StudySourceKind, StudyStatus,
 };
-use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
+use scriptotar_db::{SqliteStore, StudioBundleUpdate, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -83,6 +84,37 @@ fn seed_existing_origins(db: &SqliteStore, project: &Project) -> (Uuid, Uuid, Uu
     (research, media, transcript)
 }
 
+/// Entire database row-content snapshot through a read-only SQLite connection.
+/// This includes provider approvals, effects, attempts, receipts and audit tables.
+fn whole_database_snapshot(db: &SqliteStore) -> BTreeMap<String, Vec<String>> {
+    let connection = Connection::open_with_flags(db.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("snapshot must never open the database for writing");
+    let tables = {
+        let mut statement = connection.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table'
+             AND name NOT GLOB 'sqlite_*' ORDER BY name",
+        ).unwrap();
+        let rows = statement.query_map([], |row| row.get::<_, String>(0)).unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    };
+    let mut snapshot = BTreeMap::new();
+    for name in tables {
+        let sql = format!("SELECT * FROM \"{}\"", name.replace('"', "\"\""));
+        let mut statement = connection.prepare(&sql).unwrap();
+        let rows = statement.query_map([], |row| {
+            (0..row.as_ref().column_count())
+                .map(|column| row.get::<_, Value>(column))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        }).unwrap();
+        let mut contents = rows
+            .map(|row| format!("{:?}", row.unwrap()))
+            .collect::<Vec<_>>();
+        contents.sort();
+        snapshot.insert(name, contents);
+    }
+    snapshot
+}
+
 #[test]
 fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
     let (_directory, db, project_a, project_b) = fixture();
@@ -128,6 +160,7 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         .get_study_source(project_a.id, study.id, source.id)
         .unwrap();
     let before_draft = db.get_draft(project_a.id, draft.id).unwrap();
+    let all_rows_before = whole_database_snapshot(&db);
 
     // Wrong-project, forged-reference and stale revision attempts do not
     // consume the CAS token or change any persisted row.
@@ -166,6 +199,8 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         before_source
     );
     assert_eq!(db.get_draft(project_a.id, draft.id).unwrap(), before_draft);
+    assert_eq!(whole_database_snapshot(&db), all_rows_before,
+        "denied operations must not change any canonical approval/effect/audit row");
 
     db.revoke_study_source_access(
         project_a.id,
@@ -208,6 +243,39 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         original_origin, 1,
         "project-owned original must not be deleted"
     );
+    let all_rows_revoked = whole_database_snapshot(&db);
+    for (table, previous) in &all_rows_before {
+        if table != "content_studies" && table != "study_sources" {
+            assert_eq!(all_rows_revoked.get(table), Some(previous),
+                "authorized source revocation must preserve all historical {table} rows");
+        }
+    }
+    // Even a current-revision editor write cannot reattach the tombstoned
+    // origin; the unique provenance fingerprint makes resurrection fail closed.
+    let desired = [(StudySourceKind::Transcript, transcript_id)];
+    let edit = StudyEdit {
+        title: "Protected source".into(),
+        goal: "Read provenance".into(),
+        status: StudyStatus::Active,
+    };
+    let saved_brief = brief();
+    assert!(db.save_studio_bundle(
+        project_a.id,
+        study.id,
+        StudioBundleUpdate {
+            expected_revision: before.revision + 1,
+            edit: &edit,
+            brief: &saved_brief,
+            brief_changed: false,
+            sources: &desired,
+            draft: &before_draft.body,
+            draft_id: Some(draft.id),
+            expected_draft_revision: Some(before_draft.revision),
+        },
+    ).is_err());
+    assert_eq!(whole_database_snapshot(&db), all_rows_revoked,
+        "a failed source reattachment must roll back every canonical row");
+
     // Revocation is not reversible by a replay or a stale new Studio save.
     assert!(db
         .revoke_study_source_access(
@@ -227,6 +295,7 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
             .unwrap(),
         revoked
     );
+    assert_eq!(whole_database_snapshot(&db), all_rows_revoked);
 }
 
 #[test]
