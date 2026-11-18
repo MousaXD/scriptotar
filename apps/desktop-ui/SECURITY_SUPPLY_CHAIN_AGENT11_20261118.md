@@ -190,3 +190,50 @@ A self-published `picomatch@4.0.8` under a private registry is **not** trustwort
 Original Agent 11 exact-head run at `75b2fb568b4958cc25bde262643b00c240f04961`: [Tauri migration integration #44299922352](https://github.com/MousaXD/scriptotar/actions/runs/44299922352) — Rust workspace PASS, Rust/sidecar PASS, Python sidecar tests PASS, Svelte check/test/build PASS, integrated Tauri build PASS, supply-chain **FAIL** at npm advisory, Python **advisory** audit SKIPPED. The new probe/report commit must earn its own exact-head checks before being cited as validated CI.
 
 **Owner decision:** keep PR #132 DRAFT, no merge/release authorization. Prefer waiting for the maintainer's verifiable patch. If timing cannot tolerate that, Agent 00 must explicitly commission a separately reviewed security-fork experiment or perform a documented risk-acceptance process without claiming remediation. Unresolved external advisories remain blocking under current policy.
+
+
+## Independent real installed dependency exploit evidence (2026-11-18, follow-up)
+
+**New verified exact-head:** `fe13a6a52e4890ca91cda8a35a6202fc35b07e0d`.
+
+Added isolated, non-release [Agent 11 picomatch exploit evidence workflow](https://github.com/MousaXD/scriptotar/actions/runs/44313324125) under `.github/workflows/agent11-picomatch-evidence.yml`, triggered only for the Agent 11 branch or manually. This does not modify the existing mandatory audit workflow. The new workflow **FAILED as intended** rather than masking the exploit or security gate. Its GitHub job is named `Real installed dependency — expected vulnerable / NO RELEASE`.
+
+### Grounded runner results
+
+| Clean Node 22 GitHub runner step | Actual result |
+| --- | --- |
+| `npm ci` | PASS |
+| `npm explain picomatch`, `npm ls` and exact lockfile provenance | PASS |
+| Opt-in subprocess ReDoS `--report` | PASS as diagnostic wrapper; **two vulnerable pattern TIMEOUTs** |
+| `npm run check` | PASS, 0 errors / 1 unused-selector warning |
+| `npm run test` | PASS (jsdom logs include nonfatal `window.scrollTo` unimplemented warnings) |
+| `npm run build` | PASS |
+| Static `dist` grep for `picomatch|tinyglobby|fdir` | No parser-name indicator found; **not** a runtime absence proof |
+| Strict `--assert-patched` | **FAIL**: both hostile pattern subprocesses timed out |
+| Unfiltered `npm audit --audit-level=high --json` | **FAIL**: 8 high, 0 critical, 0 moderate, 0 low |
+
+Two exploit cases independently timed out at the configured **1,200 ms per child** after the clean install:
+
+- `picomatch('+(*a)')('a'.repeat(36) + 'b')` → **TIMEOUT**;
+- `picomatch('*(*a)')('a'.repeat(36) + 'b')` → **TIMEOUT**.
+
+Normal control `picomatch('+(a|b)')('abab')` returned in **2 ms**. Separate killable subprocesses prevented a test-runner hang. As the runner truly executed the installed `picomatch@4.0.7`, this is now **confirmed runtime behavior in the Node build/test environment** rather than a merely hypothetical GHSA claim. It is still **not evidence of a user-controlled glob reaching a packaged desktop session**.
+
+The same workflow independently exercised a real build. A negative `grep` for parser-name identifiers in `dist` has limited sensitivity (minification, dynamic code, string elimination); it is not binary-level reachability analysis and not a security waiver.
+
+Audit JSON metadata from GitHub Actions:
+
+```json
+{"info":0,"low":0,"moderate":0,"high":8,"critical":0,"total":8}
+```
+
+The audit still identifies `GHSA-fc5q-39xc-vjpf` at `node_modules/picomatch`; the eight propagated affected names remain `picomatch`, `fdir`, `tinyglobby`, `vite`, `vitest`, `svelte-check`, `@sveltejs/vite-plugin-svelte`, and `@sveltejs/vite-plugin-svelte-inspector`. This runner proves the **before** vulnerability after an unmodified lockfile reinstall. There is **no patched after-state** and no security fix to claim.
+
+The official [GitHub advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) is updated 2026-11-17 and explicitly lists **affected `<=4.0.7`, patched versions: None**. The latest upstream GitHub release is still 4.0.7 (2026-08-24), with unmerged mitigation proposals. An unmerged upstream pull request is not provenance-verifiable released npm remediation.
+
+### P0 release gate and responsibility
+
+- PR #132 **must remain DRAFT and UNMERGED** as a diagnostic/security report, not a code fix.
+- Existing Tauri migration integration continues to **FAIL** at npm audit. The isolated reproduction workflow **also fails**, deliberately and correctly.
+- No manifests, lockfiles, production files, native acceptance tests or mandatory security workflows were changed by this follow-up.
+- **Decision for Agent 00:** wait for upstream fixed release plus successful clean reproducible audit and compatibility validation, or separately authorize a formal reviewed security-fork experiment. A time-boxed risk acceptance is a distinct policy exception, not remediation; it must never be silently applied to this release gate.
