@@ -235,6 +235,97 @@ def count_canonical_jobs(data_dir: Path, project_name: str) -> int:
         raise NativeFailure(f"Installed canonical jobs read-only probe failed: {exc}") from exc
 
 
+
+def canonical_records_snapshot(data_dir: Path) -> dict:
+    """Read-only identity/content fingerprint of every canonical SQLite table.
+
+    Unlike a job count, this detects rewrites, extra rows and modified draft,
+    effect, receipt and audit records. No raw user data is written to evidence.
+    """
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Installed canonical SQLite missing for no-write snapshot")
+    tables = {}
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro",
+                             uri=True, timeout=8) as db:
+            db.execute("PRAGMA query_only=ON")
+            names = [r[0] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )]
+            if not names or "content_studies" not in names or "jobs" not in names:
+                raise NativeFailure("Installed canonical DB lacks required tables")
+            for name in names:
+                quoted = '"' + name.replace('"', '""') + '"'
+                row_hashes = []
+                for row in db.execute(f"SELECT * FROM {quoted}"):
+                    typed = [
+                        {"blob_sha256": hashlib.sha256(v).hexdigest(), "length": len(v)}
+                        if isinstance(v, bytes) else v for v in row
+                    ]
+                    payload = json.dumps(typed, ensure_ascii=False,
+                                         separators=(",", ":"), default=str)
+                    row_hashes.append(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+                row_hashes.sort()
+                tables[name] = {
+                    "rows": len(row_hashes),
+                    "sha256": hashlib.sha256("\n".join(row_hashes).encode()).hexdigest(),
+                }
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Read-only canonical snapshot failed: {exc}") from exc
+    digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
+    return {"digest": digest, "tables": tables}
+
+
+def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
+    """Only actual named AT-SPI alert nodes, never unrelated text or screenshots."""
+    found = set()
+    for node in ax.nodes():
+        try:
+            if "alert" not in node.getRoleName().lower():
+                continue
+            label = (node.name or "").strip()
+            if not label:
+                try:
+                    label = node.queryText().getText(0, -1).strip()
+                except Exception:
+                    continue
+            if label and any(word in label.lower() for word in keywords):
+                found.add(label[:400])
+        except Exception:
+            continue
+    return sorted(found)
+
+
+def valid_native_angle_request_binding(proof: object) -> bool:
+    """Reject Agent 10's fake semantic bit; require fresh observed request transition."""
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("human_review_required") is True or proof.get("atspi_error_text_exposed") is not True:
+        return False
+    binding = proof.get("request_correlation")
+    if not isinstance(binding, dict):
+        return False
+    payload = binding.get("submitted_payload_sha256")
+    return (
+        isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
+        and binding.get("native_readback_sha256") == payload
+        and binding.get("native_action") == "Validate 3 angles"
+        and binding.get("prior_alerts") == []
+        and isinstance(binding.get("new_alerts"), list)
+        and len(binding["new_alerts"]) > 0
+        and all(isinstance(x, str) and "angle" in x.lower()
+                and "invalid" in x.lower() for x in binding["new_alerts"])
+        and type(binding.get("action_monotonic_ns")) is int
+        and type(binding.get("observed_monotonic_ns")) is int
+        and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
+        and isinstance(binding.get("canonical_before_digest"), str)
+        and bool(re.fullmatch(r"[a-f0-9]{64}", binding["canonical_before_digest"]))
+        and binding.get("canonical_after_digest") == binding["canonical_before_digest"]
+    )
+
+
 def verify_canonical_saved_draft(
     data_dir: Path, project_name: str, study_name: str, expected_body: str
 ) -> str:
@@ -921,13 +1012,12 @@ def checked(report: dict, key: str, fn):
             # This check is deliberately after the callback so all later
             # no-write/recovery probes can execute and retain their artifacts.
             proof = report.get("angle_rejection_visual_proof")
-            if (not isinstance(proof, dict)
-                    or proof.get("human_review_required") is True
-                    or proof.get("atspi_error_text_exposed") is not True):
+            if not valid_native_angle_request_binding(proof):
                 raise NativeUnavailable(
                     "Native angle rejection has no independent semantic "
-                    "AT-SPI proof; a screenshot or unresolved human review "
-                    "must never automatically certify error_recovery"
+                    "request-correlated AT-SPI proof with exact native input "
+                    "readback, fresh alert transition, and immutable canonical "
+                    "SQLite snapshot; screenshot or semantic Boolean is insufficient"
                 )
         status(report, key, "PASS", str(detail))
         return True
@@ -1308,40 +1398,46 @@ def exercise(args, report: dict, root: Path):
             old_count = count_canonical_jobs(root / "data", name_a)
             a.click("Queue", "button")
             a.heading("Jobs", timeout=15)
-            a.type_into("Media URL", "file:///scriptotar-native-qa-denied-media.mp4")
+            rejected_url = "file:///scriptotar-native-qa-denied-media.mp4"
+            a.type_into("Media URL", rejected_url)
+            if a.read_text("Media URL") != rejected_url:
+                raise NativeFailure("Native Queue field lacks exact submitted URL readback")
+            prior_queue_alerts = native_named_alerts(
+                a, ("url", "scheme", "protocol", "unsupported", "invalid", "blocked"))
+            before_records = canonical_records_snapshot(root / "data")
             a.click("Queue URL", "button")
             error_text = ""
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
-                for node in a.nodes():
-                    try:
-                        if "alert" not in node.getRoleName().lower():
-                            continue
-                        label = (node.name or "").strip()
-                        if not label:
-                            try:
-                                label = node.queryText().getText(0, -1).strip()
-                            except Exception:
-                                pass
-                        lower = label.lower()
-                        if (len(label) > 8 and any(word in lower for word in
-                                ("url", "scheme", "protocol", "unsupported",
-                                 "invalid", "blocked", "not allowed"))):
-                            error_text = label
-                            break
-                    except Exception:
-                        continue
-                if error_text:
+                candidates = native_named_alerts(
+                    a, ("url", "scheme", "protocol", "unsupported", "invalid", "blocked"))
+                fresh = [label for label in candidates if label not in prior_queue_alerts]
+                if fresh:
+                    error_text = fresh[0]
                     break
                 time.sleep(0.35)
             # Run the independent read-only canonical SQLite check even if
             # the accessible alert is missing. The failure screenshot and
             # final AT-SPI snapshot are retained for production triage.
             new_count = count_canonical_jobs(root / "data", name_a)
+            after_records = canonical_records_snapshot(root / "data")
             report["denied_url_canonical_job_count"] = {
                 "before": old_count, "after": new_count,
                 "unchanged": new_count == old_count,
             }
+            report["denied_url_canonical_snapshot"] = {
+                "before": before_records, "after": after_records,
+                "unchanged": before_records == after_records,
+            }
+            if before_records != after_records:
+                changed = [key for key in sorted(set(before_records["tables"]) |
+                                                 set(after_records["tables"]))
+                           if before_records["tables"].get(key) !=
+                              after_records["tables"].get(key)]
+                raise NativeFailure(
+                    "Rejected Queue URL modified existing canonical SQLite "
+                    f"records (changed tables: {changed})"
+                )
             if new_count != old_count:
                 session.screenshot("failed-denied-url-job-created")
                 raise NativeFailure(
@@ -1398,28 +1494,45 @@ def exercise(args, report: dict, root: Path):
                 button_bounds = control.queryComponent().getExtents(a.atspi.DESKTOP_COORDS)
             except Exception as exc:
                 raise NativeFailure(f"Cannot read native Validate button bounds: {exc}") from exc
+            previous_angle_alerts = native_named_alerts(a, ("angle", "invalid"))
+            # A stale named error is never treated as a fresh rejection.
+            previous_angle_alerts = [
+                value for value in previous_angle_alerts
+                if "angle" in value.lower() and "invalid" in value.lower()
+            ]
+            angle_db_before = canonical_records_snapshot(root / "data")
             pre_image = session.screenshot("pre-negative-angles")
             if not pre_image:
                 raise NativeFailure("No actual installed WebKit pre-rejection screenshot")
+            submission_ns = time.monotonic_ns()
             a.click("Validate 3 angles", "button")
             # Prefer a named AT-SPI alert. The real WebKitGTK #44278805547
             # screenshot shows the rejection while the AT-SPI tree omits it.
             deadline = time.monotonic() + 12
-            saw_error = False
+            new_angle_alerts = []
+            observed_ns = 0
             while time.monotonic() < deadline:
-                for node in a.nodes():
-                    try:
-                        label = (node.name or "").lower()
-                        if ("angle" in label and "invalid" in label
-                                and node.getRoleName().lower() in
-                                ("alert", "text", "static", "paragraph", "section")):
-                            saw_error = True
-                            break
-                    except Exception:
-                        continue
-                if saw_error:
+                candidates = native_named_alerts(a, ("angle", "invalid"))
+                new_angle_alerts = [
+                    value for value in candidates
+                    if "angle" in value.lower() and "invalid" in value.lower()
+                    and value not in previous_angle_alerts
+                ]
+                if new_angle_alerts:
+                    observed_ns = time.monotonic_ns()
                     break
                 time.sleep(0.3)
+            saw_error = bool(new_angle_alerts)
+            angle_db_after = canonical_records_snapshot(root / "data")
+            report["angle_rejection_canonical_snapshot"] = {
+                "before": angle_db_before,
+                "after": angle_db_after,
+                "unchanged": angle_db_before == angle_db_after,
+            }
+            if angle_db_before != angle_db_after:
+                raise NativeFailure(
+                    "Malformed three-angle validation modified canonical SQLite records"
+                )
             post_image = session.screenshot("negative-angles-rejected")
             if not post_image:
                 raise NativeFailure("No actual installed WebKit rejection screenshot")
@@ -1438,8 +1551,21 @@ def exercise(args, report: dict, root: Path):
                 }
             else:
                 report["angle_rejection_visual_proof"] = {
-                    "proof": "named AT-SPI native validation alert",
+                    "proof": "fresh named AT-SPI alert after real native action",
                     "screenshot": post_image, "atspi_error_text_exposed": True,
+                    "request_correlation": {
+                        "native_action": "Validate 3 angles",
+                        "submitted_payload_sha256": hashlib.sha256(
+                            malformed_angle_json.encode()).hexdigest(),
+                        "native_readback_sha256": hashlib.sha256(
+                            observed_angle_json.encode()).hexdigest(),
+                        "prior_alerts": previous_angle_alerts,
+                        "new_alerts": new_angle_alerts,
+                        "action_monotonic_ns": submission_ns,
+                        "observed_monotonic_ns": observed_ns,
+                        "canonical_before_digest": angle_db_before["digest"],
+                        "canonical_after_digest": angle_db_after["digest"],
+                    },
                 }
             # A rejected one-angle response must leave zero native action
             # cards: do not accept previously rendered/stale model output.
