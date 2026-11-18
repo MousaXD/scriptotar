@@ -121,6 +121,24 @@ PY
     cp audit/tests/defragmentation/security/tests/provider_wire_boundary.rs target/tests/defragmentation/security/tests/
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
     cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
+    # Independently append a host regression into CI's disposable checkout.
+    # This directly exercises AppServices and compares every canonical SQLite
+    # table's *contents* across denied schemes and forged project IDs.
+    # Never change production files, disable the provider fuse, or mock storage.
+    test -f audit/tests/defragmentation/security/host_url_nonmutation_additional_tests.rs
+    python3 - <<'PY'
+from pathlib import Path
+source = Path('target/apps/desktop/src-tauri/src/services.rs')
+body = source.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in body, 'missing actual AppServices Rust host fixture'
+closing = body.rfind('}')
+assert closing > body.index(marker), 'missing host fixture close'
+assert not body[closing + 1:].strip(), 'host test module not last in services.rs'
+extra = Path('audit/tests/defragmentation/security/host_url_nonmutation_additional_tests.rs').read_text()
+assert 'independent_host_denied_url_and_foreign_project_preserve_all_canonical_contents' in extra
+source.write_text(body[:closing] + '\n' + extra + '\n' + body[closing:])
+PY
     # Assert production wiring, not merely that feature files exist on disk.
     # Collect the structural authorization failure without skipping Rust host,
     # database and canonical-v11 tests. The final gate MUST stay nonzero.
