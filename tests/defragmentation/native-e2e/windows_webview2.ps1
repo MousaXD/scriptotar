@@ -1591,9 +1591,11 @@ try {
           throw 'Cannot bind installed malformed request: stale angle error already exposed'
         }
         $beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $angleHostLogOffset = Get-InstalledHostLogOffset
         $angleClickUtc = [DateTime]::UtcNow.ToString('o')
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
         $currentAngleError = Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts
+        $angleHostId = Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $currentAngleError 'The angle response is invalid or its Study evidence changed.'
         $angleErrorUtc = [DateTime]::UtcNow.ToString('o')
         $afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
         $report.angle_rejection_request_correlation = @{
@@ -1603,6 +1605,8 @@ try {
           exact_native_input_readback = $true # independently asserted in Paste-InstalledJson
           prior_alert_count = $priorAngleAlerts.Count
           fresh_alert_text = $currentAngleError
+          installed_rust_stderr_request_id = $angleHostId
+          native_accessible_error_request_id = $angleHostId
           action_utc = $angleClickUtc
           observed_utc = $angleErrorUtc
           canonical_before = ($beforeAnglesCanonical | ConvertFrom-Json)
@@ -1628,6 +1632,7 @@ try {
         Paste-InstalledQueueUrl $arabicHwnd $rejectedUrl
         $priorQueueAlerts = @(Get-InstalledQueueRejectionAlerts $arabicHwnd)
         $beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $queueHostLogOffset = Get-InstalledHostLogOffset
         $queueClickUtc = [DateTime]::UtcNow.ToString('o')
         Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
         $deniedError = ''
@@ -1661,6 +1666,7 @@ try {
           throw 'Unsupported URL submitted through installed Queue but no fresh visible UIA error text appeared'
         }
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'rejected-url-error.png')
+        $queueHostId = Get-InstalledHostDenial $queueHostLogOffset 'INVALID_MEDIA_URL' $deniedError 'Invalid media URL. Only HTTP and HTTPS URLs are supported.'
         Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'Studio'
         Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
@@ -1668,11 +1674,11 @@ try {
         $recovered = Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'recovered-studio-after-denial.png')
         $report.denied_url_error = $deniedError.Substring(0, [Math]::Min(300, $deniedError.Length))
-        # Native UIA and SQLite observations are retained, but the current
-        # production Tauri error contract supplies NO opaque request identity.
-        # A fresh unrelated UIA error can share these generic text tokens, so
-        # this scenario cannot be release-certified. Do not fabricate the
-        # missing backend denial ID or infer it from a screenshot/timestamp.
+        # A human-visible error is not proof of WHICH native Rust request
+        # failed. Only the actual installed process stderr marker and a
+        # freshly observed, matching UIA accessible request ID can certify
+        # both negative requests. The existing exact ValuePattern input,
+        # canonical rows, valid retry and original draft checks still apply.
         $report.error_recovery_observations = @{
           malformed_json_native_input = 'exact UIA ValuePattern readback'
           visible_angle_error = $currentAngleError
@@ -1680,11 +1686,20 @@ try {
           visible_queue_error = $deniedError
           canonical_snapshot_unchanged = $true
           persisted_study_recovered = $recovered
-          backend_request_identity = $null
+          backend_angle_denial_id = $angleHostId
+          backend_url_denial_id = $queueHostId
+          host_provenance = 'installed Windows native process stderr; not QA-generated'
         }
-        $cases.error_recovery = @{
-          status='NOT TESTED'
-          reason='Observed native UIA error/recovery and unchanged canonical SQLite, but no authoritative Tauri denial ID is exposed for binding this exact request to its accessible alert. Agent 00 production contract required.'
+        if ($angleHostId -and $queueHostId) {
+          $cases.error_recovery = @{
+            status='PASS'
+            reason='Real installed Tauri typed angle and Queue denial IDs matched independent new UIA alerts; exact native input, valid retry and full canonical SQLite readback verified.'
+          }
+        } else {
+          $cases.error_recovery = @{
+            status='NOT TESTED'
+            reason='Actual installed UIA rejection/recovery and unchanged SQLite observed, but one or both typed Rust stderr request IDs were absent or not identical to the newly accessible error IDs.'
+          }
         }
       } catch {
         $cases.error_recovery = @{
