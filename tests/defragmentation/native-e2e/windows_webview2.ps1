@@ -414,18 +414,34 @@ function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [sw
   Start-Sleep -Milliseconds 650
 }
 function Type-InstalledEdit([IntPtr]$hwnd, [string]$name, [string]$value) {
-  $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
-  $element.SetFocus()
-  # Keyboard dispatch triggers the real Svelte input listeners. UIA SetValue
-  # alone can replace a DOM value without emitting input events.
-  [System.Windows.Forms.SendKeys]::SendWait('^a')
-  [System.Windows.Forms.SendKeys]::SendWait($value)
-  Start-Sleep -Milliseconds 650
-  $actual = $element.GetCurrentPattern(
-    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-  if ($actual -ne $value) {
-    throw "Installed Edit control '$name' did not receive actual user text"
+  # Installed WebView2 PR #135 run #44353033303 found real UIA Edit
+  # 'Creative goal' but SetFocus + SendKeys sent nothing into that editor.
+  # The existing native Queue URL test already proved HWND-bounded pointer
+  # click followed by Windows clipboard keyboard paste is necessary.
+  # Never replace this with UIA ValuePattern.SetValue or injected JavaScript;
+  # those bypass the real Svelte event path and could counterfeit success.
+  $actual = ''
+  $lastFocus = $false
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    Click-InstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit) -pointer
+    $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+    $element.SetFocus()
+    Set-Clipboard -Value $value
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+      Start-Sleep -Milliseconds 250
+      # Requery native ValuePattern after the real WebView2 renderer updated;
+      # stale AutomationElements must not satisfy this exact-input assertion.
+      $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit) 3
+      $actual = [string]$element.GetCurrentPattern(
+        [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+      if ($actual -ceq $value) { return }
+      $lastFocus = [bool]$element.Current.HasKeyboardFocus
+    } while ([DateTime]::UtcNow -lt $deadline)
   }
+  throw "Installed Edit control '$name' did not receive exact native pointer/clipboard input (expected length $($value.Length), actual length $($actual.Length), focused=$lastFocus)"
 }
 function Paste-InstalledQueueUrl([IntPtr]$hwnd, [string]$url) {
   # Installed WebView2 sometimes keeps the URL placeholder after SetFocus +
