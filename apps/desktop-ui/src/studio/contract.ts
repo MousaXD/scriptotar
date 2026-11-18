@@ -159,6 +159,9 @@ export interface StudioGateway {
     anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
     preparedDraftPrompt: string, scriptResponseJson: string,
     acceptAsNewCandidate: boolean): Promise<StudyScriptReview>;
+  /** Standard user action, preserving canonical source provenance. */
+  revokeStudySourceAccess?(projectId: string, studyId: string, expectedRevision: number,
+    source: StudySourceRef): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief;
     sources?: StudySourceRef[];
