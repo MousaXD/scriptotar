@@ -149,3 +149,72 @@ real cases PASS per OS, immutable package/executable hashes, native UI trees,
 canonical read-only evidence and independent Agent 10 verification. PR
 [#131](https://github.com/MousaXD/scriptotar/pull/131) remains the exact-head
 status authority; never extrapolate from this historical text alone.
+
+### Installed exact-head `fc42c852` results and consequent QA fixes
+
+New, independently **completed** [installed run #44343815684](https://github.com/MousaXD/scriptotar/actions/runs/44343815684)
+at `fc42c8525d34321aa228ffe8da4880cc7d03803a`:
+
+- **Windows installed NSIS/WebView2: 10 PASS, 0 FAIL, 6 NOT TESTED**,
+  with genuine app executable SHA-256
+  `07abd8b916cad5b0dfa2c8f690802e6285f12ae208bb7ec19f8d954e82121adc`.
+  The previous 11th `error_recovery` PASS remains NOT TESTED under the
+  strengthened authoritative-host identity requirement. This is a correct
+  evidence-integrity veto, not an observed application failure. Raw [Windows
+  UIA/screenshots/result archive](https://github.com/MousaXD/scriptotar/actions/runs/44343815684/artifacts/14445748276)
+  also contains actual Arabic Studio/Queue/Settings pages, System appearance
+  rendered light, Dark appearance rendered dark, one-angle visible error,
+  permitted three-angle correction and unsupported URL rejection. Screenshot
+  appearance is **not** full application RTL/three-theme certification.
+- **Linux installed .deb/WebKitGTK: 10 PASS, 1 FAIL, 5 NOT TESTED**.
+  Real `error_recovery` failed before a corrected request was submitted:
+  the native `xdotool type --delay 2` into the previously used three-angle
+  JSON editor delivered only **711 of the exact 801** expected characters.
+  Unlike a source-only test, actual AT-SPI `queryText()` confirmed the
+  mismatch, and the test refused to certify. Raw [Linux
+  AT-SPI/screenshots/result archive](https://github.com/MousaXD/scriptotar/actions/runs/44343815684/artifacts/14446722061).
+  The failure was in native input delivery/test automation, not evidence that
+  Rust accepted malformed JSON or rejected a fully submitted valid request.
+  The Linux `desktop.log` was empty on this production source, as the host
+  did not yet implement the typed denial contract.
+- **Independent Agent 10 native-evidence check: 5/5 PASS** in
+  [eight-gate #44342228107](https://github.com/MousaXD/scriptotar/actions/runs/44342228107),
+  pinned independent audit `13a1176f23abeb1df7cc366e4758bfe1b2192ccb`
+  and QA source `fc42c8525d34321aa228ffe8da4880cc7d03803a`.
+  The unrelated-fresh-alert attack no longer certified the wrong request.
+  This is an independent helper/security regression success only.
+
+After those **real installed** observations, QA-only subsequent commits:
+
+- `df031f1` + `a3ece54`: long WebKitGTK JSON entry now uses real X11
+  keystroke chunks, independently verifies each AT-SPI text prefix, and
+  retries at a slower native key interval **without** native text SetValue,
+  DOM injection or direct SQLite edits. A mismatch still fails; source-only
+  deterministic tests reproduce transport loss.
+- `0bc1dae` + `5ad4446` + `0bfaff4`: parse only **new** genuine Rust
+  installed process stderr `[scriptotar-native-denial] code=... request_id=...`
+  and require an identical newly exposed 128-bit request ID in the *exact*
+  production-localized AT-SPI error node for both malformed-angle and Queue
+  rejection. All canonical row content and exact typed native input remain
+  required. Missing host stderr, stale/mismatched IDs, unrelated alerts,
+  screenshots and duplicate markers cannot PASS.
+- `e373564` + `1de6bfd` + `f2a1c51`: Windows native NSIS driver now starts
+  each installed GUI process with stderr redirected to a separate file,
+  captures post-click stderr only, and requires its typed request ID to match
+  the newly named WebView2 UIA angle **and** Queue denial. Without two observed
+  matching Rust responses, `error_recovery=NOT TESTED`. Unit/source
+  regressions prohibit name-only/caller-owned certification.
+
+**Production prerequisite:** Agent 00's separate
+[PR #135](https://github.com/MousaXD/scriptotar/pull/135)
+implements the actual request ID in frontend, typed real Rust/Tauri denial and
+real accessible alert. It is **not** in the above installed `fc42c852` package
+or the base integration `5ed385d`. The QA runner never invents a denial ID
+to make old production appear compliant. Agent 00 must security-review and
+merge approved production work with normal two-parent history and notify QA
+of the final exact SHA before retesting, alongside explicit Light/Study source
+and permission contracts. Existing supply-chain npm advisory remains a
+separate release veto.
+
+**Latest QA exact-head CI** is linked on [PR #131](https://github.com/MousaXD/scriptotar/pull/131);
+completed old-source results must not be transferred to a newer commit.
