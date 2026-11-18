@@ -74,6 +74,45 @@ def same_image(observed: Path | None, expected: Path) -> bool:
     return os.path.normcase(str(observed)) == os.path.normcase(str(expected.resolve(strict=True)))
 
 
+
+def process_instance_id(pid: int) -> str | None:
+    """Kernel-derived creation identity; refuse silent PID reuse during sampling."""
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    if platform.system() == "Linux":
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            # The process comm between parentheses may contain whitespace.
+            after_comm = stat[stat.rfind(")") + 1:].split()
+            # Stat field 22 (starttime) is index 19 after field 2 (comm).
+            return f"linux-{int(after_comm[19])}"
+        except (OSError, UnicodeError, IndexError, ValueError):
+            return None
+    if platform.system() == "Windows":
+        from ctypes import wintypes as w
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+        kernel.OpenProcess.restype = w.HANDLE
+        kernel.GetProcessTimes.argtypes = [w.HANDLE] + [ctypes.POINTER(w.FILETIME)] * 4
+        kernel.GetProcessTimes.restype = w.BOOL
+        kernel.CloseHandle.argtypes = [w.HANDLE]
+        handle = kernel.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return None
+        try:
+            created, exited, kernel_time, user_time = (w.FILETIME() for _ in range(4))
+            if not kernel.GetProcessTimes(handle, ctypes.byref(created),
+                                          ctypes.byref(exited),
+                                          ctypes.byref(kernel_time),
+                                          ctypes.byref(user_time)):
+                return None
+            creation_ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+            return f"windows-{creation_ticks}"
+        finally:
+            kernel.CloseHandle(handle)
+    return None
+
+
 def attach(pid: int, executable: Path, package: Path, source_sha: str,
            seconds: float, interval_seconds: float, study_count: int | None,
            run_url: str | None) -> dict:
@@ -88,11 +127,15 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
     expected = executable.resolve(strict=True)
     if not same_image(process_image(pid), expected):
         raise ValueError("kernel process image does not match the supplied installed executable")
+    instance = process_instance_id(pid)
+    if instance is None:
+        raise ValueError("could not independently determine process creation identity")
     begin = time.perf_counter()
     records = []
     end_reason = "duration_elapsed"
     while time.perf_counter() - begin < seconds:
-        if not same_image(process_image(pid), expected):
+        if (not same_image(process_image(pid), expected)
+                or process_instance_id(pid) != instance):
             end_reason = "process_gone_or_identity_changed"
             break
         clock = time.perf_counter()
@@ -114,7 +157,8 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "source_run_url_operator_supplied": run_url,
         "package_path": str(package.resolve()), "package_sha256": sha256(package),
         "executable_path": str(expected), "executable_sha256": sha256(executable),
-        "pid": pid, "platform": platform.platform(),
+        "pid": pid, "kernel_process_creation_id": instance,
+        "platform": platform.platform(),
         "cpu": platform.processor() or "unknown", "logical_cpus": os.cpu_count(),
         "study_count_operator_supplied": study_count,
         "requested_duration_seconds": seconds, "interval_seconds": interval_seconds,
