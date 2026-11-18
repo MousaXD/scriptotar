@@ -2,13 +2,21 @@
 # CI-owned independent feature tests. Run from the GitHub Actions workspace.
 # Never silently skip missing feature implementations.
 set -euo pipefail
-gate="${1:?provider|migration|writing|verification}"
+gate="${1:?provider|migration|receipt-v12|writing|verification|combined-v11|combined|native-evidence}"
 pr="${2:?expected PR number}"
 echo "Audit SHA: $(git -C audit rev-parse HEAD)"
 echo "PR #$pr feature SHA: $(git -C target rev-parse HEAD)"
 test -f target/Cargo.toml || { echo "ERROR: feature checkout missing"; exit 3; }
 
 case "$gate:$pr" in
+  native-evidence:131)
+    # Independently probe Agent 07's actual QA runner from PR #131.
+    # This test MUST fail if unreviewed screenshot-only validation is
+    # auto-certified as a successful installed-app negative path.
+    test -f target/tests/defragmentation/native-e2e/linux_webkit.py
+    python3 audit/tests/defragmentation/security/test_native_visual_adjudication.py \
+      target/tests/defragmentation/native-e2e/linux_webkit.py
+    ;;
   provider:118)
     test -f target/crates/scriptotar-ai/src/provider_consent.rs
     mkdir -p target/tests/defragmentation/security/tests
