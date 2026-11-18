@@ -300,3 +300,24 @@ PR259 changes approximately 480 lines of parser security/compatibility logic and
 Two-parent merge commit b022213ee1014192b3b62aea7a9bb0850026f0fd merged exact integration 5ed385d09092d2c94a1bd86cb56888d96df0bb5e into the Agent 11 evidence branch, preserving all predecessor commits, production source and six Agent 11-owned files. Verified GitHub compare: 0 commits behind integration, no overlapping changed paths, no merge conflicts, no production or npm manifest changes.
 
 **PR #132 remains DRAFT / BLOCKED. Main unchanged, mandatory npm audit FAIL, release NO-GO. Do not merge as supply-chain remediation.**
+
+## 2026-11-18 — upstream maintainer policy and final dependency-graph decision
+
+**Material upstream status change:** [micromatch/picomatch PR #259](https://github.com/micromatch/picomatch/pull/259) was **CLOSED WITHOUT MERGE** at 2026-11-18 15:48:15 UTC by its author. The closing comment explicitly referenced the maintainer's position about untrusted regular-expression/glob patterns and withdrew this proposed implementation. Therefore the previously successful bounded CI evaluation of its prior source SHA is **a historical experiment**, not an active upstream remediation candidate.
+
+**Maintainer's explicit view:** In [micromatch/picomatch PR #235, maintainer comment 6315749381](https://github.com/micromatch/picomatch/pull/235#issuecomment-6315749381), the maintainer disputes treating arbitrary complex glob patterns as a package vulnerability and recommends that applications do not accept untrusted regex-like patterns. In that discussion the maintainer additionally stated that he had submitted a dispute asking the CNA to withdraw the advisory. This is a maintainer's stated position, **not** an official withdrawal or a guarantee that the demonstrated pathological execution disappears. As of the last verification, [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) still covers npm picomatch through 4.0.7, with **no published patched version**. GitHub upstream latest published release also remains 4.0.7 (2026-08-24).
+
+**Exact reproducible dependency edges in Scriptotar desktop-ui package-lock.json:**
+
+| Installed package | Resolved version | Direct dependency constraint on picomatch |
+| --- | --- | --- |
+| Vite | 7.3.7 | ^4.0.3 |
+| Vitest | 5.1.0 | ^4.0.7 |
+| tinyglobby | 0.2.17 | ^4.0.4 |
+| picomatch | 4.0.7 | advisory affected |
+
+All listed tools are under the desktop-ui root development dependency graph, but a production runtime non-reachability claim would require a separate complete packaged-artifact review; development/build-time exposure is still relevant. Updating Vite or Vitest without removing all picomatch edges or obtaining a genuinely unaffected released version cannot clear the unfiltered audit. There is no demonstrated supported, audited replacement graph. Do not use the maintainer's dispute to infer an advisory is withdrawn or falsely mark a vulnerable locked version fixed.
+
+**Lifecycle improvement at Agent 11 workflow commit 31fc203dbb31c18e0f9c22a228bca98a3eaa1d64:** On normal pushes, the original installed-picomatch job now runs the *expanded* 11-case bounded regression in strict failing mode, then the mandatory unchanged unfiltered npm audit. The independent Python requirements audit remains separately executable and fail-closed. Previously measured PR #237, #274 and now-closed #259 comparisons are preserved as provenance-pinned experimental jobs but run only on explicit workflow_dispatch, preventing repetitive known-failing matrices on every documentation or test change. No candidate test failure was converted to PASS, the original npm audit command and gate were not weakened, and no production packages were modified.
+
+**Unblock alternatives and required authority:** (A) a maintainer-published, independently reviewed, integrity-verified patched version with a registry-resolved graph and updated advisory data, followed by exact-head full CI; (B) a demonstrated maintained, supported build/test dependency graph removing **all** advisory-affected picomatch paths and passing full compatibility/security tests; (C) if the CNA and advisory issuers formally withdraw the advisory, independently evaluate the reasons and residual threat exposure with Agent 10 and Agent 00 before changing any release decision. An owner-authorized security-policy exception remains a separate decision; **none was requested or granted**. Until one defensible path is complete, Agent 11 is **BLOCKED / NOT MERGE READY**, PR #132 stays draft, strict npm audit FAIL and Scriptotar release **NO-GO**.
