@@ -321,3 +321,30 @@ All listed tools are under the desktop-ui root development dependency graph, but
 **Lifecycle improvement at Agent 11 workflow commit 31fc203dbb31c18e0f9c22a228bca98a3eaa1d64:** On normal pushes, the original installed-picomatch job now runs the *expanded* 11-case bounded regression in strict failing mode, then the mandatory unchanged unfiltered npm audit. The independent Python requirements audit remains separately executable and fail-closed. Previously measured PR #237, #274 and now-closed #259 comparisons are preserved as provenance-pinned experimental jobs but run only on explicit workflow_dispatch, preventing repetitive known-failing matrices on every documentation or test change. No candidate test failure was converted to PASS, the original npm audit command and gate were not weakened, and no production packages were modified.
 
 **Unblock alternatives and required authority:** (A) a maintainer-published, independently reviewed, integrity-verified patched version with a registry-resolved graph and updated advisory data, followed by exact-head full CI; (B) a demonstrated maintained, supported build/test dependency graph removing **all** advisory-affected picomatch paths and passing full compatibility/security tests; (C) if the CNA and advisory issuers formally withdraw the advisory, independently evaluate the reasons and residual threat exposure with Agent 10 and Agent 00 before changing any release decision. An owner-authorized security-policy exception remains a separate decision; **none was requested or granted**. Until one defensible path is complete, Agent 11 is **BLOCKED / NOT MERGE READY**, PR #132 stays draft, strict npm audit FAIL and Scriptotar release **NO-GO**.
+
+## 2026-11-18 — independently reconstructed source-exact backports for active upstream candidates
+
+Maintainer-published npm latest remains picomatch 4.0.7. On 2026-11-18 at 15:38:56 UTC the reviewed GitHub advisory database still recorded GHSA-fc5q-39xc-vjpf as HIGH with npm picomatch affected from introduction 0 through last_affected 4.0.7 and no fixed-version event. The maintainer's previous CNA dispute did not remove this active advisory.
+
+### Candidate provenance and exact-file reconstruction
+
+The initial GitHub PR patches were relative to the upstream master parser (9fab7bf); master and the official npm 4.0.7 tag differ. A direct PR264 patch against the installed 4.0.7 parser does not pass exact hunk-context verification. Applying it blindly would create an uncontrolled partial mixture, so that approach was **replaced before CI certification**.
+
+Agent 11 fetched GitHub's upstream commit comparison from exact tag 4.0.7 to the immutable PR HEAD and generated target-version backport patches. Each diff was independently parsed and applied in a pure source-reconstruction check; the reconstructed full lib/parse.js content was compared byte-for-byte against the upstream PR HEAD's actual published Git blob:
+
+| Candidate | Pinned upstream HEAD | Backport Git blob | Reconstructed lib/parse.js Git blob | Source equality |
+| --- | --- | --- | --- | --- |
+| Open PR #260 | d10c0e5003aabed2d81427dd6c125af50bf920ab | 740e30bdd7b4263672ccf04c0b68c11fb39ebc07 | 1e992b2d41d91aa62a06f69c3e1dab42a727517c | byte-for-byte exact, 9 hunks |
+| Open PR #264 | 8144a1a22a8fa1766951411f220cc8c6228cb041 | fad2d74ae69aa2d19fcbec0ef124f992bc83bfb5 | b9eaa6dbc4a52c931e8ec5d7bb216d0eeb8c61a8 | byte-for-byte exact, 15 hunks |
+
+The exact upstream HEAD contains the small post-4.0.7 upstream master changes as well as the PR's security changes; that is intentional for an exact-source comparison, but it broadens the compatibility review surface. The separate original upstream PR diff files remain archival provenance, not the patch inputs used by the final CI. The CI now verifies actual source identity both before and after applying each backport to throwaway node_modules; the application package graph is unchanged.
+
+### Expanded bounded adversarial execution
+
+The existing probe now includes 19 cases when --extended is selected: the original two malformed repeated-extglob attacks, a safe control, eight prior nested/multi-branch/alternation bypass variants, four raw/brace/negation quantifier variants and four 5,000-character near-miss stress cases. Each pattern executes in an individually killable subprocess with the existing fixed 1,200ms timeout. Adding long forms addresses an independent upstream review finding that PR260 can remain pathological on long near-misses even if initial short-input tests pass. Repeated source tests must not be mistaken for universal regex-safety proof.
+
+An independent upstream reviewer compared 17 proposals and reported PR264 as comparatively stronger for the tested adversarial corpus, though it still intentionally changes some complex glob matching semantics through literal fallback. These external observations are not Scriptotar's own completed acceptance evidence and do not constitute maintainer endorsement.
+
+Final exact-head PR260/PR264 Linux/Windows workflow evidence: https://github.com/MousaXD/scriptotar/actions/runs/44348878620 (queued when first read; the most recent source/report commits require an exact new-HEAD rerun). Even if all experiments pass, the original registry-locked picomatch@4.0.7 and unfiltered npm audit remain affected and FAIL. No experimental parser file is included in the actual desktop application or adopted as a pinned npm dependency. No owner-approved security exception, production release or main merge.
+
+**Status remains BLOCKED / NOT READY FOR INTEGRATION.** Upstream must publish a supported, independently reviewed and advisory-cleared fix, a demonstrably clean maintained alternative dependency graph, or obtain a formal advisory change followed by independent Agent 10 residual-risk review. Agent 00 controls all integration and release decisions.
