@@ -691,6 +691,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("windows-theme-dark-reopened.png", script)
         self.assertIn("$cases.theme_mode_control = @{", script)
 
+    def test_arabic_installed_navigation_captures_do_not_self_certify_rtl(self):
+        import inspect
+        linux = inspect.getsource(native.exercise)
+        self.assertIn('a.click("الطابور", "button")', linux)
+        self.assertIn('a.heading("المهام")', linux)
+        self.assertIn('session.screenshot("arabic-queue")', linux)
+        self.assertIn('a.click("الإعدادات", "button")', linux)
+        self.assertIn('session.screenshot("arabic-settings")', linux)
+        self.assertIn('a.click("الاستوديو", "button")', linux)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', linux)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("'الطابور' ([System.Windows.Automation.ControlType]::Button)", windows)
+        self.assertIn("Wait-InstalledStudioPageText $themeHwnd 'المهام'", windows)
+        self.assertIn("'الإعدادات' ([System.Windows.Automation.ControlType]::Button)", windows)
+        self.assertIn("windows-arabic-queue.png", windows)
+        self.assertIn("windows-arabic-settings.png", windows)
+        self.assertIn("windows-arabic-studio-return.png", windows)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
+
     def test_installed_light_mode_is_conditional_and_never_inferred_from_system(self):
         import inspect
         source = inspect.getsource(native.exercise)
