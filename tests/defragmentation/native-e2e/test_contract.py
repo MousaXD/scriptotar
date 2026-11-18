@@ -187,14 +187,19 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertFalse(native.checked(report, "error_recovery", stale))
         self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
 
-    def test_semantic_rejection_requires_native_request_binding(self):
+    def test_semantic_rejection_requires_authoritative_backend_identity(self):
+        # Test the declared future host contract without claiming a production
+        # host response. Agent 00 must implement/expose this on the real Tauri
+        # service before a native installed PASS is possible.
         payload = hashlib.sha256(b'{"angles":[{"id":"invalid"}]}').hexdigest()
         correlation = {
             "native_action": "Validate 3 angles",
             "submitted_payload_sha256": payload,
             "native_readback_sha256": payload,
             "prior_alerts": [],
-            "new_alerts": ["Invalid three-angle JSON response"],
+            "new_alerts": [
+                "The angle response is invalid or its Study evidence changed."
+            ],
             "action_monotonic_ns": 1000000000,
             "observed_monotonic_ns": 1200000000,
             "canonical_before_digest": "f" * 64,
@@ -205,27 +210,48 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "proof": "fresh named AT-SPI alert after real native action",
             "request_correlation": correlation,
         }
-        self.assertTrue(native.valid_native_angle_request_binding(proof))
-        # These are source helper checks, NOT installed host certification.
+        # Even accurate user-visible semantics and full data immutability
+        # CANNOT prove which Tauri rejection happened.
+        self.assertFalse(native.valid_native_angle_request_binding(proof))
+        fake_unrelated = dict(correlation, new_alerts=[
+            "Unrelated angle invalid warning in another workspace panel"
+        ])
+        self.assertFalse(native.valid_native_angle_request_binding(
+            dict(proof, request_correlation=fake_unrelated)
+        ))
+        # A synthetic receipt tests helper validation only. It MUST NOT be
+        # manufactured in native exercise(); source production needs to
+        # return this stable opaque identifier.
+        host = {
+            "submitted_request_id": "a" * 32,
+            "tauri_denial_request_id": "a" * 32,
+            "native_alert_request_id": "a" * 32,
+            "error_code": "INVALID_STUDY_ANGLES",
+        }
+        bound = dict(correlation, authoritative_denial=host)
+        self.assertTrue(native.valid_native_angle_request_binding(
+            dict(proof, request_correlation=bound)
+        ))
         for key, bad in [
-            ("prior_alerts", ["Invalid angles from older request"]),
+            ("prior_alerts", ["The angle response is invalid or its Study evidence changed."]),
             ("native_readback_sha256", "e" * 64),
-            ("new_alerts", []),
+            ("new_alerts", ["Unrelated angle invalid warning in another workspace panel"]),
             ("observed_monotonic_ns", 500000000),
             ("canonical_after_digest", "e" * 64),
             ("native_action", "unrelated button"),
+            ("authoritative_denial", dict(host, tauri_denial_request_id="b" * 32)),
         ]:
             with self.subTest(key=key):
-                modified = dict(correlation, **{key: bad})
+                modified = dict(bound, **{key: bad})
                 self.assertFalse(native.valid_native_angle_request_binding(
                     dict(proof, request_correlation=modified)
                 ))
         report = {"cases": {}}
-        def semantic():
+        def no_host_binding():
             report["angle_rejection_visual_proof"] = proof
-            return "bound native evidence contract"
-        self.assertTrue(native.checked(report, "error_recovery", semantic))
-        self.assertEqual(report["cases"]["error_recovery"]["status"], "PASS")
+            return "native error looked correct but host correlation unavailable"
+        self.assertFalse(native.checked(report, "error_recovery", no_host_binding))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
 
     def test_canonical_snapshot_detects_rewrites_and_appended_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
