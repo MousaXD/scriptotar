@@ -8,6 +8,7 @@ on:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
       - 'apps/desktop-ui/scripts/audit-desktop-runtime-exposure.mjs'
       - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
+      - 'apps/desktop-ui/scripts/test-tauri-manifest-inventory.mjs'
       - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
@@ -388,6 +389,10 @@ jobs:
         run: |
           node --check scripts/audit-tauri-bundle-resources.mjs
           node scripts/audit-tauri-bundle-resources.mjs
+      - name: Exercise real manifest validator with synthetic adversarial and clean test inputs
+        run: |
+          node --check scripts/test-tauri-manifest-inventory.mjs
+          node scripts/test-tauri-manifest-inventory.mjs
       - name: Explicit non-release scope
         run: |
           echo 'Dev-only dependency graph/static bundle absence does not prove parser safe.'
