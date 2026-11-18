@@ -54,6 +54,26 @@ def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
 
 
 
+
+def count_native_angle_actions(ax) -> int:
+    """Count real AT-SPI angle-card action buttons, not DOM/source or screenshots.
+
+    WebKitGTK's installed provider exposes the three actual button nodes
+    but not the <strong> angle-title text as named AT-SPI nodes (run
+    #44299491028). These buttons only mount for each reviewed angle in
+    StudioView.svelte after public Rust validation succeeds.
+    """
+    count = 0
+    for node in ax.nodes():
+        try:
+            if ((node.name or "").strip() == "Prepare script for this angle"
+                    and node.getRoleName().lower() in ("push button", "button")):
+                count += 1
+        except Exception:
+            continue
+    return count
+
+
 def native_new_alert_border(before_rgb, after_rgb, image_width: int,
                             image_height: int, button_bounds) -> dict:
     """Require a NEW red-outlined error surface immediately below the real button.
@@ -1389,9 +1409,34 @@ def exercise(args, report: dict, root: Path):
                     "proof": "named AT-SPI native validation alert",
                     "screenshot": post_image, "atspi_error_text_exposed": True,
                 }
+            # A rejected one-angle response must leave zero native action
+            # cards: do not accept previously rendered/stale model output.
+            cards_after_rejection = count_native_angle_actions(a)
+            if cards_after_rejection != 0:
+                raise NativeFailure(
+                    f"Malformed response retained {cards_after_rejection} "
+                    "interactive angle cards after native rejection"
+                )
             a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}')
             a.click("Validate 3 angles", "button")
-            a.find("Share a practical checklist", timeout=12)
+            # Actual installed WebKitGTK AT-SPI does not expose <strong>
+            # card titles as names; run #44299491028 *rendered all three*
+            # cards but a title-name query falsely failed. Count the three
+            # native rendered action buttons (no synthetic rows or DOM).
+            deadline = time.monotonic() + 12
+            count = 0
+            while time.monotonic() < deadline:
+                count = count_native_angle_actions(a)
+                if count == 3:
+                    break
+                time.sleep(0.3)
+            if count != 3:
+                session.screenshot("failed-valid-three-angles-not-mounted")
+                raise NativeFailure(
+                    f"Valid three-angle response did not mount exactly "
+                    f"three native AT-SPI card actions (observed {count})"
+                )
+            report["valid_three_angle_native_action_count"] = count
             # The original immutable script must remain intact. This local
             # response review cannot create a draft or send an AI request.
             if a.read_text("Script draft") != body:

@@ -92,6 +92,44 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('if not checked(report, "error_recovery", error_recovery):', source)
 
 
+
+    def test_webkit_reviewed_three_angles_require_exact_native_action_count(self):
+        # This tests only the AT-SPI evidence collector; a native PASS still
+        # requires three real buttons after rejected input cleared old state,
+        # valid public Rust response and read-only immutable DB/Queue checks.
+        class Node:
+            def __init__(self, label, role):
+                self.name, self.role = label, role
+            def getRoleName(self):
+                return self.role
+
+        class Ax:
+            def __init__(self, nodes):
+                self._nodes = nodes
+            def nodes(self):
+                return iter(self._nodes)
+
+        button = lambda: Node("Prepare script for this angle", "push button")
+        self.assertEqual(native.count_native_angle_actions(Ax([])), 0)
+        self.assertEqual(native.count_native_angle_actions(Ax([
+            Node("Prepare script for this angle", "label"),
+            Node("Other action", "push button"),
+            Node("Share a practical checklist", "document frame"),
+        ])), 0)
+        self.assertEqual(native.count_native_angle_actions(Ax([
+            button(), button(), button(),
+        ])), 3)
+        import inspect
+        exercise = inspect.getsource(native.exercise)
+        self.assertIn('cards_after_rejection = count_native_angle_actions(a)', exercise)
+        self.assertIn('if cards_after_rejection != 0:', exercise)
+        self.assertIn('if count == 3:', exercise)
+        self.assertIn('if count != 3:', exercise)
+        self.assertNotIn('a.find("Share a practical checklist"', exercise)
+        self.assertIn('verify_canonical_reopened_candidates(', exercise)
+        self.assertIn('denied_url_recovery()', exercise)
+
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
