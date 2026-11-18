@@ -572,7 +572,7 @@ function Get-InstalledHostLogOffset {
 function Get-InstalledHostDenial([long]$beforeOffset, [string]$code,
                                  [string]$nativeAlert, [string]$expectedText) {
   if ($code -cnotin @('INVALID_STUDY_ANGLES','INVALID_MEDIA_URL') -or
-      -not $script:installedDenialLog) { return $null }
+      -not $script:installedDenialLog -or -not $nativeAlert) { return $null }
   $native = [regex]::Match(
     $nativeAlert,
     '^' + [regex]::Escape($expectedText) + ' · request ([0-9a-f]{32})$')
