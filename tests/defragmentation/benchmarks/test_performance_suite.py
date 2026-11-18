@@ -13,6 +13,7 @@ from .query_suite import profile, percentile
 from .ipc_trace import summarize_trace
 from .native_trials import summary
 from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
+from . import native_attach as native_attach_module
 from .native_attach import attach, process_image, same_image, process_instance_id
 
 SHA = "3" * 40
@@ -209,12 +210,12 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             package = Path(folder) / "synthetic-not-installed.zip"
             package.write_bytes(b"unit test only")
-            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+            with patch.object(native_attach_module, "process_instance_id",
                        return_value=None):
                 with self.assertRaisesRegex(ValueError, "creation identity"):
                     attach(os.getpid(), Path(sys.executable), package, SHA,
                            1.0, 0.2, 100, None)
-            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+            with patch.object(native_attach_module, "process_instance_id",
                        side_effect=["first-instance", "recycled-instance"]):
                 report = attach(os.getpid(), Path(sys.executable), package,
                                 SHA, 1.0, 0.2, 100, None)
@@ -225,7 +226,7 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             # Attack the intra-sample TOCTOU window: initial identity and
             # pre-read probe match, but the post-read birth identity changes.
             # The snapshot MUST be discarded instead of entering p50/p95.
-            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+            with patch.object(native_attach_module, "process_instance_id",
                        side_effect=["first-instance", "first-instance", "recycled-instance"]):
                 raced = attach(os.getpid(), Path(sys.executable), package,
                                SHA, 1.0, 0.2, 100, None)

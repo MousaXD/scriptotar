@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'tests/defragmentation/security/**'
+      - 'tests/defragmentation/benchmarks/**'
       - 'apps/desktop-ui/**'
       - '.github/workflows/gui-visual-qa.yml'
   push:
