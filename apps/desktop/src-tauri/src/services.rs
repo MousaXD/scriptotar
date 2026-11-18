@@ -1618,7 +1618,7 @@ fn settings_from_ui(
             ))
         }
     };
-    if !["dark", "system"].contains(&ui.appearance.as_str()) {
+    if !["dark", "light", "system"].contains(&ui.appearance.as_str()) {
         return Err(RepositoryError::Validation(
             "unsupported appearance setting".to_owned(),
         ));
@@ -1674,6 +1674,21 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
+
+    #[test]
+    fn explicit_light_appearance_round_trips_but_unknown_values_stay_denied() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let mut ui = services.load_settings().unwrap();
+        ui.appearance = "light".to_owned();
+        services.save_settings(ui).unwrap();
+        assert_eq!(services.load_settings().unwrap().appearance, "light");
+
+        let mut invalid = services.load_settings().unwrap();
+        invalid.appearance = "auto".to_owned();
+        assert!(services.save_settings(invalid).is_err());
+        assert_eq!(services.load_settings().unwrap().appearance, "light");
+    }
 
     #[test]
     fn legacy_import_waits_for_authorization_guard_before_mutating_sources() {
