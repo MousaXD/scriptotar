@@ -131,7 +131,7 @@ jobs:
           echo 'Official upstream tag 4.0.7 source matches installed npm package parse.js'
       - name: Verify isolated experimental patch and apply ONLY to throwaway node_modules
         run: |
-          echo '82eb05e1c8e600c502c28192977c55e043feadf4a0bfc1f5818c434688441538  scripts/experimental/picomatch-4.0.7-pr237.patch' | sha256sum --check
+          echo '10862a65fefb1466c91774f2517b4ce7fd3a7f433b91ac2aa5f360ebf49b7933  scripts/experimental/picomatch-4.0.7-pr237.patch' | sha256sum --check
           git apply --check -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
           git apply -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
           echo 'Experimental candidate based on unmerged micromatch/picomatch PR #237; NOT a published patch'
