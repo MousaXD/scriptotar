@@ -599,6 +599,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         import inspect
         source = inspect.getsource(native.exercise)
         self.assertIn('if ax.available("Open Study reference"):', source)
+        self.assertIn('active.assert_selected_option("PROJECT", name_b)', source)
         self.assertIn('active.type_into("Paste Study reference", reference)', source)
         self.assertIn('active.read_text("Paste Study reference") != reference', source)
         self.assertIn('active.click("Open reference", "button")', source)
