@@ -1427,8 +1427,8 @@ try {
           fresh_alert_text = $currentAngleError
           action_utc = $angleClickUtc
           observed_utc = $angleErrorUtc
-          canonical_before = $beforeAnglesCanonical | ConvertFrom-Json
-          canonical_after = $afterAnglesCanonical | ConvertFrom-Json
+          canonical_before = ($beforeAnglesCanonical | ConvertFrom-Json)
+          canonical_after = ($afterAnglesCanonical | ConvertFrom-Json)
         }
         if ($beforeAnglesCanonical -cne $afterAnglesCanonical) {
           throw 'Malformed three-angle submission changed canonical SQLite rows'
@@ -1467,8 +1467,8 @@ try {
         $afterJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
         $afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
         $report.denied_url_canonical_snapshot = @{
-          before = $beforeQueueCanonical | ConvertFrom-Json
-          after = $afterQueueCanonical | ConvertFrom-Json
+          before = ($beforeQueueCanonical | ConvertFrom-Json)
+          after = ($afterQueueCanonical | ConvertFrom-Json)
           unchanged = ($beforeQueueCanonical -ceq $afterQueueCanonical)
           before_jobs = $beforeJobs
           after_jobs = $afterJobs
