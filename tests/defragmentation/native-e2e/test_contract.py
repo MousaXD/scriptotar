@@ -402,6 +402,33 @@ class NativeEvidenceContractTests(unittest.TestCase):
             self.assertIsNone(native.observed_host_denial(
                 path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text))
 
+    def test_foreign_study_reference_requires_real_fresh_host_and_native_id(self):
+        # Unit proof only: never a substitute for a real installed WebView.
+        label = "This Study reference cannot be opened in the active project."
+        req = "e" * 32
+        named = label + " · request " + req
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "installed-host-stderr.txt"
+            log.write_text("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
+                           "request_id=" + req + "\\n")
+            offset = native.native_host_log_offset(log)
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [named], label))
+            with log.open("a") as stream:
+                stream.write("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
+                             "request_id=" + req + "\\n")
+            receipt = native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [named], label)
+            self.assertEqual(receipt["tauri_denial_request_id"], req)
+            self.assertEqual(receipt["native_alert_request_id"], req)
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [label], label))
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE",
+                [label + " · request " + "f" * 32], label))
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "INVALID_STUDY_ANGLES", [named], label))
+
     def test_native_queue_denial_requires_exact_real_host_and_accessibility_proof(self):
         ident = "b" * 32
         label = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
@@ -532,6 +559,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"',
                       source)
         self.assertIn('if after != before or not found_error:', source)
+        self.assertIn('"FOREIGN_STUDY_REFERENCE",', source)
+        self.assertIn('reference_host_proof = observed_host_denial(', source)
+        self.assertIn('"host_request_correlation": reference_host_proof', source)
         self.assertIn('preserve_foreign_reference_failure(report, exc)', source)
         self.assertIn('"preexisting_exact_denial": expected_error in before_alerts', source)
         self.assertIn('"postclick_exact_denial": expected_error in alerts', source)
@@ -622,6 +652,10 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)", source)
         self.assertIn("$priorProof['status'] = 'FAIL'", source)
         self.assertIn("$priorProof['reason'] =", source)
+        self.assertIn("'FOREIGN_STUDY_REFERENCE' $now[0] $referenceError", source)
+        self.assertIn("Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError", source)
+        self.assertIn("host_request_id = $hostReferenceId", source)
+        self.assertIn("native_bound_alert_name = $hostBoundAlert", source)
         self.assertIn("Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference", source)
         self.assertIn("Verify-InstalledCanonicalDb 'snapshot' $first", source)
         self.assertIn("$priorDenial = @(Get-InstalledReferenceDenials", source)
