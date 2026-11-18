@@ -250,6 +250,12 @@ def canonical_records_snapshot(data_dir: Path) -> dict:
         with sqlite3.connect(database.resolve().as_uri() + "?mode=ro",
                              uri=True, timeout=8) as db:
             db.execute("PRAGMA query_only=ON")
+            # A single deferred READ transaction pins one committed SQLite
+            # snapshot across the sqlite_master scan and every table SELECT.
+            # In WAL, an actual concurrent writer can commit without tearing
+            # our content_studies/jobs/effects readback; never acquire a write
+            # lock or copy user rows into the evidence artifact.
+            db.execute("BEGIN")
             names = [r[0] for r in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' "
                 "AND name NOT LIKE 'sqlite_%' ORDER BY name"
