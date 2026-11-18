@@ -291,7 +291,7 @@ jobs:
       - name: Verify upstream PR260 source provenance and apply ephemeral parser patch
         run: |
           git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260-backport.patch > scripts/experimental/.ci-pr260-backport-lf.patch
-          test "$(git hash-object scripts/experimental/.ci-pr260-backport-lf.patch)" = 740e30bdd7b4263672ccf04c0b68c11fb39ebc07
+          test "$(git hash-object scripts/experimental/.ci-pr260-backport-lf.patch)" = 0f1c920e2352a6fe09b90ac3f915c8ae3fb75e09
           git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
           git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
           test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 1e992b2d41d91aa62a06f69c3e1dab42a727517c
@@ -337,7 +337,7 @@ jobs:
       - name: Verify pinned PR264 source and apply only to transient node_modules
         run: |
           git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264-backport.patch > scripts/experimental/.ci-pr264-backport-lf.patch
-          test "$(git hash-object scripts/experimental/.ci-pr264-backport-lf.patch)" = fad2d74ae69aa2d19fcbec0ef124f992bc83bfb5
+          test "$(git hash-object scripts/experimental/.ci-pr264-backport-lf.patch)" = 8a54ef54ddaf9b176c8b6bf30562140cc955c153
           git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-backport-lf.patch
           git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-backport-lf.patch
           test "$(git hash-object node_modules/picomatch/lib/parse.js)" = b9eaa6dbc4a52c931e8ec5d7bb216d0eeb8c61a8
