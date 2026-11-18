@@ -1124,16 +1124,76 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "theme_mode_control", theme):
             return
 
-        # This run deliberately has no fabricated downloads or media transcripts.
-        # The following steps require source fixtures and dedicated adversarial UI inputs.
+
+        # A real installed, offline negative-to-recovery path. The malformed
+        # JSON is typed into the actual WebKitGTK editor; Rust's public
+        # interpret_study_angles command rejects it. The next three angles
+        # must be accepted by the same public UI without egress or DB edits
+        # to the already saved script.
+        def error_recovery():
+            a = session.ax
+            a.click("Studio", "button")
+            if not a.available("Script candidates", "combo"):
+                a.choose("Open study", study)
+            a.type_into("Creative goal", "Describe practical original editing tips")
+            a.type_into("Audience", "People learning video editing")
+            a.click("Prepare 3 creative angles", "button")
+            a.edit_field("Paste three-angle JSON response", timeout=12)
+            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}')
+            a.click("Validate 3 angles", "button")
+            # Observe a visible native accessibility error, never infer a
+            # backend rejection from a disabled button or malformed input.
+            deadline = time.monotonic() + 12
+            saw_error = False
+            while time.monotonic() < deadline:
+                for node in a.nodes():
+                    try:
+                        label = (node.name or "").lower()
+                        if ("angle" in label and "invalid" in label
+                                and node.getRoleName().lower() in
+                                ("alert", "text", "static", "paragraph", "section")):
+                            saw_error = True
+                            break
+                    except Exception:
+                        continue
+                if saw_error:
+                    break
+                time.sleep(0.3)
+            if not saw_error:
+                raise NativeFailure(
+                    "Malformed three-angle JSON produced no visible native rejection"
+                )
+            session.screenshot("negative-angles-rejected")
+            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}')
+            a.click("Validate 3 angles", "button")
+            a.find("Share a practical checklist", timeout=12)
+            # The original immutable script must remain intact. This local
+            # response review cannot create a draft or send an AI request.
+            if a.read_text("Script draft") != body:
+                raise NativeFailure(
+                    "Local angle recovery changed the original saved script"
+                )
+            verify_canonical_reopened_candidates(
+                root / "data", name_a, study, body, tag + "-copy"
+            )
+            session.screenshot("three-angles-recovered")
+            return (
+                "Real WebKitGTK malformed JSON rejected through public Rust IPC, "
+                "three deterministic angles subsequently validated in installed "
+                "Studio, unchanged canonical draft and immutable candidate versions; "
+                "no provider execution"
+            )
+        if not checked(report, "error_recovery", error_recovery):
+            return
+
+        # The remaining scenarios require separate genuine fixtures/probes.
+        # Do not grant PASS based on the unrelated local writing recovery case.
         status(report, "multi_source_transcript", "NOT TESTED",
                "Disposable profile has no real research/transcript sources; no mock material injected")
         status(report, "source_revocation", "NOT TESTED",
                "Needs a real source with revocable availability, verified after project reload")
         status(report, "wrong_project_ipc_denial", "NOT TESTED",
                "Native UI scoping is not an authorization probe for forged foreign IDs")
-        status(report, "error_recovery", "NOT TESTED",
-               "No safe native graphical fault-injection mechanism in isolated profile")
         status(report, "arabic_rtl", "NOT TESTED",
                "AT-SPI labels alone cannot certify document direction, mixed-text order or visual RTL")
         status(report, "light_dark_visual", "NOT TESTED",

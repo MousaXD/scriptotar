@@ -425,6 +425,45 @@ function Type-InstalledEdit([IntPtr]$hwnd, [string]$name, [string]$value) {
     throw "Installed Edit control '$name' did not receive actual user text"
   }
 }
+function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
+  # Never invoke UIA SetValue: it bypasses browser input handlers. SendKeys
+  # cannot type literal JSON braces safely, so use real native clipboard paste
+  # into the focused WebView2 editor, then independently read its ValuePattern.
+  $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  $field.SetFocus()
+  Set-Clipboard -Value $value
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  Start-Sleep -Milliseconds 650
+  $actual = [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+  if ($actual -cne $value) {
+    throw "Installed JSON editor '$name' did not receive exact native pasted text"
+  }
+}
+function Wait-InstalledAngleRejection([IntPtr]$hwnd) {
+  # Match only a visible rendered error associated with angle validation.
+  # A malformed fixture alone is not proof of a denied IPC.
+  $textCondition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Text)
+  $deadline = [DateTime]::UtcNow.AddSeconds(12)
+  do {
+    try {
+      $tree = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+      if ($tree) {
+        $nodes = $tree.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
+        foreach ($item in $nodes) {
+          $label = [string]$item.Current.Name
+          if ($label -match '(?i)(angle.*invalid|invalid.*angle)' -and
+              -not $item.Current.IsOffscreen) { return }
+        }
+      }
+    } catch { }
+    Start-Sleep -Milliseconds 350
+  } while ([DateTime]::UtcNow -lt $deadline)
+  throw 'Malformed three-angle JSON produced no visible installed UIA validation error'
+}
 function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
   # In the captured WebView2 tree the current project is twice exposed as
   # Text (combobox selected value + actual visible dashboard h1). Requiring
@@ -1270,6 +1309,39 @@ try {
       }
     }
   }
+    if ($cases.arabic_locale_control.status -eq 'PASS') {
+      try {
+        # Deterministic no-cost negative/recovery through actual installed
+        # WebView2 inputs and the public Rust Study angle review command.
+        Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
+        Type-InstalledEdit $arabicHwnd 'Creative goal' 'Describe practical original editing tips'
+        Type-InstalledEdit $arabicHwnd 'Audience' 'People learning video editing'
+        Click-InstalledControl $arabicHwnd 'Prepare 3 creative angles' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $arabicHwnd 'Paste three-angle JSON response' ([System.Windows.Automation.ControlType]::Edit) | Out-Null
+        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+        Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledAngleRejection $arabicHwnd
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-negative-angles-rejected.png')
+        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}'
+        Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
+        Find-ExactInstalledControl $arabicHwnd 'Share a practical checklist' ([System.Windows.Automation.ControlType]::Text) 12 | Out-Null
+        Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody
+        $proof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-three-angles-recovered.png')
+        $cases.error_recovery = @{
+          status='PASS'
+          reason="Installed WebView2 malformed JSON rejected; three deterministic angles validated by public Rust Studio, saved canonical drafts remain unchanged ($proof). No provider call"
+        }
+      } catch {
+        $cases.error_recovery = @{
+          status='FAIL'
+          reason="Installed WebView2 three-angle negative/recovery: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-error_recovery.png')
+        Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
+      }
+    }
 } catch {
   $message = $_.Exception.Message
   $cases.installed_webview = @{ status='FAIL'; reason="Native probe failed: $message" }

@@ -31,6 +31,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             native.status(record, "installed_webview", "SKIPPED_BUT_PASS", "forged")
 
+
+    def test_offline_native_three_angle_recovery_is_real_and_denies_fake_success(self):
+        # Source contract ONLY. Native PASS needs an actual installed WebView,
+        # confirmed rejection, accepted replacement and canonical SQLite proof.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('a.type_into("Paste three-angle JSON response"', source)
+        self.assertIn('a.click("Validate 3 angles", "button")', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        self.assertIn('if not checked(report, "error_recovery", error_recovery):', source)
+        self.assertNotIn('status(report, "error_recovery", "PASS"', source)
+        ps = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Paste-InstalledJson(", ps)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('^v')", ps)
+        self.assertIn("function Wait-InstalledAngleRejection(", ps)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates'", ps)
+        self.assertIn("status='FAIL'\n          reason=\"Installed WebView2 three-angle", ps)
+        self.assertNotIn("SetValue($value)", ps)
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
