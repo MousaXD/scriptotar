@@ -1089,14 +1089,24 @@ try {
       try {
         $draftBody = 'Original installed WebView2 user-edit candidate ' + $tag
         Type-InstalledEdit $providerHwnd 'Script draft' $draftBody
-        $saveButton = Find-ExactInstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
-        # The editor also auto-saves after 900ms; avoid failing when native UI
-        # has already saved and disabled the manual button. Database proof is
-        # mandatory in either case.
-        if ($saveButton.Current.IsEnabled) {
+        # The installed Studio auto-saves after a real native Edit change.
+        # Real run #44357622512 showed 'Save changes' visible at bounded
+        # UIA coordinates but became non-invokable while we were checking it.
+        # First VERIFY genuine canonical SQLite persistence rather than racing
+        # a transiently disabled manual button. No direct database mutations.
+        $savedProof = $null
+        $saveMode = 'autosave'
+        try {
+          $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        } catch {
+          # If auto-save has NOT actually persisted the exact user text,
+          # invoke the real native visible manual Save action, then require
+          # the canonical rows. An unavailable button remains a true failure.
+          $saveMode = 'manual'
           Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+          $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
         }
-        $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        $report['native_draft_save_mode'] = $saveMode
         Click-InstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button) | Out-Null
         Click-InstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button)
