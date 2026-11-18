@@ -338,3 +338,4 @@ diff --git a/lib/parse.js b/lib/parse.js
 +
          const source = create(match[1]);
          if (!source) return;
+ 
