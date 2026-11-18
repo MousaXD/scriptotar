@@ -63,7 +63,9 @@ mod native_denial_identity_tests {
 
     #[test]
     fn rejects_weak_or_untrusted_request_identity_before_host_dispatch() {
-        for value in ["", "123", "A".repeat(32).as_str(), "f".repeat(31).as_str(), "f".repeat(33).as_str(), "ff?not-a-uuid"] {
+        for value in ["", "123", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                      "fffffffffffffffffffffffffffffff",
+                      "fffffffffffffffffffffffffffffffff", "ff?not-a-uuid"] {
             assert!(validate_native_request_id(Some(value)).is_err());
         }
         assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
