@@ -675,6 +675,29 @@ describe('Content Study Studio', () => {
     expect(await screen.findByRole('alert', { name: arabicDenial })).toHaveTextContent(arabicDenial);
     expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
     expect(provider).not.toHaveBeenCalled();
+
+    // The same installed-style UI session must recover without a reload,
+    // re-approval, new Study revision, provider call, or canonical write.
+    await act(async () => { setLocale('en'); });
+    const recoveryJson = JSON.stringify({
+      angles: ['Problem', 'Contrast', 'Checklist'].map((approach, index) => ({
+        id: 'recovery-' + index,
+        approach: approach + ' fresh viewpoint',
+        hook: 'A distinct useful opening ' + index,
+        promise: 'Useful takeaways for the reader',
+        outline: [{ role: 'hook', intent: 'Introduce viewpoint ' + index, estimated_seconds: 8 }],
+        evidence_ids: []
+      }))
+    });
+    await fireEvent.input(screen.getByRole('textbox', {
+      name: 'Paste three-angle JSON response'
+    }), { target: { value: recoveryJson } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
+    expect(await screen.findByText('Checklist fresh viewpoint')).toBeInTheDocument();
+    expect(screen.queryByRole('alert', { name: denial })).not.toBeInTheDocument();
+    expect((await api.getStudy('p-creator-lab', study.id))).toEqual(original);
+    expect(provider).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
   });
 
   it('discards stale asynchronous angle validation after the user replaces the pasted response', async () => {
