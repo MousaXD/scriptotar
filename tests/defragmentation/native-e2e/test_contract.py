@@ -681,7 +681,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # can certify the actual interactions and screenshot.
         script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
         self.assertIn("if ($cases.keyboard_custom_controls.status -eq 'PASS')", script)
-        self.assertIn("foreach ($choice in @('System', 'Dark'))", script)
+        self.assertIn("foreach ($choice in $actualThemeChoices)", script)
         self.assertIn("Choose-InstalledOption $restoredHwnd 'Theme' $choice", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Theme' $choice", script)
         self.assertIn("if ($saveTheme.Current.IsEnabled)", script)
@@ -690,6 +690,24 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'", script)
         self.assertIn("windows-theme-dark-reopened.png", script)
         self.assertIn("$cases.theme_mode_control = @{", script)
+
+    def test_installed_light_mode_is_conditional_and_never_inferred_from_system(self):
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('light_offered = a.available("Light", "list item")', source)
+        self.assertIn('if light_offered:', source)
+        self.assertIn('a.choose("Theme", "Light")', source)
+        self.assertIn('a.assert_selected_option("Theme", "Light")', source)
+        self.assertIn('session.screenshot("light-theme")', source)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', source)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$lightOffered = [bool](Test-InstalledPopupOptionVisible", windows)
+        self.assertIn("'explicit_light_option'", windows)
+        self.assertIn("@('System', 'Light', 'Dark')", windows)
+        self.assertIn("@('System', 'Dark')", windows)
+        self.assertIn("foreach ($choice in $actualThemeChoices)", windows)
+        self.assertIn("windows-theme-", windows)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
 
     def test_windows_arabic_persisted_relaunch_and_english_restore_fail_closed(self):
         # Native UIA evidence, not a simulated DOM locale toggle. Studio
