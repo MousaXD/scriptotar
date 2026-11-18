@@ -1,4 +1,9 @@
-use std::{fs, path::Path, thread, time::Duration};
+use std::{
+    fs,
+    path::Path,
+    thread,
+    time::{Duration, Instant},
+};
 
 use scriptotar_core::{
     Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository,
@@ -33,22 +38,34 @@ fn sidecar_progress_is_persisted_before_completion() {
     store.insert_job(&job).unwrap();
     orchestrator.enqueue(job.id).unwrap();
 
-    let mut observed = false;
-    for _ in 0..300 {
+    // The actual background orchestrator must commit the sidecar's event
+    // before the fixture is permitted to emit a result. This is a handshake
+    // over a test-only file, not a mocked repository write or sleep window.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let observed = loop {
         let current = store.get_job(job.id).unwrap();
         if current.state == JobState::Transcribing && current.progress == Some(0.5) {
-            observed = true;
-            break;
+            break current;
         }
         if matches!(
             current.state,
             JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
-        ) {
-            break;
+        ) || Instant::now() >= deadline
+        {
+            panic!(
+                "transcribing progress was not durably observable: state={:?}, progress={:?}",
+                current.state, current.progress
+            );
         }
         thread::sleep(Duration::from_millis(10));
-    }
-    assert!(observed, "transcribing progress was not durably observable");
+    };
+    assert_eq!(observed.progress, Some(0.5));
+    let observation_ack = input.with_extension("progress-observed");
+    fs::write(
+        &observation_ack,
+        b"observed committed transcribing progress",
+    )
+    .unwrap();
 
     for _ in 0..300 {
         let current = store.get_job(job.id).unwrap();
