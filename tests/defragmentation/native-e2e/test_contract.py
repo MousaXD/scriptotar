@@ -51,6 +51,71 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("SetValue($value)", ps)
 
 
+    def test_long_webkit_native_input_uses_bounded_real_key_chunks(self):
+        # This is a transport contract, not an installed-app PASS. Prior run
+        # #44343815684 lost 90 of 801 real keyboard characters at 2 ms.
+        editor = [""]
+        typed = []
+        class Node:
+            def queryComponent(self):
+                return SimpleNamespace(grabFocus=lambda: True)
+        ax = object.__new__(native.AxWebKit)
+        ax.edit_field = lambda _label: Node()
+        ax.read_text = lambda _label: editor[0]
+        def keys(*argv, **_kwargs):
+            self.assertEqual(argv[0], "xdotool")
+            if argv[1] == "key":
+                editor[0] = ""
+            elif argv[1] == "type":
+                self.assertEqual(argv[2], "--clearmodifiers")
+                self.assertEqual(argv[-2], "--")
+                self.assertLessEqual(len(argv[-1]), 64)
+                typed.append(int(argv[argv.index("--delay") + 1]))
+                editor[0] += argv[-1]
+            else:
+                raise AssertionError(f"Unexpected nonnative input method: {argv}")
+        value = "Study original JSON: " + "0123456789abcdef" * 52
+        with mock.patch.object(native, "command", side_effect=keys), \
+             mock.patch.object(native.time, "sleep"):
+            ax.type_into("Paste three-angle JSON response", value)
+        self.assertEqual(editor[0], value)
+        self.assertEqual(len(typed), (len(value) + 63) // 64)
+        self.assertTrue(all(delay == 12 for delay in typed))
+
+    def test_long_webkit_input_retries_only_with_exact_semantic_readback(self):
+        # First native keyboard attempt loses a character; retry is a real
+        # Ctrl+A + slower native key route, never UIA SetValue or direct DB.
+        editor = [""]
+        delays = []
+        class Node:
+            def queryComponent(self):
+                return SimpleNamespace(grabFocus=lambda: True)
+        ax = object.__new__(native.AxWebKit)
+        ax.edit_field = lambda _label: Node()
+        ax.read_text = lambda _label: editor[0]
+        def keys(*argv, **_kwargs):
+            if argv[1] == "key":
+                editor[0] = ""
+            else:
+                delay = int(argv[argv.index("--delay") + 1])
+                delays.append(delay)
+                text = argv[-1]
+                editor[0] += (text[:-1] if delay == 12 else text)
+        # Fake monotonic advancement is scoped to this unit-level regression,
+        # never to any installed runtime or QA evidence collector.
+        clock = [0]
+        def monotonic():
+            clock[0] += 2.5
+            return clock[0]
+        value = "abcdefghij" * 81
+        with mock.patch.object(native, "command", side_effect=keys), \
+             mock.patch.object(native.time, "sleep"), \
+             mock.patch.object(native.time, "monotonic", side_effect=monotonic):
+            ax.type_into("Paste three-angle JSON response", value)
+        self.assertEqual(editor[0], value)
+        self.assertIn(12, delays)
+        self.assertIn(35, delays)
+
     def test_rendered_native_angle_alert_requires_new_button_adjacent_rectangle(self):
         # Pure pixel contract; real certification still requires installed
         # AT-SPI button bounds, genuine before/after scrot PNGs and SQLite.
