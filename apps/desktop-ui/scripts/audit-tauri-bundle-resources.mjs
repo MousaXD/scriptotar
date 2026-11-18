@@ -9,7 +9,8 @@
  *
  * This does NOT prove that bundled binaries are harmless or replace npm audit.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, resolve, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -97,18 +98,51 @@ function inspectManifest(manifest, platform, findings) {
   if (!tools) findings.push('Actual package manifest lacks mcp-tools resource paths');
   return { entries: raw.length, runtime, tools };
 }
+async function sha256File(file) {
+  const hash = createHash('sha256');
+  for await (const bytes of createReadStream(file)) hash.update(bytes);
+  return hash.digest('hex');
+}
 const argv = process.argv.slice(2);
 const idx = argv.indexOf('--manifest');
 const pidx = argv.indexOf('--platform');
+const pkgidx = argv.indexOf('--package');
+const expectedidx = argv.indexOf('--expected-package-sha256');
 let inventory = null;
+let manifestProvenance = null;
+let packageProvenance = null;
 if (idx >= 0 || pidx >= 0) {
   if (idx < 0 || pidx < 0 || !argv[idx + 1] || !argv[pidx + 1]) {
     problems.push('Real package inventory validation requires BOTH --manifest and --platform');
   } else {
     const path = resolve(process.cwd(), argv[idx + 1]);
     if (!existsSync(path)) problems.push(`Actual package manifest missing: ${path}`);
-    else inventory = inspectManifest(path, argv[pidx + 1], problems);
+    else {
+      inventory = inspectManifest(path, argv[pidx + 1], problems);
+      manifestProvenance = { filename: path, byteLength: statSync(path).size, sha256: await sha256File(path) };
+    }
   }
+}
+if (pkgidx >= 0) {
+  if (idx < 0 || pidx < 0 || !argv[pkgidx + 1]) {
+    problems.push('Package-byte SHA-256 check requires --package alongside --platform and actual --manifest');
+  } else {
+    const packagePath = resolve(process.cwd(), argv[pkgidx + 1]);
+    if (!existsSync(packagePath) || !statSync(packagePath).isFile()) {
+      problems.push(`Actual package file missing: ${packagePath}`);
+    } else {
+      const sha256 = await sha256File(packagePath);
+      packageProvenance = { filename: packagePath, byteLength: statSync(packagePath).size, sha256 };
+      if (expectedidx >= 0) {
+        const expectedHash = argv[expectedidx + 1]?.toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(expectedHash || '') || sha256 !== expectedHash) {
+          problems.push('Actual installer/package SHA-256 mismatches the exact expected 64-hex digest');
+        }
+      }
+    }
+  }
+} else if (expectedidx >= 0) {
+  problems.push('--expected-package-sha256 requires --package');
 }
 // The SAME path-detection function used against actual package inventories
 // must reject prohibited filenames, while leaving legitimate runtime files alone.
@@ -131,6 +165,8 @@ const report = {
   title: 'Tauri generated config source and optional ACTUAL package manifest security inventory',
   configSources: out,
   packageManifest: inventory,
+  manifestProvenance,
+  packageProvenance,
   pathMatcherFixtures: manifestPathControls.length,
   actualPackageManifestExamined: idx >= 0 && inventory !== null,
   issues: problems
