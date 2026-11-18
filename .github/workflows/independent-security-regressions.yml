@@ -55,7 +55,7 @@ jobs:
           repo="https://github.com/MousaXD/scriptotar.git"
           result="{"
           separator=""
-          for pr in 131 118 119 128 121 117; do
+          for pr in 131 118 119 128 121 117 137; do
             sha="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot resolve PR $pr source" >&2; exit 1; }
             printf 'Pinning feature PR #%s to %s\n' "$pr" "$sha"
@@ -83,6 +83,8 @@ jobs:
           - { gate: receipt-v12, pr: 128 }
           - { gate: writing, pr: 121 }
           - { gate: verification, pr: 117 }
+          # Source permission withdrawal: prevent NEW post-revocation links.
+          - { gate: revocation, pr: 137 }
           # Integrated v11 checks should execute even while paid egress is disabled.
           # This separate gate never certifies the full production security boundary.
           - { gate: combined-v11, pr: 114 }
@@ -155,10 +157,10 @@ jobs:
           [[ "$current" == "$PINNED_SHA" ]] ||
             { echo "Integration moved while independent matrix ran; rerun exact-head audit" >&2; exit 1; }
           repo="https://github.com/MousaXD/scriptotar.git"
-          for pr in 131 118 119 128 121 117; do
+          for pr in 131 118 119 128 121 117 137; do
             pinned="$(printf '%s' "$FEATURE_SHAS" | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$pr")"
             [[ "$pinned" =~ ^[0-9a-f]{40}$ ]] || { echo "Bad pinned feature SHA for PR $pr" >&2; exit 1; }
             current="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
             [[ "$current" == "$pinned" ]] || { echo "Feature PR $pr moved while matrix ran; rerun" >&2; exit 1; }
           done
-          echo "Exact-head security matrix remains valid on integration $PINNED_SHA and six immutable feature PR sources"
+          echo "Exact-head security matrix remains valid on integration $PINNED_SHA and seven immutable feature PR sources"
