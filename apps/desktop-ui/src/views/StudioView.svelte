@@ -881,6 +881,7 @@
       angleError = t.angleReviewBusy;
       return;
     }
+    const ownerProject = projectId;
     const ownerStudy = studyId;
     const epoch = promptRequest;
     const responseEpoch = angleResponseEpoch;
@@ -890,9 +891,9 @@
     draftAnglePrompt = '';
     try {
       const result = await gateway.interpretStudyAngles(
-        projectId, ownerStudy, angleStudyRevision,
+        ownerProject, ownerStudy, angleStudyRevision,
         anglePromptSource, responseJson, selectedAngleId);
-      if (studyId !== ownerStudy || epoch !== promptRequest ||
+      if (projectId !== ownerProject || studyId !== ownerStudy || epoch !== promptRequest ||
           responseEpoch !== angleResponseEpoch) return;
       if (result.angles.length !== 3 ||
           result.angles.some((angle) => !angle.id || !angle.approach || !angle.hook) ||
@@ -911,15 +912,17 @@
       // Tauri can reject with a string or an Error. Never expose its unlocalized
       // diagnostic as the primary native message: the installed WebView must
       // display an accessible, stable EN/AR rejection for every invalid reply.
-      if (studyId === ownerStudy && epoch === promptRequest &&
+      if (projectId === ownerProject && studyId === ownerStudy && epoch === promptRequest &&
           responseEpoch === angleResponseEpoch) {
         angleError = t.invalidAngles;
         reviewedAngles = [];
         // Move keyboard and assistive-tech focus to the actual rejection.
         // Recheck the scope after the DOM commit so stale replies never steal focus.
         await tick();
-        if (angleError && studyId === ownerStudy && epoch === promptRequest &&
-            responseEpoch === angleResponseEpoch) angleErrorElement?.focus();
+        if (angleError && projectId === ownerProject && studyId === ownerStudy &&
+            epoch === promptRequest && responseEpoch === angleResponseEpoch) {
+          angleErrorElement?.focus();
+        }
       }
     } finally {
       angleBusy = false;
