@@ -364,6 +364,47 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
 
+    def test_same_session_replayed_monotonic_pair_cannot_inflate_trial_count(self):
+        # Reassigning both evidence IDs and the trial ID must not let the
+        # exact same observed start/completion interval count as two trials.
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "native-intervals.jsonl"
+            first = self.event(0)
+            relabeled = {
+                **self.event(1),
+                "session_id": first["session_id"],
+                "start_monotonic_ns": first["start_monotonic_ns"],
+                "completion_monotonic_ns": first["completion_monotonic_ns"],
+            }
+            # Both evidence IDs are distinct and would pass the older
+            # label-only replay guard. The time pair exposes the replay.
+            self.assertNotEqual(first["trial_id"], relabeled["trial_id"])
+            self.assertNotEqual(first["start_evidence_id"], relabeled["start_evidence_id"])
+            self.assertNotEqual(first["completion_evidence_id"], relabeled["completion_evidence_id"])
+            trace.write_text("\n".join(json.dumps(e) for e in (first, relabeled)))
+            with self.assertRaisesRegex(ValueError, "duplicate native monotonic time pair"):
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+
+            # Ordinary subsequent actions from the same session are valid
+            # when their true observed time intervals differ.
+            distinct = {**self.event(1), "session_id": first["session_id"]}
+            trace.write_text("\n".join(json.dumps(e) for e in (first, distinct)))
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            self.assertEqual(result["event_count"], 2)
+            self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
+
+            # Different sessions can legitimately reuse equal numeric clock
+            # values; this does not elevate self-asserted event authenticity.
+            another_session = {
+                **self.event(1),
+                "start_monotonic_ns": first["start_monotonic_ns"],
+                "completion_monotonic_ns": first["completion_monotonic_ns"],
+            }
+            trace.write_text("\n".join(json.dumps(e) for e in (first, another_session)))
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            self.assertEqual(result["event_count"], 2)
+            self.assertEqual(result["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
     def test_distinct_cache_conditions_cannot_be_pooled_for_p95(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
