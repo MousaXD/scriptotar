@@ -48,6 +48,8 @@
     saveStudy: (projectId: string, studyId: string, revision: number,
       patch: Parameters<StudioGateway['saveStudy']>[3]) =>
       api.saveStudy(projectId, studyId, revision, patch),
+    revokeStudySourceAccess: (projectId: string, studyId: string, revision: number,
+      source: StudySourceRef) => api.revokeStudySourceAccess(projectId, studyId, revision, source),
     getAiArtifact: (projectId: string, runId: string) => api.getAiRun(projectId, runId),
     listStudyEvidence: (projectId: string, studyId: string) => api.listStudyEvidence(projectId, studyId),
     addStudyEvidence: (projectId: string, studyId: string, input: Parameters<ScriptotarApi['addStudyEvidence']>[2]) =>
