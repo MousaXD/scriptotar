@@ -57,32 +57,6 @@ fn native_denial(code: &str, request_id: Option<&str>, fallback: String) -> Stri
     }
 }
 
-#[cfg(test)]
-mod native_denial_identity_tests {
-    use super::*;
-
-    #[test]
-    fn rejects_weak_or_untrusted_request_identity_before_host_dispatch() {
-        for value in ["", "123", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                      "fffffffffffffffffffffffffffffff",
-                      "fffffffffffffffffffffffffffffffff", "ff?not-a-uuid"] {
-            assert!(validate_native_request_id(Some(value)).is_err());
-        }
-        assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
-        assert!(validate_native_request_id(None).is_ok());
-    }
-
-    #[test]
-    fn redacted_native_denial_never_contains_untrusted_payload() {
-        let id = "0123456789abcdef0123456789abcdef";
-        let payload = "UNTRUSTED JSON PRIVATE BODY";
-        assert_eq!(
-            native_denial("INVALID_STUDY_ANGLES", Some(id), payload.into()),
-            format!("SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:{id}")
-        );
-        assert_eq!(native_denial("INVALID_MEDIA_URL", None, payload.into()), payload);
-    }
-}
 
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
 static MIGRATION_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1890,5 +1864,32 @@ mod tests {
         symlink(&target, temp.path().join(MIGRATION_COMPLETED_MARKER)).unwrap();
         assert!(migration_completed(temp.path()).is_err());
         assert!(mark_migration_completed(temp.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_denial_identity_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_weak_or_untrusted_request_identity_before_host_dispatch() {
+        for value in ["", "123", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                      "fffffffffffffffffffffffffffffff",
+                      "fffffffffffffffffffffffffffffffff", "ff?not-a-uuid"] {
+            assert!(validate_native_request_id(Some(value)).is_err());
+        }
+        assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
+        assert!(validate_native_request_id(None).is_ok());
+    }
+
+    #[test]
+    fn redacted_native_denial_never_contains_untrusted_payload() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let payload = "UNTRUSTED JSON PRIVATE BODY";
+        assert_eq!(
+            native_denial("INVALID_STUDY_ANGLES", Some(id), payload.into()),
+            format!("SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:{id}")
+        );
+        assert_eq!(native_denial("INVALID_MEDIA_URL", None, payload.into()), payload);
     }
 }
