@@ -1,3 +1,18 @@
+## 2026-11-18 — Live integration/QA head movement: revised immutable evidence
+
+**This addendum supersedes only the *current-state* assertions in the earlier dated checkpoint; earlier run/shas remain historically correct.** GitHub refs changed during the independent inspection. No fresh current-audit certification or installed-host release acceptance is claimed.
+
+- **Integration NOW** `caafb11d9d082af025c8f567a60e8d103730b8e0` (read from actual `git/ref/heads/integration/scriptotar-defragmentation-agent00-20261113`). Agent 00 production [PR #133](https://github.com/MousaXD/scriptotar/pull/133) **is now merged** at this integration SHA. The previous `7af95c...` integration and the claim "#133 unmerged" below were true only at that earlier inspection.
+- New integration's [independent security run #44307588806](https://github.com/MousaXD/scriptotar/actions/runs/44307588806) now **PASS** for all **seven** constituent jobs: provider, migration, receipt-v12, writing, verification, combined-v11 and combined. This is a significant real improvement for the production host, but it is **not** Agent 10's newer eight-gate audit including `native-evidence:131`, and not full installed-app release certification.
+- New integration [P1 provider-race workflow](https://github.com/MousaXD/scriptotar/actions/runs/44307588613), security hygiene, Desktop UI and GUI visual/performance have already completed **PASS**. Other integration workflows were still queued/in progress at inspection, including installed acceptance and supply-chain migration. No overall release GREEN.
+- **Agent 07 NOW** `93a3b7ae8b27d58dbbbe551a3d38e22654e379b8` ([PR #131](https://github.com/MousaXD/scriptotar/pull/131)). Its actual `linux_webkit.py::checked()` **now refuses to auto-PASS** `error_recovery` if `angle_rejection_visual_proof` is missing, `human_review_required=True`, or `atspi_error_text_exposed` is not true. It classifies that condition **NOT TESTED** via `NativeUnavailable`. This is a source-level remediation of Agent 10's earlier fail-open regression, and it retains the remaining native recovery probes. **Do not claim the current branch passed native-evidence yet.**
+- Latest Agent 07 [CI](https://github.com/MousaXD/scriptotar/actions/runs/44307630160) and [security hygiene](https://github.com/MousaXD/scriptotar/actions/runs/44307630106) passed. Its [installed WebView acceptance #44307630119](https://github.com/MousaXD/scriptotar/actions/runs/44307630119) was **CANCELLED**, not GREEN, at this source SHA.
+- Agent 10 independently requested a **single-job rerun** of the original `native-evidence:131` [run #44300422996](https://github.com/MousaXD/scriptotar/actions/runs/44300422996), job ID `134788406951`. This is **only a narrow regression attempt**: rerun workflow checkout is still associated with its original audit commit, while the target feature ref is resolved dynamically; its log must show the *actual* target checkout SHA before any status is attributed. It **cannot** replace a fresh full matrix from Agent 10's own current audit head, with the integration SHA pinned uniformly.
+
+**Current independent verdict: QA evidence fail-open appears fixed in source, but dynamic exact-head audit rerun and semantic/native authorization are NOT CERTIFIED. Release remains DRAFT / NO-GO / egress OFF.**
+
+---
+
 ## 2026-11-18 — Independent QA-integrity veto / exact-SHA rescan
 
 **Decision: RELEASE NO-GO; PR #124 remains DRAFT.** This is an independent audit record, not an installed-host certification. Never enable paid egress or merge to main on this evidence. **All links and conclusions below distinguish the test source from the code being tested.**
