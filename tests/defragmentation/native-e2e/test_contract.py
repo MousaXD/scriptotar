@@ -525,7 +525,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ):
             self.assertLess(source.index(core_case),
                             source.index('if ax.available("Open Study reference"):'))
-        self.assertIn('        ax = session.ax\\n', source)
+        self.assertIn('        ax = session.ax', source.splitlines())
         self.assertIn(
             'status(report, "wrong_project_ipc_denial", "FAIL"', source
         )
