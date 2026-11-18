@@ -35,6 +35,28 @@
 - `test_performance_suite.py`: tests unit conversion, process ancestry, incomplete-tree rejection and explicitly non-certified process snapshots.
 - This instrument must be executed as part of an **independently attested installed-app session**; code presence and hermetic unit tests establish neither correct Windows telemetry on a host nor actual installed app memory values. Windows EX2 requires a supported patched OS (see [Microsoft PSAPI EX2 reference](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters_ex2)).
 
+## Attaching memory sampling to Agent 07's real installed app (new)
+
+`native_attach.py` is benchmark-only. Agent 07 must obtain the PID **directly from the installed native driver** after launching the real signed/packaged executable and keep the GUI session open while the sampler runs. It does not spawn/kill Scriptotar, drive the UI, alter the database, or certify a window. It validates the kernel-reported running image against the path supplied for the installed executable, with no permission to label an arbitrary process or debug build as certified.
+
+Linux example (run in parallel with independent AT-SPI UI interaction after Agent 07 has installed the exact .deb):
+
+```bash
+python3 -m tests.defragmentation.benchmarks.native_attach \
+  --pid "$INSTALLED_APP_PID_FROM_AGENT07" \
+  --executable "$INSTALLED_APP_BINARY" --package "$EXACT_DEB" \
+  --source-sha "$EXACT_HEAD_SHA" --study-count 100 \
+  --run-url "$EXACT_NATIVE_QA_RUN_URL" \
+  --seconds 30 --interval-seconds 0.25 \
+  --output "$FRESH_EVIDENCE_DIR/native-100-memory.json"
+```
+
+Windows: the same command is supported under Python 3.12+ using `--pid` from UI Automation and the exact NSIS-installer/installed executable paths. No Linux /proc assumptions are applied on Windows.
+
+This stores kernel-probed image identity, process-tree memory observations, package/binary digests, raw samples, p50/p95, omissions and sample completeness. A complete process-tree total requires **every observed descendant** to have readable data. When a child is inaccessible, that total is null, not a partial sum. Results remain `PENDING_INDEPENDENT_NATIVE_QA` and must be tied to Agent 07 UI milestone evidence and a read-only verification that the running app uses the provided Study count. Trials measured with an attached package whose source does not match the UI package are invalid.
+
+These are `process memory` measurements only. Process-tree ancestry can miss orphaned/reparented WebView helpers. If that occurs, Agent 07 must inventory/identify WebView helper PIDs and explain whether OS-level accounting is complete; do not silently count only the parent.
+
 ## Exact collection contract for Agents 07 and 00
 
 1. Agent 07 owns installed native driver interaction. Supply **real** monotonic input/completion UI event pairs for open/usable Studio, select project, open Study, edit/save/reopen candidate and source navigation. Assert actual native WebKitGTK AT-SPI or Windows UI Automation document and render state for each observation. Record any skipped case as `NOT TESTED`.
