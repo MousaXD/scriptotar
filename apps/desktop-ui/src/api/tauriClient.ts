@@ -70,7 +70,7 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       invoke<StudyAngleInterpretation>('interpret_study_angles', {
         projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson,
         selectedAngleId: selectedAngleId ?? null,
-        ...(requestId ? { requestId } : {})
+        requestId: requestId ?? null
       }),
     reviewStudyScript: (projectId, studyId, expectedStudyRevision, anglePrompt,
       anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) =>
@@ -136,7 +136,7 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     chooseOutputDirectory: () => invoke<string | null>('choose_output_directory'),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
     enqueueUrl: (projectId, url, requestId) => invoke<BackendJob>('enqueue_url', {
-      projectId, url, ...(requestId ? { requestId } : {})
+      projectId, url, requestId: requestId ?? null
     }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
     saveWatchlist: (query: ResearchQuery) =>

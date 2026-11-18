@@ -142,7 +142,7 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
       projectId: 'project-id',
-      url: 'https://www.youtube.com/watch?v=fixture'
+      url: 'https://www.youtube.com/watch?v=fixture', requestId: null
     });
     expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
       projectId: 'project-id', url: 'file:///denied.mp4',
@@ -193,7 +193,8 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
       projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
-      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: 'angle-1'
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}',
+      selectedAngleId: 'angle-1', requestId: null
     });
     expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
       projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
