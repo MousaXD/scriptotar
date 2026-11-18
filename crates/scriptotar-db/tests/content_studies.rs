@@ -313,6 +313,32 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         revoked
     );
     assert_eq!(whole_database_snapshot(&db), all_rows_revoked);
+
+    // A revoked historical source ID must never authorize NEW evidence or
+    // source links, including links on a newly created draft. Keep existing
+    // evidence and the old draft's historical links fully readable.
+    let fresh_draft = db.create_draft(
+        project_a.id, study.id, "Post-revocation draft", "Independent new draft"
+    ).unwrap();
+    let before_denials = whole_database_snapshot(&db);
+    let denied_evidence = db.add_evidence_reference(
+        project_a.id, study.id, &EvidenceInput {
+            study_source_id: source.id,
+            claim: "No new evidence after permission withdrawal".into(),
+            locator: "0:08".into(),
+            timestamp_seconds: Some(8.0),
+            certainty: EvidenceCertainty::Unverified,
+            uncertainty_note: None,
+        },
+    );
+    assert!(denied_evidence.is_err(), "revoked origin gained new evidence");
+    assert!(db.attach_source_to_draft(
+        project_a.id, fresh_draft.id, source.id
+    ).is_err(), "revoked origin gained new draft source link");
+    assert_eq!(whole_database_snapshot(&db), before_denials,
+        "rejected source use changed canonical SQLite row contents");
+    assert_eq!(db.list_evidence_references(project_a.id, study.id).unwrap().len(), 1);
+    assert!(db.list_draft_source_ids(project_a.id, fresh_draft.id).unwrap().is_empty());
 }
 
 #[test]
