@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/workflows/agent11-package-artifact-inventory.yml'
       - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
+      - 'apps/desktop-ui/src/**'
+      - 'apps/desktop-ui/vite.config.ts'
+      - 'apps/desktop/src-tauri/**'
+      - '.github/workflows/linux-tauri.yml'
+      - '.github/workflows/windows-tauri.yml'
+      - '.github/workflows/installed-webview-acceptance.yml'
   workflow_dispatch:
 
 permissions:

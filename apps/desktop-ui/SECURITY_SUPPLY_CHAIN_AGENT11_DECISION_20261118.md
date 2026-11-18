@@ -78,3 +78,16 @@ node scripts/test-tauri-manifest-inventory.mjs
 ## Exact PR-head package provenance extension (2026-11-18)
 
 New read-only Agent11 jobs use the original Linux/Windows packaging workflow runs for the SAME PR head SHA and branch, selected by GitHub Actions metadata. They poll for successful completion, fail closed on absent/failed runs, verify original artifact SHA256SUMS, and independently recompute real .deb/NSIS archive path inventories using the existing validator. Historical pinned-artifact jobs remain intact. These additional jobs are not credited as passing until their exact-head results exist. A PR packaging workflow can checkout a synthetic merge ref even when run metadata shows a given PR head SHA, so this check cannot attest the full checked-out source tree. File names and installer hashes are NOT a binary-content scan, exploit-reachability proof or release certification. Agent10 threat analysis and Agent00 exact-final-integration validation remain required.
+
+## Completed previous-head Linux and Windows genuine package provenance
+
+At immutable prior Agent 11 SHA `a57e6c8bb9be4a48e64e16fe7c81bfe7d4c192bf`, the separate [exact-source genuine package workflow #44387006766](https://github.com/MousaXD/scriptotar/actions/runs/44387006766) **completed all 4/4 jobs PASS**, including both *actual original same-source* Linux and Windows artifact checks; this is NOT certification for any later code commit.
+
+| Original package | Original build run | Real package SHA-256 | Actual inspected paths | Recomputed manifest SHA-256 |
+| --- | --- | --- | --- | --- |
+| Linux `Scriptotar-Next-1.4.1-amd64.deb` | [#44387024413](https://github.com/MousaXD/scriptotar/actions/runs/44387024413); artifact `14466973554` | `08ff3b0a94c9c1859ab3e8ed6d0db715aee89745d46420318683c7d54ff4c1f1` | **2,992** original `dpkg-deb --contents` entries | `6ef71f021d066af4f5db712e2e2a2bc16b82e19703836aa57d317addacb09cd6` |
+| Windows `Scriptotar-Next-1.4.1-x64-setup.exe` | [#44387024220](https://github.com/MousaXD/scriptotar/actions/runs/44387024220); artifact `14465899558` | `4a1e4fab92b54b978931f439519a0b72dea7c48536e6c0489d6bf591387fef32` | **2,387** actual 7-Zip `Path =` entries | `e5beeb0860542cdf81340c73f8cfd83ca8191b678aeb369b919a10c1f79f1396` |
+
+Both original packager jobs completed successfully on `head_sha=a57e6c8`, package bytes matched builders' SHA256SUMS, exact-source identity was rechecked before downloading, generated Linux/Windows/installed-native Tauri config checks passed, expected transcription/MCP resource trees were present and the validator reported `issues: []`. This checks original archive path manifests and package integrity, **not compiled/embedded binary parser signatures**, definitive checked-out merge-tree identity, final Agent00 integration package bytes or production attacker-supplied glob-pattern reachability.
+
+The independent package provenance workflow now triggers for changed desktop frontend sources, Vite config, Tauri native source and platform packaging workflows in addition to its own files. Its exact-head results are a separate condition; do not inherit this previous-head PASS.
