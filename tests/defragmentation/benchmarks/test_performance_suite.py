@@ -222,6 +222,16 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             self.assertEqual(report["sample_count"], 0)
             self.assertEqual(report["kernel_process_creation_id"], "first-instance")
             self.assertEqual(report["raw_samples"], [])
+            # Attack the intra-sample TOCTOU window: initial identity and
+            # pre-read probe match, but the post-read birth identity changes.
+            # The snapshot MUST be discarded instead of entering p50/p95.
+            with patch("tests.defragmentation.benchmarks.native_attach.process_instance_id",
+                       side_effect=["first-instance", "first-instance", "recycled-instance"]):
+                raced = attach(os.getpid(), Path(sys.executable), package,
+                               SHA, 1.0, 0.2, 100, None)
+            self.assertEqual(raced["end_reason"], "process_gone_or_identity_changed_during_sample")
+            self.assertEqual(raced["raw_samples"], [])
+            self.assertEqual(raced["sample_count"], 0)
             self.assertLessEqual(report["measurement_started_monotonic_ns"],
                                  report["measurement_finished_monotonic_ns"])
             self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
