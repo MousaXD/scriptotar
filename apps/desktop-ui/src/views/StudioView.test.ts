@@ -664,10 +664,11 @@ describe('Content Study Studio', () => {
     expect(save).not.toHaveBeenCalled();
     expect(provider).not.toHaveBeenCalled();
 
-    setLocale('ar');
-    await fireEvent.input(screen.getByRole('textbox', {
+    await act(async () => { setLocale('ar'); });
+    const arabicTextbox = await screen.findByRole('textbox', {
       name: 'الصق استجابة الزوايا الثلاث بصيغة JSON'
-    }), { target: { value: rejected } });
+    });
+    await fireEvent.input(arabicTextbox, { target: { value: rejected } });
     interpret.mockRejectedValueOnce('invalid angle response');
     await fireEvent.click(screen.getByRole('button', { name: 'التحقق من الزوايا الثلاث' }));
     const arabicDenial = 'استجابة الزوايا غير صالحة أو تغير دليل الدراسة.';
