@@ -410,13 +410,13 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "installed-host-stderr.txt"
             log.write_text("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
-                           "request_id=" + req + "\\n")
+                           "request_id=" + req + "\n")
             offset = native.native_host_log_offset(log)
             self.assertIsNone(native.observed_host_denial(
                 log, offset, "FOREIGN_STUDY_REFERENCE", [named], label))
             with log.open("a") as stream:
                 stream.write("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
-                             "request_id=" + req + "\\n")
+                             "request_id=" + req + "\n")
             receipt = native.observed_host_denial(
                 log, offset, "FOREIGN_STUDY_REFERENCE", [named], label)
             self.assertEqual(receipt["tauri_denial_request_id"], req)
