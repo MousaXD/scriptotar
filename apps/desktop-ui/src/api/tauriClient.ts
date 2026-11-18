@@ -82,6 +82,10 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
       }),
     saveStudy: (projectId, studyId, expectedRevision, patch) =>
       invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
+    revokeStudySourceAccess: (projectId, studyId, expectedRevision, source) =>
+      invoke<ContentStudy>('revoke_study_source_access', {
+        projectId, studyId, expectedRevision, kind: source.kind, referenceId: source.id
+      }),
     listStudyEvidence: (projectId, studyId) =>
       invoke<StudyEvidence[]>('list_study_evidence', { projectId, studyId }),
     addStudyEvidence: (projectId, studyId, input: StudyEvidenceInput) =>
