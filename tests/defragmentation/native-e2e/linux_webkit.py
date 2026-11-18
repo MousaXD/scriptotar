@@ -118,6 +118,24 @@ def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -
 
 
 
+def count_canonical_jobs(data_dir: Path, project_name: str) -> int:
+    """Read-only count of jobs for the actual installed project's SQLite."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Installed canonical SQLite missing during denied URL test")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM jobs j JOIN projects p ON p.id=j.project_id "
+                "WHERE p.name=? AND p.archived_at IS NULL", (project_name,)
+            ).fetchone()
+            if row is None:
+                raise NativeFailure("Could not count installed canonical jobs")
+            return int(row[0])
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Installed canonical jobs read-only probe failed: {exc}") from exc
+
+
 def verify_canonical_saved_draft(
     data_dir: Path, project_name: str, study_name: str, expected_body: str
 ) -> str:
@@ -1169,8 +1187,70 @@ def exercise(args, report: dict, root: Path):
                "Needs a real source with revocable availability, verified after project reload")
         status(report, "wrong_project_ipc_denial", "NOT TESTED",
                "Native UI scoping is not an authorization probe for forged foreign IDs")
-        status(report, "error_recovery", "NOT TESTED",
-               "No safe native graphical fault-injection mechanism in isolated profile")
+        def denied_url_recovery():
+            # A genuine GUI request reaches production NetworkPolicy. An
+            # unsupported file: URL is rejected before JobService enqueue.
+            # No database seeding, debug bypass, or synthetic success.
+            a = session.ax
+            old_count = count_canonical_jobs(root / "data", name_a)
+            a.click("Queue", "button")
+            a.heading("Queue", timeout=15)
+            a.type_into("Media URL", "file:///scriptotar-native-qa-denied-media.mp4")
+            a.click("Queue URL", "button")
+            error_text = ""
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                for node in a.nodes():
+                    try:
+                        if "alert" not in node.getRoleName().lower():
+                            continue
+                        label = (node.name or "").strip()
+                        if not label:
+                            try:
+                                label = node.queryText().getText(0, -1).strip()
+                            except Exception:
+                                pass
+                        lower = label.lower()
+                        if (len(label) > 8 and any(word in lower for word in
+                                ("url", "scheme", "protocol", "unsupported",
+                                 "invalid", "blocked", "not allowed"))):
+                            error_text = label
+                            break
+                    except Exception:
+                        continue
+                if error_text:
+                    break
+                time.sleep(0.35)
+            if not error_text:
+                session.screenshot("failed-denied-url-no-error")
+                raise NativeFailure(
+                    "Unsupported URL was submitted through installed Queue, "
+                    "but no native error alert was exposed"
+                )
+            session.screenshot("rejected-url-error")
+            new_count = count_canonical_jobs(root / "data", name_a)
+            if new_count != old_count:
+                raise NativeFailure(
+                    "Unsupported URL created a canonical job despite GUI rejection "
+                    f"(before={old_count}, after={new_count})"
+                )
+            # Recover through ordinary user navigation and readback. Previously
+            # edited immutable candidate rows must still hold the exact body.
+            a.click("Studio", "button")
+            a.heading("Studio")
+            a.choose("Open study", study)
+            if a.read_text("Script draft") != body:
+                raise NativeFailure("Original native draft changed after denied URL")
+            verify_canonical_reopened_candidates(
+                root / "data", name_a, study, body, tag + "-copy"
+            )
+            session.screenshot("recovered-studio-after-denial")
+            report["denied_url_error"] = error_text[:300]
+            return (
+                "Production Queue rejected unsupported URL with visible native alert, "
+                "job count unchanged, and original Study/candidate text recovered"
+            )
+        checked(report, "error_recovery", denied_url_recovery)
         status(report, "arabic_rtl", "NOT TESTED",
                "AT-SPI labels alone cannot certify document direction, mixed-text order or visual RTL")
         status(report, "light_dark_visual", "NOT TESTED",
