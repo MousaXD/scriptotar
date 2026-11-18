@@ -573,6 +573,41 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("$cases.wrong_project_ipc_denial = @{ status='PASS'", source)
         self.assertIn("$cases.wrong_project_ipc_denial.status -ne 'FAIL'", source)
 
+    def test_windows_real_role_alert_container_carries_host_request_id(self):
+        # Real #44362977640 screenshot renders a Request ID, but WebView2
+        # child Text exposed only the plain error. Require the fresh PARENT
+        # aria-label exposed as a native UIA name, not pixels/OCR/DOM or
+        # a regex over unrelated page text, before trusting the Rust stderr.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        helper = script.split("function Get-InstalledBoundDenialAlerts(", 1)[1].split(
+            "function Get-InstalledAngleRejectionAlerts(", 1)[0]
+        self.assertIn("[System.Windows.Automation.TreeScope]::Subtree", helper)
+        self.assertIn("[System.Windows.Automation.Condition]::TrueCondition", helper)
+        self.assertIn("ControlType.Group", helper)
+        self.assertIn("ControlType.Text", helper)
+        self.assertIn("$node.Current.Name", helper)
+        self.assertIn("$node.Current.IsOffscreen", helper)
+        self.assertIn("$rect.Width -le 3", helper)
+        self.assertIn("' · request [0-9a-f]{32}$'", helper)
+        self.assertIn("Where-Object { $_ -cnotin $prior }", helper)
+        self.assertIn("if ($fresh.Count -eq 1)", helper)
+        self.assertIn("if ($fresh.Count -gt 1) { return $null }", helper)
+        self.assertNotIn("OCR", helper.split("function Wait-InstalledBoundDenial(",1)[1])
+        self.assertNotIn("SetValue(", helper)
+        angle = "Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $angleBoundAlert"
+        queue = "Get-InstalledHostDenial $queueHostLogOffset 'INVALID_MEDIA_URL' $queueBoundAlert"
+        self.assertIn(angle, script)
+        self.assertIn(queue, script)
+        self.assertIn("$priorAngleBoundAlerts.Count -ne 0", script)
+        self.assertIn("$priorQueueBoundAlerts.Count -ne 0", script)
+        self.assertIn("real_native_alert_aria_label = $angleBoundAlert", script)
+        self.assertIn("native_accessible_error_request_id = $angleUiaId", script)
+        self.assertIn("native_bound_queue_alert = $queueBoundAlert", script)
+        self.assertIn("-not $nativeAlert) { return $null }", script)
+        self.assertNotIn(
+            "Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $currentAngleError", script
+        )
+
     def test_windows_native_denial_requires_actual_host_stderr_and_ui_id(self):
         # Static runner audit: a real installed process must emit a typed
         # Rust stderr marker; a UIA alert matching only text is not enough.
