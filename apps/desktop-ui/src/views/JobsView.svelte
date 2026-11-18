@@ -134,6 +134,11 @@
           throw new Error($translator('queue.unsupportedUrl'));
         }
         const detail = error instanceof Error ? error.message : String(error);
+        // Never display an unrelated request's opaque backend marker as a
+        // native authorization or proof identity.
+        if (/^SCRIPTOTAR_DENIAL:[A-Z_]+:[0-9a-f]{32}$/.test(detail)) {
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
         if (detail.includes('research URL is invalid: only http and https are supported')) {
           urlRejected = true;
           throw new Error($translator('queue.unsupportedUrl'));

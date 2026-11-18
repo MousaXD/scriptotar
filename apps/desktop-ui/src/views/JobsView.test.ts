@@ -9,7 +9,7 @@ function setup(jobs: Job[] = []) {
   const props = {
     jobs, onCancel: vi.fn(async (_id: string) => {}), onRetry: vi.fn(async (_id: string) => {}),
     onChooseLocal: vi.fn(async () => '/safe/recording.mp4'),
-    onEnqueueLocal: vi.fn(async (_path: string) => {}), onEnqueueUrl: vi.fn(async (_url: string) => {}),
+    onEnqueueLocal: vi.fn(async (_path: string) => {}), onEnqueueUrl: vi.fn(async (_url: string, _requestId?: string) => {}),
     onOpenCompleted: vi.fn(async (_job: Job) => {})
   };
   return { ...render(JobsView, { props }), ...props };
