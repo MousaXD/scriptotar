@@ -1481,8 +1481,8 @@ try {
               Where-Object { $_ -cnotin $priorBound })
             if ($visible.Count -eq 1 -and $priorDenial.Count -eq 0 -and
                 $now.Count -eq 1) {
-              $id = Get-InstalledHostDenial $hostOffset 'FOREIGN_STUDY_REFERENCE' \
-                $now[0] $referenceError
+              $id = Get-InstalledHostDenial $hostOffset `
+                'FOREIGN_STUDY_REFERENCE' $now[0] $referenceError
               if ($id) {
                 $hostReferenceId = $id
                 $hostBoundAlert = $now[0]
