@@ -44,6 +44,45 @@ describe('jobs workspace', () => {
     await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/clip'));
   });
 
+  it('announces a rejected file: URL to assistive tech, without creating a job, and recovers on valid input', async () => {
+    const { onEnqueueUrl, container } = setup();
+    onEnqueueUrl.mockRejectedValueOnce('validation failed: research URL is invalid: only http and https are supported');
+    const input = screen.getByRole('textbox', { name: 'Media URL' });
+    await fireEvent.input(input, { target: { value: 'file:///scriptotar-native-qa-denied-media.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    const message = 'Invalid media URL. Only HTTP and HTTPS URLs are supported.';
+    const alert = await screen.findByRole('alert', { name: message });
+    expect(alert).toHaveTextContent(message);
+    expect(alert).toHaveAttribute('aria-live', 'assertive');
+    expect(alert).toHaveAttribute('aria-atomic', 'true');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAttribute('aria-describedby', 'queue-action-error');
+    expect(onEnqueueUrl).toHaveBeenCalledWith('file:///scriptotar-native-qa-denied-media.mp4');
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(0);
+
+    await fireEvent.input(input, { target: { value: 'https://example.com/safe-video' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid');
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/safe-video'));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('exposes the same backend URL rejection in Arabic with a named native alert', async () => {
+    setLocale('ar');
+    const { onEnqueueUrl } = setup();
+    onEnqueueUrl.mockRejectedValueOnce(new Error('validation failed: research URL is invalid: only http and https are supported'));
+    const input = screen.getByRole('textbox', { name: 'رابط الوسائط' });
+    await fireEvent.input(input, { target: { value: 'file:///scriptotar-native-qa-denied-media.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'إضافة الرابط للطابور' }));
+    const arabicMessage = 'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.';
+    const alert = await screen.findByRole('alert', { name: arabicMessage });
+    expect(alert).toHaveTextContent(arabicMessage);
+    expect(alert).toHaveAttribute('dir', 'auto');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(onEnqueueUrl).toHaveBeenCalledTimes(1);
+  });
+
   it('allows cancel, retry and open completed transcript without hiding failure details', async () => {
     const { onCancel, onRetry, onOpenCompleted } = setup([job('1', 'transcribing'), job('2', 'failed'), job('3', 'completed')]);
     expect(screen.getByText('Permission denied')).toBeInTheDocument();
