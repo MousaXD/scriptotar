@@ -1,6 +1,8 @@
 """Contract tests for the evidence collector, NOT native GUI certification."""
 import hashlib
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -185,6 +187,22 @@ class NativeEvidenceContractTests(unittest.TestCase):
             dict(example, authoritative_denial=dict(host, tauri_denial_request_id="c" * 32)),
         ]:
             self.assertFalse(native.valid_native_url_request_binding(bad))
+
+    def test_agent10_independent_five_native_anti_spoof_attacks(self):
+        # Execute Agent 10's own UNMODIFIED independent source tests on the
+        # exact current checkout, not a checked-in synthetic PASS receipt.
+        # This source-only assurance is not installed native 16/16 proof.
+        native_source = Path(__file__).resolve().parent / "linux_webkit.py"
+        agent10 = Path(__file__).resolve().parents[1] / "security" / "test_native_visual_adjudication.py"
+        self.assertTrue(agent10.is_file(), "Independent security review test is absent")
+        completed = subprocess.run(
+            [sys.executable, str(agent10), str(native_source)],
+            capture_output=True, text=True, timeout=45, check=False,
+        )
+        output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, output)
+        self.assertIn("Ran 5 tests", output)
+        self.assertIn("OK", output)
 
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
