@@ -185,6 +185,13 @@ public static class NativeWebViewWindow {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    public static void NativeScrollUp(int x, int y) {
+        // Genuine OS wheel motion in the installed WebView2 viewport, not
+        // browser JavaScript, UIA SetValue, or a synthetic ScrollPattern PASS.
+        if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position native Studio wheel pointer");
+        System.Threading.Thread.Sleep(100);
+        mouse_event(0x0800, 0, 0, 480, UIntPtr.Zero); // MOUSEEVENTF_WHEEL: four 120-unit detents up.
+    }
     public static void NativeClick(int x, int y) {
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position pointer at UIA option");
         System.Threading.Thread.Sleep(120);
@@ -409,6 +416,17 @@ function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [sw
     }
   } catch {
     Write-Host "UIA GetClickablePoint unsupported for '$name'; using visible, enabled HWND-bounded UIA rectangle"
+  }
+  if ($pointer -and $name -eq 'Script candidates') {
+    # Refuse a pointer event on a UIA combobox aligned beneath the fixed
+    # global workspace search bar. WebView2 can label this IsOffscreen=false.
+    $nativeOwner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    $screen = $nativeOwner.Current.BoundingRectangle
+    $safeTop = $screen.Y + 135
+    if ($cy -lt $safeTop -or $cy -gt ($screen.Y + $screen.Height - 25)) {
+      throw "Installed Script candidates pointer would strike fixed toolbar or viewport edge (y=$cy, safe_top=$safeTop)"
+    }
+    Assert-InstalledCommandPaletteClosed $hwnd
   }
   [NativeWebViewWindow]::NativeClick([int][Math]::Round($cx), [int][Math]::Round($cy))
   Start-Sleep -Milliseconds 650
@@ -717,8 +735,89 @@ function Find-InstalledPopupOption([IntPtr]$hwnd, [string]$name, [int]$timeoutSe
   } while ([DateTime]::UtcNow -lt $deadline)
   throw "Installed popup option not found with actionable UIA role: $name"
 }
+function Assert-InstalledCommandPaletteClosed([IntPtr]$hwnd) {
+  # A previous native misclick opened the global palette in #44389766717.
+  # It is an obstructing native modal, never a legitimate Studio selection.
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $owner) { throw 'Installed UIA WebView provider lost before candidate click' }
+  $condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, 'Command palette')
+  foreach ($modal in $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)) {
+    try {
+      $bounds = $modal.Current.BoundingRectangle
+      if (-not $modal.Current.IsOffscreen -and
+          $bounds.Width -gt 50 -and $bounds.Height -gt 50) {
+        throw 'Installed Command palette obstructs native Studio candidate selection'
+      }
+    } catch [System.Runtime.InteropServices.COMException] { }
+  }
+}
+function Ensure-InstalledCandidateViewport([IntPtr]$hwnd) {
+  # A genuine UIA ScrollItemIntoView can place this combobox UNDER the fixed
+  # workspace search header. Requery native bounds and move the actual page
+  # using OS wheel events; never presume a scroll request was successful.
+  for ($attempt = 0; $attempt -lt 7; $attempt++) {
+    Assert-InstalledCommandPaletteClosed $hwnd
+    $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    $window = $owner.Current.BoundingRectangle
+    if ($window.Width -le 150 -or $window.Height -le 200) {
+      throw 'Installed WebView2 viewport has no actionable UIA bounds'
+    }
+    $candidate = Find-ExactInstalledControl $hwnd 'Script candidates' (
+      [System.Windows.Automation.ControlType]::ComboBox) 3
+    $rect = $candidate.Current.BoundingRectangle
+    $safeTop = $window.Y + 135
+    # Use the actual installed global-search control to expand the fixed
+    # toolbar exclusion when its observable bounds are taller than usual.
+    $search = [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty,
+      'Search workspace and commands')
+    foreach ($header in $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $search)) {
+      try {
+        if ($header.Current.IsOffscreen) { continue }
+        $headerBounds = $header.Current.BoundingRectangle
+        if ($headerBounds.Width -gt 50 -and $headerBounds.Height -gt 5) {
+          $safeTop = [Math]::Max($safeTop, $headerBounds.Y + $headerBounds.Height + 18)
+        }
+      } catch { }
+    }
+    $safeBottom = $window.Y + $window.Height - 28
+    $centerX = $rect.X + $rect.Width / 2
+    $centerY = $rect.Y + $rect.Height / 2
+    if ($candidate.Current.IsEnabled -and -not $candidate.Current.IsOffscreen -and
+        $rect.Width -gt 5 -and $rect.Height -gt 5 -and
+        $centerX -gt $window.X -and $centerX -lt ($window.X + $window.Width) -and
+        $centerY -ge $safeTop -and $centerY -le $safeBottom) {
+      Write-Host "Native candidate combobox verified toolbar-clear by fresh UIA: center_y=$centerY safe_top=$safeTop safe_bottom=$safeBottom"
+      return
+    }
+    if ($attempt -eq 0) {
+      try {
+        $scrollItem = $candidate.GetCurrentPattern(
+          [System.Windows.Automation.ScrollItemPattern]::Pattern)
+        if ($scrollItem) { $scrollItem.ScrollIntoView() }
+      } catch { }
+    } elseif ($centerY -lt $safeTop -or $candidate.Current.IsOffscreen) {
+      $wheelX = [int][Math]::Round($window.X + $window.Width * 0.7)
+      $wheelY = [int][Math]::Round($window.Y + $window.Height * 0.55)
+      [NativeWebViewWindow]::NativeScrollUp($wheelX, $wheelY)
+    } else {
+      # A still-below-viewport or invalid native control must remain a FAIL.
+      # No simulated DOM click and no unbounded scrolling.
+      throw "Installed Script candidates native center remains outside safe viewport (y=$centerY, top=$safeTop, bottom=$safeBottom)"
+    }
+    Start-Sleep -Milliseconds 450
+  }
+  throw 'Installed Script candidates could not be moved clear of the fixed toolbar by genuine native scroll'
+}
 function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
+  if ($label -eq 'Script candidates') {
+    Ensure-InstalledCandidateViewport $hwnd
+  }
   Click-InstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+  if ($label -eq 'Script candidates') {
+    Assert-InstalledCommandPaletteClosed $hwnd
+  }
   $option = Find-InstalledPopupOption $hwnd $name 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
   if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
