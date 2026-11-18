@@ -1,4 +1,9 @@
-use std::{fs, path::Path, thread, time::{Duration, Instant}};
+use std::{
+    fs,
+    path::Path,
+    thread,
+    time::{Duration, Instant},
+};
 
 use scriptotar_core::{
     Job, JobInput, JobRepository, JobState, Project, ProjectRepository, SettingsRepository,
@@ -45,7 +50,8 @@ fn sidecar_progress_is_persisted_before_completion() {
         if matches!(
             current.state,
             JobState::Completed | JobState::Failed | JobState::Cancelled | JobState::Interrupted
-        ) || Instant::now() >= deadline {
+        ) || Instant::now() >= deadline
+        {
             panic!(
                 "transcribing progress was not durably observable: state={:?}, progress={:?}",
                 current.state, current.progress
@@ -55,7 +61,11 @@ fn sidecar_progress_is_persisted_before_completion() {
     };
     assert_eq!(observed.progress, Some(0.5));
     let observation_ack = input.with_extension("progress-observed");
-    fs::write(&observation_ack, b"observed committed transcribing progress").unwrap();
+    fs::write(
+        &observation_ack,
+        b"observed committed transcribing progress",
+    )
+    .unwrap();
 
     for _ in 0..300 {
         let current = store.get_job(job.id).unwrap();
