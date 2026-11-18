@@ -81,7 +81,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
             raise ValueError(f"line {number}: missing host metadata SHA-256")
         if (not isinstance(event["native_qa_run_url"], str)
                 or not RUN_URL.fullmatch(event["native_qa_run_url"])):
-            raise ValueError(f"line {number}: invalid native QA run URL
+            raise ValueError(f"line {number}: invalid native QA run URL")
         if (not isinstance(event["native_provider"], str) or event["native_provider"] not in PROVIDERS
                 or not isinstance(event["cache_state"], str) or event["cache_state"] not in CACHE):
             raise ValueError(f"line {number}: invalid provider or cache state")
