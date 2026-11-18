@@ -17,6 +17,39 @@ permissions:
   contents: read
 
 jobs:
+  audit-windows-denial-integrity:
+    name: "Security / Windows source-pinned native denial anti-spoof"
+    needs: [pin-features]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Agent 10 audit source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: audit
+          persist-credentials: false
+      - name: Checkout exact Agent 07 native Windows runner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ fromJSON(needs.pin-features.outputs.shas)['131'] }}
+          path: native
+          persist-credentials: false
+      - name: Reject stale, unrelated, duplicate or unbound Windows denial evidence
+        shell: pwsh
+        env:
+          EXPECTED_AUDIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_NATIVE_SHA: ${{ fromJSON(needs.pin-features.outputs.shas)['131'] }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git -C audit rev-parse HEAD) -cne $env:EXPECTED_AUDIT_SHA) {
+            throw 'Wrong audit source checked out on Windows'
+          }
+          if ((git -C native rev-parse HEAD) -cne $env:EXPECTED_NATIVE_SHA) {
+            throw 'Wrong native QA source checked out on Windows'
+          }
+          & ./audit/tests/defragmentation/security/test_windows_denial_integrity.ps1 -NativeRunner ./native/tests/defragmentation/native-e2e/windows_webview2.ps1
+
   audit-unittest-discovery:
     name: "Security / native evidence imported by unittest discovery"
     runs-on: ubuntu-22.04
@@ -162,7 +195,7 @@ jobs:
   verify-pinned-integration:
     name: "Security / exact SHA remains current after the matrix"
     if: always()
-    needs: [pin-integration, pin-features, feature-security, audit-unittest-discovery]
+    needs: [pin-integration, pin-features, feature-security, audit-unittest-discovery, audit-windows-denial-integrity]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -172,12 +205,13 @@ jobs:
           PINNED_SHA: ${{ needs.pin-integration.outputs.sha }}
           MATRIX_RESULT: ${{ needs.feature-security.result }}
           DISCOVERY_RESULT: ${{ needs.audit-unittest-discovery.result }}
+          WINDOWS_RESULT: ${{ needs.audit-windows-denial-integrity.result }}
           PIN_RESULT: ${{ needs.pin-integration.result }}
           FEATURE_PIN_RESULT: ${{ needs.pin-features.result }}
           FEATURE_SHAS: ${{ needs.pin-features.outputs.shas }}
         run: |
           set -euo pipefail
-          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success && "$DISCOVERY_RESULT" == success ]] ||
+          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success && "$DISCOVERY_RESULT" == success && "$WINDOWS_RESULT" == success ]] ||
             { echo "One or more independent security gates did not pass"; exit 1; }
           [[ "$PINNED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             { echo "Missing exact integration SHA"; exit 1; }
