@@ -85,6 +85,76 @@ class IndependentNativeVisualEvidence(unittest.TestCase):
             "FAIL OPEN: semantic-looking metadata alone became host certification",
         )
 
+    def test_unrelated_fresh_angle_invalid_alert_is_not_rejection_proof(self):
+        """Adversarial exact-shape attack on the *new* request-binding helper.
+
+        A caller can submit exact native input, record a timestamp window and
+        unchanged SQLite content, yet observe a newly rendered *unrelated*
+        alert with the generic tokens 'angle' and 'invalid'.  That is not
+        authoritative proof the public Tauri command denied this request.
+        The collector must bind the actual expected validation error/control,
+        not promote generic text from elsewhere in the WebView.
+        """
+        report = {"cases": {}}
+
+        def unrelated_fresh_alert():
+            payload_hash = "a" * 64
+            canonical_hash = "b" * 64
+            report["angle_rejection_visual_proof"] = {
+                "proof": "fresh named AT-SPI alert after real native action",
+                "atspi_error_text_exposed": True,
+                "request_correlation": {
+                    "native_action": "Validate 3 angles",
+                    "submitted_payload_sha256": payload_hash,
+                    "native_readback_sha256": payload_hash,
+                    "prior_alerts": [],
+                    "new_alerts": [
+                        "Unrelated angle invalid warning in another workspace panel"
+                    ],
+                    "action_monotonic_ns": 100,
+                    "observed_monotonic_ns": 200,
+                    "canonical_before_digest": canonical_hash,
+                    "canonical_after_digest": canonical_hash,
+                },
+            }
+            return "unrelated alert was incorrectly treated as denial"
+
+        self.assertFalse(
+            self.native["checked"](report, "error_recovery", unrelated_fresh_alert),
+            "FAIL OPEN: a fresh but unrelated 'angle invalid' AT-SPI alert "
+            "certified the malformed request without authoritative error binding",
+        )
+        self.assertNotEqual(report["cases"]["error_recovery"]["status"], "PASS")
+
+    def test_preexisting_angle_error_cannot_certify_retry(self):
+        """Even new timing metadata must not launder a previously seen alert."""
+        report = {"cases": {}}
+
+        def stale_alert():
+            payload_hash = "c" * 64
+            canonical_hash = "d" * 64
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": True,
+                "request_correlation": {
+                    "native_action": "Validate 3 angles",
+                    "submitted_payload_sha256": payload_hash,
+                    "native_readback_sha256": payload_hash,
+                    "prior_alerts": ["The angle response is invalid"],
+                    "new_alerts": ["The angle response is invalid"],
+                    "action_monotonic_ns": 100,
+                    "observed_monotonic_ns": 200,
+                    "canonical_before_digest": canonical_hash,
+                    "canonical_after_digest": canonical_hash,
+                },
+            }
+            return "stale alert misclassified"
+
+        self.assertFalse(
+            self.native["checked"](report, "error_recovery", stale_alert),
+            "FAIL OPEN: preexisting angle-invalid alert was recycled",
+        )
+        self.assertNotEqual(report["cases"]["error_recovery"]["status"], "PASS")
+
     def test_visual_fallback_does_not_hide_human_review_obligation(self):
         if "native_angle_alert_image_proof(" not in self.source:
             return
