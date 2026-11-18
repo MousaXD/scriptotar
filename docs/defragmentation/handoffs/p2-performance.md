@@ -4,6 +4,13 @@
 **Synchronized integration baseline:** `7af95c574643c14565a5c10d0be2cc78c5e57254` via history-preserving merge commit `1223d81d4894561e5fb44e9ba75624083d4166df`.
 **Integration:** draft PR #127 remains open; issue #100 remains open. The original six benchmark files already exist byte-identically in integration; do not double-merge or squash historical commits. New work is isolated to benchmark tooling, this handoff, and one separately scoped performance SQL CI workflow; no production code, release flag or native acceptance workflow was edited.
 
+## Independent evidence checkpoint: 2026-11-18
+
+- Verified SQL-only workflow [44299533922](https://github.com/MousaXD/scriptotar/actions/runs/44299533922) **PASS on Linux and Windows** at `01d915574cb117e3bbc47480efb96030097e735f`. This does **not** certify native application performance.
+- Independently reviewed Agent 07 installed acceptance [44302808654](https://github.com/MousaXD/scriptotar/actions/runs/44302808654) at `9c272a92de8df42a1ecfee5211a4f7ea3bb74e44`: both OS jobs failed and do not supply trustworthy native p50/p95/IPC measurements.
+- Added independent benchmark-only `native_memory.py` to collect Linux PSS/private resident pages and Windows EX2 private working set/private commit, with missing child data rejected for process-tree totals. `native_session.py` and `native_trials.py` now retain raw per-trial memory samples and summarize metrics where available. No production code was touched.
+- See [independent evidence matrix, raw artifact references, missing native hooks and profiling priorities](p2-native-performance-evidence-20261118.md). **Actual installed memory and interaction performance remain NOT TESTED until independent Agent 07 instrumentation executes on installed packages.**
+
 ## Delivered
 
 - `study_scale.py`: adds N=100, 1,000, 10,000 synthetic canonical Content Studies, StudySource links, briefs, draft candidates, immutable draft versions, and one ~1 MiB transcript to the existing guarded scratch-only legacy fixture generator. Requires an **actual empty app-migrated v6+** SQLite template and records resulting DB SHA-256/size.
