@@ -77,7 +77,8 @@ describe('Content Study Studio', () => {
       target: { value: 'scriptotar://study/' + projectA + '/' + studyA }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
-    await waitFor(() => expect(denied).toHaveBeenCalledWith(projectA, studyA, undefined));
+    await waitFor(() => expect(denied).toHaveBeenCalledWith(
+      projectA, studyA, undefined, expect.stringMatching(/^[0-9a-f]{32}$/)));
     const referenceAlert = await screen.findByRole('alert', {
       name: 'This Study reference cannot be opened in the active project.'
     });
@@ -87,6 +88,37 @@ describe('Content Study Studio', () => {
     expect(referenceAlert).toHaveAttribute('aria-live', 'assertive');
     expect(referenceAlert).toHaveAttribute('aria-atomic', 'true');
     // Studio keeps its empty unsaved editor mounted; denial must not fill it.
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
+  });
+
+  it('exposes only a fresh host-correlated denial ID, never the foreign reference or private data', async () => {
+    const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const studyA = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const denied = vi.fn(async (_p: string, _s: string, _d?: string, requestId?: string) => {
+      throw new Error('SCRIPTOTAR_DENIAL:FOREIGN_STUDY_REFERENCE:' + requestId);
+    });
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy: denied,
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway, { projectId: projectB, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'scriptotar://study/' + projectA + '/' + studyA }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(denied).toHaveBeenCalledTimes(1));
+    const id = denied.mock.calls[0][3];
+    expect(id).toMatch(/^[0-9a-f]{32}$/);
+    const alert = await screen.findByRole('alert', {
+      name: 'This Study reference cannot be opened in the active project. · request ' + id
+    });
+    expect(alert).toHaveTextContent('This Study reference cannot be opened in the active project.');
+    expect(alert.getAttribute('aria-label')).not.toContain(projectA);
+    expect(alert.getAttribute('aria-label')).not.toContain(studyA);
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
   });
 
@@ -115,7 +147,7 @@ describe('Content Study Studio', () => {
       .toHaveValue('Private persisted working draft'));
     expect(screen.getByRole('combobox', { name: 'Open study' })).toHaveTextContent('Direct project Study');
     expect(getStudy).toHaveBeenCalledTimes(1);
-    expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined);
+    expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined, expect.stringMatching(/^[0-9a-f]{32}$/));
     expect(screen.queryByText('This Study reference cannot be opened in the active project.')).not.toBeInTheDocument();
   });
 
@@ -143,7 +175,7 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This Study reference cannot be opened in the active project.');
-    expect(getStudy).toHaveBeenCalledWith(projectB, studyId, undefined);
+    expect(getStudy).toHaveBeenCalledWith(projectB, studyId, undefined, expect.stringMatching(/^[0-9a-f]{32}$/));
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
     expect(screen.queryByText('Foreign Study')).not.toBeInTheDocument();
   });
@@ -171,7 +203,8 @@ describe('Content Study Studio', () => {
       target: { value: ref }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
-    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, draftId));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(
+      project, studyId, draftId, expect.stringMatching(/^[0-9a-f]{32}$/)));
     expect(screen.getByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('Correct stored draft');
     expect(screen.queryByText('This Study reference cannot be opened in the active project.'))
@@ -196,7 +229,8 @@ describe('Content Study Studio', () => {
       target: { value: 'scriptotar://study/' + project + '/' + studyId }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
-    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(
+      project, studyId, undefined, expect.stringMatching(/^[0-9a-f]{32}$/)));
     await fireEvent.input(input, { target: { value: 'scriptotar://study/edited-before-host-return' } });
     answer?.({
       id: studyId, projectId: project, revision: 1,
