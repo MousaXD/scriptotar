@@ -71,3 +71,32 @@ Agent 11's recorded inspection of the failing supply-chain job identifies 10 per
 Agent 00 must land reviewed production/native repairs **on the intended integration branch**, Agent 11 must supply a verifiably clean npm graph or preserve NO-GO, and Agent 07 must produce full installed Linux+Windows `PASS` for previously untested and failed security cases. **Then run all independent security gates against the exact same final integration SHA**, retain audit/test SHA and job logs, inspect secret/error telemetry and verify paid provider remains disabled until a separately certified real-provider path exists. Any source SHA change invalidates prior release certification. Do not squash away independent evidence or edit red results to green.
 
 **Audit conduct:** inspected GitHub source/workflow/job logs and upstream advisory; did not modify production, dependency manifests, audit thresholds, guard code, tests or `main`. No new local compilation, live HTTP billing, multi-process adversarial runtime, or installed-app execution was performed during this independent report-writing pass.
+
+## Continuation — native proof integrity and CI source pinning (18 November)
+
+**Agent 10 change ownership:** independent test source and workflow only. Nothing in paid provider production, SQLite, Agent 07 QA source, npm dependencies, or `main` was changed.
+
+### P0: Red rectangle is not authenticated malformed-angle rejection
+
+Agent 07 #131 at **`bd8187942dd735998bb48024efedce6786423c6d`** retains a correct malformed-three-angle scenario and adds real Queue URL rejection/no-SQLite-write/recovery checks. The new Linux fallback nevertheless accepts a pair of *red horizontal borders* beneath the real AT-SPI Validate button when the rendered angle error has no AT-SPI text. The report records `angle_rejection_visual_proof.human_review_required = True`. The common `checked(report, "error_recovery", fn)` helper marks the scenario **PASS** as soon as `fn` returns. There is no independent visual adjudication prerequisite in that helper.
+
+**Risk:** a visually changed but semantically unrelated red rectangle can be counted as proof that malformed JSON was actually rejected. This is an assurance failure in the QA evidence boundary; it does not itself prove production accepted the JSON.
+
+**New narrow independent regression:** `tests/defragmentation/security/test_native_visual_adjudication.py` loads **Agent 07's actual QA module**, injects the image-only `human_review_required=True` evidence shape through a callback, and requires the status to remain non-PASS. In Agent 07's observed source, `checked` unconditionally marks that successful callback PASS, so the new negative test is **expected to fail**. A source contract regression is not a substitute for an installed run. Exact reproduction from a two-directory CI checkout (`audit` = Agent 10, `target` = Agent 07):
+
+```sh
+python3 audit/tests/defragmentation/security/test_native_visual_adjudication.py \
+  target/tests/defragmentation/native-e2e/linux_webkit.py
+```
+
+The independent `native-evidence:131` job was added as **eighth** gate to the Agent 10 security matrix. Correct solution: Agent 07/00 should expose the real rejection as an accessible text alert; otherwise emit `NOT TESTED` until the required independent screenshot review is recorded. Keep legitimate draft/recovery and Queue assertions. Corresponding QA issue comment: https://github.com/MousaXD/scriptotar/pull/131#issuecomment-6978066315 .
+
+### Source-provenance defect in PR #124's audit run
+
+Audit branch CI [run #44297864912](https://github.com/MousaXD/scriptotar/actions/runs/44297864912) printed **`PR #114 feature SHA: f42eff03051c43f4b919763a8950b01758afd36f`** for combined tests, although the integration branch had advanced to `7af95c574643c14565a5c10d0be2cc78c5e57254`. The workflow was using the PR #124 event's stale `base.sha`, so those red combined results prove behavior at **f42**, not at **7af**.
+
+Agent 10's workflow now uses a dedicated `pin-integration` job to resolve the live integration HEAD **once**, feeds that SHA to both combined jobs, rejects stale requested SHAs, and requires a `verify-pinned-integration` job to verify the branch did not move during execution. Any missing job or changed SHA is NO-GO rather than a green certification.
+
+**Latest audit branch source (after CI pin change, before this documentation append):** `1a442fd3cb20583b30f54dae5863eeff0d0568c1`. The new eight-gate workflow on this branch had **not completed** at observation. Do **not** upgrade the new `native-evidence` regression or exact-head matrix to PASS without its actual log, audit SHA, feature SHA and full result.
+
+**Release veto unchanged:** npm high-severity advisory unremediated (Agent 11 report-only branch); installed Linux/Windows acceptances not fully green; public paid provider remains hard-disabled pending separate live pricing, cross-process authorization and remote receipts certification.
