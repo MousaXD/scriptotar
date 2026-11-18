@@ -285,6 +285,27 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('failed-valid-three-angles-scrolled', code)
         self.assertIn('if count != 3:', code)
 
+    def test_windows_native_error_requests_have_fresh_alert_and_full_sqlite_proof(self):
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledAngleRejectionAlerts(", source)
+        self.assertIn("function Get-InstalledQueueRejectionAlerts(", source)
+        self.assertIn("Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts", source)
+        self.assertIn("if ($priorAngleAlerts.Count -ne 0)", source)
+        self.assertIn("$beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("if ($beforeAnglesCanonical -cne $afterAnglesCanonical)", source)
+        self.assertIn("$beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$report.denied_url_canonical_snapshot", source)
+        self.assertIn("$freshQueueAlerts = @(", source)
+        self.assertIn("$_ -cnotin $priorQueueAlerts", source)
+        self.assertIn("elif kind == \"snapshot\":", source)
+        self.assertIn("canonical_records_snapshot(Path(root))", source)
+        self.assertLess(
+            source.index("$afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'"),
+            source.index("if (-not $deniedError)"),
+        )
+
     def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
         # A SetFocus/SendKeys-only URL entry left the actual installed
         # WebView2 Media URL field at its placeholder in run #44308361975.
@@ -303,7 +324,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('if ($actual -cne $url)', helper)
         self.assertNotIn('SetValue(', helper)
         self.assertIn(
-            "Paste-InstalledQueueUrl $arabicHwnd 'file:///scriptotar-native-qa-denied-media.mp4'",
+            "Paste-InstalledQueueUrl $arabicHwnd $rejectedUrl",
             source,
         )
         self.assertNotIn(
