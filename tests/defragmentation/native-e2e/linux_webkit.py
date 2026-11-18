@@ -278,19 +278,39 @@ def canonical_records_snapshot(data_dir: Path) -> dict:
     return {"digest": digest, "tables": tables}
 
 
+# Real installed WebKitGTK (Agent 00 run #44313725742) sometimes maps
+# Svelte role=alert to an AT-SPI "image map". Admit that provider mapping ONLY
+# for an exact production-localized error label. Never admit an arbitrary
+# similarly named button/image map as a native rejection.
+PRODUCTION_ERROR_LABELS = frozenset({
+    "The angle response is invalid or its Study evidence changed.",
+    "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
+    "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
+    "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
+})
+
+
 def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
-    """Only actual named AT-SPI alert nodes, never unrelated text or screenshots."""
+    """Find current installed semantic alert names, including strict WebKit mapping.
+
+    An ImageMap node is evidence of accessible displayed text only when its
+    exact name matches production's error. This cannot authenticate the
+    underlying Tauri invocation; separate request ID proof is still required.
+    """
     found = set()
     for node in ax.nodes():
         try:
-            if "alert" not in node.getRoleName().lower():
-                continue
+            role = node.getRoleName().lower()
             label = (node.name or "").strip()
-            if not label:
+            if not label and "alert" in role:
                 try:
                     label = node.queryText().getText(0, -1).strip()
                 except Exception:
                     continue
+            if role == "image map" and label not in PRODUCTION_ERROR_LABELS:
+                continue
+            if "alert" not in role and role != "image map":
+                continue
             if label and any(word in label.lower() for word in keywords):
                 found.add(label[:400])
         except Exception:
