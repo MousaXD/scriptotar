@@ -4,6 +4,39 @@
 // Source-scoped revocation is not merely an editor UI preference: a revoked
 // source must not gain NEW evidence/draft links through other repository APIs.
 // Preexisting immutable evidence and draft provenance must remain readable.
+
+// Read the *actual* canonical SQLite file in query-only mode. Row counts alone
+// miss unauthorized changes to private drafts, provider ledgers and audit text.
+fn independent_revoked_database_snapshot(
+    db: &SqliteStore,
+) -> Vec<(String, Vec<Vec<String>>)> {
+    use rusqlite::OpenFlags;
+    let conn = Connection::open_with_flags(db.path(), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .expect("canonical app SQLite must open read-only");
+    conn.pragma_update(None, "query_only", "ON").unwrap();
+    let mut index = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table'          AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).unwrap();
+    let names = index.query_map([], |row| row.get::<_, String>(0))
+        .unwrap().map(|row| row.unwrap()).collect::<Vec<_>>();
+    assert!(names.iter().any(|table| table == "study_sources"));
+    assert!(names.iter().any(|table| table == "study_evidence"));
+    assert!(names.iter().any(|table| table == "agent_audit_events"));
+    names.into_iter().map(|table| {
+        let quoted = table.replace('"', "\"\"");
+        let mut stmt = conn.prepare(&format!("SELECT * FROM \"{quoted}\"")).unwrap();
+        let columns = stmt.column_count();
+        let mut rows: Vec<Vec<String>> = stmt.query_map([], |row| {
+            (0..columns).map(|col| {
+                let field = row.get_ref(col)?;
+                Ok(format!("{field:?}"))
+            }).collect::<rusqlite::Result<Vec<String>>>()
+        }).unwrap().map(|row| row.unwrap()).collect();
+        rows.sort();
+        (table, rows)
+    }).collect()
+}
+
 #[test]
 fn independent_revoked_source_cannot_acquire_new_evidence() {
     let (_scratch, db, owner, _foreign) = fixture();
@@ -47,6 +80,7 @@ fn independent_revoked_source_cannot_acquire_new_evidence() {
         "revocation deleted historical evidence",
     );
 
+    let snapshot_before_denial = independent_revoked_database_snapshot(&db);
     // The same revoked source ID is still an immutable historical identity.
     // This cannot confer fresh authorization on a future mutation.
     let rejected = db.add_evidence_reference(
@@ -71,6 +105,8 @@ fn independent_revoked_source_cannot_acquire_new_evidence() {
     let persisted_evidence = db.list_evidence_references(owner.id, study.id).unwrap();
     assert_eq!(persisted_evidence.len(), 1);
     assert_eq!(persisted_evidence[0].id, historic_evidence.id);
+    assert_eq!(independent_revoked_database_snapshot(&db), snapshot_before_denial,
+        "denied evidence write modified canonical SQLite rows");
 }
 
 #[test]
@@ -104,12 +140,15 @@ fn independent_revoked_source_cannot_acquire_new_draft_link() {
 
     // An immutable historic link remains readable; no new link may be created
     // after permission withdrawal even through the direct storage API.
+    let snapshot_before_denial = independent_revoked_database_snapshot(&db);
     let attempted = db.attach_source_to_draft(owner.id, fresh.id, source.id);
     assert!(attempted.is_err(),
         "FAIL OPEN: canonical DB created new draft-source link after revocation");
     assert_eq!(db.get_study(owner.id, study.id).unwrap(), revoked);
     assert_eq!(db.list_draft_source_ids(owner.id, historic.id).unwrap(), vec![source.id]);
     assert!(db.list_draft_source_ids(owner.id, fresh.id).unwrap().is_empty());
+    assert_eq!(independent_revoked_database_snapshot(&db), snapshot_before_denial,
+        "denied draft link modified canonical SQLite rows");
 }
 
 #[test]
@@ -139,6 +178,7 @@ fn independent_revoked_origin_cannot_be_reselected_by_editor_bundle() {
     let after = db.get_study(owner.id, study.id).unwrap();
     let original_draft = db.get_draft(owner.id, draft.id).unwrap();
 
+    let snapshot_before_denial = independent_revoked_database_snapshot(&db);
     let proposed = StudyEdit {
         title: "Forged reattachment".into(),
         goal: "Never save".into(),
@@ -162,6 +202,8 @@ fn independent_revoked_origin_cannot_be_reselected_by_editor_bundle() {
     assert_eq!(db.get_study_source(owner.id, study.id, source.id).unwrap(), tombstone);
     assert_eq!(db.get_draft(owner.id, draft.id).unwrap(), original_draft);
     assert!(db.list_draft_source_ids(owner.id, draft.id).unwrap().is_empty());
+    assert_eq!(independent_revoked_database_snapshot(&db), snapshot_before_denial,
+        "denied bundle reselect modified canonical SQLite rows");
 }
 
 #[test]
@@ -202,6 +244,7 @@ fn independent_revoked_source_cannot_gain_job_or_clone_lineage() {
     );
     assert!(db.list_study_source_job_ids(owner.id, study.id, source.id).unwrap().is_empty());
 
+    let snapshot_before_denial = independent_revoked_database_snapshot(&db);
     // Independent of the direct evidence and draft-link tests: both these
     // lower-level APIs can create new provenance through a revoked tombstone.
     assert!(
@@ -235,4 +278,6 @@ fn independent_revoked_source_cannot_gain_job_or_clone_lineage() {
         "denied new work corrupted historical provenance",
     );
     assert!(db.list_study_source_job_ids(owner.id, study.id, source.id).unwrap().is_empty());
+    assert_eq!(independent_revoked_database_snapshot(&db), snapshot_before_denial,
+        "denied job/candidate/clone operations modified any canonical SQLite row");
 }
