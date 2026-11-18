@@ -159,7 +159,7 @@ jobs:
   verify-pinned-integration:
     name: "Security / exact SHA remains current after the matrix"
     if: always()
-    needs: [pin-integration, pin-features, feature-security]
+    needs: [pin-integration, pin-features, feature-security, audit-unittest-discovery]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -168,12 +168,13 @@ jobs:
         env:
           PINNED_SHA: ${{ needs.pin-integration.outputs.sha }}
           MATRIX_RESULT: ${{ needs.feature-security.result }}
+          DISCOVERY_RESULT: ${{ needs.audit-unittest-discovery.result }}
           PIN_RESULT: ${{ needs.pin-integration.result }}
           FEATURE_PIN_RESULT: ${{ needs.pin-features.result }}
           FEATURE_SHAS: ${{ needs.pin-features.outputs.shas }}
         run: |
           set -euo pipefail
-          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success ]] ||
+          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success && "$DISCOVERY_RESULT" == success ]] ||
             { echo "One or more independent security gates did not pass"; exit 1; }
           [[ "$PINNED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             { echo "Missing exact integration SHA"; exit 1; }
