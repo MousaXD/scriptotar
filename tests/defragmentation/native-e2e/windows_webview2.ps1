@@ -1493,11 +1493,18 @@ try {
             Start-Sleep -Milliseconds 350
           } while ([DateTime]::UtcNow -lt $deadline)
           $afterReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          # Preserve post-click canonical evidence even if native UIA readback
+          # throws during the additional private Study non-disclosure check.
+          $report.foreign_study_reference_probe['canonical_after'] = (
+            $afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
+          $foreignDraftEmpty = ((Read-InstalledEdit $restoredHwnd 'Script draft').Length -eq 0)
           $report.foreign_study_reference_probe = @{
-            status = $(if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical) { 'PARTIAL' } else { 'FAIL' })
+            status = $(if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical -and
+                           $foreignDraftEmpty) { 'PARTIAL' } else { 'FAIL' })
             native_input_readback = 'exact ValuePattern verified'
             denial_accessible_text_new = $denied
             canonical_unchanged = ($beforeReferenceCanonical -ceq $afterReferenceCanonical)
+            foreign_draft_text_absent = $foreignDraftEmpty
             canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
             canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
             preexisting_denial_count = $priorDenial.Count
@@ -1513,8 +1520,9 @@ try {
             })
           }
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-foreign-study-reference-denial.png')
-          if (-not $denied -or $beforeReferenceCanonical -cne $afterReferenceCanonical) {
-            throw 'Installed foreign A reference did not produce fresh denial without canonical mutation'
+          if (-not $denied -or $beforeReferenceCanonical -cne $afterReferenceCanonical -or
+              -not $foreignDraftEmpty) {
+            throw 'Installed foreign A reference lacked host-correlated denial, changed canonical SQLite or disclosed foreign draft in Project B'
           }
           # Restore A and original verified Study for the rest of the journey.
           Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
