@@ -7,6 +7,7 @@ on:
     paths:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
       - 'apps/desktop-ui/scripts/audit-desktop-runtime-exposure.mjs'
+      - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
       - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
@@ -60,6 +61,7 @@ jobs:
           npm run test
           npm run build
           node scripts/audit-desktop-runtime-exposure.mjs
+          node scripts/audit-tauri-bundle-resources.mjs
       - name: Expanded security regression — MUST fail if vulnerable
         run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
       - name: Mandatory unfiltered npm advisory gate — NEVER masked
@@ -382,6 +384,10 @@ jobs:
         run: |
           node --check scripts/audit-desktop-runtime-exposure.mjs
           node scripts/audit-desktop-runtime-exposure.mjs
+      - name: Independently inspect generated Linux and Windows bundle resource configs
+        run: |
+          node --check scripts/audit-tauri-bundle-resources.mjs
+          node scripts/audit-tauri-bundle-resources.mjs
       - name: Explicit non-release scope
         run: |
           echo 'Dev-only dependency graph/static bundle absence does not prove parser safe.'
