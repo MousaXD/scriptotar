@@ -871,9 +871,10 @@ async fn interpret_study_angles(
                     _ => None,
                 };
                 let fallback = command_error(error);
-                code.map_or_else(|| fallback.clone(), |code| {
-                    native_denial(code, request_id.as_deref(), fallback)
-                })
+                match code {
+                    Some(code) => native_denial(code, request_id.as_deref(), fallback),
+                    None => fallback,
+                }
             })
     })
     .await
