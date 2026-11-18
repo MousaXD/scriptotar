@@ -116,13 +116,14 @@ The benchmark-only tests/defragmentation/benchmarks/native_ui_trace.py parses JS
 
 - evidence_kind = externally-observed-installed-a11y-action
 - source_sha, package_sha256, executable_sha256, fixture_sha256
+- host_evidence_sha256 (SHA-256 of the exact native QA runner's host metadata file), native_qa_run_url (the exact GitHub installed QA run)
 - session_id, trial_id, native_provider (linux-webkitgtk-atspi or windows-webview2-uia)
 - study_count (100, 1000, 10000) and cache_state (cold-rebooted, cold-cache-dropped, warm-cache, unknown)
 - action (cold_start_window, warm_start_window, studio_actionable, project_switch, study_open, candidate_typing, candidate_save, candidate_reopen, source_navigation, transcript_navigation, gui_interaction)
 - start_monotonic_ns and completion_monotonic_ns as a same-clock ordered action/completion pair
 - start_evidence_id and completion_evidence_id referencing Agent 07's independent UIA/AT-SPI observations.
 
-It rejects unexpected secret fields, mock labels, invalid/mismatched hashes, bad clocks, duplicate trial/action tuples, invalid cache/start conditions, wrong provider and Study count. It never pools different fixtures, actions, study counts, providers or cache states. Default minimum is 10 independent successful comparable samples per group. Smaller groups return INSUFFICIENT_TRIALS and null p50/p95 rather than unsupported numbers. It preserves raw timestamp samples and uses nearest-rank p95.
+It rejects unexpected secret fields, mock labels, invalid/mismatched hashes, forged or missing host evidence references, invalid run URLs, bad clocks, duplicate trial/action tuples, invalid cache/start conditions, wrong provider and Study count. It never pools different QA runs, host metadata digests, fixtures, actions, study counts, providers or cache states. Agent 07 must preserve the full OS build, CPU, RAM and WebView runtime metadata file whose SHA-256 is referenced by host_evidence_sha256; an unverified digest or GitHub URL is not a trusted host attestation. Default minimum is 10 independent successful comparable samples per group. Smaller groups return INSUFFICIENT_TRIALS and null p50/p95 rather than unsupported numbers. It preserves raw timestamp samples and uses nearest-rank p95.
 
 Command with real independently attested Agent 07 input (the tool does NOT create traces):
 
