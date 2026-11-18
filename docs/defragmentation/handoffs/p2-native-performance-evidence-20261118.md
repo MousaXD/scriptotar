@@ -136,3 +136,24 @@ The parser validates FORMAT and consistency only. Provider labels, evidence IDs 
 Agent 07 controls installed WebKitGTK/AT-SPI and Windows WebView2/UIA sessions; Agent 00 controls canonical app database layout and any authentic Tauri IPC instrumentation. Agent 08 can attach the existing read-only native_attach.py during a real Agent 07 installed session; it cannot substitute local Python process probes or mock/frontend traces. Await 10 comparable repeats per scenario, cold/warm control, authentic fixture and binary hash matches, native memory PSS/private working-set observations and native UI milestones. IPC latency remains NOT TESTED absent authentic command boundary instrumentation. Do not modify production solely due SQL temp sorting.
 
 Branch instrumentation is independently testable; release-native performance certification remains BLOCKED / NOT TESTED until Agent 07 supplies installed-host evidence. PR #127 stays DRAFT; no merge to main, release, authorization, or paid egress.
+
+## Source-derived safe synthetic installed database placement (new Agent 08 tooling)
+
+Inspected integrated production source at 5ed385d09092d2c94a1bd86cb56888d96df0bb5e:
+
+- apps/desktop/src-tauri/src/lib.rs:1541-1543 resolves an explicit SCRIPTOTAR_DATA_DIR or Tauri app.path().app_data_dir().
+- apps/desktop/src-tauri/src/lib.rs:1558 passes that directory to AppServices::new_with_job_notifier.
+- apps/desktop/src-tauri/src/services.rs:112-117 opens data_dir/scriptotar.sqlite3 and performs current integration migrations.
+- The installed backend smoke also uses SCRIPTOTAR_DATA_DIR (lib.rs:1525-1534), but does not establish graphical WebView readiness.
+
+**New benchmark-only tool:** tests/defragmentation/benchmarks/stage_installed_fixture.py verifies a source fixture and JSON manifest from the already existing app-migrated 100/1k/10k synthetic SQL generator. It demands matching exact source SHA and fixture digest/size, schema version 12, complete core/integration migration ledgers, correct canonical Study table counts, synthetic-only titles and project identity, valid foreign keys/SQLite integrity, and source + destination scratch directories each marked by a pre-existing .scriptotar-benchmark-only file containing SYNTHETIC_ONLY. It refuses symlinks, existing target databases/SQLite sidecars and writes an exclusive new 0600 destination data_dir/scriptotar.sqlite3. No ordinary user's database may be used. It preserves a separate staging JSON receipt; it does not start the app, invoke Tauri, claim real migrated Rust execution from a forged ledger or certify UI.
+
+For each N=100/1000/10000, after the exact-head SQL generator has emitted scriptotar-synthetic-N.sqlite3 and its manifest, create a fresh **separate** destination directory with the scratch sentinel, then invoke the staging tool:
+
+    python3 -m tests.defragmentation.benchmarks.stage_installed_fixture --fixture "$SQL_SCRATCH/scriptotar-synthetic-N.sqlite3" --manifest "$SQL_SCRATCH/scriptotar-synthetic-N.json" --data-dir "$FRESH_APP_DATA_DIR" --study-count N --source-sha "$EXACT_INSTALLED_SOURCE_SHA" --output "$FRESH_APP_DATA_DIR/staging-proof.json"
+
+The *actual installed package* must run with SCRIPTOTAR_DATA_DIR pointing to FRESH_APP_DATA_DIR. Agent 07 must independently attest that live installed PID, package/executable/source hashes, real window/UIA/AT-SPI state, and read-only canonical Study counts/schema after app startup match the staged fixture; existence of the file and receipt are insufficient. Use a new app-data directory per size and trial where required to avoid cache/state contamination. The package's exact source SHA must match the fixture build source SHA; do not reuse older SQL artifact databases as exact-source native experiments.
+
+The dedicated Linux/Windows migrated SQL smoke workflow now stages all three 100/1,000/10,000 datasets through this tool and uploads *receipt JSONs only*, deliberately excluding large SQLite bytes and never upgrading the SQL workflow to installed/native performance certification. Hermetic unit tests use deliberately simplified schemas to check safety behaviors only; **only the real Rust-migration workflow** can support app-migrated fixture claims.
+
+Remaining external dependency: Agent 07 must run genuine installed .deb/NSIS native UI trials using this layout, add 10 comparable actual monotonic repetitions and concurrent attached private memory metrics; Agent 00 owns any real authenticated IPC timing hooks. All installed performance metrics continue to read BLOCKED/NOT TESTED until collected and independently validated. No production optimizations or release approvals have been requested.
