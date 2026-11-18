@@ -1,5 +1,7 @@
 """Contract tests for the evidence collector, NOT native GUI certification."""
 import hashlib
+import subprocess
+import sys
 import sqlite3
 from pathlib import Path
 import tempfile
@@ -633,6 +635,22 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("backend_request_identity = $null", block)
         # The tests above are source-level; not a forged host log or native PASS.
         self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
+
+    def test_agent10_independent_five_native_anti_spoof_attacks(self):
+        # Execute Agent 10's own UNMODIFIED independent source tests on the
+        # exact current checkout, not a checked-in synthetic PASS receipt.
+        # This source-only assurance is not installed native 16/16 proof.
+        native_source = Path(__file__).resolve().parent / "linux_webkit.py"
+        agent10 = Path(__file__).resolve().parents[1] / "security" / "test_native_visual_adjudication.py"
+        self.assertTrue(agent10.is_file(), "Independent security review test is absent")
+        completed = subprocess.run(
+            [sys.executable, str(agent10), str(native_source)],
+            capture_output=True, text=True, timeout=45, check=False,
+        )
+        output = completed.stdout + completed.stderr
+        self.assertEqual(completed.returncode, 0, output)
+        self.assertIn("Ran 5 tests", output)
+        self.assertIn("OK", output)
 
     def test_windows_native_denial_proof_requires_fresh_input_distinct_host_receipts_and_order(self):
         # Source-contract regression only. An installed UIA/real Rust process
