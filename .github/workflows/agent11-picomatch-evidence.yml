@@ -11,6 +11,7 @@ on:
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260-backport.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264-backport.patch'
       - 'apps/desktop-ui/package.json'
@@ -289,11 +290,11 @@ jobs:
           test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
       - name: Verify upstream PR260 source provenance and apply ephemeral parser patch
         run: |
-          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch > scripts/experimental/.ci-pr260-lf.patch
-          test "$(git hash-object scripts/experimental/.ci-pr260-lf.patch)" = dabd989017e6bf0f1decc2d7b49184920ea753cd
-          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-lf.patch
-          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-lf.patch
-          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260-backport.patch > scripts/experimental/.ci-pr260-backport-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr260-backport-lf.patch)" = 740e30bdd7b4263672ccf04c0b68c11fb39ebc07
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 1e992b2d41d91aa62a06f69c3e1dab42a727517c
       - name: Require actual expanded bounded ReDoS corpus to pass
         run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
       - name: Require Svelte, all Vitest and production build compatibility
