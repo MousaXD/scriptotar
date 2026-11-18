@@ -1,3 +1,47 @@
+## 2026-11-18 — Agent 10 continuation: semantic-denial spoofing and pinned feature matrix
+
+**Independent disposition: DRAFT / RELEASE NO-GO / paid egress OFF.** The following is an additional audit checkpoint; previous dated observations remain historical evidence, not live branch status.
+
+### Exact source / completed execution provenance
+
+| Source | Latest inspected immutable SHA | Status |
+| --- | --- | --- |
+| Integration PR #114 | `caafb11d9d082af025c8f567a60e8d103730b8e0` | Agent 00 #133 production fix merged; seven integration independent security jobs PASS; installed and npm gates FAIL |
+| Agent 07 PR #131 | `6981df8c1bf7592d083d9d3bd011f258755b8850` | screenshot-only automatic PASS corrected, but stale semantic-text risk and real native gaps persist |
+| Agent 11 PR #132 | `5b0086d635645a90e8492ed8f624449f65f98364` | report/exploit evidence only, no patched dependency graph |
+| Agent 10 PR #124 | test commit `8909c8e39ddc99ecf8179fcfc5a59068002d8cc2`, followed by workflow hardening | new exact-head matrix has NOT completed |
+
+**Narrow independent rerun:** [Agent 10 run #44300422996, attempt 2](https://github.com/MousaXD/scriptotar/actions/runs/44300422996) reran `native-evidence:131` and **PASS** when job `134816208320` checked out audit **old merge SHA** `28baf36c1560dd10afebe10b8029388a8b578d3d` and Agent 07 exact target `d7173290004b7de4b9906dabdb3c0ee8eebbebee`. It confirms the earlier *screenshot-only/unreviewed* auto-PASS regression is fixed on that QA source, **not** that the later semantic-spoofing regression or installed-host acceptance is certified. The workflow attempt as a whole remains **FAIL** because combined job `134816210945` used old integration `f42eff03051c43f4b919763a8950b01758afd36f` and again found missing paid host registration. Do not mix this old combined red with newer [integration run #44307588806](https://github.com/MousaXD/scriptotar/actions/runs/44307588806) (**seven jobs PASS** on `caafb11d9...`).
+
+### New Agent 10 P0 QA-evidence trust challenge
+
+Added `test_unbound_semantic_flag_is_not_request_correlated_proof` to `tests/defragmentation/security/test_native_visual_adjudication.py`. In Agent 07's current Linux runner, a matching AT-SPI node containing the generic tokens `angle` and `invalid` is accepted as proof without proving it is new, specifically associated with the exact malformed JSON submission, or sourced from that public Rust IPC response. The runner writes a report shape consisting of a generic `proof` description, screenshot filename and `atspi_error_text_exposed: True`. The generic `checked()` accepts this caller-controlled shape as PASS after any successful callback.
+
+**Adversarial test:** supply the same semantic-looking proof record from an unrelated/stale native alert, with no request ID, correlated before/after transition, or backend denial identity. Assert that `checked(report, "error_recovery", ...)` cannot certify PASS. This is a **test-only challenge** expected to expose a residual QA-integrity gap in the inspected code; do not claim confirmed executed RED until a fresh workflow runs. Genuine exact-editor readback and correct adjacent accessibility semantics help but do not alone eliminate stale/unrelated text confusion. Request-correlated denial and read-only canonical nonmutation remain mandatory.
+
+**Test-source provenance hardened:** `independent-security-regressions.yml` now checks out the real invoking Agent 10 PR head rather than GitHub's synthetic `refs/pull/124/merge`; asserts its SHA; independently resolves PRs #131, #118, #119, #128, #121 and #117 to immutable SHAs before running feature jobs; uses the same dynamically pinned PR #114 integration SHA for both combined jobs; and post-checks all branch/PR refs for drift before permitting matrix certification. This requires a **fresh workflow run** to validate the new YAML and all eight jobs. Do not assert the new guard is green on source alone.
+
+### Real installed failures at newer exact SHAs
+
+- Integration `caafb11d9...`: [installed run #44307588562](https://github.com/MousaXD/scriptotar/actions/runs/44307588562) **FAIL** on both Linux and Windows. Linux logs `Malformed three-angle JSON produced no visible native rejection`; Windows overall remains incomplete with mandatory NOT TESTED cases, despite old successful GUI controls. Therefore merging Agent 00 PR #133 did **not** establish installed Linux error recovery.
+- Agent 07 `d7173290004b7de4b9906dabdb3c0ee8eebbebee`: [installed run #44308361975](https://github.com/MousaXD/scriptotar/actions/runs/44308361975) **FAIL** on both OSes. Linux: valid three-angle follow-up produced **0 native AT-SPI card actions** instead of three; image-only case is correctly **NOT TESTED** when semantic proof absent. Windows: `Media URL` UIA edit control **did not receive actual user text** during unsupported-URL recovery. Both platforms still leave forged foreign-project IPC, genuine multi-source acquisition, source revocation, and full RTL/theme adjudication uncertified.
+- Agent 07 `6981df8...` adds unit-contract adjustments including exact input readback; its new installed run must finish before any statement about that SHA. Existing job failures above may not reproduce on newer source, and cannot be carried forward as fresh results.
+
+### Supply-chain blocker strengthened by real exploit evidence
+
+Agent 11's dedicated [Node 22 run #44313324125](https://github.com/MousaXD/scriptotar/actions/runs/44313324125) on `fe13a6a52e4890ca91cda8a35a6202fc35b07e0d` found `picomatch@4.0.7` crafted repeated-extglob inputs **timeout at 1,200ms**, while a benign control completed in 2ms. Clean install/check/tests/build passed, but `npm audit --audit-level=high` failed **8 high findings** and strict patched-version assertion failed. This is operational exploit evidence; do **not** say the compiled desktop runtime is proven attacker-reachable. PR #132 current `5b0086...` is still **report/diagnostic only**, not remediation. Keep original npm supply-chain gate unsuppressed and release NO-GO.
+
+### Ownership and next gates
+
+1. Agent 07: eliminate semantic proof spoofing and make rejection identity/state transitions request-correlated; preserve independent screenshot adjudication. Resolve Linux 0-card recovery and Windows input control failure in installed apps without fake success.
+2. Agent 00: prove complete **before-and-after content snapshots** of canonical draft/version, approvals, receipts/effect attempts and historical audit rows during each denied installed-host request. Counts alone are insufficient. Real foreign-project Tauri IPC authorization, source revocation, and allowed multi-source acquisition remain required.
+3. Agent 11: independently remediate npm advisory with a verified patched graph or report the upstream blocker, never force an unpatched downgrade or suppress audit.
+4. Agent 10: obtain a new complete **current-head eight-gate matrix** using the SHA-pinned workflow and inspect native Linux/Windows artifacts. Any auto-PASS before request-correlated semantic proof is an independent release veto.
+
+**NO-GO remains active. No main merge, no release, no paid-provider egress.**
+
+---
+
 ## 2026-11-18 — Live integration/QA head movement: revised immutable evidence
 
 **This addendum supersedes only the *current-state* assertions in the earlier dated checkpoint; earlier run/shas remain historically correct.** GitHub refs changed during the independent inspection. No fresh current-audit certification or installed-host release acceptance is claimed.
