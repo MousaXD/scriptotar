@@ -103,3 +103,90 @@ The second independent audit output reproduces the exact same root advisory `GHS
 ### Handoff
 
 Agent 00 was notified in [integration PR #114](https://github.com/MousaXD/scriptotar/pull/114#issuecomment-6977582294). This draft PR is a technical security assessment, **not a patch**. Keep it draft until a release-grade patched graph and exact-head audit are available; do not merge it as a fix or clear the production gate.
+
+
+## Follow-up: independent remediation architecture and bounded reproduction (2026-11-18)
+
+**Release decision remains NO-GO.** This extension documents independently reconstructed lockfile edges, the real Tauri packaging boundary, unmerged upstream candidate review, and a reproducible regression tool. It does not assert that a vulnerable upstream dependency was patched.
+
+### Confirmed upstream publication and candidate fixes
+
+- [Official GitHub releases](https://github.com/micromatch/picomatch/releases) still top out at `4.0.7` (published 2026-08-24); [npm published versions](https://www.npmjs.com/package/picomatch?activeTab=versions) list the same `latest` tag.
+- [GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf) applies to `picomatch` through `4.0.7`, with **no published fixed range**. A withdrawn Snyk listing or upstream dispute is not a revoked GitHub advisory.
+- [Upstream issue #247](https://github.com/micromatch/picomatch/issues/247) is open; as of this review, proposed PRs [#237](https://github.com/micromatch/picomatch/pull/237), [#238](https://github.com/micromatch/picomatch/pull/238), [#246](https://github.com/micromatch/picomatch/pull/246), [#259](https://github.com/micromatch/picomatch/pull/259), [#273](https://github.com/micromatch/picomatch/pull/273), and [#274](https://github.com/micromatch/picomatch/pull/274) remain **unmerged**. The latest upstream main commit inspected is from 2026-08-27, not a security patch release.
+- These are **alternative unreviewed approaches**, not an endorsed fix: #237 attempts repetition collapse while preserving many matching semantics; #238 literalizes selected risky patterns and acknowledges uncovered nested forms; #246 adapts a collapse approach to v2; #259 adds broad ambiguity handling with several hundred lines of parser changes; #273 specializes star-literal single-branch cases; #274 uses emitted-repetition metadata and conservative literal fallback. Each has compatibility/security tradeoffs. Do not combine or vendor any blindly.
+
+### Lockfile dependency graph independently reconstructed
+
+At exact original PR HEAD `75b2fb568b4958cc25bde262643b00c240f04961`, `apps/desktop-ui/package-lock.json` has one hoisted `node_modules/picomatch` record, **version `4.0.7`**, `dev: true`, resolved from `https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz`, integrity:
+
+```text
+sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==
+```
+
+Direct dependency edges in the lockfile:
+
+```text
+root -> vite@7.3.7 -> picomatch@4.0.7 (^4.0.3)
+root -> vitest@5.1.0 -> picomatch@4.0.7 (^4.0.7)
+root -> vite@7.3.7 -> tinyglobby@0.2.17 -> picomatch@4.0.7 (^4.0.4)
+root -> vitest@5.1.0 -> tinyglobby@0.2.17 -> picomatch@4.0.7 (^4.0.4)
+root -> svelte-check@4.7.5 -> fdir@6.5.0 --peer--> picomatch (^3 || ^4)
+root -> vite@7.3.7 -> fdir@6.5.0 --peer--> picomatch (^3 || ^4)
+```
+
+The tree contains 177 lockfile package records including root, and all are reachable by manifest dependency traversal. The affected picomatch record and `vite`, `vitest`, `fdir` and `tinyglobby` have `dev: true`. This is a **static reconstruction from the committed lockfile**, not claimed `npm explain` output. The required `npm explain picomatch` and `npm audit --json` must still be captured on a networked clean runner for the selected fix.
+
+### What is and is not reachable
+
+- The Tauri configuration `apps/desktop/src-tauri/tauri.conf.json` runs `npm ci && npm run build` as a **build-time step**, then uses `../../desktop-ui/dist` for `frontendDist`. This is affirmative evidence that the Node dependency graph drives development/build/test tooling rather than being an intentionally bundled Node runtime.
+- No packaged-desktop runtime call chain accepting arbitrary user-supplied glob expressions was established. The production build succeeding is not proof that the library cannot be present in build outputs; no compiled-artifact symbol search or dynamic native reachability test has yet been performed.
+- Build environments, CI, plugins, and future import/research tasks still require a trust-boundary check. A ReDoS input must flow into the **glob pattern**, not just a filename being matched. Static trusted patterns reduce attack reachability but are **not an advisory fix**.
+
+### Bounded, opt-in regression probe
+
+Added `apps/desktop-ui/scripts/probe-picomatch-redos.mjs` on this branch. It runs two fixed malicious patterns, `+(*a)` and `*(*a)`, against a trailing-mismatch input (`'a'.repeat(36) + 'b'`), plus a safe control. Each case executes in a separate Node subprocess killed after 1,200 ms; max child output is capped at 64 KiB. A timeout is an explicit **failure** in `--assert-patched` mode. No hostile regex runs in the parent process.
+
+```sh
+cd apps/desktop-ui
+npm ci
+node scripts/probe-picomatch-redos.mjs --report
+# For a genuine replacement candidate, a mandatory *additional* check:
+node scripts/probe-picomatch-redos.mjs --assert-patched
+npm explain picomatch
+npm audit --json > npm-audit-after.json
+npm audit --audit-level=high
+npm run check
+npm test -- --run
+npm run build
+```
+
+`--report` exits successfully even on a vulnerable match **by design** and loudly reports it; **never use report-only mode as an audit or release gate**. `--assert-patched` is necessary but insufficient: a successful bounded sample cannot prove arbitrary-pattern ReDoS safety, validate capture semantics, or override `npm audit`.
+
+**Actual validation so far:** The probe's JavaScript syntax was checked locally with Node v22.16.0 (`node --check`: PASS). This sandbox lacks the repo's installed dependencies and network npm access, so executing the probe against the actual locked `picomatch@4.0.7` was **not possible locally**. The existing exact-head GitHub runner, not this local check, remains the independent proof of `npm ci` success and audit failure. No fixed dependency graph has been implemented or tested.
+
+### Remediation options ranked (no authorization implied)
+
+| Rank | Path | Security integrity | Compatibility / maintenance cost | Release recommendation |
+| --- | --- | --- | --- | --- |
+| 1 | **Maintainer-published and advisory-cleared picomatch patch** | Best: official source, new npm integrity, independent fix tests | Low if a semver-compatible release | Wait for real release; update lockfile, run full checks, retain evidence |
+| 2 | **Reviewed maintained security fork with verifiable source commit and npm provenance** | Potentially defensible **only after** independent patch review, regression corpus, integrity and policy approval | Medium/high ongoing patch ownership; may require private registry/auditor treatment | Experimental only until owner approves source, maintainership, signature, test corpus and real unfiltered advisory status |
+| 3 | **Dependency-chain replacement without picomatch** | Can eliminate root risk if truly absent | Very high: Vite/Vitest/Svelte replacement and fresh E2E packaging evidence | Avoid as emergency patch; investigate only with dedicated architecture review |
+| — | **Time-boxed owner risk acceptance** | Exposure mitigation, **not remediation** | Low code disruption; residual risk remains | Explicit written exception only; current mandatory audit **stays failing** unless owner separately authorizes a transparent policy change |
+
+A self-published `picomatch@4.0.8` under a private registry is **not** trustworthy merely because its version is above the advisory's last published version. A renamed vulnerable package, semver trick, patched lockfile metadata without code modification, blanket ignore or `npm audit fix --force` cannot be certified. A real fork needs source/patch diff and provenance, bounded plus comprehensive glob semantics/security tests, a reproducible build and cryptographic integrity, controlled maintainer policy, and an auditor that genuinely evaluates that exact artifact.
+
+### Before/after and handoff at this checkpoint
+
+| Evidence | Before | After this investigative follow-up |
+| --- | --- | --- |
+| Declared npm versions / npm lockfile | Unmodified | **Unmodified** |
+| npm high advisories | **8 high / 1 root GHSA** | **8 high / 1 root GHSA remains** (same lockfile; not a newly executed after-audit) |
+| Published upstream fix | None | **None** |
+| Production/native source changes | None | None |
+| Regression evidence | Upstream reproductions, npm audit failure | Added bounded opt-in probe; syntax check PASS, package-level invocation pending networked execution |
+| Release gate | **FAIL** | **FAIL — no waiver or suppression** |
+
+Original Agent 11 exact-head run at `75b2fb568b4958cc25bde262643b00c240f04961`: [Tauri migration integration #44299922352](https://github.com/MousaXD/scriptotar/actions/runs/44299922352) — Rust workspace PASS, Rust/sidecar PASS, Python sidecar tests PASS, Svelte check/test/build PASS, integrated Tauri build PASS, supply-chain **FAIL** at npm advisory, Python **advisory** audit SKIPPED. The new probe/report commit must earn its own exact-head checks before being cited as validated CI.
+
+**Owner decision:** keep PR #132 DRAFT, no merge/release authorization. Prefer waiting for the maintainer's verifiable patch. If timing cannot tolerate that, Agent 00 must explicitly commission a separately reviewed security-fork experiment or perform a documented risk-acceptance process without claiming remediation. Unresolved external advisories remain blocking under current policy.
