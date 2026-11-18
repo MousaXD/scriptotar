@@ -1218,7 +1218,7 @@ try {
           } while ([DateTime]::UtcNow -lt $deadline)
           $afterReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
           $report.foreign_study_reference_probe = @{
-            status = if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical) { 'PARTIAL' } else { 'FAIL' }
+            status = $(if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical) { 'PARTIAL' } else { 'FAIL' })
             native_input_readback = 'exact ValuePattern verified'
             denial_accessible_text_new = $denied
             canonical_unchanged = ($beforeReferenceCanonical -ceq $afterReferenceCanonical)
