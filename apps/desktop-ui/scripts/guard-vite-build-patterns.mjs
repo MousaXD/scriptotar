@@ -68,7 +68,12 @@ function audit() {
     if (!existsSync(path)) findings.push('Missing build contract: '+relative(repo,path));
   }
   if (!findings.length) {
-    const sha256 = createHash('sha256').update(readFileSync(configFile)).digest('hex');
+    // GitHub Windows checkout may convert Git LF to CRLF. Compare canonical
+    // line endings, but preserve fail-closed review for all other bytes.
+    const configText = readFileSync(configFile, 'utf8');
+    if (/\r(?!\n)/.test(configText))
+      findings.push('Unexpected bare-CR Vite config line ending: manual review required');
+    const sha256 = createHash('sha256').update(configText.replace(/\r\n/g, '\n'), 'utf8').digest('hex');
     if (sha256 !== trustedConfigSha256)
       findings.push('Unreviewed Vite config SHA-256 change: inspect all plugin and PostCSS glob sinks BEFORE build');
     const pkg = JSON.parse(readFileSync(packageFile,'utf8'));
