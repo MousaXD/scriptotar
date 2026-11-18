@@ -149,8 +149,8 @@ jobs:
             console.log(pattern, pm.makeRe(pattern).source);
           }
           NODE
-      - name: Exercise candidate with bounded exploit probes
-        run: node scripts/probe-picomatch-redos.mjs --assert-patched
+      - name: Exercise candidate with expanded bounded exploit probes
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
       - name: Check frontend compatibility on experimental candidate
         run: |
           npm run check
