@@ -73,3 +73,8 @@ node scripts/test-tauri-manifest-inventory.mjs
 **Repository owner (required for an exception):** explicitly authorize or reject any exception in writing, specifying the reviewed commit SHA, dev/build-only scope and excluded runtime assumptions, allowed PR treatment, duration/expiry, compensating controls, further evidence conditions, and rescission triggers (a confirmed reachable attacker-supplied glob PATTERN, an upstream fix, a dependency graph change, or new final package contents). **No exception or approval has been granted here.**
 
 **Final disposition:** `BLOCKED AS REMEDIATION` / `DRAFT` / `NO RELEASE AUTHORIZATION`. PR #132 may convey reproducible independent evidence but cannot be represented as a fixed dependency. Preserve all historical commits.
+
+
+## Exact PR-head package provenance extension (2026-11-18)
+
+New read-only Agent11 jobs use the original Linux/Windows packaging workflow runs for the SAME PR head SHA and branch, selected by GitHub Actions metadata. They poll for successful completion, fail closed on absent/failed runs, verify original artifact SHA256SUMS, and independently recompute real .deb/NSIS archive path inventories using the existing validator. Historical pinned-artifact jobs remain intact. These additional jobs are not credited as passing until their exact-head results exist. A PR packaging workflow can checkout a synthetic merge ref even when run metadata shows a given PR head SHA, so this check cannot attest the full checked-out source tree. File names and installer hashes are NOT a binary-content scan, exploit-reachability proof or release certification. Agent10 threat analysis and Agent00 exact-final-integration validation remain required.
