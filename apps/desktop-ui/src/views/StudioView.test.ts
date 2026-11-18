@@ -192,6 +192,46 @@ describe('Content Study Studio', () => {
     expect(await screen.findByText('The opening uses a question')).toBeInTheDocument();
   });
 
+  it('revokes a Study source with confirmation without losing linked evidence or immutable drafts', async () => {
+    const api = createMockClient();
+    const study = await api.createStudy('p-creator-lab', {
+      ...emptyBrief(), title: 'Permission withdrawal', goal: 'Teach an editing concept'
+    });
+    const attached = await api.saveStudy('p-creator-lab', study.id, study.revision, {
+      sources: [{ kind: 'transcript', id: 't-ar' }], draft: 'Original immutable script'
+    });
+    await api.addStudyEvidence('p-creator-lab', study.id, {
+      source: { kind: 'transcript', id: 't-ar' }, claim: 'Old observation', locator: '0:02'
+    });
+    const original = await api.getStudy('p-creator-lab', study.id);
+    expect(original.revision).toBe(attached.revision);
+    const provider = vi.spyOn(api, 'runAi');
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Permission withdrawal' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Revoke source access' }));
+    expect(screen.getByText(/Linked evidence and draft history remain/)).toBeInTheDocument();
+    expect((await api.getStudy('p-creator-lab', study.id)).revision).toBe(original.revision);
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
+    await screen.findByText('Study source access revoked. Historical evidence retained.');
+    const changed = await api.getStudy('p-creator-lab', study.id);
+    expect(changed.sources).toEqual([]);
+    expect(changed.revision).toBe(original.revision + 1);
+    expect(changed.draft).toBe(original.draft);
+    expect(changed.draftVersions).toEqual(original.draftVersions);
+    expect((await api.listStudyEvidence('p-creator-lab', study.id))[0].sourceAvailable).toBe(false);
+    await expect(api.saveStudy('p-creator-lab', study.id, changed.revision, {
+      sources: [{ kind: 'transcript', id: 't-ar' }]
+    })).rejects.toThrow(/Revoked Study source/);
+    await expect(api.revokeStudySourceAccess('p-client-a', study.id, changed.revision,
+      { kind: 'transcript', id: 't-ar' })).rejects.toThrow();
+    expect(await api.getStudy('p-creator-lab', study.id)).toEqual(changed);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it('prepares a local writing prompt with exact saved evidence and makes zero paid calls', async () => {
     const built = vi.fn(async (_input: AiPromptInput) => 'Prepared locally');
     const paid = vi.fn(async (_input: AiPromptInput) => 'Should never run');

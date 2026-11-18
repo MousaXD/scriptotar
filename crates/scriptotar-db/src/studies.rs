@@ -576,6 +576,39 @@ fn evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceReference> {
     })
 }
 
+/// Perform source permission validation on the *same write transaction* that
+/// creates a new evidence or draft link. Historical tombstones remain readable,
+/// but their missing origin FK must never authorize a fresh attachment.
+pub(crate) fn require_available_study_source(
+    db: &Connection,
+    project_id: Uuid,
+    study_id: Uuid,
+    source_id: Uuid,
+) -> RepositoryResult<()> {
+    let sql = format!(
+        "SELECT {SOURCE_COLUMNS} FROM study_sources
+         WHERE id=?1 AND project_id=?2 AND study_id=?3"
+    );
+    let source = db
+        .query_row(
+            &sql,
+            params![
+                source_id.to_string(),
+                project_id.to_string(),
+                study_id.to_string()
+            ],
+            source_row,
+        )
+        .optional()
+        .map_err(db_error)?;
+    match source {
+        Some(source) if source.available => Ok(()),
+        _ => Err(RepositoryError::NotFound(
+            "available Study source permission".into(),
+        )),
+    }
+}
+
 impl SqliteStore {
     pub fn add_evidence_reference(
         &self,
@@ -594,11 +627,14 @@ impl SqliteStore {
                 "invalid evidence timestamp".into(),
             ));
         }
-        self.get_study_source(project_id, study_id, input.study_source_id)?;
-        let db = database(self)?;
-        require_active_study(&db, project_id, study_id)?;
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        require_available_study_source(&tx, project_id, study_id, input.study_source_id)?;
         let id = Uuid::new_v4();
-        db.execute(
+        tx.execute(
             "INSERT INTO study_evidence (
                 id,project_id,study_id,study_source_id,claim,locator,timestamp_seconds,
                 certainty,uncertainty_note,created_at
@@ -617,6 +653,7 @@ impl SqliteStore {
             ],
         )
         .map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
         self.get_evidence_reference(project_id, study_id, id)
     }
 
@@ -788,10 +825,13 @@ impl SqliteStore {
         study_source_id: Uuid,
         job_id: Uuid,
     ) -> RepositoryResult<()> {
-        self.get_study_source(project_id, study_id, study_source_id)?;
-        let db = database(self)?;
-        require_active_study(&db, project_id, study_id)?;
-        let owns_job: bool = db
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        require_available_study_source(&tx, project_id, study_id, study_source_id)?;
+        let owns_job: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM jobs WHERE id=?1 AND project_id=?2)",
                 params![job_id.to_string(), project_id.to_string()],
@@ -801,7 +841,7 @@ impl SqliteStore {
         if !owns_job {
             return Err(RepositoryError::NotFound(format!("job {job_id}")));
         }
-        db.execute(
+        tx.execute(
             "INSERT INTO study_source_jobs(project_id,study_id,study_source_id,job_id,linked_at)
              VALUES(?1,?2,?3,?4,?5)",
             params![
@@ -813,7 +853,7 @@ impl SqliteStore {
             ],
         )
         .map_err(db_error)?;
-        Ok(())
+        tx.commit().map_err(db_error)
     }
 
     pub fn list_study_source_job_ids(
@@ -842,6 +882,105 @@ impl SqliteStore {
             )
             .map_err(db_error)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+    }
+}
+
+impl SqliteStore {
+    /// Revoke one Study's ability to use an attached origin. The origin itself
+    /// remains project-owned; linked evidence/drafts retain their immutable
+    /// provenance and source identity. NULLing the origin FK is the existing
+    /// fail-closed "unavailable" tombstone (not a reassignable reference).
+    ///
+    /// Study revision and tombstone commit in ONE IMMEDIATE transaction, so a
+    /// stale writer cannot consume a revision or accidentally restore access.
+    pub fn revoke_study_source_access(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        expected_revision: i64,
+        kind: StudySourceKind,
+        origin: Uuid,
+    ) -> RepositoryResult<()> {
+        if !matches!(
+            kind,
+            StudySourceKind::Transcript | StudySourceKind::ResearchItem
+        ) {
+            return Err(RepositoryError::Validation(
+                "unsupported Study source permission kind".into(),
+            ));
+        }
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project, study)?;
+        let source: Option<(String, i64)> = tx
+            .query_row(
+                "SELECT id, CASE WHEN kind='transcript' THEN transcript_id IS NOT NULL
+                                 WHEN kind='research_item' THEN research_id IS NOT NULL
+                                 ELSE 0 END
+                 FROM study_sources
+                 WHERE project_id=?1 AND study_id=?2 AND kind=?3 AND reference_id=?4",
+                params![
+                    project.to_string(),
+                    study.to_string(),
+                    kind.as_str(),
+                    origin.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        let (source_id, available) = source.ok_or_else(|| {
+            RepositoryError::NotFound("attached Study source in active project".into())
+        })?;
+        if available == 0 {
+            return Err(RepositoryError::Conflict(
+                "Study source access was already revoked".into(),
+            ));
+        }
+        let now = now_rfc3339();
+        let revised = tx
+            .execute(
+                "UPDATE content_studies SET revision=revision+1, updated_at=?1
+                 WHERE project_id=?2 AND id=?3 AND revision=?4 AND archived_at IS NULL
+                   AND EXISTS(SELECT 1 FROM projects p
+                              WHERE p.id=?2 AND p.archived_at IS NULL)",
+                params![
+                    now,
+                    project.to_string(),
+                    study.to_string(),
+                    expected_revision
+                ],
+            )
+            .map_err(db_error)?;
+        if revised != 1 {
+            return Err(RepositoryError::Conflict(
+                "Study source permission changed; refresh this Study".into(),
+            ));
+        }
+        let revoked = tx
+            .execute(
+                "UPDATE study_sources SET research_id=NULL, transcript_id=NULL
+                 WHERE id=?1 AND project_id=?2 AND study_id=?3
+                   AND ((kind='research_item' AND research_id=?4)
+                     OR (kind='transcript' AND transcript_id=?4))",
+                params![
+                    source_id,
+                    project.to_string(),
+                    study.to_string(),
+                    origin.to_string()
+                ],
+            )
+            .map_err(db_error)?;
+        if revoked != 1 {
+            return Err(RepositoryError::Conflict(
+                "source permission changed before revocation".into(),
+            ));
+        }
+        // The unique provenance fingerprint remains: a later save cannot
+        // silently re-add the same origin to this Study after revocation.
+        tx.commit().map_err(db_error)
     }
 }
 
