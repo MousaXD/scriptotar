@@ -53,7 +53,11 @@ function verify(input) {
 function gh(path, json = true) {
   const repo = process.env.GITHUB_REPOSITORY;
   assert.match(repo || '', /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, 'repository required');
-  const result = spawnSync('gh', ['api', 'repos/' + repo + '/' + path], {
+  // GitHub job logs legitimately contain runner ANSI formatting. gh refuses
+  // terminal escape sequences by default; opt in ONLY for the read-only log
+  // download, never for trusted JSON and never by stripping checkout evidence.
+  const ghArgs = ['api', ...(json ? [] : ['--allow-escape-sequences']), 'repos/' + repo + '/' + path];
+  const result = spawnSync('gh', ghArgs, {
     encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 120000
   });
   if (result.error || result.status !== 0) {
