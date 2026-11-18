@@ -54,7 +54,13 @@ const extendedCases = [
   { label: 'nested wrapper bare star', pattern: '+(@(*))', input: 'a'.repeat(36) + '/', matches: false },
   { label: 'ambiguously repeated character classes', pattern: '+([ab]|b)', input: 'b'.repeat(36) + '/', matches: false },
   { label: 'ambiguously repeated literals', pattern: '+(a|b|ab)', input: 'ab'.repeat(22) + '/', matches: false },
-  { label: 'wrapped nested repeated class', pattern: '+(@(+([ab])))', input: 'a'.repeat(36) + '/', matches: false }
+  { label: 'wrapped nested repeated class', pattern: '+(@(+([ab])))', input: 'a'.repeat(36) + '/', matches: false },
+  // Cross-candidate counterexamples: PR260 has published independent failures on these.
+  // All inputs remain fixed and are evaluated in separately timeout-killable child processes.
+  { label: 'nested negation and suffix', pattern: '+(!(b)a)', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'quantifier after glob wrapper', pattern: '@(*a)+', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'quantifier after raw group', pattern: '(*a)+', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'quantifier after brace group', pattern: '{*a,b}+', input: 'a'.repeat(36) + '/', matches: false }
 ];
 const extended = process.argv.includes('--extended');
 const cases = extended ? [...baselineCases, ...extendedCases] : baselineCases;
