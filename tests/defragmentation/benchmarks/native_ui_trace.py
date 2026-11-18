@@ -55,6 +55,9 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         raise ValueError("missing external native trace")
     groups: dict[tuple, list[dict]] = {}
     unique: set[tuple[str, str, str]] = set()
+    # Relabeling one timing observation with new trial and evidence IDs must
+    # not turn the same monotonic interval into multiple apparent trials.
+    used_time_pairs: set[tuple[str, int, int]] = set()
     # Evidence IDs are scoped to the native driver's session, not to each
     # purported trial. A single accessibility observation cannot prove ten
     # independent trials merely by relabeling the trial_id field.
@@ -108,6 +111,12 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         unique_key = (event["session_id"], event["trial_id"], event["action"])
         if unique_key in unique:
             raise ValueError(f"line {number}: duplicate trial/action")
+        # The labels are self-asserted. Within one observed session, an exact
+        # repeated nanosecond start/end pair is the same interval, not a new
+        # physical interaction. Separate sessions retain their own namespace.
+        time_key = (event["session_id"], start, end)
+        if time_key in used_time_pairs:
+            raise ValueError(f"line {number}: duplicate native monotonic time pair in session")
         evidence_keys = (
             (event["session_id"], event["start_evidence_id"]),
             (event["session_id"], event["completion_evidence_id"]),
@@ -117,6 +126,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         if any(item in used_evidence for item in evidence_keys):
             raise ValueError(f"line {number}: duplicate native evidence ID within session")
         used_evidence.update(evidence_keys)
+        used_time_pairs.add(time_key)
         unique.add(unique_key)
         key = (event["native_provider"], event["action"], event["study_count"],
                event["cache_state"], event["fixture_sha256"],
@@ -156,7 +166,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         "required_trials_per_bucket": min_trials, "event_count": count,
         "groups": buckets,
         "ipc_latency_ms": None,
-        "limitations": "Monotonic clocks must be from the same process per event pair. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
+        "limitations": "Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
     }
 
 
