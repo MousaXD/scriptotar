@@ -2,13 +2,21 @@
 # CI-owned independent feature tests. Run from the GitHub Actions workspace.
 # Never silently skip missing feature implementations.
 set -euo pipefail
-gate="${1:?provider|migration|writing|verification}"
+gate="${1:?provider|migration|receipt-v12|writing|verification|combined-v11|combined|native-evidence}"
 pr="${2:?expected PR number}"
 echo "Audit SHA: $(git -C audit rev-parse HEAD)"
 echo "PR #$pr feature SHA: $(git -C target rev-parse HEAD)"
 test -f target/Cargo.toml || { echo "ERROR: feature checkout missing"; exit 3; }
 
 case "$gate:$pr" in
+  native-evidence:131)
+    # Independently probe Agent 07's actual QA runner from PR #131.
+    # This test MUST fail if unreviewed screenshot-only validation is
+    # auto-certified as a successful installed-app negative path.
+    test -f target/tests/defragmentation/native-e2e/linux_webkit.py
+    python3 audit/tests/defragmentation/security/test_native_visual_adjudication.py \
+      target/tests/defragmentation/native-e2e/linux_webkit.py
+    ;;
   provider:118)
     test -f target/crates/scriptotar-ai/src/provider_consent.rs
     mkdir -p target/tests/defragmentation/security/tests
@@ -44,6 +52,19 @@ PY
       # All original five regressions plus new adversarial and positive
       # provider-scoping, retry, ACK, migration and restart tests.
       cargo test --locked -p scriptotar-db
+    )
+    ;;
+  revocation:137)
+    # Independent source-permission withdrawal security gate on Agent 00's
+    # unmerged production PR #137. Augment only a disposable checkout's real
+    # versioned SQLite fixture, not PR #137's source code or migrations.
+    test -f target/crates/scriptotar-db/tests/content_studies.rs
+    test -f target/crates/scriptotar-db/src/studies.rs
+    test -f audit/tests/defragmentation/security/source_revocation_additional_tests.rs
+    cat audit/tests/defragmentation/security/source_revocation_additional_tests.rs >> target/crates/scriptotar-db/tests/content_studies.rs
+    (
+      cd target
+      cargo test --locked -p scriptotar-db --test content_studies -- --nocapture
     )
     ;;
   migration:119)
@@ -113,6 +134,24 @@ PY
     cp audit/tests/defragmentation/security/tests/provider_wire_boundary.rs target/tests/defragmentation/security/tests/
     cp audit/tests/defragmentation/security/test_study_claim_boundary.py target/tests/defragmentation/security/
     cp audit/tests/defragmentation/security/test_combined_host_wiring.py target/tests/defragmentation/security/
+    # Independently append a host regression into CI's disposable checkout.
+    # This directly exercises AppServices and compares every canonical SQLite
+    # table's *contents* across denied schemes and forged project IDs.
+    # Never change production files, disable the provider fuse, or mock storage.
+    test -f audit/tests/defragmentation/security/host_url_nonmutation_additional_tests.rs
+    python3 - <<'PY'
+from pathlib import Path
+source = Path('target/apps/desktop/src-tauri/src/services.rs')
+body = source.read_text()
+marker = '#[cfg(test)]\nmod tests {'
+assert marker in body, 'missing actual AppServices Rust host fixture'
+closing = body.rfind('}')
+assert closing > body.index(marker), 'missing host fixture close'
+assert not body[closing + 1:].strip(), 'host test module not last in services.rs'
+extra = Path('audit/tests/defragmentation/security/host_url_nonmutation_additional_tests.rs').read_text()
+assert 'independent_host_denied_url_and_foreign_project_preserve_all_canonical_contents' in extra
+source.write_text(body[:closing] + '\n' + extra + '\n' + body[closing:])
+PY
     # Assert production wiring, not merely that feature files exist on disk.
     # Collect the structural authorization failure without skipping Rust host,
     # database and canonical-v11 tests. The final gate MUST stay nonzero.
