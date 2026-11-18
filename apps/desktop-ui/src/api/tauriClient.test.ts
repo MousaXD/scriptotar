@@ -77,6 +77,8 @@ describe('Tauri client command contract', () => {
     await api.reviewStudyScript('project-id', 'study-id', 7, 'angle prompt', '{"angles":[]}',
       'angle-1', 'draft prompt', '{"beats":[]}', false);
     await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
+    await api.revokeStudySourceAccess('project-id', 'study-id', 3,
+      { kind: 'transcript', id: 'transcript-id' });
     await api.listStudyEvidence('project-id', 'study-id');
     await api.addStudyEvidence('project-id', 'study-id', {
       source: { kind: 'transcript', id: 'transcript-id' },
@@ -218,6 +220,10 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
       studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });
+    expect(invokeMock).toHaveBeenCalledWith('revoke_study_source_access', {
+      projectId: 'project-id', studyId: 'study-id', expectedRevision: 3,
+      kind: 'transcript', referenceId: 'transcript-id'
+    });
     expect(invokeMock).toHaveBeenCalledWith('list_study_evidence', { projectId: 'project-id', studyId: 'study-id' });
     expect(invokeMock).toHaveBeenCalledWith('add_study_evidence', { projectId: 'project-id',
       studyId: 'study-id', input: { source: { kind: 'transcript', id: 'transcript-id' },
