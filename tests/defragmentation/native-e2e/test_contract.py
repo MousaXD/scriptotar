@@ -599,6 +599,28 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # The tests above are source-level; not a forged host log or native PASS.
         self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
 
+    def test_windows_studio_text_uses_native_pointer_clipboard_and_exact_uia_readback(self):
+        # Real installed PR #135 QA candidate #44353033303: SetFocus and
+        # direct SendKeys did not deliver even the first Creative goal field.
+        # This regression enforces actual pointer-bound WebView2 focus,
+        # keyboard clipboard paste, and strict UIA native ValuePattern text.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        helper = source.split("function Type-InstalledEdit(", 1)[1].split(
+            "function Paste-InstalledQueueUrl(", 1)[0]
+        self.assertIn("Click-InstalledControl $hwnd $name", helper)
+        self.assertIn("([System.Windows.Automation.ControlType]::Edit) -pointer", helper)
+        self.assertIn("Set-Clipboard -Value $value", helper)
+        self.assertIn("SendWait('^a')", helper)
+        self.assertIn("SendWait('^v')", helper)
+        self.assertIn("[System.Windows.Automation.ValuePattern]::Pattern).Current.Value", helper)
+        self.assertIn("if ($actual -ceq $value) { return }", helper)
+        self.assertIn("for ($attempt = 1; $attempt -le 2; $attempt++)", helper)
+        self.assertIn("$lastFocus", helper)
+        self.assertNotIn("SetValue(", helper)
+        self.assertNotIn("SendWait($value)", helper)
+        self.assertIn("Type-InstalledEdit $arabicHwnd 'Creative goal'", source)
+        self.assertIn("Type-InstalledEdit $arabicHwnd 'Audience'", source)
+
     def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
         # A SetFocus/SendKeys-only URL entry left the actual installed
         # WebView2 Media URL field at its placeholder in run #44308361975.
