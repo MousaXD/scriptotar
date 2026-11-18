@@ -6,6 +6,7 @@ on:
       - agent-11/p0-supply-chain-recovery-20261118
     paths:
       - '.github/workflows/agent11-package-artifact-inventory.yml'
+      - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
   workflow_dispatch:
 
 permissions:
