@@ -288,7 +288,7 @@ PRODUCTION_ERROR_LABELS = frozenset({
     "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
     "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
     "This Study reference cannot be opened in the active project.",
-    "لا يمكن فتح مرجع هذه الدراسة في المشروع النشط.",
+    "لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
 })
 
 
@@ -1335,8 +1335,8 @@ def exercise(args, report: dict, root: Path):
                 verify_canonical_reopened_candidates(
                     root / "data", name_a, study, body, tag + "-copy"
                 )
-                active.choose("PROJECT", name_b)
-                active.heading("Studio")
+                # Restore Project A so subsequent native keyboard/locale
+                # tests continue with the original real Study.
                 return "Partial real installed foreign Study read denial; write IPC not tested"
             try:
                 detail = foreign_study_reference_probe()
