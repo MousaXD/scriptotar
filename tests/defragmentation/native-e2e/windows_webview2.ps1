@@ -1338,9 +1338,16 @@ try {
       try {
         Click-InstalledControl $restoredHwnd 'Settings' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) 12 | Out-Null
-        # SettingsView in this exact app source offers System and Dark only.
-        # A Light label is not invented or accepted as evidence.
-        foreach ($choice in @('System', 'Dark')) {
+        # Detect a genuinely rendered native Light option. Older installed
+        # builds have System/Dark only; System must not be relabeled Light.
+        # Later production PR #136 introduces a separately selectable Light.
+        Click-InstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+        $lightOffered = [bool](Test-InstalledPopupOptionVisible $restoredHwnd 'Light')
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 200
+        $report.visual_capture['explicit_light_option'] = $lightOffered
+        $actualThemeChoices = if ($lightOffered) { @('System', 'Light', 'Dark') } else { @('System', 'Dark') }
+        foreach ($choice in $actualThemeChoices) {
           Choose-InstalledOption $restoredHwnd 'Theme' $choice
           Wait-InstalledComboValue $restoredHwnd 'Theme' $choice
           $saveTheme = Find-ExactInstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
