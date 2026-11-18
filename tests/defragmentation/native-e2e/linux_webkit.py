@@ -915,6 +915,20 @@ def status(report: dict, scenario: str, state: str, reason: str, image: str | No
 def checked(report: dict, key: str, fn):
     try:
         detail = fn()
+        if key == "error_recovery":
+            # A changed screenshot is evidence for human inspection, not
+            # semantic proof that public Tauri IPC rejected the bad input.
+            # This check is deliberately after the callback so all later
+            # no-write/recovery probes can execute and retain their artifacts.
+            proof = report.get("angle_rejection_visual_proof")
+            if (not isinstance(proof, dict)
+                    or proof.get("human_review_required") is True
+                    or proof.get("atspi_error_text_exposed") is not True):
+                raise NativeUnavailable(
+                    "Native angle rejection has no independent semantic "
+                    "AT-SPI proof; a screenshot or unresolved human review "
+                    "must never automatically certify error_recovery"
+                )
         status(report, key, "PASS", str(detail))
         return True
     except NativeUnavailable as exc:
@@ -1320,19 +1334,29 @@ def exercise(args, report: dict, root: Path):
                 if error_text:
                     break
                 time.sleep(0.35)
-            if not error_text:
-                session.screenshot("failed-denied-url-no-error")
-                raise NativeFailure(
-                    "Unsupported URL was submitted through installed Queue, "
-                    "but no native error alert was exposed"
-                )
-            session.screenshot("rejected-url-error")
+            # Run the independent read-only canonical SQLite check even if
+            # the accessible alert is missing. The failure screenshot and
+            # final AT-SPI snapshot are retained for production triage.
             new_count = count_canonical_jobs(root / "data", name_a)
+            report["denied_url_canonical_job_count"] = {
+                "before": old_count, "after": new_count,
+                "unchanged": new_count == old_count,
+            }
             if new_count != old_count:
+                session.screenshot("failed-denied-url-job-created")
                 raise NativeFailure(
                     "Unsupported URL created a canonical job despite GUI rejection "
                     f"(before={old_count}, after={new_count})"
                 )
+            if not error_text:
+                session.screenshot("failed-denied-url-no-error")
+                raise NativeFailure(
+                    "Unsupported URL was submitted through installed Queue; "
+                    "read-only canonical job count is unchanged, but no named "
+                    "native AT-SPI error alert was exposed. A screenshot "
+                    "cannot automatically substitute for semantic evidence"
+                )
+            session.screenshot("rejected-url-error")
             # Recover through ordinary user navigation and readback. Previously
             # edited immutable candidate rows must still hold the exact body.
             a.click("Studio", "button")
