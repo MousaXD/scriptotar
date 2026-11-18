@@ -64,3 +64,25 @@ This is an **independent review of real installed screenshots**, not a new insta
 4. **Error recovery:** identify a safe deterministic *real* recoverable GUI failure route (for example an existing stale-revision conflict or denied operation) that keeps the old SQLite data and visibly supports retry, without modifying production code from the QA branch.
 
 **Final verdict:** `NO-GO`. The normal merge of #126 preserves already proven native code/history but does **not** certify these six gaps or authorize release.
+
+
+## 2026-11-18 — new exact installed native menu captures
+
+**Completed run:** [#44203276678](https://github.com/MousaXD/scriptotar/actions/runs/44203276678). **Installed source:** `18768375908968b3bbdf92ab0f6ad229335368fb`. [Linux review artifact 14383885160](https://github.com/MousaXD/scriptotar/actions/runs/44203276678/artifacts/14383885160), [Windows review artifact 14383736564](https://github.com/MousaXD/scriptotar/actions/runs/44203276678/artifacts/14383736564). **Both result.json reports remain exactly 10 PASS, 0 FAIL, 6 NOT TESTED**. This section records independent screenshot review without rewriting the machine-generated verdict.
+
+| Installed visual artifact | Pixels | SHA-256 |
+| --- | --- | --- |
+| Linux `arabic-locale-menu-open.png` | 1440×900 | `bce13acb3cc2351e49e6d80e2194199bb6606de373919b412eb66ff7a8197c8f` |
+| Linux `dark-theme-menu-open.png` | 1440×900 | `bf9465c03997344581089ad8755d71d2804a4c4de38a00dfe6c8382a81079b26` |
+| Linux `system-theme.png` | 1440×900 | `bac5599f8b3a7328e1460cb46764dcfb83e4e7efcc02742709e269990b2f8c0c` |
+| Windows `windows-arabic-menu-open.png` | 1044×788 | `3e23555b82428f8b800aa2cd950d2c06ee683c96f8a0840b53e12f0be8ae89da` |
+| Windows `windows-theme-menu-open.png` | 1044×788 | `dfb6e9fc2f6b9574cf85b8f05bf693e202de3a1092dad509e8045663ab08e770` |
+| Windows `windows-theme-system.png` | 1044×788 | `37cc127d43fb6ebec7ad494595f1053fc7ce288a26755eafab4f6f64925fa1fb` |
+
+**Visual observations:** Both installed Arabic popup screenshots show the language selector's open menu anchored to the native top-bar trigger without being cut off at the screen boundary. The Arabic Studio content uses a right-side navigation rail, right-aligned headings, form controls and source cards; the left-to-right project ID remains distinguishable. In System and Dark screenshots the upper Settings panels, labels and selectors are readable and their popup options remain inside the application window. Windows uses a noticeably smaller 1044×788 capture and the lower Settings panels are outside the viewport; the screenshots do not prove their scroll behavior or focus state. No evident overlap in the inspected upper Settings controls. This is **partial independent visual evidence only**: unobserved Arabic dialog placement, full scroll/resize/zoom/keyboard focus and full-coverage theme contrast prevent full `arabic_rtl` or `light_dark_visual` PASS.
+
+**CI note:** Exact QA source `187683759` had three unrelated Svelte `svelte-check` errors because it was behind Agent 00's owner fixes. Agent 07 merged integration `0948a45a` into its follow-up with two parents (merge SHA `89bd8c9f`); [general CI #44277978423](https://github.com/MousaXD/scriptotar/actions/runs/44277978423) and [security hygiene #44277978401](https://github.com/MousaXD/scriptotar/actions/runs/44277978401) then **PASSED on that merge HEAD**, but these checks are not native acceptance of subsequent QA commits.
+
+### Gate 4 — real installed error recovery (source implementation; **NOT TESTED**)
+
+Agent 07 QA-only scripts now attempt a rejected `file:` URL using the actual Jobs/Queue GUI and its production network admission policy. The scripts require a visible native error, read-only identical canonical job counts before/after, navigation back to the saved Study, exact script draft text and immutable candidate DB readback. No SQLite seeding or mock IPC is used. A failure of any proof must remain FAIL. **The changed scripts have not completed a newer exact-head installed workflow yet**; do not promote `error_recovery` to PASS until a report and screenshot with the precise QA HEAD exist. Security and other visual/source scenarios remain NOT TESTED.
