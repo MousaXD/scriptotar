@@ -1977,7 +1977,7 @@ mod native_denial_identity_tests {
                 RepositoryError::NotFound("project is not active".into()),
                 None,
             ),
-            "project is not active"
+            "not found: project is not active"
         );
     }
 
