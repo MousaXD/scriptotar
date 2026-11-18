@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/agent11-package-artifact-inventory.yml'
       - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
+      - 'apps/desktop-ui/scripts/attest-pr-package-checkout.mjs'
       - 'apps/desktop-ui/src/**'
       - 'apps/desktop-ui/vite.config.ts'
       - 'apps/desktop/src-tauri/**'
@@ -144,6 +145,13 @@ jobs:
       - name: Verify original installed artifact exact source identity
         run: |
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LINUX_RUN_ID" --jq '.head_sha')" = "$GITHUB_SHA"
+      - name: Verify actual original Linux packager checkout Git TREE matches PR HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check apps/desktop-ui/scripts/attest-pr-package-checkout.mjs
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --self-test
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --run-id "$LINUX_RUN_ID" --pr 132 --job-name "Build and validate Tauri deb" --expected-head "$GITHUB_SHA" --expected-branch "$GITHUB_REF_NAME"
       - name: Download original real Linux package artifact (not rebuilt or fabricated)
         run: |
           mkdir -p "$RUNNER_TEMP/agent11-real-linux"
@@ -206,6 +214,14 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $source.Trim() -ne $env:GITHUB_SHA) {
             throw 'Windows installer is not the exact expected source SHA'
           }
+      - name: Verify actual original Windows packager checkout Git TREE matches PR HEAD
+        run: |
+          node --check apps/desktop-ui/scripts/attest-pr-package-checkout.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Attestor syntax failure' }
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Attestor regression failure' }
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --run-id $env:WINDOWS_RUN_ID --pr 132 --job-name 'Build and smoke-test NSIS setup.exe' --expected-head $env:GITHUB_SHA --expected-branch $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'Package checkout tree cannot be attested to original PR head' }
       - name: Download real installed Windows NSIS artifact
         run: |
           $root = Join-Path $env:RUNNER_TEMP 'agent11-real-windows'
