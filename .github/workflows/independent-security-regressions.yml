@@ -25,6 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Independently certify Agent 07's QA runner cannot mark image-only
+          # rejection evidence as PASS before the required human review.
+          - { gate: native-evidence, pr: 131 }
           - { gate: provider, pr: 118 }
           - { gate: migration, pr: 119 }
           # Verify proposed v12 receipt repair against the entire independent red suite.
@@ -55,8 +58,8 @@ jobs:
           persist-credentials: false
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
-      - name: Set up Python for verification
-        if: matrix.gate == 'verification'
+      - name: Set up Python for independent verification and native evidence
+        if: matrix.gate == 'verification' || matrix.gate == 'native-evidence'
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
