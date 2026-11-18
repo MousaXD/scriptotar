@@ -116,6 +116,53 @@ PY
     )
     ;;
   combined:114)
+    # PR #140 is a test-only correction to PR #124's already-merged audit
+    # module. The target checkout is the *unmodified pinned integration commit*
+    # and still contains the old discovery bug until Agent 00 merges #140.
+    # Simulate that exact owned test correction in this disposable checkout;
+    # never patch a production module and fail if *any other* source differs.
+    python3 - <<'PY'
+from pathlib import Path
+import hashlib
+audit_path = Path('audit/tests/defragmentation/security/test_native_visual_adjudication.py')
+target_path = Path('target/tests/defragmentation/security/test_native_visual_adjudication.py')
+audited = audit_path.read_text()
+original = target_path.read_text()
+old = (
+    'TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else\\n'
+    '              "target/tests/defragmentation/native-e2e/linux_webkit.py").resolve()'
+)
+new = (
+    '# The dedicated SHA-pinned gate invokes this file directly with the Agent 07\\n'
+    '# checkout as argv[1]. Ordinary unittest discovery *imports* this module;\\n'
+    '# its argv[1] is "discover", not a file path. In that case always exercise\\n'
+    '# the actual in-repository native evidence helper rather than opening "discover"\\n'
+    '# or silently skipping these adversarial assertions.\\n'
+    'LOCAL_NATIVE_QA = Path(__file__).resolve().parents[1] / "native-e2e" / "linux_webkit.py"\\n'
+    'TARGET = (Path(sys.argv[1]).resolve()\\n'
+    '          if __name__ == "__main__" and len(sys.argv) > 1\\n'
+    '          else LOCAL_NATIVE_QA)'
+)
+required = [
+    'test_image_only_angle_rejection_cannot_be_autocertified',
+    'test_unbound_semantic_flag_is_not_request_correlated_proof',
+    'test_unrelated_fresh_angle_invalid_alert_is_not_rejection_proof',
+    'test_preexisting_angle_error_cannot_certify_retry',
+    'test_visual_fallback_does_not_hide_human_review_obligation',
+]
+for name in required:
+    assert original.count('def ' + name + '(') == 1, 'missing original independent test: ' + name
+    assert audited.count('def ' + name + '(') == 1, 'audit dropped independent test: ' + name
+if original != audited:
+    assert original.count(old) == 1, 'unexpected integration audit module, refuse to overlay'
+    assert original.replace(old, new) == audited, 'unauthorized modification in candidate audit tests'
+    target_path.write_text(audited)
+    print('Overlaying EXACT Agent 10 PR #140 test-only discovery correction on pinned integration checkout')
+else:
+    print('Exact Agent 10 test-only discovery correction already present in integration')
+print('Audit test source SHA256:', hashlib.sha256(audited.encode()).hexdigest())
+print('Production source and integration Git commit remain unchanged')
+PY
     # This exact PR #114 head must have all feature owners integrated by Agent 00.
     # A missing module is a release-blocking FAIL, not a skipped test.
     for file in \
