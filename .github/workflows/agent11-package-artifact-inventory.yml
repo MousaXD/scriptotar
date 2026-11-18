@@ -85,9 +85,12 @@ jobs:
           $expected = ($record -split '\s+')[0].ToLowerInvariant()
           $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
           if ($expected -ne $actual) { throw 'Downloaded actual installer SHA256 mismatch' }
-          $seven = Get-Command 7z.exe -ErrorAction SilentlyContinue
-          if (-not $seven) { $seven = Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
-          if (-not (Test-Path $seven)) { throw 'Read-only NSIS extractor 7z.exe unavailable; remain NOT CERTIFIED' }
+          $sevenCommand = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          $seven = if ($sevenCommand) { $sevenCommand.Source } else { Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
+          if (-not $seven -or -not (Test-Path -LiteralPath $seven -PathType Leaf)) {
+            throw 'Read-only NSIS extractor binary unavailable; keep installer inventory NOT CERTIFIED'
+          }
+          Write-Host "Read-only NSIS extractor: $seven"
           $listing = Join-Path $root 'NSIS-EXTRACTED-FILES.txt'
           & $seven l -slt $installer.FullName | Set-Content -Encoding utf8 $listing
           if ($LASTEXITCODE -ne 0) { throw 'Read-only NSIS extraction/manifest listing failed; remain NOT CERTIFIED' }
