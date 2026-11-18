@@ -599,6 +599,27 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # The tests above are source-level; not a forged host log or native PASS.
         self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
 
+    def test_windows_native_saved_draft_checks_canonical_before_clicking_autosaved_button(self):
+        # Real installed run #44357622512 showed visible Save changes but its
+        # enabled state raced native Svelte auto-save. A native text edit must
+        # be proven in canonical SQLite before declaring success; button
+        # activation is allowed only when actual saved rows are still missing.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        block = script.split("if ($cases.create_study.status -eq 'PASS') {", 1)[1].split(
+            "if ($cases.edit_save_duplicate_candidate.status -eq 'PASS') {", 1)[0]
+        self.assertIn("Type-InstalledEdit $providerHwnd 'Script draft' $draftBody", block)
+        proof = "Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody"
+        self.assertEqual(block.count(proof), 2)
+        self.assertLess(block.find(proof), block.find(
+            "Click-InstalledControl $providerHwnd 'Save changes'"))
+        self.assertIn("catch {", block)
+        self.assertIn("$saveMode = 'autosave'", block)
+        self.assertIn("$saveMode = 'manual'", block)
+        self.assertIn("$report['native_draft_save_mode'] = $saveMode", block)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates'", script)
+        self.assertNotIn("$saveButton.Current.IsEnabled", block)
+        self.assertNotIn("SetValue(", block)
+
     def test_windows_studio_text_uses_native_pointer_clipboard_and_exact_uia_readback(self):
         # Real installed PR #135 QA candidate #44353033303: SetFocus and
         # direct SendKeys did not deliver even the first Creative goal field.
