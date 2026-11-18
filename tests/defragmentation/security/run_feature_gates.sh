@@ -129,18 +129,18 @@ target_path = Path('target/tests/defragmentation/security/test_native_visual_adj
 audited = audit_path.read_text()
 original = target_path.read_text()
 old = (
-    'TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else\\n'
+    'TARGET = Path(sys.argv[1] if len(sys.argv) > 1 else\n'
     '              "target/tests/defragmentation/native-e2e/linux_webkit.py").resolve()'
 )
 new = (
-    '# The dedicated SHA-pinned gate invokes this file directly with the Agent 07\\n'
-    '# checkout as argv[1]. Ordinary unittest discovery *imports* this module;\\n'
-    '# its argv[1] is "discover", not a file path. In that case always exercise\\n'
-    '# the actual in-repository native evidence helper rather than opening "discover"\\n'
-    '# or silently skipping these adversarial assertions.\\n'
-    'LOCAL_NATIVE_QA = Path(__file__).resolve().parents[1] / "native-e2e" / "linux_webkit.py"\\n'
-    'TARGET = (Path(sys.argv[1]).resolve()\\n'
-    '          if __name__ == "__main__" and len(sys.argv) > 1\\n'
+    '# The dedicated SHA-pinned gate invokes this file directly with the Agent 07\n'
+    '# checkout as argv[1]. Ordinary unittest discovery *imports* this module;\n'
+    '# its argv[1] is "discover", not a file path. In that case always exercise\n'
+    '# the actual in-repository native evidence helper rather than opening "discover"\n'
+    '# or silently skipping these adversarial assertions.\n'
+    'LOCAL_NATIVE_QA = Path(__file__).resolve().parents[1] / "native-e2e" / "linux_webkit.py"\n'
+    'TARGET = (Path(sys.argv[1]).resolve()\n'
+    '          if __name__ == "__main__" and len(sys.argv) > 1\n'
     '          else LOCAL_NATIVE_QA)'
 )
 required = [
