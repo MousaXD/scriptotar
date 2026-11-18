@@ -644,6 +644,7 @@ from linux_webkit import (
     verify_canonical_projects,
     verify_canonical_saved_draft,
     verify_canonical_reopened_candidates,
+    count_canonical_jobs,
 )
 kind, root, a, b, c, copy = sys.argv[2:8]
 if kind == "projects":
@@ -652,6 +653,8 @@ elif kind == "draft":
     print(verify_canonical_saved_draft(Path(root), a, b, c))
 elif kind == "candidates":
     print(verify_canonical_reopened_candidates(Path(root), a, b, c, copy))
+elif kind == "jobs":
+    print(count_canonical_jobs(Path(root), a))
 else:
     raise ValueError("Unsupported canonical installed DB probe")
 '@
@@ -1303,6 +1306,70 @@ try {
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-arabic_locale_control.png')
           Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
         }
+      }
+    }
+    if ($cases.arabic_locale_control.status -eq 'PASS') {
+      try {
+        # Use real installed UIA against the production URL admission path.
+        # file: is deliberately unsupported. This must NOT create a job or
+        # mutate the previously persisted Study/candidates.
+        $beforeJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
+        Click-InstalledControl $arabicHwnd 'Queue' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'Jobs'
+        Type-InstalledEdit $arabicHwnd 'Media URL' 'file:///scriptotar-native-qa-denied-media.mp4'
+        Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
+        $deniedError = ''
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+          $owner = [System.Windows.Automation.AutomationElement]::FromHandle($arabicHwnd)
+          $tree = $owner.FindAll(
+            [System.Windows.Automation.TreeScope]::Subtree,
+            [System.Windows.Automation.Condition]::TrueCondition)
+          foreach ($element in $tree) {
+            try {
+              if ($element.Current.ControlType -ne [System.Windows.Automation.ControlType]::Text -or
+                  $element.Current.IsOffscreen) { continue }
+              $value = [string]$element.Current.Name
+              if ($value.Length -gt 12 -and
+                  $value -match '(?i)(url|scheme|protocol|unsupported|invalid|blocked|not allowed|https?://)' -and
+                  $value -ne 'Supported media URL') {
+                $deniedError = $value
+                break
+              }
+            } catch {
+              continue
+            }
+          }
+          if ($deniedError) { break }
+          Start-Sleep -Milliseconds 350
+        } while ([DateTime]::UtcNow -lt $deadline)
+        if (-not $deniedError) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-denied-url-no-error.png')
+          throw 'Unsupported URL submitted through installed Queue but no visible UIA error text appeared'
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'rejected-url-error.png')
+        $afterJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
+        if ($afterJobs -ne $beforeJobs) {
+          throw "Denied URL mutated canonical job count (before=$beforeJobs, after=$afterJobs)"
+        }
+        Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'Studio'
+        Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
+        Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody
+        $recovered = Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'recovered-studio-after-denial.png')
+        $report.denied_url_error = $deniedError.Substring(0, [Math]::Min(300, $deniedError.Length))
+        $cases.error_recovery = @{
+          status='PASS'
+          reason="Installed production Queue rejected unsupported file URL with visible UIA error, zero new canonical jobs and original Study/candidate recovered ($recovered)"
+        }
+      } catch {
+        $cases.error_recovery = @{
+          status='FAIL'
+          reason="Installed native denied URL recovery: $($_.Exception.Message)"
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-error_recovery.png')
+        Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
   }
