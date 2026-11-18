@@ -332,6 +332,19 @@ class NativeEvidenceContractTests(unittest.TestCase):
             source.index("if (-not $deniedError)"),
         )
 
+    def test_windows_native_negative_case_never_auto_passes_without_host_binding(self):
+        # A genuinely visible but unrelated fresh UIA warning and unchanged
+        # SQLite are insufficient to identify the rejected Tauri request.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$report.error_recovery_observations", script)
+        self.assertIn("backend_request_identity = $null", script)
+        self.assertIn("status='NOT TESTED'", script)
+        self.assertIn("no authoritative Tauri denial ID", script)
+        block = script.split("$report.error_recovery_observations = @", 1)[1]
+        block = block.split("$cases.error_recovery = @", 1)[1]
+        self.assertIn("status='NOT TESTED'", block.split("} catch {", 1)[0])
+        self.assertNotIn("status='PASS'", block.split("} catch {", 1)[0])
+
     def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
         # A SetFocus/SendKeys-only URL entry left the actual installed
         # WebView2 Media URL field at its placeholder in run #44308361975.
