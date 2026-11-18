@@ -6,6 +6,11 @@ on:
       - agent-11/p0-supply-chain-recovery-20261118
     paths:
       - '.github/workflows/agent11-package-artifact-inventory.yml'
+      - '.github/workflows/agent11-vite-pattern-reachability.yml'
+      - 'apps/desktop-ui/scripts/guard-vite-build-patterns.mjs'
+      - 'apps/desktop-ui/scripts/probe-vite-pattern-reachability.mjs'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_DECISION_20261118.md'
       - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
       - 'apps/desktop-ui/scripts/attest-pr-package-checkout.mjs'
       - 'apps/desktop-ui/src/**'

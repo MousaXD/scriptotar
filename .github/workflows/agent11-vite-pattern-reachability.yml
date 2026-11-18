@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/agent11-vite-pattern-reachability.yml'
       - 'apps/desktop-ui/scripts/probe-vite-pattern-reachability.mjs'
+      - 'apps/desktop-ui/scripts/guard-vite-build-patterns.mjs'
   workflow_dispatch:
 
 permissions:
@@ -29,6 +30,11 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '22'
+      - name: PRE-BUILD first-party glob-pattern review (no npm install required)
+        run: |
+          node --check scripts/guard-vite-build-patterns.mjs
+          node scripts/guard-vite-build-patterns.mjs --self-test
+          node scripts/guard-vite-build-patterns.mjs
       - name: Verify branch source identity and clean install
         run: |
           git rev-parse HEAD
