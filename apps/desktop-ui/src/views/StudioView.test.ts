@@ -653,7 +653,11 @@ describe('Content Study Studio', () => {
     await fireEvent.input(textbox, { target: { value: rejected } });
     await fireEvent.click(screen.getByRole('button', { name: 'Validate 3 angles' }));
     const denial = 'The angle response is invalid or its Study evidence changed.';
-    expect(await screen.findByRole('alert', { name: denial })).toHaveTextContent(denial);
+    const visibleDenial = await screen.findByRole('alert', { name: denial });
+    expect(visibleDenial).toHaveTextContent(denial);
+    expect(textbox).toHaveAttribute('aria-invalid', 'true');
+    expect(textbox).toHaveAttribute('aria-describedby', 'studio-angle-error');
+    await waitFor(() => expect(visibleDenial).toHaveFocus());
     expect(screen.queryByText('Incomplete')).not.toBeInTheDocument();
 
     await fireEvent.input(textbox, { target: { value: rejected + ' ' } });
@@ -672,7 +676,9 @@ describe('Content Study Studio', () => {
     interpret.mockRejectedValueOnce('invalid angle response');
     await fireEvent.click(screen.getByRole('button', { name: 'التحقق من الزوايا الثلاث' }));
     const arabicDenial = 'استجابة الزوايا غير صالحة أو تغير دليل الدراسة.';
-    expect(await screen.findByRole('alert', { name: arabicDenial })).toHaveTextContent(arabicDenial);
+    const arabicAlert = await screen.findByRole('alert', { name: arabicDenial });
+    expect(arabicAlert).toHaveTextContent(arabicDenial);
+    await waitFor(() => expect(arabicAlert).toHaveFocus());
     expect(await api.getStudy('p-creator-lab', study.id)).toEqual(original);
     expect(provider).not.toHaveBeenCalled();
 

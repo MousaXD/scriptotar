@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import Checkbox from '../components/ui/Checkbox.svelte';
@@ -64,6 +64,7 @@
   let scriptBusy = false;
   let scriptError = '';
   let angleError = '';
+  let angleErrorElement: HTMLParagraphElement | undefined;
   let angleBusy = false;
   // Invalidate an in-flight validation when its pasted input changes.
   let angleResponseEpoch = 0;
@@ -914,6 +915,11 @@
           responseEpoch === angleResponseEpoch) {
         angleError = t.invalidAngles;
         reviewedAngles = [];
+        // Move keyboard and assistive-tech focus to the actual rejection.
+        // Recheck the scope after the DOM commit so stale replies never steal focus.
+        await tick();
+        if (angleError && studyId === ownerStudy && epoch === promptRequest &&
+            responseEpoch === angleResponseEpoch) angleErrorElement?.focus();
       }
     } finally {
       angleBusy = false;
@@ -1453,6 +1459,8 @@
         <div class="angle-review">
           <label>{t.pasteAngles}
             <textarea rows="7" dir="auto" aria-label={t.pasteAngles}
+              aria-invalid={angleError ? 'true' : undefined}
+              aria-describedby={angleError ? 'studio-angle-error' : undefined}
               maxlength="100000" bind:value={angleResponseJson}
               on:input={() => { reviewedAngles = []; draftAnglePrompt = '';
                 selectedWritingAngleId = ''; reviewedScript = null;
@@ -1464,7 +1472,8 @@
           <button type="button" class="button secondary"
             disabled={angleBusy || preparing || busy || saving || !angleResponseJson.trim()}
             on:click={() => void reviewPastedAngles()}>{t.reviewAngles}</button>
-          {#if angleError}<p role="alert" aria-live="assertive" aria-atomic="true"
+          {#if angleError}<p id="studio-angle-error" bind:this={angleErrorElement} tabindex="-1"
+            role="alert" aria-live="assertive" aria-atomic="true"
             aria-label={angleError} class="studio-error" dir="auto">{angleError}</p>{/if}
           {#if reviewedAngles.length}
             <div class="angle-options">

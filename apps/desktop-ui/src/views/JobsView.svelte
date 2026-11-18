@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { locale } from '../i18n';
   import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
@@ -24,6 +24,7 @@
   let manualPath = '';
   let sourceUrl = '';
   let actionError = '';
+  let actionErrorElement: HTMLParagraphElement | undefined;
   let urlRejected = false;
   let actionStatus = '';
   let busy = false;
@@ -58,7 +59,15 @@
     actionStatus = '';
     try { await action(); }
     catch (error) { actionError = error instanceof Error ? error.message : String(error); }
-    finally { busy = false; }
+    finally {
+      busy = false;
+      if (actionError) {
+        // WebKitGTK can render an alert without exposing a reliably named
+        // native node until it receives focus. Do not alter Rust admission.
+        await tick();
+        if (actionError) actionErrorElement?.focus();
+      }
+    }
   }
 
   async function chooseLocal() {
@@ -258,7 +267,7 @@
   </details>
 </section>
 
-{#if actionError}<p id="queue-action-error" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError} dir="auto" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError} dir="auto" data-i18n-ignore>{actionError}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>

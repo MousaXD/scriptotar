@@ -53,6 +53,7 @@ describe('jobs workspace', () => {
     const message = 'Invalid media URL. Only HTTP and HTTPS URLs are supported.';
     const alert = await screen.findByRole('alert', { name: message });
     expect(alert).toHaveTextContent(message);
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(alert).toHaveAttribute('aria-live', 'assertive');
     expect(alert).toHaveAttribute('aria-atomic', 'true');
     expect(input).toHaveAttribute('aria-invalid', 'true');
@@ -78,6 +79,7 @@ describe('jobs workspace', () => {
     const arabicMessage = 'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.';
     const alert = await screen.findByRole('alert', { name: arabicMessage });
     expect(alert).toHaveTextContent(arabicMessage);
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(alert).toHaveAttribute('dir', 'auto');
     expect(input).toHaveAttribute('aria-invalid', 'true');
     expect(onEnqueueUrl).toHaveBeenCalledTimes(1);
