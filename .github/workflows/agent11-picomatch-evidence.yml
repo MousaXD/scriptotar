@@ -6,6 +6,7 @@ on:
       - agent-11/p0-supply-chain-recovery-20261118
     paths:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
+      - 'apps/desktop-ui/scripts/audit-desktop-runtime-exposure.mjs'
       - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
@@ -53,16 +54,12 @@ jobs:
         run: |
           node --check scripts/probe-picomatch-redos.mjs
           node scripts/probe-picomatch-redos.mjs --report
-      - name: Build and scan static frontend for bundled parser indicators
+      - name: Build and inspect actual Tauri frontend static boundary (never an audit waiver)
         run: |
           npm run check
           npm run test
           npm run build
-          if grep -RIl -E 'picomatch|tinyglobby|fdir' dist; then
-            echo 'Parser-name indicator found in frontend bundle; manual reachability review required'
-          else
-            echo 'No parser-name indicator in static dist; absence alone does not prove runtime unreachability'
-          fi
+          node scripts/audit-desktop-runtime-exposure.mjs
       - name: Expanded security regression — MUST fail if vulnerable
         run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
       - name: Mandatory unfiltered npm advisory gate — NEVER masked
@@ -352,3 +349,37 @@ jobs:
         run: |
           echo 'Experiment is unmerged PR264 source, not an npm-published patched version.'
           echo 'No package-lock modification. Original strict npm audit still FAILS.'
+
+  desktop-frontend-exposure:
+    # Independent, read-only reachability inventory. This never overrides npm audit.
+    name: Static release-input boundary (${{ matrix.os }}) — NOT CERTIFICATION
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Install exact original locked frontend dependencies
+        run: npm ci
+      - name: Build actual static Tauri frontend input
+        run: npm run build
+      - name: Fail if parser module surfaces in output or lockfile runtime edges
+        run: |
+          node --check scripts/audit-desktop-runtime-exposure.mjs
+          node scripts/audit-desktop-runtime-exposure.mjs
+      - name: Explicit non-release scope
+        run: |
+          echo 'Dev-only dependency graph/static bundle absence does not prove parser safe.'
+          echo 'A build tool can still evaluate untrusted globs; independent security review required.'
+          echo 'Original mandatory unfiltered npm advisory gate remains active and must not be bypassed.'
