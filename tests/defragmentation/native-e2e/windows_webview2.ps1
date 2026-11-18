@@ -427,6 +427,24 @@ function Type-InstalledEdit([IntPtr]$hwnd, [string]$name, [string]$value) {
     throw "Installed Edit control '$name' did not receive actual user text"
   }
 }
+function Paste-InstalledQueueUrl([IntPtr]$hwnd, [string]$url) {
+  # Installed WebView2 sometimes keeps the URL placeholder after SetFocus +
+  # SendKeys.SendWait (run #44308361975, attached screenshot + UIA Edit).
+  # Demand an actual HWND-bounded pointer click and native clipboard paste.
+  # Never use ValuePattern.SetValue, JavaScript injection, or direct backend API.
+  Click-InstalledControl $hwnd 'Media URL' ([System.Windows.Automation.ControlType]::Edit) -pointer
+  $field = Find-ExactInstalledControl $hwnd 'Media URL' ([System.Windows.Automation.ControlType]::Edit)
+  $field.SetFocus()
+  Set-Clipboard -Value $url
+  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  Start-Sleep -Milliseconds 750
+  $actual = [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+  if ($actual -cne $url) {
+    throw "Installed Media URL did not receive actual native clipboard input (expected length $($url.Length), actual length $($actual.Length), focused=$($field.Current.HasKeyboardFocus))"
+  }
+}
 function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
   # Never invoke UIA SetValue: it bypasses browser input handlers. SendKeys
   # cannot type literal JSON braces safely, so use real native clipboard paste
@@ -1373,7 +1391,7 @@ try {
         $beforeJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
         Click-InstalledControl $arabicHwnd 'Queue' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'Jobs'
-        Type-InstalledEdit $arabicHwnd 'Media URL' 'file:///scriptotar-native-qa-denied-media.mp4'
+        Paste-InstalledQueueUrl $arabicHwnd 'file:///scriptotar-native-qa-denied-media.mp4'
         Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
         $deniedError = ''
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
