@@ -55,6 +55,10 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         raise ValueError("missing external native trace")
     groups: dict[tuple, list[dict]] = {}
     unique: set[tuple[str, str, str]] = set()
+    # Evidence IDs are scoped to the native driver's session, not to each
+    # purported trial. A single accessibility observation cannot prove ten
+    # independent trials merely by relabeling the trial_id field.
+    used_evidence: set[tuple[str, str]] = set()
     count = 0
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
@@ -104,6 +108,15 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         unique_key = (event["session_id"], event["trial_id"], event["action"])
         if unique_key in unique:
             raise ValueError(f"line {number}: duplicate trial/action")
+        evidence_keys = (
+            (event["session_id"], event["start_evidence_id"]),
+            (event["session_id"], event["completion_evidence_id"]),
+        )
+        if evidence_keys[0] == evidence_keys[1]:
+            raise ValueError(f"line {number}: start/completion reuse the same evidence ID")
+        if any(item in used_evidence for item in evidence_keys):
+            raise ValueError(f"line {number}: duplicate native evidence ID within session")
+        used_evidence.update(evidence_keys)
         unique.add(unique_key)
         key = (event["native_provider"], event["action"], event["study_count"],
                event["cache_state"], event["fixture_sha256"],
