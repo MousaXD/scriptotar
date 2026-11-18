@@ -18,7 +18,7 @@ try {
 const assertPatched = process.argv.includes('--assert-patched');
 const reportOnly = process.argv.includes('--report');
 if (assertPatched === reportOnly) {
-  console.error('Usage: node scripts/probe-picomatch-redos.mjs --report|--assert-patched');
+  console.error('Usage: node scripts/probe-picomatch-redos.mjs --report|--assert-patched [--extended]');
   process.exit(2);
 }
 
@@ -36,11 +36,28 @@ const childSource = String.raw`
 // The trailing mismatch is essential. All inputs are fixed, not user-controlled.
 // Run each matcher in a killable subprocess; never invoke a hostile pattern
 // in the parent process, including for warm-up or compilation.
-const cases = [
+const baselineCases = [
   { label: 'single-branch plus-star', pattern: '+(*a)', input: 'a'.repeat(36) + 'b', matches: false },
   { label: 'single-branch star-star', pattern: '*(*a)', input: 'a'.repeat(36) + 'b', matches: false },
   { label: 'safe control', pattern: '+(a|b)', input: 'abab', matches: true }
 ];
+
+
+// Adversarial variants beyond the original GHSA minimal reproduction.
+// A final slash cannot be matched by default segment-scoped glob wildcards.
+// Keep all hostile patterns in individually killable subprocesses.
+const extendedCases = [
+  { label: 'single branch suffix-star', pattern: '+(a*)', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'single branch infix-stars', pattern: '+(*a*)', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'repeated multi-branch wildcards', pattern: '+(*a|b)', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'nested wrapper star', pattern: '+(@(*a))', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'nested wrapper bare star', pattern: '+(@(*))', input: 'a'.repeat(36) + '/', matches: false },
+  { label: 'ambiguously repeated character classes', pattern: '+([ab]|b)', input: 'b'.repeat(36) + '/', matches: false },
+  { label: 'ambiguously repeated literals', pattern: '+(a|b|ab)', input: 'ab'.repeat(22) + '/', matches: false },
+  { label: 'wrapped nested repeated class', pattern: '+(@(+([ab])))', input: 'a'.repeat(36) + '/', matches: false }
+];
+const extended = process.argv.includes('--extended');
+const cases = extended ? [...baselineCases, ...extendedCases] : baselineCases;
 
 let failed = false;
 for (const entry of cases) {
