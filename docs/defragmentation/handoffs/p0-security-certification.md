@@ -1,3 +1,13 @@
+## 2026-11-18 — Production Queue alert recovery merged; new integration gate pending
+
+**Live integration source moved again** to `5ed385d09092d2c94a1bd86cb56888d96df0bb5e` after the previously certified `caafb11d9d082af025c8f567a60e8d103730b8e0` checkpoint. The newer Agent 00 commit modifies `apps/desktop-ui/src/i18n/messages.ts`, `apps/desktop-ui/src/views/JobsView.svelte` and its tests. On an actual rejected unsupported `file:` URL response, the Queue now exposes localized EN/AR text, `role="alert"`, `aria-live="assertive"`, `aria-atomic="true"`, `aria-label`, `aria-invalid` and `aria-describedby`; the implementation still sends the URL to Rust `onEnqueueUrl` for authoritative admission rather than silently accepting frontend validation. Unit tests cover English string rejection and Arabic `Error` rejection. **This is a source-level improvement only.**
+
+The freshly dispatched exact-HEAD integration workflows include [native installed acceptance #44313725742](https://github.com/MousaXD/scriptotar/actions/runs/44313725742), [independent security #44313725766](https://github.com/MousaXD/scriptotar/actions/runs/44313725766), and [Tauri migration/npm audit #44313726305](https://github.com/MousaXD/scriptotar/actions/runs/44313726305). At last inspection these were queued; **no new completed PASS is asserted**. The previous `caafb...` 7/7 security PASS is historical and cannot be transferred to `5ed385d09092d2c94a1bd86cb56888d96df0bb5e`. Native Windows input/negative-path behavior and all required installed cross-project/revocation scenarios still require new exact-head evidence.
+
+**Release veto unchanged: DRAFT / NO-GO / paid egress OFF.**
+
+---
+
 ## 2026-11-18 — Agent 10 continuation: semantic-denial spoofing and pinned feature matrix
 
 **Independent disposition: DRAFT / RELEASE NO-GO / paid egress OFF.** The following is an additional audit checkpoint; previous dated observations remain historical evidence, not live branch status.
