@@ -493,6 +493,58 @@ function Wait-InstalledAngleRejection([IntPtr]$hwnd, [string[]]$priorAlerts) {
   } while ([DateTime]::UtcNow -lt $deadline)
   throw 'Malformed three-angle JSON has no NEW installed UIA validation alert for this request'
 }
+# Observe actual installed GUI process stderr; no synthetic Tauri IPC.
+$script:installedDenialLog = $null
+$script:installedLaunchIndex = 0
+function Start-InstalledDesktop([string]$exe) {
+  $script:installedLaunchIndex++
+  $script:installedDenialLog = Join-Path $EvidenceDir (
+    'installed-host-stderr-' + $script:installedLaunchIndex + '.txt')
+  return Start-Process -FilePath $exe -PassThru -RedirectStandardError $script:installedDenialLog
+}
+function Get-InstalledHostLogOffset {
+  if (-not $script:installedDenialLog) { return [long]0 }
+  try {
+    if (Test-Path $script:installedDenialLog) {
+      return [long](Get-Item $script:installedDenialLog).Length
+    }
+  } catch { }
+  return [long]0
+}
+function Get-InstalledHostDenial([long]$beforeOffset, [string]$code,
+                                 [string]$nativeAlert, [string]$expectedText) {
+  if ($code -cnotin @('INVALID_STUDY_ANGLES','INVALID_MEDIA_URL') -or
+      -not $script:installedDenialLog) { return $null }
+  $native = [regex]::Match(
+    $nativeAlert,
+    '^' + [regex]::Escape($expectedText) + ' · request ([0-9a-f]{32})$')
+  if (-not $native.Success) { return $null }
+  try {
+    $log = [IO.File]::Open(
+      $script:installedDenialLog, [IO.FileMode]::Open,
+      [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+      if ($log.Length -lt $beforeOffset -or
+          ($log.Length - $beforeOffset) -gt 65536) { return $null }
+      $log.Seek($beforeOffset, [IO.SeekOrigin]::Begin) | Out-Null
+      $reader = [IO.StreamReader]::new($log, [Text.Encoding]::UTF8, $false, 1024, $true)
+      try { $fresh = $reader.ReadToEnd() }
+      finally { $reader.Dispose() }
+    } finally { $log.Dispose() }
+  } catch { return $null }
+  $pattern = '^\[scriptotar-native-denial\] code=' +
+    [regex]::Escape($code) + ' request_id=([0-9a-f]{32})$'
+  $markers = @()
+  foreach ($line in ($fresh -split '\r?\n')) {
+    $match = [regex]::Match($line.Trim(), $pattern)
+    if ($match.Success) { $markers += $match.Groups[1].Value }
+  }
+  if ($markers.Count -ne 1 -or $markers[0] -cne $native.Groups[1].Value) {
+    return $null
+  }
+  return [string]$markers[0]
+}
+
 function Get-InstalledReferenceDenials([IntPtr]$hwnd) {
   $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
   if (-not $root) { return @() }
@@ -808,7 +860,7 @@ try {
   $report.executable_sha256 = (Get-FileHash -Algorithm SHA256 $app.FullName).Hash.ToLowerInvariant()
   New-Item -ItemType Directory -Force $dataDir | Out-Null
   $env:SCRIPTOTAR_DATA_DIR = $dataDir
-  $proc = Start-Process -FilePath $app.FullName -PassThru
+  $proc = Start-InstalledDesktop $app.FullName
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
   Add-Type -AssemblyName System.Drawing
@@ -1073,7 +1125,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed Windows app did not exit from graphical Alt+F4'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $probeRestored = $null
         $deadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
@@ -1383,7 +1435,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed Windows app did not close with Alt+F4 during theme persistence check'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $themeProbe = $null
         $themeDeadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
@@ -1469,7 +1521,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed app did not quit through Alt+F4 while Arabic'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $arabicProbe = $null
         $arabicDeadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
