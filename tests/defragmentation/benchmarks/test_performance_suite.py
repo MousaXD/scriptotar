@@ -172,6 +172,24 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             self.assertIsNone(report["source_run_url_operator_supplied"])
             self.assertEqual(report["study_count_operator_supplied"], 100)
             self.assertEqual(report["end_reason"], "duration_elapsed")
+            # Bracket every genuine OS memory sample in a Python monotonic
+            # interval, without claiming that an external UIA/AT-SPI driver's
+            # clock has been independently synchronized with this process.
+            self.assertEqual(report["monotonic_clock"], "python.time.perf_counter_ns")
+            self.assertLess(report["measurement_started_monotonic_ns"],
+                            report["measurement_finished_monotonic_ns"])
+            raw = report["raw_samples"]
+            self.assertEqual(len(raw), report["sample_count"])
+            self.assertTrue(all(
+                report["measurement_started_monotonic_ns"] <= item["sample_started_monotonic_ns"]
+                <= item["sample_finished_monotonic_ns"] <= report["measurement_finished_monotonic_ns"]
+                for item in raw
+            ))
+            self.assertEqual(
+                sorted(item["sample_started_monotonic_ns"] for item in raw),
+                [item["sample_started_monotonic_ns"] for item in raw],
+            )
+            self.assertNotIn("native_ui_p95_ms", report)
             self.assertGreater(report["metrics"]["main_pss_bytes"]["valid_trials"] if
                                platform.system() == "Linux" else
                                report["metrics"]["main_private_working_set_bytes"]["valid_trials"], 0)
@@ -203,6 +221,9 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             self.assertEqual(report["end_reason"], "process_gone_or_identity_changed")
             self.assertEqual(report["sample_count"], 0)
             self.assertEqual(report["kernel_process_creation_id"], "first-instance")
+            self.assertEqual(report["raw_samples"], [])
+            self.assertLessEqual(report["measurement_started_monotonic_ns"],
+                                 report["measurement_finished_monotonic_ns"])
             self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
 
     def test_mock_ipc_is_rejected_and_only_declared_native_input_is_summarized(self):
