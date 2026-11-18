@@ -8,6 +8,7 @@ on:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
       - 'apps/desktop-ui/package.json'
       - 'apps/desktop-ui/package-lock.json'
       - '.github/workflows/agent11-picomatch-evidence.yml'
@@ -205,3 +206,48 @@ jobs:
         run: |
           echo 'Unmerged upstream experimental diff only. Package 4.0.7 and original lockfile remain advisory-affected.'
           echo 'Original unfiltered npm audit MUST remain failing; do NOT ship this experiment.'
+
+  upstream-pr259-experiment:
+    # Upstream proposal is unmerged and materially changes glob compatibility.
+    # Do not promote to production or use this as a substitute for unfiltered npm audit.
+    name: Unmerged upstream PR259 broader parser experiment (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Reproduce unpatched, official parser byte provenance
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Apply experimental upstream PR259 source to ephemeral node_modules only
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch > scripts/experimental/.ci-pr259-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr259-lf.patch)" = 8d12d987655d3b7298c64e4bb27899a8291d6097
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr259-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr259-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Extended bounded exploit regression must be clean
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Broad experimental application compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Preserve original strict audit failure and release veto
+        run: |
+          echo 'Unreleased unreviewed upstream comparison only; npm package-lock unchanged.'
+          echo 'Mandatory strict npm audit remains a known fail; release NO-GO.'
