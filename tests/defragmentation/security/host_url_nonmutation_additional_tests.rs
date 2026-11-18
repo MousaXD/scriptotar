@@ -102,7 +102,7 @@ fn independent_host_denied_foreign_study_read_preserves_private_draft_and_canoni
     let directory = TempDir::new().unwrap();
     let services = AppServices::new(directory.path()).unwrap();
     let project_a = services.active_project_id().unwrap();
-    let owner_study = services.create_studio_study(
+    let created_study = services.create_studio_study(
         project_a,
         crate::dto::UiStudioBrief {
             title: "Private project A Study".into(),
@@ -114,7 +114,21 @@ fn independent_host_denied_foreign_study_read_preserves_private_draft_and_canoni
             style: "factual".into(),
         },
     ).unwrap();
-    let study_a = Uuid::parse_str(&owner_study.id).unwrap();
+    let study_a = Uuid::parse_str(&created_study.id).unwrap();
+    let private_body = "Secret canonical draft body from private project A";
+    let owner_study = services.save_studio_study(
+        project_a,
+        study_a,
+        created_study.revision,
+        crate::dto::UiStudioStudyPatch {
+            brief: None,
+            sources: None,
+            draft: Some(private_body.into()),
+            draft_id: created_study.draft_id.clone(),
+            draft_revision: created_study.draft_revision,
+        },
+    ).unwrap();
+    assert_eq!(owner_study.draft, private_body);
     let owner_draft = owner_study.draft_id.as_ref()
         .map(|id| Uuid::parse_str(id).unwrap());
     // Positive evidence that the canonical Study and draft actually exist.
@@ -154,4 +168,5 @@ fn independent_host_denied_foreign_study_read_preserves_private_draft_and_canoni
     let recovered = services.get_studio_study(project_a, study_a).unwrap();
     assert_eq!(recovered.id, owner_study.id);
     assert_eq!(recovered.project_id, project_a.to_string());
+    assert_eq!(recovered.draft, private_body, "denial changed private Study draft body");
 }
