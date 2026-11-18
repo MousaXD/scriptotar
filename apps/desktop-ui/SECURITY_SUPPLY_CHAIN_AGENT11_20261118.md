@@ -362,3 +362,33 @@ An independent upstream reviewer compared 17 proposals and reported PR264 as com
 Final exact-head PR260/PR264 Linux/Windows workflow evidence: https://github.com/MousaXD/scriptotar/actions/runs/44348878620 (queued when first read; the most recent source/report commits require an exact new-HEAD rerun). Even if all experiments pass, the original registry-locked picomatch@4.0.7 and unfiltered npm audit remain affected and FAIL. No experimental parser file is included in the actual desktop application or adopted as a pinned npm dependency. No owner-approved security exception, production release or main merge.
 
 **Status remains BLOCKED / NOT READY FOR INTEGRATION.** Upstream must publish a supported, independently reviewed and advisory-cleared fix, a demonstrably clean maintained alternative dependency graph, or obtain a formal advisory change followed by independent Agent 10 residual-risk review. Agent 00 controls all integration and release decisions.
+
+
+## 2026-11-18 — latest source synchronization and real-package audit boundary
+
+**Integration synchronization:** Agent11 production source was merged again by true two-parent commit `adf671eda69e404c13de448fd5ee92d4ee039750`, first parent `f65f525a828e0597afc740c55ca76fcfab9b92a3` (every prior Agent11 commit), second parent Agent00 integration `63fafe38a2a9280d8b0cec275f185906ee643407` (every latest Agent00 contribution). Compared 15 newly changed integration paths against 12 Agent11-owned changed paths: zero overlaps and zero conflicts. GitHub compare confirms **0 behind** at time of synchronization. No rebase, squash, force push or main merge.
+
+**New static boundary:** `scripts/audit-tauri-bundle-resources.mjs` parses and validates four actual generated Tauri bundle JSON structures embedded in three production/installed-WebView CI workflow sources: Linux packaging, Windows packaging, Linux installed WebKitGTK QA and Windows installed WebView2 QA. Each must map **exactly two** resource roots, `resources/transcription-runtime/` and `resources/mcp-tools/`, and preserve the expected `deb`/`nsis` targets, runtime build/validation and pinned MCP provisioning steps. It rejects unexpected additional resource entries, including `node_modules`, rather than incorrectly trusting the checked-in `tauri.conf.json`, whose `bundle.resources` list is empty.
+
+**Real manifest checker available; still needs actual input:** The same script supports `--manifest <real file listing> --platform linux|windows`, rejects parser/npm-dev tooling paths, requires both runtime and MCP resource roots, and has eight adversarial/clean path-matching fixtures. On an actual completed Linux package job run from repo root:
+
+```bash
+# Existing Linux packaging workflow writes this from dpkg-deb --contents.
+node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs \
+  --platform linux --manifest dist/DEB-CONTENTS.txt
+```
+
+On Windows after the existing real NSIS installed-package smoke test, `$installDir` is the actual installation directory:
+
+```powershell
+Get-ChildItem -LiteralPath $installDir -Recurse -File |
+  ForEach-Object { $_.FullName } |
+  Set-Content -Encoding utf8 dist/WINDOWS-CONTENTS.txt
+node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs --platform windows --manifest dist/WINDOWS-CONTENTS.txt
+```
+
+**Do not confuse the above CLI examples with completed package manifest evidence.** Agent11's own cross-platform checks independently execute the generated CONFIG source validation; the actual .deb/NSIS manifest invocation must be inserted into Agent00-owned packaging workflows after package/install generation, or separately verified against downloaded exact-SHA artifacts. Only those real invocations can justify a path-list package-content conclusion; even a clean manifest does not prove absence of arbitrary malicious code inside PyInstaller binaries or that attacker-provided glob patterns are unreachable in build tooling.
+
+**Prior same-source code status:** Linux/Windows config/source guard jobs PASS after correcting a source parser mismatch between PowerShell opening `@'` and closing `'@` heredoc markers. The original published picomatch 4.0.7 still exhibits pathological crafted-glob runtime; strict unfiltered npm audit PASS on officially withdrawn GHSA, but real 19-case malicious-pattern assertion FAIL. No release/security exception. Agent10 must separately determine untrusted glob-pattern reachability, and Agent00 must independently validate final installed packages and all remaining native/host security requirements.
+
+**Readiness: BLOCKED as parser remediation and full installed-release certification**, with exact dependency request: actual package-file manifest execution and independent residual-risk decision. Preserve the malicious-pattern failure as real negative security evidence.
