@@ -461,28 +461,55 @@ function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
     throw "Installed JSON editor '$name' did not receive exact native pasted text"
   }
 }
-function Wait-InstalledAngleRejection([IntPtr]$hwnd) {
-  # Match only a visible rendered error associated with angle validation.
-  # A malformed fixture alone is not proof of a denied IPC.
+function Get-InstalledAngleRejectionAlerts([IntPtr]$hwnd) {
+  # Read actual visible UIA error text before/after the native click.
+  # A historical 'angle invalid' label must never certify a newer request.
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
   $textCondition = [System.Windows.Automation.PropertyCondition]::new(
     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
     [System.Windows.Automation.ControlType]::Text)
+  $labels = @()
+  $nodes = $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
+  foreach ($item in $nodes) {
+    try {
+      $label = [string]$item.Current.Name
+      if ($label -match '(?i)(angle.*invalid|invalid.*angle)' -and
+          -not $item.Current.IsOffscreen) { $labels += $label }
+    } catch { }
+  }
+  return @($labels | Sort-Object -Unique)
+}
+function Wait-InstalledAngleRejection([IntPtr]$hwnd, [string[]]$priorAlerts) {
+  # Temporal binding: an accessible denial must appear NEW after the actual
+  # malformed input and clicked native Validate action, not already before.
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
     try {
-      $tree = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
-      if ($tree) {
-        $nodes = $tree.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
-        foreach ($item in $nodes) {
-          $label = [string]$item.Current.Name
-          if ($label -match '(?i)(angle.*invalid|invalid.*angle)' -and
-              -not $item.Current.IsOffscreen) { return }
-        }
-      }
+      $candidates = @(Get-InstalledAngleRejectionAlerts $hwnd)
+      $newAlerts = @($candidates | Where-Object { $_ -cnotin $priorAlerts })
+      if ($newAlerts.Count -gt 0) { return [string]$newAlerts[0] }
     } catch { }
     Start-Sleep -Milliseconds 350
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw 'Malformed three-angle JSON produced no visible installed UIA validation error'
+  throw 'Malformed three-angle JSON has no NEW installed UIA validation alert for this request'
+}
+function Get-InstalledQueueRejectionAlerts([IntPtr]$hwnd) {
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  $textCondition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Text)
+  $values = @()
+  $tree = $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
+  foreach ($element in $tree) {
+    try {
+      if ($element.Current.IsOffscreen) { continue }
+      $value = [string]$element.Current.Name
+      if ($value.Length -gt 12 -and
+          $value -match '(?i)(scheme|protocol|unsupported|invalid|blocked|not allowed|denied|file:)' -and
+          $value -ne 'Supported media URL') { $values += $value }
+    } catch { }
+  }
+  return @($values | Sort-Object -Unique)
 }
 function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
   # In the captured WebView2 tree the current project is twice exposed as
@@ -702,6 +729,7 @@ from linux_webkit import (
     verify_canonical_saved_draft,
     verify_canonical_reopened_candidates,
     count_canonical_jobs,
+    canonical_records_snapshot,
 )
 kind, root, a, b, c, copy = sys.argv[2:8]
 if kind == "projects":
@@ -712,6 +740,9 @@ elif kind == "candidates":
     print(verify_canonical_reopened_candidates(Path(root), a, b, c, copy))
 elif kind == "jobs":
     print(count_canonical_jobs(Path(root), a))
+elif kind == "snapshot":
+    import json
+    print(json.dumps(canonical_records_snapshot(Path(root)), sort_keys=True))
 else:
     raise ValueError("Unsupported canonical installed DB probe")
 '@
@@ -1375,9 +1406,33 @@ try {
         Type-InstalledEdit $arabicHwnd 'Audience' 'People learning video editing'
         Click-InstalledControl $arabicHwnd 'Prepare 3 creative angles' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $arabicHwnd 'Paste three-angle JSON response' ([System.Windows.Automation.ControlType]::Edit) | Out-Null
-        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+        $malformedAngleJson = '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' $malformedAngleJson
+        $priorAngleAlerts = @(Get-InstalledAngleRejectionAlerts $arabicHwnd)
+        if ($priorAngleAlerts.Count -ne 0) {
+          throw 'Cannot bind installed malformed request: stale angle error already exposed'
+        }
+        $beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $angleClickUtc = [DateTime]::UtcNow.ToString('o')
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
-        Wait-InstalledAngleRejection $arabicHwnd
+        $currentAngleError = Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts
+        $angleErrorUtc = [DateTime]::UtcNow.ToString('o')
+        $afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $report.angle_rejection_request_correlation = @{
+          input_sha256 = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData(
+              [Text.Encoding]::UTF8.GetBytes($malformedAngleJson))).ToLowerInvariant()
+          exact_native_input_readback = $true # independently asserted in Paste-InstalledJson
+          prior_alert_count = $priorAngleAlerts.Count
+          fresh_alert_text = $currentAngleError
+          action_utc = $angleClickUtc
+          observed_utc = $angleErrorUtc
+          canonical_before = $beforeAnglesCanonical | ConvertFrom-Json
+          canonical_after = $afterAnglesCanonical | ConvertFrom-Json
+        }
+        if ($beforeAnglesCanonical -cne $afterAnglesCanonical) {
+          throw 'Malformed three-angle submission changed canonical SQLite rows'
+        }
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-negative-angles-rejected.png')
         Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}'
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
@@ -1391,42 +1446,43 @@ try {
         $beforeJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
         Click-InstalledControl $arabicHwnd 'Queue' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'Jobs'
-        Paste-InstalledQueueUrl $arabicHwnd 'file:///scriptotar-native-qa-denied-media.mp4'
+        $rejectedUrl = 'file:///scriptotar-native-qa-denied-media.mp4'
+        Paste-InstalledQueueUrl $arabicHwnd $rejectedUrl
+        $priorQueueAlerts = @(Get-InstalledQueueRejectionAlerts $arabicHwnd)
+        $beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $queueClickUtc = [DateTime]::UtcNow.ToString('o')
         Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
         $deniedError = ''
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
-          $owner = [System.Windows.Automation.AutomationElement]::FromHandle($arabicHwnd)
-          $tree = $owner.FindAll(
-            [System.Windows.Automation.TreeScope]::Subtree,
-            [System.Windows.Automation.Condition]::TrueCondition)
-          foreach ($element in $tree) {
-            try {
-              if ($element.Current.ControlType -ne [System.Windows.Automation.ControlType]::Text -or
-                  $element.Current.IsOffscreen) { continue }
-              $value = [string]$element.Current.Name
-              if ($value.Length -gt 12 -and
-                  $value -match '(?i)(scheme|protocol|unsupported|invalid|blocked|not allowed|denied|file:)' -and
-                  $value -ne 'Supported media URL') {
-                $deniedError = $value
-                break
-              }
-            } catch {
-              continue
-            }
+          $currentQueueAlerts = @(Get-InstalledQueueRejectionAlerts $arabicHwnd)
+          $freshQueueAlerts = @($currentQueueAlerts | Where-Object { $_ -cnotin $priorQueueAlerts })
+          if ($freshQueueAlerts.Count -gt 0) {
+            $deniedError = [string]$freshQueueAlerts[0]
+            break
           }
-          if ($deniedError) { break }
           Start-Sleep -Milliseconds 350
         } while ([DateTime]::UtcNow -lt $deadline)
+        # Perform full canonical readback EVEN if the expected error is missing.
+        $afterJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
+        $afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $report.denied_url_canonical_snapshot = @{
+          before = $beforeQueueCanonical | ConvertFrom-Json
+          after = $afterQueueCanonical | ConvertFrom-Json
+          unchanged = ($beforeQueueCanonical -ceq $afterQueueCanonical)
+          before_jobs = $beforeJobs
+          after_jobs = $afterJobs
+          url = $rejectedUrl
+          clicked_utc = $queueClickUtc
+        }
+        if ($afterJobs -ne $beforeJobs -or $beforeQueueCanonical -cne $afterQueueCanonical) {
+          throw "Denied URL changed canonical SQLite data or job count (before_jobs=$beforeJobs, after_jobs=$afterJobs)"
+        }
         if (-not $deniedError) {
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-denied-url-no-error.png')
-          throw 'Unsupported URL submitted through installed Queue but no visible UIA error text appeared'
+          throw 'Unsupported URL submitted through installed Queue but no fresh visible UIA error text appeared'
         }
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'rejected-url-error.png')
-        $afterJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
-        if ($afterJobs -ne $beforeJobs) {
-          throw "Denied URL mutated canonical job count (before=$beforeJobs, after=$afterJobs)"
-        }
         Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'Studio'
         Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
