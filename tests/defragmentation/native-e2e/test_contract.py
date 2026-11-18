@@ -601,9 +601,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn(
             'status(report, "wrong_project_ipc_denial", "FAIL"', source
         )
-        self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"',
+        self.assertIn('"status": ("PARTIAL" if found_error and before == after and protected',
                       source)
-        self.assertIn('if after != before or not found_error:', source)
+        self.assertIn('if after != before or not found_error or not protected:', source)
         self.assertIn('"FOREIGN_STUDY_REFERENCE",', source)
         self.assertIn('reference_host_proof = observed_host_denial(', source)
         self.assertIn('"host_request_correlation": reference_host_proof', source)
@@ -653,7 +653,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('active.click("Open reference", "button")', source)
         self.assertIn('before = canonical_records_snapshot(root / "data")', source)
         self.assertIn('after = canonical_records_snapshot(root / "data")', source)
-        self.assertIn('"status": "PARTIAL" if found_error and before == after else "FAIL"', source)
+        self.assertIn('"status": ("PARTIAL" if found_error and before == after and protected', source)
         self.assertIn('status(report, "wrong_project_ipc_denial", "NOT TESTED"', source)
         self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
         self.assertIn('"This Study reference cannot be opened in the active project."', source)
