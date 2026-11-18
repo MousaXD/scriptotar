@@ -6,6 +6,7 @@ on:
       - agent-11/p0-supply-chain-recovery-20261118
     paths:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/package.json'
       - 'apps/desktop-ui/package-lock.json'
       - '.github/workflows/agent11-picomatch-evidence.yml'
@@ -80,3 +81,68 @@ jobs:
           console.log(JSON.stringify({ metadata: d.metadata?.vulnerabilities, issues }, null, 2));
           NODE
           exit "$audit_rc"
+
+  python-advisory-independent:
+    name: Python audit (independent; never overrides npm failure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install and identify auditor
+        run: |
+          python -m pip install pip-audit
+          python -m pip show pip-audit
+          pip-audit --version
+      - name: Execute full existing Python requirement audit independently
+        run: |
+          test -s sidecars/transcription/requirements-engine.txt
+          sha256sum sidecars/transcription/requirements-engine.txt
+          pip-audit -r sidecars/transcription/requirements-engine.txt
+
+  upstream-pr237-experiment:
+    # A demonstration against a throwaway node_modules, NOT a supported dependency fix.
+    # The npm lockfile still resolves vulnerable picomatch@4.0.7, and npm audit must fail.
+    name: Unmerged upstream PR237 experiment (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Recreate exact published vulnerable baseline
+        run: |
+          npm ci
+          node -e "const p=require('./node_modules/picomatch/package.json'); if(p.version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+          echo 'Official upstream tag 4.0.7 source matches installed npm package parse.js'
+      - name: Verify isolated experimental patch and apply ONLY to throwaway node_modules
+        run: |
+          echo '82eb05e1c8e600c502c28192977c55e043feadf4a0bfc1f5818c434688441538  scripts/experimental/picomatch-4.0.7-pr237.patch' | sha256sum --check
+          git apply --check -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
+          git apply -p1 --directory=node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
+          echo 'Experimental candidate based on unmerged micromatch/picomatch PR #237; NOT a published patch'
+      - name: Exercise candidate with bounded exploit probes
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched
+      - name: Check frontend compatibility on experimental candidate
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Explicit release and advisory boundary
+        run: |
+          echo 'EXPERIMENT ONLY: npm package version and lockfile remain advisory-affected.'
+          echo 'Do not label this patched, accept an npm audit waiver, or release.'
