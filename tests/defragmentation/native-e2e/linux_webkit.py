@@ -299,7 +299,15 @@ def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
 
 
 def valid_native_angle_request_binding(proof: object) -> bool:
-    """Reject Agent 10's fake semantic bit; require fresh observed request transition."""
+    """Fail closed unless installed UI exposes the exact backend rejection ID.
+
+    Temporal proximity, a correct-looking localized alert and unchanged SQLite
+    cannot authenticate WHICH Tauri invocation failed. Agent 10's unrelated
+    fresh-alert adversarial test demonstrated this distinction. The production
+    owner must expose one opaque client-request nonce echoed in the rejected
+    Tauri result and the accessible alert, not a QA-only mock or fabricated
+    semantic bit.
+    """
     if not isinstance(proof, dict):
         return False
     if proof.get("human_review_required") is True or proof.get("atspi_error_text_exposed") is not True:
@@ -308,6 +316,19 @@ def valid_native_angle_request_binding(proof: object) -> bool:
     if not isinstance(binding, dict):
         return False
     payload = binding.get("submitted_payload_sha256")
+    host_receipt = binding.get("authoritative_denial")
+    if not isinstance(host_receipt, dict):
+        return False
+    # Both values must come from the actual installed production command/UI.
+    # The current Studio IPC does not expose this contract; the runner retains
+    # NOT TESTED rather than inventing a request ID from a screenshot.
+    opaque_id = host_receipt.get("submitted_request_id")
+    if not (isinstance(opaque_id, str)
+            and bool(re.fullmatch(r"[a-f0-9]{32}", opaque_id))
+            and host_receipt.get("tauri_denial_request_id") == opaque_id
+            and host_receipt.get("native_alert_request_id") == opaque_id
+            and host_receipt.get("error_code") == "INVALID_STUDY_ANGLES"):
+        return False
     return (
         isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
         and binding.get("native_readback_sha256") == payload
@@ -315,8 +336,9 @@ def valid_native_angle_request_binding(proof: object) -> bool:
         and binding.get("prior_alerts") == []
         and isinstance(binding.get("new_alerts"), list)
         and len(binding["new_alerts"]) > 0
-        and all(isinstance(x, str) and "angle" in x.lower()
-                and "invalid" in x.lower() for x in binding["new_alerts"])
+        and all(isinstance(x, str) and
+                x.strip() == "The angle response is invalid or its Study evidence changed."
+                for x in binding["new_alerts"])
         and type(binding.get("action_monotonic_ns")) is int
         and type(binding.get("observed_monotonic_ns")) is int
         and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
@@ -1015,9 +1037,10 @@ def checked(report: dict, key: str, fn):
             if not valid_native_angle_request_binding(proof):
                 raise NativeUnavailable(
                     "Native angle rejection has no independent semantic "
-                    "request-correlated AT-SPI proof with exact native input "
-                    "readback, fresh alert transition, and immutable canonical "
-                    "SQLite snapshot; screenshot or semantic Boolean is insufficient"
+                    "request-correlated AT-SPI proof with an authoritative Tauri "
+                    "denial identifier exposed in the native alert, exact input "
+                    "readback and immutable SQLite records; temporal alert or "
+                    "screenshot evidence alone is insufficient"
                 )
         status(report, key, "PASS", str(detail))
         return True
