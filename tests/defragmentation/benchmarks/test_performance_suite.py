@@ -328,6 +328,41 @@ class NativeUiTraceContractTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, message):
                         summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
 
+    def test_replayed_accessibility_evidence_cannot_inflate_native_trial_count(self):
+        # The parser does not prove host authenticity, but a single recorded
+        # native accessibility event may never be counted repeatedly merely
+        # by changing the self-asserted trial label.
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "native-events.jsonl"
+            baseline = self.event(0)
+            copied = {
+                **self.event(1),
+                "session_id": baseline["session_id"],
+                "trial_id": "trial-native-independent",
+                "start_evidence_id": baseline["start_evidence_id"],
+                "completion_evidence_id": baseline["completion_evidence_id"],
+            }
+            trace.write_text("\n".join(json.dumps(x) for x in [baseline, copied]))
+            with self.assertRaisesRegex(ValueError, "duplicate native evidence ID"):
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+
+            # A supposedly completed action cannot use the same observation
+            # for both its start and completion, even for one reported trial.
+            same_id = {**baseline, "completion_evidence_id": baseline["start_evidence_id"]}
+            trace.write_text(json.dumps(same_id))
+            with self.assertRaisesRegex(ValueError, "start/completion reuse"):
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+
+            # IDs from separate independently recorded sessions have a local
+            # namespace. Those are still operator-supplied, not QA-certified.
+            separate = {**self.event(1),
+                        "start_evidence_id": baseline["start_evidence_id"],
+                        "completion_evidence_id": baseline["completion_evidence_id"]}
+            trace.write_text("\n".join(json.dumps(x) for x in [baseline, separate]))
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            self.assertEqual(result["event_count"], 2)
+            self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
+
     def test_distinct_cache_conditions_cannot_be_pooled_for_p95(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
