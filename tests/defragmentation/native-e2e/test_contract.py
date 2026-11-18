@@ -50,6 +50,142 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("status='FAIL'\n          reason=\"Installed WebView2 three-angle", ps)
         self.assertNotIn("SetValue($value)", ps)
 
+    def test_review_flag_false_does_not_replace_native_semantic_evidence(self):
+        # A manually flipped flag is not proof that the installed Tauri IPC
+        # surfaced a named native rejection.
+        report = {"cases": {}}
+
+        def incomplete():
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": False,
+                "human_review_required": False,
+            }
+            return "unreviewed screenshot promoted by mistake"
+
+        self.assertFalse(native.checked(report, "error_recovery", incomplete))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_missing_native_rejection_evidence_cannot_pass(self):
+        report = {"cases": {}}
+        self.assertFalse(native.checked(
+            report, "error_recovery", lambda: "no rejection proof"
+        ))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_agent10_stale_semantic_flag_is_not_request_correlated_proof(self):
+        # Exact independent Agent 10 adversarial shape: a stale/unrelated
+        # semantic alert must not be upgraded to a genuine host rejection.
+        report = {"cases": {}}
+
+        def stale():
+            report["angle_rejection_visual_proof"] = {
+                "proof": "named AT-SPI native validation alert",
+                "screenshot": "negative-angles-rejected.png",
+                "atspi_error_text_exposed": True,
+            }
+            return "fake historical semantic flag"
+
+        self.assertFalse(native.checked(report, "error_recovery", stale))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_semantic_rejection_requires_authoritative_backend_identity(self):
+        # Test the declared future host contract without claiming a production
+        # host response. Agent 00 must implement/expose this on the real Tauri
+        # service before a native installed PASS is possible.
+        payload = hashlib.sha256(b'{"angles":[{"id":"invalid"}]}').hexdigest()
+        correlation = {
+            "native_action": "Validate 3 angles",
+            "submitted_payload_sha256": payload,
+            "native_readback_sha256": payload,
+            "prior_alerts": [],
+            "new_alerts": [
+                "The angle response is invalid or its Study evidence changed."
+                + " · request " + "a" * 32
+            ],
+            "action_monotonic_ns": 1000000000,
+            "observed_monotonic_ns": 1200000000,
+            "canonical_before_digest": "f" * 64,
+            "canonical_after_digest": "f" * 64,
+        }
+        proof = {
+            "atspi_error_text_exposed": True,
+            "proof": "fresh named AT-SPI alert after real native action",
+            "request_correlation": correlation,
+        }
+        # Even accurate user-visible semantics and full data immutability
+        # CANNOT prove which Tauri rejection happened.
+        self.assertFalse(native.valid_native_angle_request_binding(proof))
+        fake_unrelated = dict(correlation, new_alerts=[
+            "Unrelated angle invalid warning in another workspace panel"
+        ])
+        self.assertFalse(native.valid_native_angle_request_binding(
+            dict(proof, request_correlation=fake_unrelated)
+        ))
+        # A synthetic receipt tests helper validation only. It MUST NOT be
+        # manufactured in native exercise(); source production needs to
+        # return this stable opaque identifier.
+        host = {
+            "submitted_request_id": "a" * 32,
+            "tauri_denial_request_id": "a" * 32,
+            "native_alert_request_id": "a" * 32,
+            "error_code": "INVALID_STUDY_ANGLES",
+            "host_source": "installed-process-stderr",
+            "accessibility_source": "installed-AT-SPI-alert",
+        }
+        bound = dict(correlation, authoritative_denial=host)
+        self.assertTrue(native.valid_native_angle_request_binding(
+            dict(proof, request_correlation=bound)
+        ))
+        for key, bad in [
+            ("prior_alerts", ["The angle response is invalid or its Study evidence changed."]),
+            ("native_readback_sha256", "e" * 64),
+            ("new_alerts", ["Unrelated angle invalid warning in another workspace panel"]),
+            ("observed_monotonic_ns", 500000000),
+            ("canonical_after_digest", "e" * 64),
+            ("native_action", "unrelated button"),
+            ("authoritative_denial", dict(host, tauri_denial_request_id="b" * 32)),
+        ]:
+            with self.subTest(key=key):
+                modified = dict(bound, **{key: bad})
+                self.assertFalse(native.valid_native_angle_request_binding(
+                    dict(proof, request_correlation=modified)
+                ))
+        report = {"cases": {}}
+        def no_host_binding():
+            report["angle_rejection_visual_proof"] = proof
+            return "native error looked correct but host correlation unavailable"
+        self.assertFalse(native.checked(report, "error_recovery", no_host_binding))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_native_queue_denial_requires_exact_real_host_and_accessibility_proof(self):
+        ident = "b" * 32
+        label = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        host = {
+            "submitted_request_id": ident,
+            "tauri_denial_request_id": ident,
+            "native_alert_request_id": ident,
+            "error_code": "INVALID_MEDIA_URL",
+            "host_source": "installed-process-stderr",
+            "accessibility_source": "installed-AT-SPI-alert",
+        }
+        example = {
+            "authoritative_denial": host,
+            "new_alert_text": label + " · request " + ident,
+            "canonical_unchanged": True,
+            "job_count_unchanged": True,
+            "native_input_readback_exact": True,
+        }
+        self.assertTrue(native.valid_native_url_request_binding(example))
+        for bad in [
+            dict(example, new_alert_text=label),
+            dict(example, new_alert_text="Unrelated invalid URL · request " + ident),
+            dict(example, canonical_unchanged=False),
+            dict(example, job_count_unchanged=False),
+            dict(example, native_input_readback_exact=False),
+            dict(example, authoritative_denial=dict(host, tauri_denial_request_id="c" * 32)),
+        ]:
+            self.assertFalse(native.valid_native_url_request_binding(bad))
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
