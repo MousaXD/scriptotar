@@ -16,6 +16,7 @@ SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}\Z")
 UI_KIND = "externally-observed-installed-a11y-action"
+RUN_URL = re.compile(r"https://github[.]com/MousaXD/scriptotar/actions/runs/[1-9][0-9]*\Z")
 ACTIONS = frozenset({
     "cold_start_window", "warm_start_window", "studio_actionable",
     "project_switch", "study_open", "candidate_typing", "candidate_save",
@@ -24,7 +25,8 @@ ACTIONS = frozenset({
 })
 ALLOWED_KEYS = frozenset({
     "evidence_kind", "source_sha", "package_sha256", "executable_sha256",
-    "fixture_sha256", "session_id", "trial_id", "native_provider",
+    "fixture_sha256", "host_evidence_sha256", "native_qa_run_url",
+    "session_id", "trial_id", "native_provider",
     "study_count", "cache_state", "action", "start_monotonic_ns",
     "completion_monotonic_ns", "start_evidence_id", "completion_evidence_id",
 })
@@ -74,6 +76,12 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
                 raise ValueError(f"line {number}: {key} mismatch")
         if not isinstance(event["fixture_sha256"], str) or not SHA256.fullmatch(event["fixture_sha256"]):
             raise ValueError(f"line {number}: missing fixture SHA-256")
+        if (not isinstance(event["host_evidence_sha256"], str)
+                or not SHA256.fullmatch(event["host_evidence_sha256"])):
+            raise ValueError(f"line {number}: missing host metadata SHA-256")
+        if (not isinstance(event["native_qa_run_url"], str)
+                or not RUN_URL.fullmatch(event["native_qa_run_url"])):
+            raise ValueError(f"line {number}: invalid native QA run URL
         if (not isinstance(event["native_provider"], str) or event["native_provider"] not in PROVIDERS
                 or not isinstance(event["cache_state"], str) or event["cache_state"] not in CACHE):
             raise ValueError(f"line {number}: invalid provider or cache state")
@@ -98,7 +106,8 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
             raise ValueError(f"line {number}: duplicate trial/action")
         unique.add(unique_key)
         key = (event["native_provider"], event["action"], event["study_count"],
-               event["cache_state"], event["fixture_sha256"])
+               event["cache_state"], event["fixture_sha256"],
+               event["host_evidence_sha256"], event["native_qa_run_url"])
         groups.setdefault(key, []).append({
             "session_id": event["session_id"], "trial_id": event["trial_id"],
             "start_monotonic_ns": start, "completion_monotonic_ns": end,
@@ -110,7 +119,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
     if not count:
         raise ValueError("no external native observations")
     buckets = []
-    for (provider, action, studies, cache, fixture), records in sorted(groups.items()):
+    for (provider, action, studies, cache, fixture, host_digest, qa_run_url), records in sorted(groups.items()):
         enough = len(records) >= min_trials
         metrics = _percentiles([r["duration_ms"] for r in records]) if enough else {
             "p50_ms": None, "p95_ms_nearest_rank": None,
@@ -118,6 +127,8 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         buckets.append({
             "provider": provider, "action": action, "study_count_operator_supplied": studies,
             "cache_state_operator_supplied": cache, "fixture_sha256_operator_supplied": fixture,
+            "host_evidence_sha256_operator_supplied": host_digest,
+            "native_qa_run_url_operator_supplied": qa_run_url,
             "observations": len(records), "threshold_met": enough,
             "status": "UNVERIFIED_EXTERNAL_TRACE" if enough else "INSUFFICIENT_TRIALS",
             **metrics, "raw_samples": records,
@@ -125,7 +136,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
     return {
         "scope": "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY",
         "certification": "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA",
-        "attestation": "An operator-supplied provider label, hash or event ID cannot prove installed UI identity, canonical Study count, event correlation or genuine native interaction; Agent 07 must independently review driver and artifacts.",
+        "attestation": "Operator-supplied host hashes, run URLs, provider labels, fixture hashes and event IDs cannot prove installed UI, canonical Study count, clock correlation or native interaction; Agent 07 must independently review the raw host/driver artifacts.",
         "source_sha_operator_supplied": source_sha,
         "package_sha256_operator_supplied": package_sha256,
         "executable_sha256_operator_supplied": executable_sha256,
