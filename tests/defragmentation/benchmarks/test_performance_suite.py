@@ -324,5 +324,78 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertTrue(all(x["status"] == "INSUFFICIENT_TRIALS" for x in report["groups"]))
 
 
+
+from .stage_installed_fixture import stage as stage_fixture, digest as stage_digest
+
+
+class StageInstalledFixtureSafetyTests(unittest.TestCase):
+    """Staging tests use a deliberately simulated schema ledger, NOT real migration proof."""
+
+    def test_stage_requires_guarded_synthetic_v12_provenance_and_never_overwrites(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / "template.sqlite3"
+            source = Path(folder) / "synthetic-source"
+            target = Path(folder) / "isolated-installed-data"
+            source.mkdir()
+            target.mkdir()
+            for directory in (source, target):
+                (directory / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\n")
+            blank(base)
+            fixture = source / "scriptotar-synthetic-100.sqlite3"
+            meta = build(base, fixture, 100, SHA)
+            manifest = source / "scriptotar-synthetic-100.json"
+            manifest.write_text(json.dumps(meta))
+            output = target / "staging-proof.json"
+            with self.assertRaisesRegex(ValueError, "v12 schema mismatch"):
+                stage_fixture(fixture, manifest, target, 100, SHA, output)
+            self.assertFalse((target / "scriptotar.sqlite3").exists())
+
+            # Stub migration ledger below exercises staging file-copy safety,
+            # not Scriptotar's real migration SQL or any installed behavior.
+            with closing(sqlite3.connect(fixture)) as conn, conn:
+                conn.execute("PRAGMA user_version=12")
+                conn.executemany(
+                    "INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)",
+                    [(i, f"unit-test-only-{i}", "2026-01-01") for i in (10,11,12)])
+            meta["schema_version"] = 12
+            meta["db_sha256"] = stage_digest(fixture)
+            meta["db_file_bytes"] = fixture.stat().st_size
+            manifest.write_text(json.dumps(meta))
+            (target / ".scriptotar-benchmark-only").unlink()
+            with self.assertRaisesRegex(ValueError, "sentinel"):
+                stage_fixture(fixture, manifest, target, 100, SHA, output)
+            self.assertFalse((target / "scriptotar.sqlite3").exists())
+            (target / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\n")
+            report = stage_fixture(fixture, manifest, target, 100, SHA, output)
+            self.assertEqual(report["certification"], "PENDING_REAL_INSTALLED_APP_READBACK")
+            self.assertEqual(report["staged_db"], str(target / "scriptotar.sqlite3"))
+            self.assertEqual(stage_digest(target / "scriptotar.sqlite3"), stage_digest(fixture))
+            with self.assertRaisesRegex(ValueError, "overwrite"):
+                stage_fixture(fixture, manifest, target, 100, SHA, target / "second-proof.json")
+
+    def test_stage_refuses_changed_manifest_and_private_study_content(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "scratch-source"
+            dest = Path(folder) / "scratch-dest"
+            source.mkdir()
+            dest.mkdir()
+            for directory in (source, dest):
+                (directory / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\n")
+            base = Path(folder) / "template.db"
+            blank(base)
+            fixture = source / "scriptotar-synthetic-100.sqlite3"
+            meta = build(base, fixture, 100, SHA)
+            manifest = source / "manifest.json"
+            manifest.write_text(json.dumps(meta))
+            with self.assertRaisesRegex(ValueError, "v12 schema mismatch"):
+                stage_fixture(fixture, manifest, dest, 100, SHA, dest / "proof.json")
+            meta["schema_version"] = 12
+            manifest.write_text(json.dumps(meta))
+            with self.assertRaisesRegex(ValueError, "checksum/size"):
+                # Tamper manifest hash even if schema v12 is declared.
+                stage_fixture(fixture, manifest, dest, 100, SHA, dest / "proof.json")
+            self.assertFalse((dest / "scriptotar.sqlite3").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
