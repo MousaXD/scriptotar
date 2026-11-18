@@ -9,8 +9,10 @@ echo "PR #$pr feature SHA: $(git -C target rev-parse HEAD)"
 test -f target/Cargo.toml || { echo "ERROR: feature checkout missing"; exit 3; }
 
 case "$gate:$pr" in
-  native-evidence:131)
-    # Independently probe Agent 07's actual QA runner from PR #131.
+  native-evidence:131|native-evidence-slice:141)
+    # Independently probe real Agent 07 QA runner. PR #141 is the
+    # narrowly scoped P0 fail-closed integration candidate. Both variants
+    # preserve full request-correlation negative assertions.
     # This test MUST fail if unreviewed screenshot-only validation is
     # auto-certified as a successful installed-app negative path.
     test -f target/tests/defragmentation/native-e2e/linux_webkit.py
