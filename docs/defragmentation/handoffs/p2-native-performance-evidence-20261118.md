@@ -90,3 +90,48 @@ This section supplements, but does not change, the draft/NO-GO native verdict ab
 - The Windows UIA job log contains one `readiness.elapsed_seconds=4.1` value on its first successful `Document + Studio` poll (`poll_count=1`). Source inspection shows this is a coarse two-second-interval stopwatch probe with a basic Studio control, **not** confirmed actionable workspace readiness, not a cold/warm controlled trial, and not p50/p95. Do **not** promote this one observation into native performance certification or compare it against SQL timings.
 
 **Next non-blocking coordination:** When Agent 07 has the native P0 QA pathway stable, collect independent AT-SPI/UIA event pairs for the requested journeys (installed launch; actionable Studio; project/Study/candidate navigation; save and read-back), and run the existing attach-only memory observer concurrently on the exact installed package. Agent 00 must confirm the disposable app-migrated database location and study counts. Require >=10 comparable successful repeat trials per platform/size/cache condition where feasible, monotonic raw samples and observed failures, package/executable/fixture SHA-256, OS/CPU/RAM/WebView runtime, and an explicit exact-source relationship. Accept authentic IPC distributions only when both command boundaries are instrumented; otherwise label IPC NOT TESTED. **No production optimization authorized; PR #127 stays DRAFT.**
+
+## Fresh integration, independent SQL artifact verification and UI trace contract
+
+Agent 08 integrated source 5ed385d09092d2c94a1bd86cb56888d96df0bb5e using the normal two-parent merge commit 432d7b157ab97cb4da0d9944d466bb06e9b0698c, preserving both Agent 08 history and integrated production fixes. Comparison from the common ancestor showed disjoint Agent 08 benchmark/handoff and Agent 00 production changes; no production files were overwritten.
+
+### Independently checked complete SQL ZIPs, 2026-11-18
+
+[Workflow #44332442668](https://github.com/MousaXD/scriptotar/actions/runs/44332442668) finished PASS on Linux and Windows at exact source 873da2395610f0b6fe3f862643db862ea8d0661c. Downloaded artifact ZIP bytes were independently SHA-256 matched to GitHub artifact metadata, parsed, and checked against all 11 raw trial samples per query/size/OS, recalculating medians and nearest-rank p95. Fixture/report checksums, Study counts and migration schema v12 were validated for all three sizes.
+
+- Linux SQL-only artifact 14439517488, SHA-256 120828fe75f3c58905ea66e02c2d973db698df767794c5cf771d22e74fa35eb5. Python 3.12.16; SQLite 3.37.2; four logical CPUs.
+- Windows SQL-only artifact 14439632301, SHA-256 26179a4e21227eda2836ac5bd6f0e9314e357ed3de90e9611a684bc2949de560. Python 3.12.10; SQLite 3.49.1; four logical CPUs.
+- Database sizes at 100, 1,000, 10,000 synthetic Studies: 4.01, 14.23, 116.60 MiB.
+
+| 10k synthetic Studies, warm Python SQL SELECT + fetchall, 11 trials | Linux p50/p95 ms | Windows p50/p95 ms |
+| --- | ---: | ---: |
+| Study search (200 metadata) | 20.7743 / 21.3528 | 12.735 / 13.007 |
+| Transcript metadata (50) | 13.885 / 14.247 | 9.686 / 11.480 |
+
+Study-search and transcript metadata plans record temporary B-tree ORDER BY operations. These are profiling candidates, NOT production regressions or native app timings. OS/runner/SQLite differences prohibit cross-platform speed conclusions. Prior artifact measurements at the earlier source SHA must not be conflated with these samples.
+
+### New Agent 08 native UI timing-format validator
+
+The benchmark-only tests/defragmentation/benchmarks/native_ui_trace.py parses JSONL exported by Agent 07's genuine installed native automation driver. A trace row has EXACTLY these fields:
+
+- evidence_kind = externally-observed-installed-a11y-action
+- source_sha, package_sha256, executable_sha256, fixture_sha256
+- session_id, trial_id, native_provider (linux-webkitgtk-atspi or windows-webview2-uia)
+- study_count (100, 1000, 10000) and cache_state (cold-rebooted, cold-cache-dropped, warm-cache, unknown)
+- action (cold_start_window, warm_start_window, studio_actionable, project_switch, study_open, candidate_typing, candidate_save, candidate_reopen, source_navigation, transcript_navigation, gui_interaction)
+- start_monotonic_ns and completion_monotonic_ns as a same-clock ordered action/completion pair
+- start_evidence_id and completion_evidence_id referencing Agent 07's independent UIA/AT-SPI observations.
+
+It rejects unexpected secret fields, mock labels, invalid/mismatched hashes, bad clocks, duplicate trial/action tuples, invalid cache/start conditions, wrong provider and Study count. It never pools different fixtures, actions, study counts, providers or cache states. Default minimum is 10 independent successful comparable samples per group. Smaller groups return INSUFFICIENT_TRIALS and null p50/p95 rather than unsupported numbers. It preserves raw timestamp samples and uses nearest-rank p95.
+
+Command with real independently attested Agent 07 input (the tool does NOT create traces):
+
+    python3 -m tests.defragmentation.benchmarks.native_ui_trace --trace "$AGENT07_NATIVE_JSONL" --source-sha "$EXACT_SOURCE_SHA" --package-sha256 "$PACKAGE_SHA256" --executable-sha256 "$BIN_SHA256" --min-trials 10 --output "$FRESH_DIR/native-ui-summary.json"
+
+The parser validates FORMAT and consistency only. Provider labels, evidence IDs and hashes supplied in JSON can be forged. Every result remains PENDING_INDEPENDENT_AGENT07_INSTALLED_QA until Agent 07 checks real window/accessible-control completion, package+binary identity, actual canonical app-migrated SQLite Study counts, cache state and raw event provenance. No real native UI data are included in this report.
+
+### Unresolved dependencies and readiness
+
+Agent 07 controls installed WebKitGTK/AT-SPI and Windows WebView2/UIA sessions; Agent 00 controls canonical app database layout and any authentic Tauri IPC instrumentation. Agent 08 can attach the existing read-only native_attach.py during a real Agent 07 installed session; it cannot substitute local Python process probes or mock/frontend traces. Await 10 comparable repeats per scenario, cold/warm control, authentic fixture and binary hash matches, native memory PSS/private working-set observations and native UI milestones. IPC latency remains NOT TESTED absent authentic command boundary instrumentation. Do not modify production solely due SQL temp sorting.
+
+Branch instrumentation is independently testable; release-native performance certification remains BLOCKED / NOT TESTED until Agent 07 supplies installed-host evidence. PR #127 stays DRAFT; no merge to main, release, authorization, or paid egress.
