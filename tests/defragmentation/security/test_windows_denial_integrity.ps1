@@ -25,7 +25,8 @@ Require ($waitSource.Contains('$_ -cnotin $prior')) 'preexisting native alert mu
 Require ($waitSource.Contains('$fresh.Count -eq 1')) 'must accept exactly one new native alert'
 Require ($hostSource.Contains('$log.Seek($beforeOffset')) 'host stderr must be read starting at click-time offset'
 Require ($hostSource.Contains('$markers.Count -ne 1')) 'host stderr needs exactly one typed denial'
-Require ($hostSource.Contains('$markers[0] -cne $native.Groups[1].Value')) 'backend/native IDs must match'
+Require ($hostSource.Contains('$markers[0].Code -cne $code')) 'backend typed denial code must match current action'
+Require ($hostSource.Contains('$markers[0].Id -cne $native.Groups[1].Value')) 'backend/native IDs must match'
 Invoke-Expression $hostSource
 
 $root = Join-Path ([IO.Path]::GetTempPath()) ('agent10-denial-' + [guid]::NewGuid().ToString('N'))
