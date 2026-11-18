@@ -58,6 +58,168 @@ function mount(gateway?: StudioGateway, extra: Record<string, unknown> = {}) {
 }
 
 describe('Content Study Studio', () => {
+  it('uses a genuine project-scoped gateway read for a foreign Study reference and rejects it visibly', async () => {
+    const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const studyA = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const denied = vi.fn(async (_projectId: string, _studyId: string) => {
+      throw new Error('project is not active');
+    });
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy: denied,
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway, { projectId: projectB, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'scriptotar://study/' + projectA + '/' + studyA }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(denied).toHaveBeenCalledWith(projectA, studyA, undefined));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This Study reference cannot be opened in the active project.');
+    // Studio keeps its empty unsaved editor mounted; denial must not fill it.
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
+  });
+
+  it('opens a valid active-project Study reference without leaking or replacing its owner', async () => {
+    const project = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const studyId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const verified: ContentStudy = {
+      id: studyId, projectId: project, revision: 2,
+      brief: { ...emptyBrief(), title: 'Direct project Study', goal: 'Explain the real source' },
+      sources: [], draft: 'Private persisted working draft', draftVersions: []
+    };
+    const getStudy = vi.fn(async () => structuredClone(verified));
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy,
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway, { projectId: project, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'scriptotar://study/' + project + '/' + studyId }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('Private persisted working draft'));
+    expect(screen.getByRole('combobox', { name: 'Open study' })).toHaveTextContent('Direct project Study');
+    expect(getStudy).toHaveBeenCalledTimes(1);
+    expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined);
+    expect(screen.queryByText('This Study reference cannot be opened in the active project.')).not.toBeInTheDocument();
+  });
+
+  it('rejects a forged Study read response whose returned project does not match the current scope', async () => {
+    const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const studyId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const forged: ContentStudy = {
+      id: studyId, projectId: projectA, revision: 1,
+      brief: { ...emptyBrief(), title: 'Foreign Study', goal: 'Must never render' },
+      sources: [], draft: 'FOREIGN PRIVATE BODY', draftVersions: []
+    };
+    const getStudy = vi.fn(async () => forged);
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy,
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway, { projectId: projectB, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'scriptotar://study/' + projectB + '/' + studyId }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This Study reference cannot be opened in the active project.');
+    expect(getStudy).toHaveBeenCalledWith(projectB, studyId, undefined);
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
+    expect(screen.queryByText('Foreign Study')).not.toBeInTheDocument();
+  });
+
+  it('normalizes uppercase UUIDs before host authorization and returned-identity checks', async () => {
+    const project = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const studyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const draftId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const getStudy = vi.fn(async () => ({
+      id: studyId, projectId: project, draftId, revision: 1,
+      brief: { ...emptyBrief(), title: 'Canonical reference' },
+      sources: [], draft: 'Correct stored draft', draftVersions: []
+    } as ContentStudy));
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('not used'); },
+      getStudy,
+      saveStudy: async () => { throw new Error('not used'); }
+    };
+    mount(gateway, { projectId: project, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    const ref = 'SCRIPTOTAR://STUDY/' + project.toUpperCase() +
+      '/' + studyId.toUpperCase() + '?draft=' + draftId.toUpperCase();
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: ref }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, draftId));
+    expect(screen.getByRole('textbox', { name: 'Script draft' }))
+      .toHaveValue('Correct stored draft');
+    expect(screen.queryByText('This Study reference cannot be opened in the active project.'))
+      .not.toBeInTheDocument();
+  });
+
+  it('discards a stale Study-reference result when the pasted target changes during the native read', async () => {
+    const project = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const studyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    let answer: ((value: ContentStudy) => void) | undefined;
+    const getStudy = vi.fn(() => new Promise<ContentStudy>((resolve) => { answer = resolve; }));
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('not used'); },
+      getStudy,
+      saveStudy: async () => { throw new Error('not used'); }
+    };
+    mount(gateway, { projectId: project, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    const input = screen.getByRole('textbox', { name: 'Paste Study reference' });
+    await fireEvent.input(input, {
+      target: { value: 'scriptotar://study/' + project + '/' + studyId }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined));
+    await fireEvent.input(input, { target: { value: 'scriptotar://study/edited-before-host-return' } });
+    answer?.({
+      id: studyId, projectId: project, revision: 1,
+      brief: { ...emptyBrief(), title: 'STALE PRIVATE STUDY' },
+      sources: [], draft: 'STALE PRIVATE BODY', draftVersions: []
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open reference' })).not.toBeDisabled());
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
+    expect(screen.queryByText('STALE PRIVATE STUDY')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('rejects noncanonical Study references without invoking the native gateway', async () => {
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy: vi.fn(async () => { throw new Error('should not dispatch'); }),
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway);
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'javascript:alert(1)' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid Scriptotar Study reference.');
+    expect(gateway.getStudy).not.toHaveBeenCalled();
+  });
+
   it('never claims a production save when the study service is not connected', async () => {
     mount();
     expect(screen.getByRole('heading', { name: 'Studio' })).toBeInTheDocument();
