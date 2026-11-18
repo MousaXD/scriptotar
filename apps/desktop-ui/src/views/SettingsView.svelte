@@ -155,7 +155,7 @@
       <div><span class="eyebrow">{$translator('settings.interfaceEyebrow')}</span><h2>{$translator('settings.interfaceHeading')}</h2></div>
       <div class="settings-grid">
         <Select label={$translator('settings.theme')} value={draft.appearance}
-          options={[{ value: 'dark', label: $translator('settings.themeDark') }, { value: 'system', label: $translator('settings.themeSystem') }]}
+          options={[{ value: 'dark', label: $translator('settings.themeDark') }, { value: 'light', label: $translator('settings.themeLight') }, { value: 'system', label: $translator('settings.themeSystem') }]}
           onChange={(next) => { draft.appearance = next as typeof draft.appearance; }} />
         <Select label={$translator('settings.languageControl')} value={$locale}
           options={[{ value: 'en', label: $translator('language.english') }, { value: 'ar', label: $translator('language.arabic') }]}

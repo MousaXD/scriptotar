@@ -193,7 +193,7 @@ export interface AppSettings {
   keepFailed: boolean;
   autoWatch: boolean;
   watchInterval: '30 min' | '60 min' | '2 hours' | '6 hours';
-  appearance: 'dark' | 'system';
+  appearance: 'dark' | 'light' | 'system';
 }
 
 export interface LegacyImportReport {
