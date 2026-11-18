@@ -368,10 +368,54 @@ class StageInstalledFixtureSafetyTests(unittest.TestCase):
             (target / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\n")
             report = stage_fixture(fixture, manifest, target, 100, SHA, output)
             self.assertEqual(report["certification"], "PENDING_REAL_INSTALLED_APP_READBACK")
-            self.assertEqual(report["staged_db"], str(target / "scriptotar.sqlite3"))
+            # Windows runner_temp may resolve RUNNER~1 to runneradmin; compare
+            # filesystem identity, not its short/long directory spelling.
+            self.assertEqual(Path(report["staged_db"]).resolve(strict=True),
+                             (target / "scriptotar.sqlite3").resolve(strict=True))
             self.assertEqual(stage_digest(target / "scriptotar.sqlite3"), stage_digest(fixture))
             with self.assertRaisesRegex(ValueError, "overwrite"):
                 stage_fixture(fixture, manifest, target, 100, SHA, target / "second-proof.json")
+
+    def test_synthetic_wal_fixture_is_frozen_before_sql_profile_and_staging(self):
+        # A migrated blank DB may be WAL-mode. After seeding, the synthetic
+        # fixture must be a complete single-file SQLite snapshot; read-only
+        # SQL profiling must not resurrect sidecars.
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / "template.db"
+            blank(base)
+            with closing(sqlite3.connect(base)) as db:
+                self.assertEqual(db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower(), "wal")
+            source = Path(folder) / "scratch-source"
+            dest = Path(folder) / "scratch-dest"
+            source.mkdir()
+            dest.mkdir()
+            for directory in (source, dest):
+                (directory / ".scriptotar-benchmark-only").write_text("SYNTHETIC_ONLY\\n")
+            fixture = source / "fixture.sqlite3"
+            manifest = build(base, fixture, 100, SHA)
+            for suffix in ("-wal", "-shm"):
+                self.assertFalse(Path(str(fixture) + suffix).exists(),
+                                 f"staging would reject synthetic SQLite sidecar {suffix}")
+            with closing(sqlite3.connect(fixture.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0].lower(), "delete")
+            profile(fixture, SHA, 3)
+            self.assertFalse(Path(str(fixture) + "-wal").exists())
+            self.assertFalse(Path(str(fixture) + "-shm").exists())
+            manifest["schema_version"] = 12
+            with closing(sqlite3.connect(fixture)) as db:
+                for i in (10, 11, 12):
+                    db.execute("INSERT INTO schema_migrations VALUES (?,?,?)",
+                               (i, f"migration-test-only-{i}", "2026-01-01"))
+                db.execute("PRAGMA user_version=12")
+                db.commit()
+            manifest["db_sha256"] = stage_digest(fixture)
+            manifest["db_file_bytes"] = fixture.stat().st_size
+            source_manifest = source / "manifest.json"
+            source_manifest.write_text(json.dumps(manifest))
+            proof = stage_fixture(fixture, source_manifest, dest, 100, SHA, dest / "stage-proof.json")
+            self.assertEqual(proof["staged_sha256"], manifest["db_sha256"])
+            self.assertEqual(Path(proof["staged_db"]).resolve(strict=True),
+                             (dest / "scriptotar.sqlite3").resolve(strict=True))
 
     def test_stage_refuses_changed_manifest_and_private_study_content(self):
         with tempfile.TemporaryDirectory() as folder:
