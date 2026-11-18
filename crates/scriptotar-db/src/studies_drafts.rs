@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::{
     studies::{
-        database, db_error, optional_text, require_active_study,
-        require_available_study_source, required_text, uuid_at,
+        database, db_error, optional_text, require_active_study, require_available_study_source,
+        required_text, uuid_at,
     },
     SqliteStore,
 };
@@ -73,7 +73,8 @@ fn require_copyable_draft_sources(
                 |row| uuid_at(row, 0),
             )
             .map_err(db_error)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(db_error)?
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(db_error)?
     };
     // Old links remain immutable historical evidence; new copies may not
     // inherit revoked permissions, even by a stale duplicate command.

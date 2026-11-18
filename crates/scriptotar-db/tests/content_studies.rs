@@ -317,12 +317,19 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
     // A revoked historical source ID must never authorize NEW evidence or
     // source links, including links on a newly created draft. Keep existing
     // evidence and the old draft's historical links fully readable.
-    let fresh_draft = db.create_draft(
-        project_a.id, study.id, "Post-revocation draft", "Independent new draft"
-    ).unwrap();
+    let fresh_draft = db
+        .create_draft(
+            project_a.id,
+            study.id,
+            "Post-revocation draft",
+            "Independent new draft",
+        )
+        .unwrap();
     let before_denials = whole_database_snapshot(&db);
     let denied_evidence = db.add_evidence_reference(
-        project_a.id, study.id, &EvidenceInput {
+        project_a.id,
+        study.id,
+        &EvidenceInput {
             study_source_id: source.id,
             claim: "No new evidence after permission withdrawal".into(),
             locator: "0:08".into(),
@@ -331,38 +338,77 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
             uncertainty_note: None,
         },
     );
-    assert!(denied_evidence.is_err(), "revoked origin gained new evidence");
-    assert!(db.attach_source_to_draft(
-        project_a.id, fresh_draft.id, source.id
-    ).is_err(), "revoked origin gained new draft source link");
-    assert_eq!(whole_database_snapshot(&db), before_denials,
-        "rejected source use changed canonical SQLite row contents");
-    assert_eq!(db.list_evidence_references(project_a.id, study.id).unwrap().len(), 1);
-    assert!(db.list_draft_source_ids(project_a.id, fresh_draft.id).unwrap().is_empty());
+    assert!(
+        denied_evidence.is_err(),
+        "revoked origin gained new evidence"
+    );
+    assert!(
+        db.attach_source_to_draft(project_a.id, fresh_draft.id, source.id)
+            .is_err(),
+        "revoked origin gained new draft source link"
+    );
+    assert_eq!(
+        whole_database_snapshot(&db),
+        before_denials,
+        "rejected source use changed canonical SQLite row contents"
+    );
+    assert_eq!(
+        db.list_evidence_references(project_a.id, study.id)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(db
+        .list_draft_source_ids(project_a.id, fresh_draft.id)
+        .unwrap()
+        .is_empty());
 
     // This is an independent attack surface: a real job link, an accepted
     // reviewed-script candidate, or cloning historical immutable draft links
     // must not revive access through the same tombstone.
-    let job = Job::new(project_a.id, JobInput::Url("https://example.com/after-revoke".into()));
+    let job = Job::new(
+        project_a.id,
+        JobInput::Url("https://example.com/after-revoke".into()),
+    );
     db.insert_job(&job).unwrap();
     let before_other_denials = whole_database_snapshot(&db);
-    assert!(db.attach_job_to_study_source(
-        project_a.id, study.id, source.id, job.id
-    ).is_err(), "revoked source gained a new job link");
-    assert!(db.create_reviewed_study_draft(
-        project_a.id, study.id, before.revision + 1,
-        "Forbidden new candidate", "Must not save",
-        &[source.id]
-    ).is_err(), "revoked source entered a new script candidate");
-    assert!(db.duplicate_draft(project_a.id, draft.id).is_err(),
-        "legacy draft duplication copied a revoked historical link");
-    assert!(db.duplicate_study_draft_checked(
-        project_a.id, study.id, draft.id, before_draft.revision
-    ).is_err(), "Studio draft duplication copied revoked provenance");
-    assert_eq!(whole_database_snapshot(&db), before_other_denials,
-        "revoked source gained new jobs, draft links or candidate rows");
+    assert!(
+        db.attach_job_to_study_source(project_a.id, study.id, source.id, job.id)
+            .is_err(),
+        "revoked source gained a new job link"
+    );
+    assert!(
+        db.create_reviewed_study_draft(
+            project_a.id,
+            study.id,
+            before.revision + 1,
+            "Forbidden new candidate",
+            "Must not save",
+            &[source.id]
+        )
+        .is_err(),
+        "revoked source entered a new script candidate"
+    );
+    assert!(
+        db.duplicate_draft(project_a.id, draft.id).is_err(),
+        "legacy draft duplication copied a revoked historical link"
+    );
+    assert!(
+        db.duplicate_study_draft_checked(project_a.id, study.id, draft.id, before_draft.revision)
+            .is_err(),
+        "Studio draft duplication copied revoked provenance"
+    );
+    assert_eq!(
+        whole_database_snapshot(&db),
+        before_other_denials,
+        "revoked source gained new jobs, draft links or candidate rows"
+    );
     assert_eq!(db.get_draft(project_a.id, draft.id).unwrap(), before_draft);
-    assert_eq!(db.get_study_source(project_a.id, study.id, source.id).unwrap(), revoked);
+    assert_eq!(
+        db.get_study_source(project_a.id, study.id, source.id)
+            .unwrap(),
+        revoked
+    );
 }
 
 #[test]

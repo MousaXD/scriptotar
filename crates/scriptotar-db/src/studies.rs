@@ -576,7 +576,6 @@ fn evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceReference> {
     })
 }
 
-
 /// Perform source permission validation on the *same write transaction* that
 /// creates a new evidence or draft link. Historical tombstones remain readable,
 /// but their missing origin FK must never authorize a fresh attachment.
