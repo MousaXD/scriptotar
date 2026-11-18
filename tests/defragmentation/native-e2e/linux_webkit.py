@@ -287,6 +287,8 @@ PRODUCTION_ERROR_LABELS = frozenset({
     "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
     "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
     "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
+    "This Study reference cannot be opened in the active project.",
+    "لا يمكن فتح مرجع هذه الدراسة في المشروع النشط.",
 })
 
 
@@ -366,6 +368,41 @@ def valid_native_angle_request_binding(proof: object) -> bool:
         and bool(re.fullmatch(r"[a-f0-9]{64}", binding["canonical_before_digest"]))
         and binding.get("canonical_after_digest") == binding["canonical_before_digest"]
     )
+
+
+
+def canonical_study_reference_ids(data_dir: Path, project_name: str,
+                                  study_title: str) -> tuple[str, str, str]:
+    """Get IDs already created by genuine installed GUI, never seed a row."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Canonical SQLite missing for foreign-reference probe")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro",
+                             uri=True, timeout=4) as db:
+            rows = db.execute("""
+                SELECT p.id, st.id, d.id
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                 ORDER BY d.id LIMIT 2
+            """, (project_name, study_title)).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Foreign-reference canonical read failed: {exc}") from exc
+    if not rows or len(rows[0]) != 3:
+        raise NativeFailure("No GUI-created Study/draft IDs found for reference probe")
+    ids = rows[0]
+    if any(not isinstance(value, str) for value in ids):
+        raise NativeFailure("Foreign-reference IDs have invalid types")
+    try:
+        for value in ids:
+            uuid.UUID(value)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Noncanonical real Study reference ID") from exc
+    return tuple(ids)
 
 
 def verify_canonical_saved_draft(
@@ -1229,6 +1266,93 @@ def exercise(args, report: dict, root: Path):
             return "Foreign Study absent in second project's native Studio (UI only; not forged IPC)"
         if not checked(report, "wrong_project_ui_isolation", isolation):
             return
+
+        # Candidate PR #138 introduces a normal, production-authorized
+        # read-only foreign-reference path. It is NOT a write IPC forgery:
+        # record a separate optional observation, preserving the mandatory
+        # wrong_project_ipc_denial NOT TESTED until all required commands run.
+        report["foreign_study_reference_probe"] = {
+            "status": "NOT TESTED",
+            "reason": "Open Study reference is not exposed in this installed source",
+        }
+        if ax.available("Open Study reference"):
+            def foreign_study_reference_probe():
+                active = session.ax
+                project_id, study_id, draft_id = canonical_study_reference_ids(
+                    root / "data", name_a, study
+                )
+                reference = (
+                    f"scriptotar://study/{project_id}/{study_id}?draft={draft_id}"
+                )
+                # We are in A following isolation(); activate B for a genuine
+                # foreign A reference attempted through the installed UI.
+                active.choose("PROJECT", name_b)
+                active.heading("Studio")
+                active.click("Open Study reference")
+                active.type_into("Paste Study reference", reference)
+                if active.read_text("Paste Study reference") != reference:
+                    raise NativeFailure(
+                        "Foreign Study reference native input did not match canonical IDs"
+                    )
+                expected_error = (
+                    "This Study reference cannot be opened in the active project."
+                )
+                before_alerts = native_named_alerts(
+                    active, ("study reference", "active project")
+                )
+                before = canonical_records_snapshot(root / "data")
+                active.click("Open reference", "button")
+                found_error = False
+                deadline = time.monotonic() + 12
+                while time.monotonic() < deadline:
+                    alerts = native_named_alerts(
+                        active, ("study reference", "active project")
+                    )
+                    if expected_error in alerts and expected_error not in before_alerts:
+                        found_error = True
+                        break
+                    time.sleep(0.35)
+                after = canonical_records_snapshot(root / "data")
+                report["foreign_study_reference_probe"] = {
+                    "status": "PARTIAL" if found_error and before == after else "FAIL",
+                    "source": "installed UI A reference while B active",
+                    "canonical_before": before,
+                    "canonical_after": after,
+                    "unchanged": before == after,
+                    "visible_new_native_denial": found_error,
+                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+                    "missing": "forged mutating IPC + authoritative backend request ID",
+                }
+                session.screenshot("foreign-study-reference-denial")
+                if after != before or not found_error:
+                    raise NativeFailure(
+                        "Installed foreign reference lacked fresh native denial or "
+                        "rewrote canonical data; no IPC authorization PASS possible"
+                    )
+                active.choose("PROJECT", name_a)
+                active.heading("Studio")
+                active.choose("Open study", study)
+                verify_canonical_reopened_candidates(
+                    root / "data", name_a, study, body, tag + "-copy"
+                )
+                active.choose("PROJECT", name_b)
+                active.heading("Studio")
+                return "Partial real installed foreign Study read denial; write IPC not tested"
+            try:
+                detail = foreign_study_reference_probe()
+                report["foreign_study_reference_probe"]["detail"] = detail
+            except (NativeFailure, NativeUnavailable, Exception) as exc:
+                report["foreign_study_reference_probe"] = {
+                    "status": "FAIL",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+                # This is a genuine native probe failure, never silently PASS.
+                status(report, "wrong_project_ipc_denial", "FAIL",
+                       f"Installed foreign-reference preflight failed: {exc}")
+                return
+        status(report, "wrong_project_ipc_denial", "NOT TESTED",
+               "Read-only foreign Study navigation is not forged mutating "
+               "Tauri IPC; exact write-denial and backend-ID evidence absent")
 
         def keyboard():
             # A project switch unmounts its previous Study editor; reopen
