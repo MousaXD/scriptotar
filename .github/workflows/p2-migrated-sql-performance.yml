@@ -49,11 +49,21 @@ jobs:
       - name: Run actual Rust migrations + 100/1k/10k synthetic SQL
         run: |
           python -m tests.defragmentation.benchmarks.run_migrated_scale --out-dir "${{ runner.temp }}/scriptotar-perf-sql" --source-sha "${{ env.EXACT_SHA }}" --sizes 100 1000 10000 --iterations 11
+      - name: Verify packaged-app SQLite layout in disposable scratch only (not native)
+        env:
+          PERF_ROOT: ${{ runner.temp }}/scriptotar-perf-sql
+        run: |
+          python -c "import os; from pathlib import Path; root=Path(os.environ['PERF_ROOT']); [(root / ('app-' + str(n))).mkdir() for n in (100,1000,10000)]; [(root / ('app-' + str(n)) / '.scriptotar-benchmark-only').write_text('SYNTHETIC_ONLY\n',encoding='utf-8') for n in (100,1000,10000)]"
+          python -m tests.defragmentation.benchmarks.stage_installed_fixture --fixture "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-100.sqlite3" --manifest "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-100.json" --data-dir "${{ runner.temp }}/scriptotar-perf-sql/app-100" --study-count 100 --source-sha "${{ env.EXACT_SHA }}" --output "${{ runner.temp }}/scriptotar-perf-sql/app-100/staging-proof.json"
+          python -m tests.defragmentation.benchmarks.stage_installed_fixture --fixture "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-1000.sqlite3" --manifest "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-1000.json" --data-dir "${{ runner.temp }}/scriptotar-perf-sql/app-1000" --study-count 1000 --source-sha "${{ env.EXACT_SHA }}" --output "${{ runner.temp }}/scriptotar-perf-sql/app-1000/staging-proof.json"
+          python -m tests.defragmentation.benchmarks.stage_installed_fixture --fixture "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-10000.sqlite3" --manifest "${{ runner.temp }}/scriptotar-perf-sql/scriptotar-synthetic-10000.json" --data-dir "${{ runner.temp }}/scriptotar-perf-sql/app-10000" --study-count 10000 --source-sha "${{ env.EXACT_SHA }}" --output "${{ runner.temp }}/scriptotar-perf-sql/app-10000/staging-proof.json"
       - name: Upload SQL-only evidence, never brand as native
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: p2-migrated-synthetic-sql-${{ matrix.os }}-${{ env.EXACT_SHA }}
-          path: ${{ runner.temp }}/scriptotar-perf-sql/*.json
+          path: |
+            ${{ runner.temp }}/scriptotar-perf-sql/*.json
+            ${{ runner.temp }}/scriptotar-perf-sql/app-*/*.json
           if-no-files-found: warn
           retention-days: 14
