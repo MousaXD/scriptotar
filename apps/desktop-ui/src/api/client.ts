@@ -89,6 +89,8 @@ export interface ScriptotarApi {
     anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
     preparedDraftPrompt: string, scriptResponseJson: string,
     acceptAsNewCandidate: boolean): Promise<StudyScriptReview>;
+  revokeStudySourceAccess(projectId: string, studyId: string, expectedRevision: number,
+    source: StudySourceRef): Promise<ContentStudy>;
   saveStudy(projectId: string, studyId: string, expectedRevision: number, patch: {
     brief?: CreativeBrief; sources?: StudySourceRef[]; draft?: string;
     draftId?: string; draftRevision?: number;

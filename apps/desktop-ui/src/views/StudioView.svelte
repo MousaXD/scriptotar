@@ -46,6 +46,8 @@
   let confirmArchiveDraft = false;
   let selectedArchivedDraftId = '';
   let selectedSource: StudySourceRef | null = null;
+  let revokeConfirmation: StudySourceRef | null = null;
+  let revocationBusy = false;
   let transcriptDetail: Transcript | null = null;
   let sourceLoading = false;
   let sourceError = '';
@@ -245,6 +247,7 @@
       refs = [...result.sources];
       draft = result.draft;
       selectedSource = null;
+      revokeConfirmation = null;
       transcriptDetail = null;
       status = '';
       activeInspection = null;
@@ -686,7 +689,52 @@
     }
   }
 
+  async function revokeSelectedStudySource() {
+    if (!record || !gateway?.revokeStudySourceAccess || !revokeConfirmation || revocationBusy) return;
+    const ownerProject = projectId;
+    const ownerStudy = studyId;
+    const source = { ...revokeConfirmation };
+    if (!refs.some((item) => item.kind === source.kind && item.id === source.id)) return;
+    revocationBusy = true;
+    error = '';
+    try {
+      await flushPendingSave();
+      if (projectId !== ownerProject || studyId !== ownerStudy || !record) return;
+      const previous = record;
+      const saved = await gateway.revokeStudySourceAccess(ownerProject, ownerStudy, previous.revision, source);
+      if (projectId !== ownerProject || studyId !== ownerStudy) return;
+      if (saved.id !== ownerStudy || saved.projectId !== ownerProject ||
+          saved.revision <= previous.revision ||
+          saved.sources.some((item) => item.kind === source.kind && item.id === source.id)) {
+        throw new Error(t.invalidStudy);
+      }
+      currentRequest++;
+      record = saved;
+      studies = studies.map((item) => item.id === ownerStudy
+        ? { id: saved.id, projectId: saved.projectId, revision: saved.revision, brief: saved.brief } : item);
+      refs = [...saved.sources];
+      brief = { ...saved.brief };
+      draft = saved.draft;
+      previewVersion = null;
+      selectedSource = null;
+      transcriptDetail = null;
+      promptRequest++;
+      preparing = false;
+      prompt = '';
+      status = t.revokeSourceSaved;
+      void loadEvidence(ownerStudy);
+    } catch (cause) {
+      if (projectId === ownerProject && studyId === ownerStudy) {
+        error = message(cause, t.revokeSourceError);
+      }
+    } finally {
+      revocationBusy = false;
+      revokeConfirmation = null;
+    }
+  }
+
   function toggleSource(ref: StudySourceRef) {
+    revokeConfirmation = null;
     if (refs.some((item) => item.kind === ref.kind && item.id === ref.id) &&
         evidence.some((item) => item.source?.kind === ref.kind && item.source.id === ref.id)) {
       error = t.evidenceReferenced;
@@ -705,6 +753,7 @@
   }
 
   async function showSource(ref: StudySourceRef) {
+    revokeConfirmation = null;
     const epoch = ++sourceRequest;
     selectedSource = ref;
     transcriptDetail = null;
@@ -1554,6 +1603,21 @@
       <button type="button" class="text-button" on:click={() => { if (onOpenTranscript) onOpenTranscript(selectedTranscript.id); else onNavigate('transcript'); }}>{t.openTranscript}</button>
     {:else}
       <p class="muted">{selectedSource ? t.previewUnavailable : t.selectSource}</p>
+    {/if}
+    {#if record && selectedSource && gateway?.revokeStudySourceAccess &&
+         refs.some((item) => item.kind === selectedSource?.kind && item.id === selectedSource?.id)}
+      <div class="source-revocation">
+        {#if revokeConfirmation?.kind === selectedSource.kind && revokeConfirmation?.id === selectedSource.id}
+          <p class="muted">{t.revokeStudySourceWarning}</p>
+          <button type="button" class="button secondary" disabled={revocationBusy || saving || loading}
+            on:click={() => void revokeSelectedStudySource()}>{t.confirmRevokeSource}</button>
+          <button type="button" class="text-button" disabled={revocationBusy}
+            on:click={() => { revokeConfirmation = null; }}>{t.cancelRevokeSource}</button>
+        {:else}
+          <button type="button" class="text-button" disabled={revocationBusy || saving || loading}
+            on:click={() => { revokeConfirmation = selectedSource ? { ...selectedSource } : null; }}>{t.revokeStudySource}</button>
+        {/if}
+      </div>
     {/if}
     {#if record && selectedSource && gateway?.addStudyEvidence}
       <form class="evidence-form" on:submit|preventDefault={() => void addEvidence()}>
