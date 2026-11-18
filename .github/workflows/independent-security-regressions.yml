@@ -58,8 +58,8 @@ jobs:
           for pr in 131 118 119 128 121 117; do
             sha="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot resolve PR $pr source" >&2; exit 1; }
-            printf 'Pinning feature PR #%s to %s\\n' "$pr" "$sha"
-            result+="${separator}\\\"$pr\\\":\\\"$sha\\\""
+            printf 'Pinning feature PR #%s to %s\n' "$pr" "$sha"
+            result+="${separator}\"$pr\":\"$sha\""
             separator=","
           done
           result+="}"
