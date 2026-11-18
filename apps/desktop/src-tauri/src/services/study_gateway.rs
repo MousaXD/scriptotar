@@ -1170,7 +1170,11 @@ impl AppServices {
             _ => return Err(invalid("Study source kind")),
         };
         self.store.revoke_study_source_access(
-            project_id, study_id, expected_revision, origin_kind, reference_id,
+            project_id,
+            study_id,
+            expected_revision,
+            origin_kind,
+            reference_id,
         )?;
         self.read_studio_bundle(project_id, study_id)
     }

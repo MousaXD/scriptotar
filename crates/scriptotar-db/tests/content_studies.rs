@@ -83,15 +83,17 @@ fn seed_existing_origins(db: &SqliteStore, project: &Project) -> (Uuid, Uuid, Uu
     (research, media, transcript)
 }
 
-
 #[test]
 fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
     let (_directory, db, project_a, project_b) = fixture();
     let (_research, _media, transcript_id) = seed_existing_origins(&db, &project_a);
-    let study = db.create_study(project_a.id, "Protected source", "Read provenance").unwrap();
+    let study = db
+        .create_study(project_a.id, "Protected source", "Read provenance")
+        .unwrap();
     let source = db
         .add_study_source(
-            project_a.id, study.id,
+            project_a.id,
+            study.id,
             &StudySourceInput {
                 kind: StudySourceKind::Transcript,
                 reference_id: Some(transcript_id),
@@ -104,7 +106,8 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
         .unwrap();
     let evidence = db
         .add_evidence_reference(
-            project_a.id, study.id,
+            project_a.id,
+            study.id,
             &EvidenceInput {
                 study_source_id: source.id,
                 claim: "Historical observation remains unverified".into(),
@@ -115,61 +118,115 @@ fn revoke_study_source_access_preserves_provenance_and_is_atomic_on_denial() {
             },
         )
         .unwrap();
-    let draft = db.create_draft(project_a.id, study.id, "Original", "Immutable body").unwrap();
-    db.attach_source_to_draft(project_a.id, draft.id, source.id).unwrap();
+    let draft = db
+        .create_draft(project_a.id, study.id, "Original", "Immutable body")
+        .unwrap();
+    db.attach_source_to_draft(project_a.id, draft.id, source.id)
+        .unwrap();
     let before = db.get_study(project_a.id, study.id).unwrap();
-    let before_source = db.get_study_source(project_a.id, study.id, source.id).unwrap();
+    let before_source = db
+        .get_study_source(project_a.id, study.id, source.id)
+        .unwrap();
     let before_draft = db.get_draft(project_a.id, draft.id).unwrap();
 
     // Wrong-project, forged-reference and stale revision attempts do not
     // consume the CAS token or change any persisted row.
-    assert!(db.revoke_study_source_access(
-        project_b.id, study.id, before.revision, StudySourceKind::Transcript, transcript_id
-    ).is_err());
-    assert!(db.revoke_study_source_access(
-        project_a.id, study.id, before.revision, StudySourceKind::Transcript, Uuid::new_v4()
-    ).is_err());
+    assert!(db
+        .revoke_study_source_access(
+            project_b.id,
+            study.id,
+            before.revision,
+            StudySourceKind::Transcript,
+            transcript_id
+        )
+        .is_err());
+    assert!(db
+        .revoke_study_source_access(
+            project_a.id,
+            study.id,
+            before.revision,
+            StudySourceKind::Transcript,
+            Uuid::new_v4()
+        )
+        .is_err());
     assert!(matches!(
         db.revoke_study_source_access(
-            project_a.id, study.id, before.revision + 5, StudySourceKind::Transcript, transcript_id
-        ), Err(RepositoryError::Conflict(_))
+            project_a.id,
+            study.id,
+            before.revision + 5,
+            StudySourceKind::Transcript,
+            transcript_id
+        ),
+        Err(RepositoryError::Conflict(_))
     ));
     assert_eq!(db.get_study(project_a.id, study.id).unwrap(), before);
     assert_eq!(
-        db.get_study_source(project_a.id, study.id, source.id).unwrap(),
+        db.get_study_source(project_a.id, study.id, source.id)
+            .unwrap(),
         before_source
     );
     assert_eq!(db.get_draft(project_a.id, draft.id).unwrap(), before_draft);
 
     db.revoke_study_source_access(
-        project_a.id, study.id, before.revision, StudySourceKind::Transcript, transcript_id
-    ).unwrap();
-    let revoked = db.get_study_source(project_a.id, study.id, source.id).unwrap();
+        project_a.id,
+        study.id,
+        before.revision,
+        StudySourceKind::Transcript,
+        transcript_id,
+    )
+    .unwrap();
+    let revoked = db
+        .get_study_source(project_a.id, study.id, source.id)
+        .unwrap();
     assert!(!revoked.available);
     assert_eq!(revoked.id, source.id);
     assert_eq!(revoked.reference_id, Some(transcript_id));
     assert_eq!(revoked.locator, source.locator);
     assert_eq!(revoked.fingerprint, source.fingerprint);
     assert_eq!(revoked.source_revision, source.source_revision);
-    assert_eq!(db.get_study(project_a.id, study.id).unwrap().revision, before.revision + 1);
-    assert!(db.attached_transcript_byte_length(project_a.id, study.id, transcript_id).is_err());
+    assert_eq!(
+        db.get_study(project_a.id, study.id).unwrap().revision,
+        before.revision + 1
+    );
+    assert!(db
+        .attached_transcript_byte_length(project_a.id, study.id, transcript_id)
+        .is_err());
     assert_eq!(db.get_draft(project_a.id, draft.id).unwrap(), before_draft);
     assert_eq!(
         db.list_evidence_references(project_a.id, study.id).unwrap()[0].id,
         evidence.id
     );
     let connection = Connection::open(db.path()).unwrap();
-    let original_origin: i64 = connection.query_row(
-        "SELECT count(*) FROM transcripts WHERE id=?1",
-        params![transcript_id.to_string()], |row| row.get(0)
-    ).unwrap();
-    assert_eq!(original_origin, 1, "project-owned original must not be deleted");
+    let original_origin: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM transcripts WHERE id=?1",
+            params![transcript_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        original_origin, 1,
+        "project-owned original must not be deleted"
+    );
     // Revocation is not reversible by a replay or a stale new Studio save.
-    assert!(db.revoke_study_source_access(
-        project_a.id, study.id, before.revision + 1, StudySourceKind::Transcript, transcript_id
-    ).is_err());
-    assert_eq!(db.get_study(project_a.id, study.id).unwrap().revision, before.revision + 1);
-    assert_eq!(db.get_study_source(project_a.id, study.id, source.id).unwrap(), revoked);
+    assert!(db
+        .revoke_study_source_access(
+            project_a.id,
+            study.id,
+            before.revision + 1,
+            StudySourceKind::Transcript,
+            transcript_id
+        )
+        .is_err());
+    assert_eq!(
+        db.get_study(project_a.id, study.id).unwrap().revision,
+        before.revision + 1
+    );
+    assert_eq!(
+        db.get_study_source(project_a.id, study.id, source.id)
+            .unwrap(),
+        revoked
+    );
 }
 
 #[test]

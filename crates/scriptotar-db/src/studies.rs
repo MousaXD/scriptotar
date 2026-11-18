@@ -846,7 +846,6 @@ impl SqliteStore {
 }
 
 impl SqliteStore {
-
     /// Revoke one Study's ability to use an attached origin. The origin itself
     /// remains project-owned; linked evidence/drafts retain their immutable
     /// provenance and source identity. NULLing the origin FK is the existing
@@ -862,7 +861,10 @@ impl SqliteStore {
         kind: StudySourceKind,
         origin: Uuid,
     ) -> RepositoryResult<()> {
-        if !matches!(kind, StudySourceKind::Transcript | StudySourceKind::ResearchItem) {
+        if !matches!(
+            kind,
+            StudySourceKind::Transcript | StudySourceKind::ResearchItem
+        ) {
             return Err(RepositoryError::Validation(
                 "unsupported Study source permission kind".into(),
             ));

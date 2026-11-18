@@ -852,7 +852,6 @@ async fn save_study(
     .await
 }
 
-
 #[tauri::command]
 async fn revoke_study_source_access(
     project_id: String,
@@ -869,7 +868,11 @@ async fn revoke_study_source_access(
     on_blocking_worker(move || {
         services
             .revoke_studio_source_access(
-                project_id, study_id, expected_revision, &kind, reference_id,
+                project_id,
+                study_id,
+                expected_revision,
+                &kind,
+                reference_id,
             )
             .map_err(command_error)
     })
