@@ -49,6 +49,49 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("status='FAIL'\n          reason=\"Installed WebView2 three-angle", ps)
         self.assertNotIn("SetValue($value)", ps)
 
+
+    def test_rendered_native_angle_alert_requires_new_button_adjacent_rectangle(self):
+        # Pure pixel contract; real certification still requires installed
+        # AT-SPI button bounds, genuine before/after scrot PNGs and SQLite.
+        bounds = SimpleNamespace(x=20, y=20, width=120, height=25)
+        after = {(x, y): (255, 141, 141)
+                 for y in (55, 96) for x in range(30, 130)}
+        before_rgb = lambda _x, _y: (21, 28, 35)
+        after_rgb = lambda x, y: after.get((x, y), (21, 28, 35))
+        proof = native.native_new_alert_border(
+            before_rgb, after_rgb, 200, 165, bounds
+        )
+        self.assertEqual(proof["alert_y_edges"], [55, 96])
+        # An unchanged alert present before the click cannot be green.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                after_rgb, after_rgb, 200, 165, bounds
+            )
+        # Red pixels elsewhere on the native desktop are not a relevant alert.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                before_rgb, lambda x, y: (255, 141, 141) if y == 4
+                else (21, 28, 35), 200, 165, bounds
+            )
+        # Only one red line / no bounded red notice is insufficient.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                before_rgb,
+                lambda x, y: (255, 141, 141) if y == 55 and 30 <= x < 130
+                else (21, 28, 35), 200, 165, bounds
+            )
+
+    def test_native_angle_visual_fallback_never_replaces_immutable_db_and_queue_checks(self):
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('native_angle_alert_image_proof(', source)
+        self.assertIn('session.screenshot("pre-negative-angles")', source)
+        self.assertIn('session.screenshot("negative-angles-rejected")', source)
+        self.assertIn('denied_url_recovery()', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        self.assertIn('if not checked(report, "error_recovery", error_recovery):', source)
+
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"

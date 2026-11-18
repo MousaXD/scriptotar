@@ -53,6 +53,85 @@ def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
 
 
+
+def native_new_alert_border(before_rgb, after_rgb, image_width: int,
+                            image_height: int, button_bounds) -> dict:
+    """Require a NEW red-outlined error surface immediately below the real button.
+
+    The June 2026 WebKitGTK AT-SPI provider exposes the editor and button but
+    omitted the rendered role=alert text on installed Linux run #44278805547.
+    This independent pixel proof is intentionally strict: two new horizontal
+    borders must bracket an alert immediately below the *AT-SPI-located* native
+    Validate button. A screenshot existing on disk cannot satisfy it.
+    Database and successful recovery are checked separately.
+    """
+    bx, by = int(button_bounds.x), int(button_bounds.y)
+    bw, bh = int(button_bounds.width), int(button_bounds.height)
+    if bw < 100 or bh < 15 or bx < 0 or by < 0:
+        raise NativeFailure("Invalid real AT-SPI Validate button bounds for alert proof")
+    left = max(bx + 8, 0)
+    right = min(bx + bw - 8, image_width)
+    top = max(by + bh + 3, 0)
+    bottom = min(by + bh + 130, image_height)
+    if right - left < 80 or bottom - top < 40:
+        raise NativeFailure("Native screenshot does not contain button-adjacent alert region")
+
+    def red(rgb):
+        r, g, b = rgb
+        return r >= 190 and r - g >= 55 and r - b >= 55
+
+    rows = []
+    width = right - left
+    for y in range(top, bottom):
+        now = sum(bool(red(after_rgb(x, y))) for x in range(left, right))
+        earlier = sum(bool(red(before_rgb(x, y))) for x in range(left, right))
+        # Reject old banners, random red pixels, isolated borders and changed
+        # content outside the installed native button's expected alert zone.
+        if now >= int(width * 0.75) and earlier <= int(width * 0.08):
+            rows.append(y)
+    for top_edge in rows:
+        for bottom_edge in rows:
+            if 20 <= bottom_edge - top_edge <= 100:
+                return {
+                    "proof": "new bordered error region immediately below native Validate control",
+                    "button_bounds": [bx, by, bw, bh],
+                    "alert_y_edges": [top_edge, bottom_edge],
+                    "native_screenshot_dimensions": [image_width, image_height],
+                }
+    raise NativeFailure(
+        "Malformed angle submission had no new native red-bordered error "
+        "surface at the actual AT-SPI Validate button; do not infer denial"
+    )
+
+
+def native_angle_alert_image_proof(before: Path, after: Path, button_bounds) -> dict:
+    """Decode two actual scrot PNGs via installed GTK/GdkPixbuf, not OCR or a DOM mock."""
+    try:
+        import gi
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+        old = GdkPixbuf.Pixbuf.new_from_file(str(before))
+        new = GdkPixbuf.Pixbuf.new_from_file(str(after))
+    except (ImportError, OSError, ValueError) as exc:
+        raise NativeFailure(f"Cannot decode native WebKit screenshots: {exc}") from exc
+    if (old.get_width(), old.get_height()) != (new.get_width(), new.get_height()):
+        raise NativeFailure("Native before/after screenshot sizes differ")
+
+    def reader(pixbuf):
+        pixels = pixbuf.get_pixels()
+        rowstride, channels = pixbuf.get_rowstride(), pixbuf.get_n_channels()
+        if channels < 3:
+            raise NativeFailure("Native screenshot does not contain RGB pixels")
+        def rgb(x, y):
+            i = y * rowstride + x * channels
+            return pixels[i], pixels[i + 1], pixels[i + 2]
+        return rgb
+
+    return native_new_alert_border(
+        reader(old), reader(new), new.get_width(), new.get_height(), button_bounds
+    )
+
+
 def native_crash_context(pid: int) -> dict:
     """Read bounded Linux crash metadata after a real installed-process exit.
 
@@ -1260,9 +1339,19 @@ def exercise(args, report: dict, root: Path):
             a.click("Prepare 3 creative angles", "button")
             a.edit_field("Paste three-angle JSON response", timeout=12)
             a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}')
+            # Bind visual proof to the installed AT-SPI button before the
+            # malformed action: a screenshot alone is never validation.
+            control = a.find("Validate 3 angles", "button")
+            try:
+                button_bounds = control.queryComponent().getExtents(a.atspi.DESKTOP_COORDS)
+            except Exception as exc:
+                raise NativeFailure(f"Cannot read native Validate button bounds: {exc}") from exc
+            pre_image = session.screenshot("pre-negative-angles")
+            if not pre_image:
+                raise NativeFailure("No actual installed WebKit pre-rejection screenshot")
             a.click("Validate 3 angles", "button")
-            # Observe a visible native accessibility error, never infer a
-            # backend rejection from a disabled button or malformed input.
+            # Prefer a named AT-SPI alert. The real WebKitGTK #44278805547
+            # screenshot shows the rejection while the AT-SPI tree omits it.
             deadline = time.monotonic() + 12
             saw_error = False
             while time.monotonic() < deadline:
@@ -1279,11 +1368,27 @@ def exercise(args, report: dict, root: Path):
                 if saw_error:
                     break
                 time.sleep(0.3)
+            post_image = session.screenshot("negative-angles-rejected")
+            if not post_image:
+                raise NativeFailure("No actual installed WebKit rejection screenshot")
+            # A pixel fallback is allowed ONLY when an alert visibly appears
+            # newly below the native Validate control. This is a UI assertion,
+            # never a substitute for the subsequent accepted response, read-only
+            # immutable SQLite verification, or denied Queue job count.
             if not saw_error:
-                raise NativeFailure(
-                    "Malformed three-angle JSON produced no visible native rejection"
+                proof = native_angle_alert_image_proof(
+                    root / pre_image, root / post_image, button_bounds
                 )
-            session.screenshot("negative-angles-rejected")
+                report["angle_rejection_visual_proof"] = {
+                    **proof, "before": pre_image, "after": post_image,
+                    "atspi_error_text_exposed": False,
+                    "human_review_required": True,
+                }
+            else:
+                report["angle_rejection_visual_proof"] = {
+                    "proof": "named AT-SPI native validation alert",
+                    "screenshot": post_image, "atspi_error_text_exposed": True,
+                }
             a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}')
             a.click("Validate 3 angles", "button")
             a.find("Share a practical checklist", timeout=12)
