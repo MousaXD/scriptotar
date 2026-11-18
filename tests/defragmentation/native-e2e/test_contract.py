@@ -571,18 +571,31 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("$cases.wrong_project_ipc_denial = @{ status='PASS'", source)
         self.assertIn("$cases.wrong_project_ipc_denial.status -ne 'FAIL'", source)
 
-    def test_windows_native_negative_case_never_auto_passes_without_host_binding(self):
-        # A genuinely visible but unrelated fresh UIA warning and unchanged
-        # SQLite are insufficient to identify the rejected Tauri request.
+    def test_windows_native_denial_requires_actual_host_stderr_and_ui_id(self):
+        # Static runner audit: a real installed process must emit a typed
+        # Rust stderr marker; a UIA alert matching only text is not enough.
         script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Start-InstalledDesktop(", script)
+        self.assertIn("-RedirectStandardError $script:installedDenialLog", script)
+        self.assertIn("function Get-InstalledHostDenial(", script)
+        self.assertIn("Get-InstalledHostLogOffset", script)
+        self.assertIn("Get-InstalledHostDenial $angleHostLogOffset", script)
+        self.assertIn("'INVALID_STUDY_ANGLES'", script)
+        self.assertIn("Get-InstalledHostDenial $queueHostLogOffset", script)
+        self.assertIn("'INVALID_MEDIA_URL'", script)
+        self.assertIn("request_id=([0-9a-f]{32})", script)
+        self.assertIn("· request ([0-9a-f]{32})", script)
         self.assertIn("$report.error_recovery_observations", script)
-        self.assertIn("backend_request_identity = $null", script)
-        self.assertIn("status='NOT TESTED'", script)
-        self.assertIn("no authoritative Tauri denial ID", script)
+        self.assertIn("backend_angle_denial_id = $angleHostId", script)
+        self.assertIn("backend_url_denial_id = $queueHostId", script)
         block = script.split("$report.error_recovery_observations = @", 1)[1]
-        block = block.split("$cases.error_recovery = @", 1)[1]
-        self.assertIn("status='NOT TESTED'", block.split("} catch {", 1)[0])
-        self.assertNotIn("status='PASS'", block.split("} catch {", 1)[0])
+        self.assertIn("if ($angleHostId -and $queueHostId)", block)
+        self.assertIn("status='PASS'", block)
+        self.assertIn("status='NOT TESTED'", block)
+        self.assertIn("one or both typed Rust stderr request IDs were absent", block)
+        self.assertNotIn("backend_request_identity = $null", block)
+        # The tests above are source-level; not a forged host log or native PASS.
+        self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
 
     def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
         # A SetFocus/SendKeys-only URL entry left the actual installed
