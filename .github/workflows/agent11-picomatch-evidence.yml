@@ -11,6 +11,7 @@ on:
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264.patch'
       - 'apps/desktop-ui/package.json'
       - 'apps/desktop-ui/package-lock.json'
       - '.github/workflows/agent11-picomatch-evidence.yml'
@@ -304,3 +305,48 @@ jobs:
           echo 'PR260 source is unmerged and not in npm lockfile or build output.'
           echo 'Unfiltered npm audit remains mandatory and FAILED on the original unpatched graph.'
           echo 'Never claim this test proves a released/advisory-cleared remediation.'
+
+  upstream-pr264-experiment:
+    # A genuinely open upstream parser proposal, applied only in ephemeral CI node_modules.
+    # This is NOT a lockfile change, supported distribution or audit remediation.
+    name: Active upstream PR264 parser trial (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Reproduce official registry-locked 4.0.7 parser and dependency provenance
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Verify pinned PR264 source and apply only to transient node_modules
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264.patch > scripts/experimental/.ci-pr264-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr264-lf.patch)" = e0c5c072e550e9b950d9087c0eaa5533c6eb2d85
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Expanded hostile-pattern corpus must complete without timeouts
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Run complete frontend checker and test suite with candidate parser
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Explicitly retain npm advisory and release NO-GO
+        run: |
+          echo 'Experiment is unmerged PR264 source, not an npm-published patched version.'
+          echo 'No package-lock modification. Original strict npm audit still FAILS.'
