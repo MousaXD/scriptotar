@@ -603,7 +603,8 @@ function Get-InstalledHostLogOffset {
 }
 function Get-InstalledHostDenial([long]$beforeOffset, [string]$code,
                                  [string]$nativeAlert, [string]$expectedText) {
-  if ($code -cnotin @('INVALID_STUDY_ANGLES','INVALID_MEDIA_URL') -or
+  if ($code -cnotin @('INVALID_STUDY_ANGLES','INVALID_MEDIA_URL',
+                         'FOREIGN_STUDY_REFERENCE') -or
       -not $script:installedDenialLog -or -not $nativeAlert) { return $null }
   $native = [regex]::Match(
     $nativeAlert,
@@ -1447,8 +1448,11 @@ try {
           $disclosure = Find-ExactInstalledControl $restoredHwnd 'Open Study reference' $null 4
           Click-InstalledControl $restoredHwnd 'Open Study reference' $disclosure.Current.ControlType -pointer
           Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference
+          $referenceError = 'This Study reference cannot be opened in the active project.'
           $priorDenial = @(Get-InstalledReferenceDenials $restoredHwnd)
+          $priorBound = @(Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError)
           $beforeReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          $hostOffset = Get-InstalledHostLogOffset
           # Preserve the full read-only 39-table canonical digest snapshot even
           # when UIA throws after the native click. No private DB rows included.
           $referenceHash = [Convert]::ToHexString(
@@ -1459,14 +1463,33 @@ try {
             native_input_readback = 'exact ValuePattern verified'
             reference_sha256 = $referenceHash
             preexisting_denial_count = $priorDenial.Count
+            preexisting_bound_count = $priorBound.Count
             canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
           }
           Click-InstalledControl $restoredHwnd 'Open reference' ([System.Windows.Automation.ControlType]::Button)
           $denied = $false
+          $hostReferenceId = $null
+          $hostBoundAlert = $null
+          $now = @()
+          $visible = @()
           $deadline = [DateTime]::UtcNow.AddSeconds(12)
           do {
-            $now = @(Get-InstalledReferenceDenials $restoredHwnd)
-            if ($now.Count -gt 0 -and $priorDenial.Count -eq 0) { $denied = $true; break }
+            # Check BOTH the original visible generic Text rejection and a
+            # NEW accessible alert container with a 128-bit opaque request ID.
+            $visible = @(Get-InstalledReferenceDenials $restoredHwnd)
+            $now = @(Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError |
+              Where-Object { $_ -cnotin $priorBound })
+            if ($visible.Count -eq 1 -and $priorDenial.Count -eq 0 -and
+                $now.Count -eq 1) {
+              $id = Get-InstalledHostDenial $hostOffset 'FOREIGN_STUDY_REFERENCE' \
+                $now[0] $referenceError
+              if ($id) {
+                $hostReferenceId = $id
+                $hostBoundAlert = $now[0]
+                $denied = $true
+                break
+              }
+            }
             Start-Sleep -Milliseconds 350
           } while ([DateTime]::UtcNow -lt $deadline)
           $afterReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
@@ -1478,7 +1501,10 @@ try {
             canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
             canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
             preexisting_denial_count = $priorDenial.Count
-            postclick_denial_count = $now.Count
+            postclick_denial_count = $visible.Count
+            postclick_bound_count = $now.Count
+            host_request_id = $hostReferenceId
+            native_bound_alert_name = $hostBoundAlert
             reference_sha256 = $referenceHash
             missing = 'forged mutating Tauri IPC and real backend request identity'
           }
