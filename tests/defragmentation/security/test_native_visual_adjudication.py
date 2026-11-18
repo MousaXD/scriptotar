@@ -49,6 +49,42 @@ class IndependentNativeVisualEvidence(unittest.TestCase):
             "FAIL OPEN: unadjudicated red rectangle became native error_recovery PASS",
         )
 
+    def test_unbound_semantic_flag_is_not_request_correlated_proof(self):
+        """A caller-owned semantic=True bit cannot authenticate the denied IPC.
+
+        The actual QA runner currently sets this shape after finding *any*
+        visible AT-SPI node whose name contains both 'angle' and 'invalid'.
+        Nothing in that shape proves the node was newly produced by this exact
+        malformed payload or tied to the public Tauri response. Simulate that
+        indistinguishable forged/stale evidence; a callback succeeding must
+        not certify this negative path without bound proof.
+        """
+        report = {"cases": {}}
+
+        def stale_unrelated_semantic_alert():
+            report["angle_rejection_visual_proof"] = {
+                "proof": "named AT-SPI native validation alert",
+                "screenshot": "negative-angles-rejected.png",
+                "atspi_error_text_exposed": True,
+                # No submitted request identity, observed denial, or before/
+                # after semantic transition links this to the actual action.
+            }
+            return "three angles reviewed; original SQLite drafts unchanged"
+
+        passed = self.native["checked"](
+            report, "error_recovery", stale_unrelated_semantic_alert
+        )
+        self.assertFalse(
+            passed,
+            "FAIL OPEN: stale/unrelated 'angle invalid' text plus a caller-owned "
+            "semantic flag certified rejection without request-correlated "
+            "native IPC denial evidence",
+        )
+        self.assertNotEqual(
+            report["cases"]["error_recovery"]["status"], "PASS",
+            "FAIL OPEN: semantic-looking metadata alone became host certification",
+        )
+
     def test_visual_fallback_does_not_hide_human_review_obligation(self):
         if "native_angle_alert_image_proof(" not in self.source:
             return
