@@ -205,5 +205,82 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
                 summarize_trace(trace, SHA, "b" * 64, HASH)
 
 
+
+from .native_ui_trace import summarize_ui_trace, UI_KIND
+
+
+class NativeUiTraceContractTests(unittest.TestCase):
+    """Synthetic examples validate format only; never native app timings."""
+
+    @staticmethod
+    def event(index):
+        return {
+            "evidence_kind": UI_KIND,
+            "source_sha": SHA, "package_sha256": HASH,
+            "executable_sha256": HASH, "fixture_sha256": "b" * 64,
+            "session_id": f"session-native-{index:02}",
+            "trial_id": f"trial-native-{index:02}",
+            "native_provider": "linux-webkitgtk-atspi",
+            "study_count": 100, "cache_state": "warm-cache",
+            "action": "study_open",
+            "start_monotonic_ns": 1_000_000_000 + index * 1_000_000_000,
+            "completion_monotonic_ns": 1_001_000_000 + index * 1_000_000_000,
+            "start_evidence_id": f"evidence-before-{index:02}",
+            "completion_evidence_id": f"evidence-after-{index:02}",
+        }
+
+    def test_underpowered_trace_cannot_claim_p50_or_p95(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external.jsonl"
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(9)))
+            report = summarize_ui_trace(trace, SHA, HASH, HASH)
+            bucket = report["groups"][0]
+            self.assertEqual(bucket["status"], "INSUFFICIENT_TRIALS")
+            self.assertIsNone(bucket["p95_ms_nearest_rank"])
+            self.assertIsNone(bucket["p50_ms"])
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(10)))
+            report = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(report["groups"][0]["p95_ms_nearest_rank"], 1.0)
+            self.assertEqual(report["groups"][0]["p50_ms"], 1.0)
+            self.assertEqual(report["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+            self.assertEqual(report["scope"], "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY")
+            self.assertIsNone(report["ipc_latency_ms"])
+
+    def test_untrusted_trace_rejects_duplicate_clock_and_payload_leaks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external.jsonl"
+            baseline = self.event(0)
+            bad_cases = (
+                ([baseline, baseline], "duplicate trial"),
+                ([{**baseline, "completion_monotonic_ns": 0}], "monotonic"),
+                ([{**baseline, "completion_monotonic_ns": True}], "monotonic"),
+                ([{**baseline, "raw_transcript_text": "private"}], "unexpected"),
+                ([{**baseline, "source_sha": "f" * 40}], "mismatch"),
+                ([{**baseline, "evidence_kind": "chromium-mock"}], "external native"),
+                ([{**baseline, "cache_state": "cold-rebooted",
+                   "action": "warm_start_window"}], "inconsistent"),
+                ([{**baseline, "study_count": True}], "Study count"),
+                ([{**baseline, "action": ["study_open"]}], "Study count"),
+                ([{**baseline, "native_provider": ["fake"]}], "provider"),
+                ([{**baseline, "fixture_sha256": "fake"}], "fixture"),
+            )
+            for events, message in bad_cases:
+                with self.subTest(expected=message):
+                    trace.write_text("\n".join(json.dumps(x) for x in events))
+                    with self.assertRaisesRegex(ValueError, message):
+                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+
+    def test_distinct_cache_conditions_cannot_be_pooled_for_p95(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external.jsonl"
+            events = [self.event(i) for i in range(10)]
+            for event in events[5:]:
+                event["cache_state"] = "unknown"
+            trace.write_text("\n".join(json.dumps(e) for e in events))
+            report = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(len(report["groups"]), 2)
+            self.assertTrue(all(x["status"] == "INSUFFICIENT_TRIALS" for x in report["groups"]))
+
+
 if __name__ == "__main__":
     unittest.main()
