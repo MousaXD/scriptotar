@@ -479,6 +479,32 @@ def canonical_study_reference_ids(data_dir: Path, project_name: str,
     return tuple(ids)
 
 
+def valid_native_url_request_binding(proof: object) -> bool:
+    """URL denial must have real Rust stderr + exact fresh accessible request ID."""
+    if not isinstance(proof, dict):
+        return False
+    host = proof.get("authoritative_denial")
+    if not isinstance(host, dict):
+        return False
+    ident = host.get("tauri_denial_request_id")
+    return (
+        isinstance(ident, str)
+        and bool(re.fullmatch(r"[a-f0-9]{32}", ident))
+        and host.get("native_alert_request_id") == ident
+        and host.get("submitted_request_id") == ident
+        and host.get("error_code") == "INVALID_MEDIA_URL"
+        and host.get("host_source") == "installed-process-stderr"
+        and host.get("accessibility_source") == "installed-AT-SPI-alert"
+        and production_native_error_id(
+            proof.get("new_alert_text", ""),
+            "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        ) == ident
+        and proof.get("canonical_unchanged") is True
+        and proof.get("job_count_unchanged") is True
+        and proof.get("native_input_readback_exact") is True
+    )
+
+
 def verify_canonical_saved_draft(
     data_dir: Path, project_name: str, study_name: str, expected_body: str
 ) -> str:
@@ -1217,6 +1243,13 @@ def checked(report: dict, key: str, fn):
                     "readback and immutable SQLite records; temporal alert or "
                     "screenshot evidence alone is insufficient"
                 )
+            if not valid_native_url_request_binding(report.get("denied_url_host_proof")):
+                raise NativeUnavailable(
+                    "Unsupported Queue URL has no independently observed Rust "
+                    "INVALID_MEDIA_URL request ID matching a newly rendered "
+                    "native AT-SPI error; unchanged SQLite counts alone cannot "
+                    "certify the denied Tauri request"
+                )
         status(report, key, "PASS", str(detail))
         return True
     except NativeUnavailable as exc:
@@ -1731,6 +1764,8 @@ def exercise(args, report: dict, root: Path):
             prior_queue_alerts = native_named_alerts(
                 a, ("url", "scheme", "protocol", "unsupported", "invalid", "blocked"))
             before_records = canonical_records_snapshot(root / "data")
+            queue_log = root / "desktop.log"
+            queue_log_offset = native_host_log_offset(queue_log)
             a.click("Queue URL", "button")
             error_text = ""
             deadline = time.monotonic() + 15
@@ -1779,6 +1814,18 @@ def exercise(args, report: dict, root: Path):
                     "cannot automatically substitute for semantic evidence"
                 )
             session.screenshot("rejected-url-error")
+            queue_receipt = observed_host_denial(
+                queue_log, queue_log_offset, "INVALID_MEDIA_URL",
+                [error_text], "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+            )
+            report["denied_url_host_proof"] = {
+                "authoritative_denial": queue_receipt,
+                "new_alert_text": error_text,
+                "canonical_unchanged": before_records == after_records,
+                "job_count_unchanged": new_count == old_count,
+                "native_input_readback_exact": True,
+                "native_source": "real UI Queue URL and installed stderr",
+            }
             # Recover through ordinary user navigation and readback. Previously
             # edited immutable candidate rows must still hold the exact body.
             a.click("Studio", "button")
@@ -1827,6 +1874,8 @@ def exercise(args, report: dict, root: Path):
                 if "angle" in value.lower() and "invalid" in value.lower()
             ]
             angle_db_before = canonical_records_snapshot(root / "data")
+            native_log = root / "desktop.log"
+            angle_log_offset = native_host_log_offset(native_log)
             pre_image = session.screenshot("pre-negative-angles")
             if not pre_image:
                 raise NativeFailure("No actual installed WebKit pre-rejection screenshot")
@@ -1876,11 +1925,17 @@ def exercise(args, report: dict, root: Path):
                     "human_review_required": True,
                 }
             else:
+                angle_denial = observed_host_denial(
+                    native_log, angle_log_offset, "INVALID_STUDY_ANGLES",
+                    new_angle_alerts,
+                    "The angle response is invalid or its Study evidence changed."
+                )
                 report["angle_rejection_visual_proof"] = {
                     "proof": "fresh named AT-SPI alert after real native action",
                     "screenshot": post_image, "atspi_error_text_exposed": True,
                     "request_correlation": {
                         "native_action": "Validate 3 angles",
+                        "authoritative_denial": angle_denial,
                         "submitted_payload_sha256": hashlib.sha256(
                             malformed_angle_json.encode()).hexdigest(),
                         "native_readback_sha256": hashlib.sha256(
