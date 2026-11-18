@@ -1490,9 +1490,23 @@ try {
         $recovered = Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'recovered-studio-after-denial.png')
         $report.denied_url_error = $deniedError.Substring(0, [Math]::Min(300, $deniedError.Length))
+        # Native UIA and SQLite observations are retained, but the current
+        # production Tauri error contract supplies NO opaque request identity.
+        # A fresh unrelated UIA error can share these generic text tokens, so
+        # this scenario cannot be release-certified. Do not fabricate the
+        # missing backend denial ID or infer it from a screenshot/timestamp.
+        $report.error_recovery_observations = @{
+          malformed_json_native_input = 'exact UIA ValuePattern readback'
+          visible_angle_error = $currentAngleError
+          unsupported_url = $rejectedUrl
+          visible_queue_error = $deniedError
+          canonical_snapshot_unchanged = $true
+          persisted_study_recovered = $recovered
+          backend_request_identity = $null
+        }
         $cases.error_recovery = @{
-          status='PASS'
-          reason="Installed WebView2 three-angle and Queue negative paths passed; production Queue rejected unsupported file URL with visible UIA error, zero new canonical jobs and original Study/candidate recovered ($recovered)"
+          status='NOT TESTED'
+          reason='Observed native UIA error/recovery and unchanged canonical SQLite, but no authoritative Tauri denial ID is exposed for binding this exact request to its accessible alert. Agent 00 production contract required.'
         }
       } catch {
         $cases.error_recovery = @{
