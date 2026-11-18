@@ -2056,10 +2056,16 @@ mod tests {
             assert_eq!(after_rejection.draft, before_rejection.draft);
             assert_eq!(after_rejection.draft_id, before_rejection.draft_id);
             assert_eq!(after_rejection.drafts.len(), before_rejection.drafts.len());
-            assert_eq!(after_rejection.draft_versions.len(), before_rejection.draft_versions.len());
+            assert_eq!(
+                after_rejection.draft_versions.len(),
+                before_rejection.draft_versions.len()
+            );
             assert_eq!(after_rejection.sources, before_rejection.sources);
             assert_eq!(
-                services.list_studio_evidence(project_id, study_id).unwrap().len(),
+                services
+                    .list_studio_evidence(project_id, study_id)
+                    .unwrap()
+                    .len(),
                 before_evidence.len()
             );
             let reviewed = services
