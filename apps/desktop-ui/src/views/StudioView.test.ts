@@ -80,7 +80,8 @@ describe('Content Study Studio', () => {
     await waitFor(() => expect(denied).toHaveBeenCalledWith(projectA, studyA, undefined));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This Study reference cannot be opened in the active project.');
-    expect(screen.queryByRole('textbox', { name: 'Script draft' })).not.toBeInTheDocument();
+    // Studio keeps its empty unsaved editor mounted; denial must not fill it.
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
   });
 
   it('rejects noncanonical Study references without invoking the native gateway', async () => {
