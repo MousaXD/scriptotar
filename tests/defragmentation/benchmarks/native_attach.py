@@ -130,6 +130,12 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
     instance = process_instance_id(pid)
     if instance is None:
         raise ValueError("could not independently determine process creation identity")
+    # Bind both input artifacts to the *start* of the memory interval. Hashing
+    # only at the end can label samples from the old installed app with a
+    # newer package/executable swapped into the same path mid-session.
+    package_path = package.resolve(strict=True)
+    package_sha256 = sha256(package_path)
+    executable_sha256 = sha256(expected)
     begin = time.perf_counter()
     begin_monotonic_ns = time.perf_counter_ns()
     records = []
@@ -164,6 +170,12 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         if remaining > 0:
             time.sleep(min(interval_seconds, remaining))
     finished_monotonic_ns = time.perf_counter_ns()
+    # Keep a changed artifact out of the result entirely; returning only the
+    # final hash would silently misbind previously collected raw samples.
+    if sha256(package_path) != package_sha256:
+        raise ValueError("installed package checksum changed during attached sampling")
+    if sha256(expected) != executable_sha256:
+        raise ValueError("installed executable checksum changed during attached sampling")
     samples = {name: summary([row.get(name) for row in records]) for name in MEMORY_FIELDS}
     return {
         "scope": "ATTACHED_INSTALLED_PROCESS_MEMORY_ONLY_NOT_UI_CERTIFICATION",
@@ -171,8 +183,8 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "attestation": "Operator-supplied PID and package. Kernel process-image path matched at each sample; native WebView/Study size/installation and driver provenance are not independently proved.",
         "source_sha_operator_supplied": source_sha,
         "source_run_url_operator_supplied": run_url,
-        "package_path": str(package.resolve()), "package_sha256": sha256(package),
-        "executable_path": str(expected), "executable_sha256": sha256(executable),
+        "package_path": str(package_path), "package_sha256": package_sha256,
+        "executable_path": str(expected), "executable_sha256": executable_sha256,
         "pid": pid, "kernel_process_creation_id": instance,
         "monotonic_clock": "python.time.perf_counter_ns",
         "measurement_started_monotonic_ns": begin_monotonic_ns,
@@ -184,7 +196,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "end_reason": end_reason, "sample_count": len(records),
         "complete_tree_sample_count": sum(x.get("tree_memory_complete") is True for x in records),
         "metrics": samples, "raw_samples": records,
-        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching is not package signature verification. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
+        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching and start/end hash stability are not package signature verification; a transient change-and-restore between hashes is not detectable. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
     }
 
 
