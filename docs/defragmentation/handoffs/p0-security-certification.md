@@ -1,3 +1,59 @@
+## 2026-11-18 — Independent QA-integrity veto / exact-SHA rescan
+
+**Decision: RELEASE NO-GO; PR #124 remains DRAFT.** This is an independent audit record, not an installed-host certification. Never enable paid egress or merge to main on this evidence. **All links and conclusions below distinguish the test source from the code being tested.**
+
+### Dynamically resolved revision provenance
+
+- Integration branch `refs/heads/integration/scriptotar-defragmentation-agent00-20261113` (GitHub Git ref read on 2026-11-18): `7af95c574643c14565a5c10d0be2cc78c5e57254` ([PR #114](https://github.com/MousaXD/scriptotar/pull/114)). Do **not** use PR #124's stale `base_sha` `f42eff03051c43f4b919763a8950b01758afd36f`.
+- Agent 10 audit source inspected: `a306debb78ab7fddc46a42c64f6f4b65dd63954e` ([PR #124](https://github.com/MousaXD/scriptotar/pull/124)); no completed check for this exact audit head at review time. This report commit itself also requires a **new completed exact-head matrix**.
+- Agent 07 current QA source: `9c272a92de8df42a1ecfee5211a4f7ea3bb74e44` ([PR #131](https://github.com/MousaXD/scriptotar/pull/131)).
+- Agent 00 production proposal: `e0eda73e62e9288509c92db610e841183cd31ce2` ([PR #133](https://github.com/MousaXD/scriptotar/pull/133)); **not yet integrated into the release branch**.
+- Agent 11 supplier report: `75b2fb568b4958cc25bde262643b00c240f04961` ([PR #132](https://github.com/MousaXD/scriptotar/pull/132)); report-only, not a remediation.
+
+### Independent observed matrix — old audit workflow, not current certification
+
+[Run #44300422996](https://github.com/MousaXD/scriptotar/actions/runs/44300422996) is **FAIL**. This run's trigger head was audit `1009cc92bd0653a765f7b489a0a6a3f1215b02b6`; the matrix test checkout itself printed audit **merge checkout** `28baf36c1560dd10afebe10b8029388a8b578d3d`. The target integration checkout printed `f42eff03051c43f4b919763a8950b01758afd36f`. It does **not** certify the later audit `a306...` nor the current integration `7af95...`.
+
+| Independent gate | Observed result on previous audit workflow | Trust boundary / remaining gap |
+| --- | --- | --- |
+| `provider:118` | **PASS**, isolated mocked provider | Revocation/consent reservations and context race test; not actual paid network execution |
+| `migration:119` | **PASS**, isolated | Canonical SQLite/migration and rollback, not installed app authorization |
+| `receipt-v12:128` | **PASS**, isolated | Replay/ACK/provider identity/duplicate durability; no real paid transport proof |
+| `writing:121` | **PASS**, isolated | Canonical writing atomicity, not full host/no-mutation for every negative UI request |
+| `verification:117` | **PASS**, isolated | Unbound body/claim provenance fail closed, no independent publisher attestation |
+| `combined-v11:114` | **PASS** against `f42eff...` | Integrated v11, historical DB and draft persistence only |
+| `combined:114` | **FAIL** against `f42eff...` | Missing registered approved paid Tauri execution entrypoint and serialized live transport; two independent assertions failed; leave egress OFF |
+| `native-evidence:131` | **FAIL** against Agent 07 `bd8187942dd735998bb48024efedce6786423c6d` | `test_image_only_angle_rejection_cannot_be_autocertified`: image-only evidence with `human_review_required=True` was marked PASS; real QA-integrity fail-open |
+| Whole matrix / exact-source stability | **FAIL / not yet proven** | Old workflow lacks current shared immutable pin-and-postcheck result; later audit source added one, awaiting fresh run |
+
+**Reproduction:** [native-evidence failing job](https://github.com/MousaXD/scriptotar/actions/runs/44300422996) reports `AssertionError: True is not false : FAIL OPEN: a successful callback marked screenshot-only angle rejection as certified before independent human visual review`. The current Agent 07 `9c272a92...` Linux runner still records `human_review_required: True` after the new-border screenshot fallback and then returns from `error_recovery()`; generic `checked()` blindly assigns `PASS` to any successfully returning callback. This is **source-confirmed still vulnerable**, but its newest exact HEAD has **not** received a new independent native-evidence job at review time. Fix must reject unresolved human review in the actual verdict path, not simply rename or suppress screenshot metadata.
+
+### Actual installed-app acceptance — Agent 07 exact head `9c272a92...`
+
+[Run #44302808654](https://github.com/MousaXD/scriptotar/actions/runs/44302808654) is **FAIL** overall. Linux: **10 PASS / 1 FAIL / 5 NOT TESTED**, with genuine installed Queue URL `file:///scriptotar-native-qa-denied-media.mp4` failing because no native alert was exposed; Windows: **10 PASS / 0 FAIL / 6 NOT TESTED**, including visible UIA URL rejection with unchanged canonical job count and saved candidate readback. The two untested security scenarios include **foreign-project forged IPC authorization, genuine multi-source transcript, revocation**, plus Arabic full RTL and complete visual theme adjudication. Existing screenshots are review evidence, not an automatic visual PASS. Neither OS is release-certified.
+
+Agent 07's read-only negative-path probe currently compares per-project **job count**, and checks persisted Study/candidate bodies, but does not snapshot or diff all **approval, agent effect, external attempt, audit-event, and writing batch rows** around the installed malformed-input and unsupported-URL cases. Source-only confidence in `interpret_studio_angles` or a screenshot does not prove every required installed-host non-mutation boundary. Add read-only before/after canonical table identity and content/hash checks scoped to the same application profile; fail on any unauthorized difference, and include visible native request-correlated rejection. Do not seed or alter production SQLite to satisfy tests.
+
+### Agent 00 production review, separate from native certification
+
+[PR #133](https://github.com/MousaXD/scriptotar/pull/133) improves Svelte localized `invalidAngles` and an accessible live `role=alert`, guards stale async results and saving, and adds a public Rust service test for the exact one-angle JSON. That Rust regression checks unchanged Study revision/draft ID/body/versions/source, evidence count, and snapshots the counts of six ledger-related tables (`agent_runs`, `agent_audit_events`, `agent_effects`, `agent_external_effects`, `agent_external_attempt_history`, `study_writing_batches`). This is **valuable source/unit evidence** but does not cover every approval/old-row hash or a true installed host. It is currently **unmerged into the dynamically resolved integration SHA**. [PR #133 own checks](https://github.com/MousaXD/scriptotar/pull/133/checks) include package/UI tests passing but migration supply-chain failing; do not call release GREEN.
+
+### Agent 11 independent advisory review
+
+[PR #132](https://github.com/MousaXD/scriptotar/pull/132) only adds the signed-off investigation report. On unchanged `7af95...` integration, [npm Supply chain run #44278804900](https://github.com/MousaXD/scriptotar/actions/runs/44278804900) fails high-severity audit: eight affected dependency paths traced to `GHSA-fc5q-39xc-vjpf` (picomatch <=4.0.7). Agent 11 reports **no verifiable patched release** at this checkpoint, so `npm audit fix --force`, an unpatched override, or disabling the audit is NOT certification. Their exact report-only head `75b2...` likewise has a failed Tauri migration integration check. Upstream fix state must be rechecked before changes; the vulnerability remains a RELEASE BLOCKER. Cargo audit warnings and the skipped post-npm Python advisory step must be tracked separately.
+
+### Mandatory closure / next execution
+
+1. Complete `native-evidence:131` on Agent 07's **then-current** SHA, with dynamic integration pin, fail-closed human adjudication, request-specific semantic denial, and no-mutation proof. Existing screenshot fallback is currently RED.
+2. Integrate approved real production Queue/angle visibility changes without altering QA assertions; run actual installed Linux and Windows controls and signed evidence at the **same final SHA**.
+3. Prove native rejected requests leave all canonical Study, draft/version, approvals, effects, receipts/attempts, and historical audit identities and content unchanged. Check forged IPC and source revocation through real installed-host authorization, not mocked provider races.
+4. Resolve unsuppressed npm supply-chain audit, independently re-review dependency advisories; keep paid egress disabled while authenticated paid transport and live receipt/pricing aren't certified.
+5. Rerun all eight independent security matrix gates, the exact-SHA pin and postcheck, and complete installed acceptance at a single immutable **final integration** SHA. Treat prior passing tests as historical only.
+
+**RELEASE VETO: ACTIVE / NO-GO / DRAFT / DO NOT MERGE / PAID EGRESS OFF.**
+
+---
+
 # Agent 10 — 2026-11-17 latest independent five-failure database certification
 
 **Completed exact source and executed evidence:** [Agent 10 independent security workflow #44117872802](https://github.com/MousaXD/scriptotar/actions/runs/44117872802), audit `d2498870c674dc9d501b4b5eb39f4fc705b230e6`, integration source `402ce53ef0643cf23b610571617e262ed3582a39` (PR #114). **5 of 6 security jobs PASS, combined FAIL; real SQLite v10 DB 42 PASS / 5 FAIL.** All five independent cases use separately approved RUNNING checkpoints, real v10 Fresh reservation/pre-send CAS, and **NO network or billable provider calls**. These are confirmed *ledger identity/accounting* acceptance defects, not observed external double charges or cross-project data reads. The five exact failing tests:
