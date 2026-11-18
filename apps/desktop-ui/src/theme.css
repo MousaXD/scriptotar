@@ -69,3 +69,74 @@
   :root[data-theme='system'] .state-downloading,
   :root[data-theme='system'] .state-preparing { color: #205f91; border-color: #aac7dd; background: #eaf3fa; }
 }
+
+/* Explicit Light is independent of OS appearance; System remains adaptive. */
+:root[data-theme='light'] { color-scheme: light; }
+
+  :root[data-theme='light'] {
+    --bg: #f5f7f8;
+    --sidebar: #eef2f4;
+    --surface: #fff;
+    --surface-2: #f4f6f7;
+    --surface-3: #e9eef0;
+    --border: #d7dfe3;
+    --border-strong: #a6b5bd;
+    --text: #18252d;
+    --muted: #4b5a64;
+    --faint: #586b76;
+    --accent: #226649;
+    --accent-strong: #197447;
+    --accent-ink: #fff;
+    --warn: #805d12;
+    --danger: #a83838;
+    --info: #2466a0;
+    color: var(--text);
+    background: var(--bg);
+  }
+  :root[data-theme='light'] body { background: var(--bg); color: var(--text); }
+  :root[data-theme='light'] .sidebar { border-color: var(--border); background: var(--sidebar); }
+  :root[data-theme='light'] .brand-lockup { border-color: var(--border); }
+  :root[data-theme='light'] .brand-mark { border-color: var(--border-strong); color: var(--accent); background: var(--surface-2); }
+  :root[data-theme='light'] .sidebar nav button:hover { color: var(--text); background: var(--surface-2); }
+  :root[data-theme='light'] .sidebar nav button.active { color: var(--text); background: var(--surface-3); border-color: var(--border); }
+  :root[data-theme='light'] .topbar { border-color: var(--border); background: var(--bg); }
+  :root[data-theme='light'] .panel { border-color: var(--border); background: var(--surface); box-shadow: none; }
+  :root[data-theme='light'] input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='hidden'])),
+  :root[data-theme='light'] textarea,
+  :root[data-theme='light'] .global-search,
+  :root[data-theme='light'] .search-field,
+  :root[data-theme='light'] .segmented,
+  :root[data-theme='light'] kbd { color: var(--text); border-color: var(--border); background: var(--surface-2); }
+  :root[data-theme='light'] select { color: var(--text); border-color: var(--border); background-color: var(--surface-2); }
+  /* Keep the native-select fallback affordance visible against system-light fields. */
+  :root[data-theme='light'] select:not([multiple]) {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%23586b76' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  }
+  :root[data-theme='light'] .button.secondary { color: var(--text); background: var(--surface-2); }
+  :root[data-theme='light'] .activity-button { color: var(--muted); background: var(--surface); }
+  :root[data-theme='light'] .metric-grid article,
+  :root[data-theme='light'] .thumbnail-placeholder,
+  :root[data-theme='light'] .kind-icon { border-color: var(--border); background: var(--surface-2); }
+  /* Legacy workspace markup still has a few dark-only colors; protect readable system-light contrast. */
+  :root[data-theme='light'] .research-row,
+  :root[data-theme='light'] .segment p,
+  :root[data-theme='light'] .result-copy { color: var(--text); }
+  :root[data-theme='light'] .transcript-list button.active,
+  :root[data-theme='light'] .mode-switch button,
+  :root[data-theme='light'] .mode-switch button.active,
+  :root[data-theme='light'] .toggle-grid label,
+  :root[data-theme='light'] .state-panel,
+  :root[data-theme='light'] .export-stack button,
+  :root[data-theme='light'] .timestamp { color: var(--text); background: var(--surface-2); border-color: var(--border); }
+  :root[data-theme='light'] .mode-switch button.active,
+  :root[data-theme='light'] .transcript-list button.active { background: var(--surface-3); }
+  :root[data-theme='light'] .timestamp { color: var(--info); }
+  :root[data-theme='light'] .progress-track { background: var(--surface-3); }
+  :root[data-theme='light'] .research-row.table-head { background: var(--surface-2); }
+  :root[data-theme='light'] .state-completed { color: #176a47; border-color: #a8cdbb; background: #e7f4ed; }
+  :root[data-theme='light'] .state-failed { color: #9b3434; border-color: #ddb5b5; background: #faecec; }
+  :root[data-theme='light'] .state-interrupted { color: #765614; border-color: #d9c797; background: #faf5e7; }
+  :root[data-theme='light'] .state-transcribing,
+  :root[data-theme='light'] .state-processing,
+  :root[data-theme='light'] .state-downloading,
+  :root[data-theme='light'] .state-preparing { color: #205f91; border-color: #aac7dd; background: #eaf3fa; }
