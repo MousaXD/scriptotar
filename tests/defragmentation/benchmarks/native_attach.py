@@ -131,6 +131,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
     if instance is None:
         raise ValueError("could not independently determine process creation identity")
     begin = time.perf_counter()
+    begin_monotonic_ns = time.perf_counter_ns()
     records = []
     end_reason = "duration_elapsed"
     while time.perf_counter() - begin < seconds:
@@ -139,15 +140,23 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
             end_reason = "process_gone_or_identity_changed"
             break
         clock = time.perf_counter()
+        sample_started_monotonic_ns = time.perf_counter_ns()
         try:
             memory = memory_snapshot(pid)
         except (OSError, RuntimeError, ValueError) as exc:
             memory = {"provider": platform.system(), "tree_memory_complete": False,
                       "sampling_error": type(exc).__name__}
-        records.append({"elapsed_ms": round((clock - begin) * 1000, 3), **memory})
+        sample_finished_monotonic_ns = time.perf_counter_ns()
+        records.append({
+            "elapsed_ms": round((clock - begin) * 1000, 3),
+            "sample_started_monotonic_ns": sample_started_monotonic_ns,
+            "sample_finished_monotonic_ns": sample_finished_monotonic_ns,
+            **memory,
+        })
         remaining = seconds - (time.perf_counter() - begin)
         if remaining > 0:
             time.sleep(min(interval_seconds, remaining))
+    finished_monotonic_ns = time.perf_counter_ns()
     samples = {name: summary([row.get(name) for row in records]) for name in MEMORY_FIELDS}
     return {
         "scope": "ATTACHED_INSTALLED_PROCESS_MEMORY_ONLY_NOT_UI_CERTIFICATION",
@@ -158,6 +167,9 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "package_path": str(package.resolve()), "package_sha256": sha256(package),
         "executable_path": str(expected), "executable_sha256": sha256(executable),
         "pid": pid, "kernel_process_creation_id": instance,
+        "monotonic_clock": "python.time.perf_counter_ns",
+        "measurement_started_monotonic_ns": begin_monotonic_ns,
+        "measurement_finished_monotonic_ns": finished_monotonic_ns,
         "platform": platform.platform(),
         "cpu": platform.processor() or "unknown", "logical_cpus": os.cpu_count(),
         "study_count_operator_supplied": study_count,
@@ -165,7 +177,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "end_reason": end_reason, "sample_count": len(records),
         "complete_tree_sample_count": sum(x.get("tree_memory_complete") is True for x in records),
         "metrics": samples, "raw_samples": records,
-        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Process image matching is not package signature verification. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
+        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching is not package signature verification. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
     }
 
 
