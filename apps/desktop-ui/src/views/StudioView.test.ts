@@ -58,6 +58,48 @@ function mount(gateway?: StudioGateway, extra: Record<string, unknown> = {}) {
 }
 
 describe('Content Study Studio', () => {
+  it('uses a genuine project-scoped gateway read for a foreign Study reference and rejects it visibly', async () => {
+    const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const studyA = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const denied = vi.fn(async (_projectId: string, _studyId: string) => {
+      throw new Error('project is not active');
+    });
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy: denied,
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway, { projectId: projectB, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'scriptotar://study/' + projectA + '/' + studyA }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(denied).toHaveBeenCalledWith(projectA, studyA, undefined));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'This Study reference cannot be opened in the active project.');
+    expect(screen.queryByRole('textbox', { name: 'Script draft' })).not.toBeInTheDocument();
+  });
+
+  it('rejects noncanonical Study references without invoking the native gateway', async () => {
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('no creation'); },
+      getStudy: vi.fn(async () => { throw new Error('should not dispatch'); }),
+      saveStudy: async () => { throw new Error('no mutation'); }
+    };
+    mount(gateway);
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Paste Study reference' }), {
+      target: { value: 'javascript:alert(1)' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid Scriptotar Study reference.');
+    expect(gateway.getStudy).not.toHaveBeenCalled();
+  });
+
   it('never claims a production save when the study service is not connected', async () => {
     mount();
     expect(screen.getByRole('heading', { name: 'Studio' })).toBeInTheDocument();

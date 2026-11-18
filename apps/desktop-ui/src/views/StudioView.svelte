@@ -31,6 +31,10 @@
   let studies: Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[] = [];
   let record: ContentStudy | null = null;
   let studyId = '';
+  let referenceInput = '';
+  let referenceError = '';
+  let referenceBusy = false;
+  const studyUuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
   let brief: CreativeBrief = emptyBrief();
   let refs: StudySourceRef[] = [];
   let draft = '';
@@ -219,7 +223,42 @@
     return cause instanceof Error ? cause.message : fallback;
   }
 
-  async function openStudy(id: string) {
+  // Ordinary end-user navigation. An external Study reference is never
+  // trusted as authority: the real installed Tauri host performs the read.
+  // This intentionally permits a foreign project ID to REACH the host so its
+  // active-project denial is independently testable, not preapproved in JS.
+  async function openStudyReference() {
+    if (!gateway || referenceBusy || busy || saving || loading) return;
+    referenceError = '';
+    const raw = referenceInput.trim();
+    const matched = /^scriptotar:\/\/study\/([^/?#]+)\/([^/?#]+)(?:\?draft=([^/?#]+))?$/i.exec(raw);
+    if (raw.length > 240 || !matched ||
+        !studyUuid.test(matched[1]) || !studyUuid.test(matched[2]) ||
+        (matched[3] && !studyUuid.test(matched[3]))) {
+      referenceError = t.invalidStudyReference;
+      return;
+    }
+    if (changed()) { referenceError = t.unsavedStudyReference; return; }
+    const [, claimedProject, claimedStudy, claimedDraft] = matched;
+    const activeProject = projectId;
+    referenceBusy = true;
+    try {
+      const loaded = await gateway.getStudy(claimedProject, claimedStudy, claimedDraft);
+      if (activeProject !== projectId) return;
+      if (loaded.projectId !== activeProject || loaded.projectId !== claimedProject ||
+          loaded.id !== claimedStudy || (claimedDraft && loaded.draftId !== claimedDraft)) {
+        throw new Error(t.invalidStudyReference);
+      }
+      await openStudy(claimedStudy, claimedDraft, loaded);
+      if (studyId === claimedStudy) referenceInput = '';
+    } catch {
+      if (activeProject === projectId) referenceError = t.deniedStudyReference;
+    } finally {
+      referenceBusy = false;
+    }
+  }
+
+  async function openStudy(id: string, draftId?: string, verified?: ContentStudy) {
     if (!gateway || !id || busy) return;
     if (changed()) {
       await save();
@@ -231,9 +270,14 @@
     error = '';
     previewVersion = null;
     try {
-      const result = await gateway.getStudy(projectId, id);
+      const result = verified ?? await gateway.getStudy(projectId, id, draftId);
       if (epoch !== currentRequest) return;
-      if (result.projectId !== projectId || result.id !== id) throw new Error(t.invalidStudy);
+      if (result.projectId !== projectId || result.id !== id ||
+          (draftId && result.draftId !== draftId)) throw new Error(t.invalidStudy);
+      if (!studies.some((item) => item.id === id)) {
+        studies = [{ id, projectId: result.projectId, brief: result.brief,
+          revision: result.revision }, ...studies].slice(0, 200);
+      }
       record = result;
       renameDraftOpen = false;
       confirmSavedImport = false;
@@ -1148,6 +1192,25 @@
           value: item.id, label: item.brief.title || item.id
         }))} placeholder={loading ? t.loadingStudies : t.noStudies} onChange={(id) => void openStudy(id)} />
         <button type="button" class="button secondary" disabled={busy || loading || !brief.title.trim()} on:click={createStudy}>{t.newStudy}</button>
+        <details class="study-reference-navigation">
+          <summary>{t.studyReference}</summary>
+          {#if record && studyId}
+            <label>{t.currentStudyReference}
+              <input readonly dir="ltr" aria-label={t.currentStudyReference}
+                value={'scriptotar://study/' + projectId + '/' + studyId +
+                  (record.draftId ? '?draft=' + record.draftId : '')} />
+            </label>
+          {/if}
+          <form on:submit|preventDefault={() => void openStudyReference()}>
+            <label>{t.pasteStudyReference}
+              <input dir="ltr" bind:value={referenceInput} maxlength="240"
+                autocomplete="off" spellcheck="false" />
+            </label>
+            <button type="submit" class="button secondary"
+              disabled={!referenceInput.trim() || referenceBusy || busy || saving || loading}>{t.openStudyReference}</button>
+          </form>
+          {#if referenceError}<p role="alert" class="studio-error">{referenceError}</p>{/if}
+        </details>
       {:else}
         <span class="muted">{t.workNotSaved}</span>
       {/if}
