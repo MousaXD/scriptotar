@@ -17,6 +17,31 @@ permissions:
   contents: read
 
 jobs:
+  audit-unittest-discovery:
+    name: "Security / native evidence imported by unittest discovery"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact Agent 10 review source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Execute actual unittest discovery with full evidence assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_native_visual_adjudication.py' -v 2>&1 | tee /tmp/native-evidence-discovery.log
+          grep -Eq '^Ran ([5-9]|[1-9][0-9]+) tests? in ' /tmp/native-evidence-discovery.log || {
+            echo "Native evidence adversarial tests were not discovered and executed"
+            exit 1
+          }
+      - name: Also execute explicit-source contract used in the pinned feature gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/defragmentation/security/test_native_visual_adjudication.py tests/defragmentation/native-e2e/linux_webkit.py
+
   pin-integration:
     name: "Security / pin exact integration source"
     runs-on: ubuntu-22.04
