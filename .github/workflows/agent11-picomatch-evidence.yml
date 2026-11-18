@@ -6,6 +6,7 @@ on:
       - agent-11/p0-supply-chain-recovery-20261118
     paths:
       - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
