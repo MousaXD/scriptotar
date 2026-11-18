@@ -1986,6 +1986,9 @@ def exercise(args, report: dict, root: Path):
                 # We are in A following isolation(); activate B for a genuine
                 # foreign A reference attempted through the installed UI.
                 active.choose("PROJECT", name_b)
+                # Require the real installed native project selector to expose
+                # B as selected; a generic Studio heading alone is not proof.
+                active.assert_selected_option("PROJECT", name_b)
                 active.heading("Studio")
                 active.click("Open Study reference")
                 active.type_into("Paste Study reference", reference)
@@ -2049,7 +2052,8 @@ def exercise(args, report: dict, root: Path):
                     "host_request_correlation": reference_host_proof,
                     "native_input_readback": "exact AT-SPI Text verified",
                     "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
-                    "missing": "forged mutating IPC + authoritative backend request ID",
+                    "missing": ("forged mutating cross-project IPC" if reference_host_proof
+                                else "host request identity and forged mutating IPC"),
                 }
                 session.screenshot("foreign-study-reference-denial")
                 if after != before or not found_error:
