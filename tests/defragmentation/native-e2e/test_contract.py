@@ -417,6 +417,22 @@ class NativeEvidenceContractTests(unittest.TestCase):
             with self.assertRaises(native.NativeFailure):
                 native.canonical_study_reference_ids(Path(tmp), "Project B", "Study A")
 
+    def test_windows_foreign_study_reference_stays_partial_read_only(self):
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledReferenceDenials(", source)
+        self.assertIn("canonical_study_reference_ids,", source)
+        self.assertIn('elif kind == "study_reference":', source)
+        self.assertIn("$report.foreign_study_reference_probe", source)
+        self.assertIn("Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference", source)
+        self.assertIn("Verify-InstalledCanonicalDb 'snapshot' $first", source)
+        self.assertIn("$priorDenial = @(Get-InstalledReferenceDenials", source)
+        self.assertIn("Get-InstalledReferenceDenials $restoredHwnd", source)
+        self.assertIn("Click-InstalledControl $restoredHwnd 'Open reference'", source)
+        self.assertIn("status='NOT TESTED'", source)
+        self.assertIn("forged mutating Tauri IPC", source)
+        self.assertNotIn("$cases.wrong_project_ipc_denial = @{ status='PASS'", source)
+        self.assertIn("$cases.wrong_project_ipc_denial.status -ne 'FAIL'", source)
+
     def test_windows_native_negative_case_never_auto_passes_without_host_binding(self):
         # A genuinely visible but unrelated fresh UIA warning and unchanged
         # SQLite are insufficient to identify the rejected Tauri request.
