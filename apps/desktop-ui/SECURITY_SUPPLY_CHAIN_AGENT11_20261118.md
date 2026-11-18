@@ -257,3 +257,46 @@ This is a real independent audit of the specified Python requirements on an inst
 The candidate is **not published, advisory-cleared, independently security reviewed, or installed through a supported npm dependency graph**. A partial regex performance improvement cannot make the unchanged package-lock.json secure; npm audit still correctly fails. The CI experiment may fail for patch application, semantic compatibility or additional unmitigated exploit patterns. The strict existing audit job independently fails on the unchanged published package. Require a code-owner and independent Agent 10 security review of any proposed final patch, broader hostile glob corpus, supported reproducible packaging and full advisory-clean npm resolution before release consideration.
 
 **No release permission:** This PR stays draft; main and integration production code remain untouched by these experiments. Preserve the hard npm failure.
+
+## 2026-11-18 — extended three-candidate adversarial comparison and synchronized integration
+
+**Final status: UPSTREAM BLOCKED / NO-GO.** There is no officially patched npm version of picomatch outside GHSA-fc5q-39xc-vjpf's affected range (<=4.0.7). The original strict npm audit still fails on eight high dependency-path findings. The desktop package manifest, package-lock, integration audit workflow and production code have **not** been altered to mask this failure.
+
+### Expanded defensive test harness
+
+The opt-in command node scripts/probe-picomatch-redos.mjs --assert-patched --extended executes eleven bounded cases (the original two hostile inputs, one control and eight new adversarial inputs) in separate killable Node subprocesses, each with a 1,200 ms hard timeout. Cases cover single-branch stars, multi-branch wildcards, nested wrappers, ambiguous repeated classes/literals and nested repeated classes. Every timeout is a failure. Successful bounded samples are necessary but insufficient to establish parser security.
+
+### Comparative results on Node 22
+
+| Candidate | Exact upstream HEAD | Linux attack corpus | Windows attack corpus | Frontend compatibility | Decision |
+| --- | --- | --- | --- | --- | --- |
+| Official picomatch@4.0.7 | Published release, original locked source | Original two hostile cases TIMEOUT at 1,200 ms | Original two TIMEOUT | Previously PASS but vulnerable | REJECT |
+| Unmerged PR #237 | 1bf0d04563cb9ce568cf36efc5f6b7187d9911d5 | FAIL: multi-branch, nested and class ambiguity timeout | FAIL: same, plus literal ambiguity timeout | Earlier only limited-probe check/test/build PASS | REJECT |
+| Unmerged PR #274 | 3975e4a0e6b4c4fb2c0119863b243ce04612c5e3 | FAIL: ambiguous repeated classes timeout | FAIL: repeated classes and literal ambiguity timeout | Not run after failed probe | REJECT |
+| Unmerged PR #259 | fea5ae7ed37ffd67ccdf26086eb8aa2ba2d499ae | 11/11 bounded cases PASS (2 ms each) | 11/11 bounded cases PASS (3–4 ms each) | Both: Svelte check 0 errors/1 warning, 244/244 Vitest PASS, Vite build PASS | EXPERIMENT ONLY |
+
+Actual GitHub Actions runs:
+- Original strict npm audit and Python audit plus cross-platform comparison: https://github.com/MousaXD/scriptotar/actions/runs/44336874909
+- PR #237 two-platform bypass: https://github.com/MousaXD/scriptotar/actions/runs/44336343310
+- PR #274 two-platform bypass: https://github.com/MousaXD/scriptotar/actions/runs/44336541954
+- Earlier two-pattern-only test of PR #237: https://github.com/MousaXD/scriptotar/actions/runs/44334181279
+
+All experiments install the original registry-locked picomatch 4.0.7 and check its unmodified official lib/parse.js Git blob SHA 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd. They then verify and apply unmerged upstream parser patches **only inside ephemeral CI node_modules**. Patch Git blobs are PR237 73fefc5cf92ab1250ea3beabecf4f3116ff66a7f; PR274 9314177918b9d5b9a2d1e70bade7c2c9bc574bc8; PR259 8d12d987655d3b7298c64e4bb27899a8291d6097. No experimental patch is distributed, installed by npm dependency resolution, or committed to the application runtime.
+
+PR259 changes approximately 480 lines of parser security/compatibility logic and preserves only some complex glob semantics. Its conservative fallback can change matches. Scriptotar's 244 frontend tests and eleven bounded inputs cannot certify the whole implementation, identify all alternate parser paths, establish compile-time input-complexity bounds or prove compatibility with all consumer tooling. The PR remains unmerged; no maintainer-verified fixed npm release or accepted advisory clean graph exists. DO NOT adopt it for production without upstream/independent security review, fuzz/differential testing and a supported reproducible packaging strategy.
+
+### Remediation dependency request to upstream / Agent 00
+
+1. Upstream maintainer and independent security reviewer select, harden and merge a complete fix; publish a verifiable npm version with package integrity and an advisory-updated fixed range.
+2. Once actually available, upgrade the real Vite/Vitest/tinyglobby/fdir graph using supported semver, maintaining package-lock integrity. Do not rename or hide picomatch, force an unrelated tool downgrade, or use unsupported overrides to manufacture an audit PASS.
+3. Validate fresh npm ci, all dependency paths, unfiltered npm audit --audit-level=high, expanded/fuzzed malicious corpus, Svelte/Vitest/Vite Linux and Windows, and full exact-head integrated CI.
+4. Alternative complete dependency removal would require replacing every relevant Vite/Vitest/tinyglobby path with maintained tooling; no viable such graph is demonstrated.
+5. Agent 10 must independently security-review any candidate implementation and its provenance before promotion. A private unpublished patch or source-only test does not authorize a release exception.
+
+**Python advisory stage is independently proven PASS**, using Python 3.12 / pip-audit on the original sidecars/transcription/requirements-engine.txt; it runs in a distinct non-dependent CI job and does not mask the failing npm stage. See run 44336874909.
+
+### History-preserving sync
+
+Two-parent merge commit b022213ee1014192b3b62aea7a9bb0850026f0fd merged exact integration 5ed385d09092d2c94a1bd86cb56888d96df0bb5e into the Agent 11 evidence branch, preserving all predecessor commits, production source and six Agent 11-owned files. Verified GitHub compare: 0 commits behind integration, no overlapping changed paths, no merge conflicts, no production or npm manifest changes.
+
+**PR #132 remains DRAFT / BLOCKED. Main unchanged, mandatory npm audit FAIL, release NO-GO. Do not merge as supply-chain remediation.**
