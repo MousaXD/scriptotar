@@ -10,6 +10,7 @@ on:
       - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
       - 'apps/desktop-ui/scripts/test-tauri-manifest-inventory.mjs'
       - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_DECISION_20261118.md'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
       - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
