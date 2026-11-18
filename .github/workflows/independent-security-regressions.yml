@@ -17,6 +17,64 @@ permissions:
   contents: read
 
 jobs:
+  audit-windows-denial-integrity:
+    name: "Security / Windows source-pinned native denial anti-spoof"
+    needs: [pin-features]
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Agent 10 audit source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: audit
+          persist-credentials: false
+      - name: Checkout exact Agent 07 native Windows runner
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ fromJSON(needs.pin-features.outputs.shas)['131'] }}
+          path: native
+          persist-credentials: false
+      - name: Reject stale, unrelated, duplicate or unbound Windows denial evidence
+        shell: pwsh
+        env:
+          EXPECTED_AUDIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_NATIVE_SHA: ${{ fromJSON(needs.pin-features.outputs.shas)['131'] }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git -C audit rev-parse HEAD) -cne $env:EXPECTED_AUDIT_SHA) {
+            throw 'Wrong audit source checked out on Windows'
+          }
+          if ((git -C native rev-parse HEAD) -cne $env:EXPECTED_NATIVE_SHA) {
+            throw 'Wrong native QA source checked out on Windows'
+          }
+          & ./audit/tests/defragmentation/security/test_windows_denial_integrity.ps1 -NativeRunner ./native/tests/defragmentation/native-e2e/windows_webview2.ps1
+
+  audit-unittest-discovery:
+    name: "Security / native evidence imported by unittest discovery"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact Agent 10 review source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Execute actual unittest discovery with full evidence assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -p 'test_native_visual_adjudication.py' -v 2>&1 | tee /tmp/native-evidence-discovery.log
+          grep -Eq '^Ran ([5-9]|[1-9][0-9]+) tests? in ' /tmp/native-evidence-discovery.log || {
+            echo "Native evidence adversarial tests were not discovered and executed"
+            exit 1
+          }
+      - name: Also execute explicit-source contract used in the pinned feature gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/defragmentation/security/test_native_visual_adjudication.py tests/defragmentation/native-e2e/linux_webkit.py
+
   pin-integration:
     name: "Security / pin exact integration source"
     runs-on: ubuntu-22.04
@@ -55,7 +113,7 @@ jobs:
           repo="https://github.com/MousaXD/scriptotar.git"
           result="{"
           separator=""
-          for pr in 131 118 119 128 121 117 137; do
+          for pr in 131 141 118 119 128 121 117 137; do
             sha="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot resolve PR $pr source" >&2; exit 1; }
             printf 'Pinning feature PR #%s to %s\n' "$pr" "$sha"
@@ -77,6 +135,9 @@ jobs:
           # Independently certify Agent 07's QA runner cannot mark image-only
           # rejection evidence as PASS before the required human review.
           - { gate: native-evidence, pr: 131 }
+          # Minimal P0 release-certification integrity slice owned by Agent 07.
+          # Its native denial verifier must be independently tested pre-merge.
+          - { gate: native-evidence-slice, pr: 141 }
           - { gate: provider, pr: 118 }
           - { gate: migration, pr: 119 }
           # Verify proposed v12 receipt repair against the entire independent red suite.
@@ -134,7 +195,7 @@ jobs:
   verify-pinned-integration:
     name: "Security / exact SHA remains current after the matrix"
     if: always()
-    needs: [pin-integration, pin-features, feature-security]
+    needs: [pin-integration, pin-features, feature-security, audit-unittest-discovery, audit-windows-denial-integrity]
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
@@ -143,12 +204,14 @@ jobs:
         env:
           PINNED_SHA: ${{ needs.pin-integration.outputs.sha }}
           MATRIX_RESULT: ${{ needs.feature-security.result }}
+          DISCOVERY_RESULT: ${{ needs.audit-unittest-discovery.result }}
+          WINDOWS_RESULT: ${{ needs.audit-windows-denial-integrity.result }}
           PIN_RESULT: ${{ needs.pin-integration.result }}
           FEATURE_PIN_RESULT: ${{ needs.pin-features.result }}
           FEATURE_SHAS: ${{ needs.pin-features.outputs.shas }}
         run: |
           set -euo pipefail
-          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success ]] ||
+          [[ "$PIN_RESULT" == success && "$FEATURE_PIN_RESULT" == success && "$MATRIX_RESULT" == success && "$DISCOVERY_RESULT" == success && "$WINDOWS_RESULT" == success ]] ||
             { echo "One or more independent security gates did not pass"; exit 1; }
           [[ "$PINNED_SHA" =~ ^[0-9a-f]{40}$ ]] ||
             { echo "Missing exact integration SHA"; exit 1; }
@@ -157,10 +220,10 @@ jobs:
           [[ "$current" == "$PINNED_SHA" ]] ||
             { echo "Integration moved while independent matrix ran; rerun exact-head audit" >&2; exit 1; }
           repo="https://github.com/MousaXD/scriptotar.git"
-          for pr in 131 118 119 128 121 117 137; do
+          for pr in 131 141 118 119 128 121 117 137; do
             pinned="$(printf '%s' "$FEATURE_SHAS" | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$pr")"
             [[ "$pinned" =~ ^[0-9a-f]{40}$ ]] || { echo "Bad pinned feature SHA for PR $pr" >&2; exit 1; }
             current="$(git ls-remote --exit-code "$repo" "refs/pull/$pr/head" | awk '{print $1}')"
             [[ "$current" == "$pinned" ]] || { echo "Feature PR $pr moved while matrix ran; rerun" >&2; exit 1; }
           done
-          echo "Exact-head security matrix remains valid on integration $PINNED_SHA and seven immutable feature PR sources"
+          echo "Exact-head security matrix remains valid on integration $PINNED_SHA and eight immutable feature PR sources"

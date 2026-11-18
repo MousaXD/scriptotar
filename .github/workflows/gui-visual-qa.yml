@@ -3,6 +3,7 @@ name: GUI Visual and Performance QA
 on:
   pull_request:
     paths:
+      - 'tests/defragmentation/security/**'
       - 'apps/desktop-ui/**'
       - '.github/workflows/gui-visual-qa.yml'
   push:
