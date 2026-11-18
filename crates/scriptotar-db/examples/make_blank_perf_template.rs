@@ -6,11 +6,7 @@
 //! cargo run --locked --release -p scriptotar-db --example make_blank_perf_template -- \
 //!     /tmp/scriptotar-perf/blank-migrated.sqlite3
 
-use std::{
-    env, fs,
-    fs::OpenOptions,
-    path::PathBuf,
-};
+use std::{env, fs, fs::OpenOptions, path::PathBuf};
 
 use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
 
@@ -52,8 +48,8 @@ fn run() -> Result<(), String> {
     drop(file);
 
     let result = (|| {
-        let store = SqliteStore::open(&target)
-            .map_err(|e| format!("canonical migration failed: {e}"))?;
+        let store =
+            SqliteStore::open(&target).map_err(|e| format!("canonical migration failed: {e}"))?;
         store
             .run_integration_migrations()
             .map_err(|e| format!("integration migrations failed: {e}"))?;
