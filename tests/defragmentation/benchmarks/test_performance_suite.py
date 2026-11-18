@@ -40,7 +40,7 @@ CREATE TABLE draft_versions(id TEXT PRIMARY KEY,draft_id TEXT REFERENCES creativ
 
 
 def blank(path: Path) -> None:
-    with closing(sqlite3.connect(path)) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript(SCHEMA)
         db.executemany("INSERT INTO schema_migrations VALUES (?,?,?)",
                        [(i, f"migration-{i}", "2026-01-01") for i in range(1, 10)])
@@ -62,7 +62,7 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             self.assertEqual(result["schema_version"], 9)
             self.assertEqual(result["per_collection"], 100)
             self.assertEqual(before, base.read_bytes())
-            with closing(sqlite3.connect(generated)) as db:
+            with closing(sqlite3.connect(generated)) as db, db:
                 for table in ("content_studies", "study_sources", "study_briefs", "creative_drafts", "draft_versions"):
                     self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 100)
                 self.assertEqual(db.execute("PRAGMA foreign_key_check").fetchall(), [])
@@ -80,12 +80,12 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             base = Path(folder) / "template.db"
             generated = Path(folder) / "fixture.db"
             blank(base)
-            with closing(sqlite3.connect(base)) as db:
+            with closing(sqlite3.connect(base)) as db, db:
                 db.execute("INSERT INTO projects VALUES (?,?,?)", ("secret-id", "SECRET", "2026"))
             with self.assertRaisesRegex(ValueError, "template is not empty"):
                 build(base, generated, 100, SHA)
             self.assertFalse(generated.exists())
-            with closing(sqlite3.connect(base)) as db:
+            with closing(sqlite3.connect(base)) as db, db:
                 db.execute("DELETE FROM projects")
                 db.execute("DROP TABLE content_studies")
             with self.assertRaisesRegex(ValueError, "requires actual Scriptotar v6"):
@@ -100,7 +100,7 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             blank(base)
             result = build(base, first, 100, SHA)
             self.assertEqual(result["schema_version"], 9)
-            with closing(sqlite3.connect(base)) as db:
+            with closing(sqlite3.connect(base)) as db, db:
                 db.execute("UPDATE integration_schema_migrations SET name='forged' WHERE version=3")
             with self.assertRaisesRegex(ValueError, "integration migration ledger"):
                 build(base, second, 100, SHA)
