@@ -60,7 +60,13 @@ const extendedCases = [
   { label: 'nested negation and suffix', pattern: '+(!(b)a)', input: 'a'.repeat(36) + '/', matches: false },
   { label: 'quantifier after glob wrapper', pattern: '@(*a)+', input: 'a'.repeat(36) + '/', matches: false },
   { label: 'quantifier after raw group', pattern: '(*a)+', input: 'a'.repeat(36) + '/', matches: false },
-  { label: 'quantifier after brace group', pattern: '{*a,b}+', input: 'a'.repeat(36) + '/', matches: false }
+  { label: 'quantifier after brace group', pattern: '{*a,b}+', input: 'a'.repeat(36) + '/', matches: false },
+  // Long-form near misses are essential: some patches stop short-input
+  // timeouts but still become unbounded at thousands of characters.
+  { label: 'long negation-prefix near miss', pattern: '+(!(b)a)', input: 'a'.repeat(5000) + '/', matches: false },
+  { label: 'long wrapper quantifier near miss', pattern: '@(*a)+', input: 'a'.repeat(5000) + '/', matches: false },
+  { label: 'long raw-group quantifier near miss', pattern: '(*a)+', input: 'a'.repeat(5000) + '/', matches: false },
+  { label: 'long brace quantifier near miss', pattern: '{*a,b}+', input: 'a'.repeat(5000) + '/', matches: false }
 ];
 const extended = process.argv.includes('--extended');
 const cases = extended ? [...baselineCases, ...extendedCases] : baselineCases;
