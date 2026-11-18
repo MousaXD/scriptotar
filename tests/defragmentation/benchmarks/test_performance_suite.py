@@ -13,6 +13,7 @@ from .query_suite import profile, percentile
 from .ipc_trace import summarize_trace
 from .native_trials import summary
 from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
+from .native_attach import attach, process_image, same_image
 
 SHA = "3" * 40
 HASH = "a" * 64
@@ -146,6 +147,40 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
                          if platform.system() == "Windows" else record["provider"] == "unsupported", True)
         self.assertNotIn("certification", record)
         self.assertNotIn("studio_ready_ms", record)
+        if platform.system() == "Linux":
+            self.assertGreater(record.get("main_pss_bytes") or 0, 0)
+            self.assertGreater(record.get("main_private_resident_bytes") or 0, 0)
+        elif platform.system() == "Windows":
+            self.assertGreater(record.get("main_private_working_set_bytes") or 0, 0)
+            self.assertGreater(record.get("main_private_commit_bytes") or 0, 0)
+
+    def test_attach_read_only_does_not_terminate_instrumented_process(self):
+        import os
+        import sys
+        import platform
+        self.assertTrue(same_image(process_image(os.getpid()), Path(sys.executable)))
+        self.assertFalse(same_image(process_image(987654321), Path(sys.executable)))
+        with tempfile.TemporaryDirectory() as folder:
+            sample_package = Path(folder) / "dummy-package-not-installed.zip"
+            sample_package.write_bytes(b"test only")
+            report = attach(os.getpid(), Path(sys.executable), sample_package,
+                            SHA, 1.05, 0.2, 100, None)
+            self.assertEqual(report["sample_count"] >= 3, True)
+            self.assertEqual(report["pid"], os.getpid())
+            self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
+            self.assertEqual(report["scope"], "ATTACHED_INSTALLED_PROCESS_MEMORY_ONLY_NOT_UI_CERTIFICATION")
+            self.assertIsNone(report["source_run_url_operator_supplied"])
+            self.assertEqual(report["study_count_operator_supplied"], 100)
+            self.assertEqual(report["end_reason"], "duration_elapsed")
+            self.assertGreater(report["metrics"]["main_pss_bytes"]["valid_trials"] if
+                               platform.system() == "Linux" else
+                               report["metrics"]["main_private_working_set_bytes"]["valid_trials"], 0)
+            with self.assertRaisesRegex(ValueError, "source SHA"):
+                attach(os.getpid(), Path(sys.executable), sample_package, "invalid",
+                       1.0, 0.2, None, None)
+            with self.assertRaisesRegex(ValueError, "kernel process image"):
+                attach(987654321, Path(sys.executable), sample_package, SHA,
+                       1.0, 0.2, None, None)
 
     def test_mock_ipc_is_rejected_and_only_declared_native_input_is_summarized(self):
         with tempfile.TemporaryDirectory() as folder:
