@@ -237,6 +237,48 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
                                  report["measurement_finished_monotonic_ns"])
             self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
 
+    def test_attached_memory_rejects_package_or_executable_changed_during_collection(self):
+        # Test the real package bytes without modifying the running Python
+        # executable; a fake executable digest change models external replace.
+        from unittest.mock import patch
+        import os
+        import sys
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "synthetic-not-installed.zip"
+            package.write_bytes(b"original package bytes")
+            mutated = [False]
+
+            def replace_package_during_sample(_pid):
+                if not mutated[0]:
+                    package.write_bytes(b"replacement package bytes")
+                    mutated[0] = True
+                return {"provider": "mock-memory-only",
+                        "tree_memory_complete": False}
+
+            with patch.object(native_attach_module, "memory_snapshot",
+                              side_effect=replace_package_during_sample):
+                with self.assertRaisesRegex(ValueError, "package checksum changed"):
+                    attach(os.getpid(), Path(sys.executable), package, SHA,
+                           1.0, 0.2, 100, None)
+            self.assertTrue(mutated[0])
+
+            real_sha256 = native_attach_module.sha256
+            executable = Path(sys.executable).resolve(strict=True)
+            observations = [0]
+
+            def simulated_executable_digest_drift(path):
+                if Path(path).resolve(strict=True) == executable:
+                    observations[0] += 1
+                    return "a" * 64 if observations[0] == 1 else "b" * 64
+                return real_sha256(path)
+
+            with patch.object(native_attach_module, "sha256",
+                              side_effect=simulated_executable_digest_drift):
+                with self.assertRaisesRegex(ValueError, "executable checksum changed"):
+                    attach(os.getpid(), executable, package, SHA,
+                           1.0, 0.2, 100, None)
+            self.assertGreaterEqual(observations[0], 2)
+
     def test_mock_ipc_is_rejected_and_only_declared_native_input_is_summarized(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "trace.jsonl"
