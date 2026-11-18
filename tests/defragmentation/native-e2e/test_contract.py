@@ -609,7 +609,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('"host_request_correlation": reference_host_proof', source)
         self.assertIn('preserve_foreign_reference_failure(report, exc)', source)
         self.assertIn('"preexisting_exact_denial": expected_error in before_alerts', source)
-        self.assertIn('"postclick_exact_denial": expected_error in alerts', source)
+        self.assertIn('"postclick_exact_denial": bool(fresh_native_alerts)', source)
         self.assertIn('read-only foreign Study', source)
         self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
 
