@@ -1,5 +1,19 @@
 # Agent 11 — Independent npm supply-chain recovery assessment (2026-11-18)
 
+## CURRENT CORRECTED ADVISORY STATUS — WITHDRAWN, BUT SECURITY POLICY STILL BLOCKED
+
+**Verified primary source:** the public [GitHub Advisory Database repository](https://github.com/github/advisory-database/blob/main/advisories/github-reviewed/2026/10/GHSA-fc5q-39xc-vjpf/GHSA-fc5q-39xc-vjpf.json) records `withdrawn: "2026-11-18T15:38:56Z"` and `modified: "2026-11-18T15:38:56Z"` for GHSA-fc5q-39xc-vjpf. This is an **actual formal GitHub withdrawal**, not merely an upstream maintainer request. The historical affected range `introduced: 0, last_affected: 4.0.7` and original technical description remain in the withdrawn record; they must NOT be misrepresented as a still-active reviewed advisory. GitHub advisory database commit `7bee34adc2028ebd00c2e87fe43e432cd134fe40` published this revised record at 2026-11-18 15:44 UTC. Earlier sections of this report incorrectly claimed no withdrawal; treat those statements as HISTORICAL AND SUPERSEDED by this correction.
+
+**Independent registry disagreement:** Scriptotar's **actual unfiltered** `npm audit --audit-level=high` still reported eight high findings pointing to the same withdrawn GHSA at **2026-11-18 16:59 UTC**, over one hour after GitHub's record was withdrawn ([Agent 11 exact-head run #44352653285](https://github.com/MousaXD/scriptotar/actions/runs/44352653285)). npm audit obtains reports from the npm registry's own security audit service; GitHub withdrawal need not clear npm's separate feed immediately. No npm override, cache manipulation, severity flag, audit ignore, changed registry or fabricated success is permitted. The strict integrated `npm audit --audit-level=high` remains mandatory and FAILS on the most recent measured source.
+
+**Actual technical risk remains demonstrable:** unchanged published `picomatch@4.0.7` reproducibly catastrophically backtracks on crafted pathological globs. GitHub withdrawal changes advisory metadata, **not executable behavior**. Existing public upstream PR260/264 source-only candidates each failed real expanded bounded tests on both Linux and Windows on exact tested SHA. The residual question is whether attackers can influence glob expressions/inputs in the specific build/dev/native deployment context; this requires Agent 10 review and Agent 00's release-policy decision, not automatic acceptance of either npm or GitHub metadata.
+
+**Production reachability evidence under test:** all five watched parser/build-tool entries (`picomatch, tinyglobby, fdir, vite, vitest`) are dev-only (`dev: true`) in the currently locked frontend graph. The production Tauri config `apps/desktop/src-tauri/tauri.conf.json` names `../../desktop-ui/dist` as `frontendDist`, not `node_modules`; static source-map, emitted bundle and unexpected resource inclusion are checked by the read-only `scripts/audit-desktop-runtime-exposure.mjs` cross-platform CI. This is **limited static evidence**, NOT evidence of complete installed executable reachability, security of untrusted build-time patterns, or installed-app testing.
+
+**Release decision remains BLOCKED / NO-GO:** independent runtime/source threat review, a genuinely passing unfiltered npm audit against authoritative registry metadata, all final exact-SHA gates and Agent 00 owner review are still required. A supported released patch or picomatch-free maintained graph would also be an acceptable remediation route. Keep PR #132 draft; do not merge to integration/main or weaken any audit, even if the source advisory is withdrawn.
+
+---
+
 **Status: BLOCKED UPSTREAM — no eligible patched npm dependency graph; do not merge as a remediation.**
 
 ## Provenance and reproduction
