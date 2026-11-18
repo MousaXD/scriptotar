@@ -493,6 +493,25 @@ function Wait-InstalledAngleRejection([IntPtr]$hwnd, [string[]]$priorAlerts) {
   } while ([DateTime]::UtcNow -lt $deadline)
   throw 'Malformed three-angle JSON has no NEW installed UIA validation alert for this request'
 }
+function Get-InstalledReferenceDenials([IntPtr]$hwnd) {
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $root) { return @() }
+  $condition = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty,
+      'This Study reference cannot be opened in the active project.'))
+  $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
+  $values = @()
+  foreach ($node in $nodes) {
+    try {
+      if (-not $node.Current.IsOffscreen) { $values += [string]$node.Current.Name }
+    } catch { }
+  }
+  return @($values)
+}
 function Get-InstalledQueueRejectionAlerts([IntPtr]$hwnd) {
   $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
   $textCondition = [System.Windows.Automation.PropertyCondition]::new(
@@ -730,6 +749,7 @@ from linux_webkit import (
     verify_canonical_reopened_candidates,
     count_canonical_jobs,
     canonical_records_snapshot,
+    canonical_study_reference_ids,
 )
 kind, root, a, b, c, copy = sys.argv[2:8]
 if kind == "projects":
@@ -743,6 +763,9 @@ elif kind == "jobs":
 elif kind == "snapshot":
     import json
     print(json.dumps(canonical_records_snapshot(Path(root)), sort_keys=True))
+elif kind == "study_reference":
+    import json
+    print(json.dumps(canonical_study_reference_ids(Path(root), a, b)))
 else:
     raise ValueError("Unsupported canonical installed DB probe")
 '@
@@ -1155,7 +1178,89 @@ try {
         Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
+    # PR #138 provides a legitimate *read-only* installed-host authorization
+    # path through Studio. This never substitutes for forged write IPC denial.
+    $report.foreign_study_reference_probe = @{
+      status = 'NOT TESTED'
+      reason = 'Normal Open Study reference action absent from installed production'
+    }
     if ($cases.wrong_project_ui_isolation.status -eq 'PASS') {
+      $referenceDisclosure = $null
+      try {
+        $referenceDisclosure = Find-ExactInstalledControl $restoredHwnd 'Open Study reference' $null 2
+      } catch { }
+      if ($referenceDisclosure) {
+        try {
+          $identifiers = @(Verify-InstalledCanonicalDb 'study_reference' $first $studyTitle '' |
+            ConvertFrom-Json)
+          if ($identifiers.Count -ne 3) {
+            throw 'Real canonical source has no distinct project, Study and draft identifiers'
+          }
+          $reference = "scriptotar://study/$($identifiers[0])/$($identifiers[1])?draft=$($identifiers[2])"
+          # Current project A has a saved Study. Try its true A reference
+          # while B is active; never fabricate IDs or bypass project selection.
+          Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+          Wait-InstalledDashboard $restoredHwnd $first
+          Choose-InstalledProject $restoredHwnd $second
+          Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+          $disclosure = Find-ExactInstalledControl $restoredHwnd 'Open Study reference' $null 4
+          Click-InstalledControl $restoredHwnd 'Open Study reference' $disclosure.Current.ControlType -pointer
+          Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference
+          $priorDenial = @(Get-InstalledReferenceDenials $restoredHwnd)
+          $beforeReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          Click-InstalledControl $restoredHwnd 'Open reference' ([System.Windows.Automation.ControlType]::Button)
+          $denied = $false
+          $deadline = [DateTime]::UtcNow.AddSeconds(12)
+          do {
+            $now = @(Get-InstalledReferenceDenials $restoredHwnd)
+            if ($now.Count -gt 0 -and $priorDenial.Count -eq 0) { $denied = $true; break }
+            Start-Sleep -Milliseconds 350
+          } while ([DateTime]::UtcNow -lt $deadline)
+          $afterReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          $report.foreign_study_reference_probe = @{
+            status = if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical) { 'PARTIAL' } else { 'FAIL' }
+            native_input_readback = 'exact ValuePattern verified'
+            denial_accessible_text_new = $denied
+            canonical_unchanged = ($beforeReferenceCanonical -ceq $afterReferenceCanonical)
+            reference_sha256 = [Convert]::ToHexString(
+              [System.Security.Cryptography.SHA256]::HashData(
+                [Text.Encoding]::UTF8.GetBytes($reference))).ToLowerInvariant()
+            missing = 'forged mutating Tauri IPC and real backend request identity'
+          }
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-foreign-study-reference-denial.png')
+          if (-not $denied -or $beforeReferenceCanonical -cne $afterReferenceCanonical) {
+            throw 'Installed foreign A reference did not produce fresh denial without canonical mutation'
+          }
+          # Restore A and original verified Study for the rest of the journey.
+          Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+          Wait-InstalledDashboard $restoredHwnd $second
+          Choose-InstalledProject $restoredHwnd $first
+          Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+          Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+          Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+          Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody
+          Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle | Out-Null
+        } catch {
+          $report.foreign_study_reference_probe = @{
+            status='FAIL'
+            reason="Native installed foreign Study reference probe: $($_.Exception.Message)"
+          }
+          $cases.wrong_project_ipc_denial = @{
+            status='FAIL'
+            reason="Optional installed read-only foreign reference probe failed: $($_.Exception.Message)"
+          }
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-foreign-reference-probe.png')
+        }
+      }
+    }
+    if ($cases.wrong_project_ipc_denial.status -ne 'FAIL') {
+      $cases.wrong_project_ipc_denial = @{
+        status='NOT TESTED'
+        reason='Installed read-only Study reference does not cover forged mutating Tauri IPC'
+      }
+    }
+    if ($cases.wrong_project_ui_isolation.status -eq 'PASS' -and
+        $cases.wrong_project_ipc_denial.status -ne 'FAIL') {
       try {
         # Actual artifact #14378911964 shows the real candidate ComboBox at
         # y=80, partially hidden behind the fixed Studio toolbar (bottom=111),
