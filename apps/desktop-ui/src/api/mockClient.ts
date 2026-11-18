@@ -558,6 +558,15 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
       studyEvidence.set(studyId, previous.map((item) => item.id === evidenceId ? reviewed : item));
       return structuredClone(reviewed);
     },
+    async prepareProviderConsentSealed() {
+      throw new Error('Paid provider preview is unavailable in the mock; no pricing or consent is fabricated.');
+    },
+    async decideProviderConsentSealed() {
+      throw new Error('Paid provider approval is unavailable without trusted pricing.');
+    },
+    async executeProviderConsentSealed() {
+      throw new Error('Paid provider execution is disabled pending independent certification.');
+    },
     async startLocalInspection(projectId: string, studyId: string, transcriptId: string) {
       const study = studyInProject(projectId, studyId);
       if (!study.sources.some((item) => item.kind === 'transcript' && item.id === transcriptId)) {

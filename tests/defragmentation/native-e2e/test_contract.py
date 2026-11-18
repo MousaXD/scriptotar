@@ -31,6 +31,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             native.status(record, "installed_webview", "SKIPPED_BUT_PASS", "forged")
 
+
+    def test_offline_native_three_angle_recovery_is_real_and_denies_fake_success(self):
+        # Source contract ONLY. Native PASS needs an actual installed WebView,
+        # confirmed rejection, accepted replacement and canonical SQLite proof.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('a.type_into("Paste three-angle JSON response"', source)
+        self.assertIn('a.click("Validate 3 angles", "button")', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        self.assertIn('if not checked(report, "error_recovery", error_recovery):', source)
+        self.assertNotIn('status(report, "error_recovery", "PASS"', source)
+        ps = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Paste-InstalledJson(", ps)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('^v')", ps)
+        self.assertIn("function Wait-InstalledAngleRejection(", ps)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates'", ps)
+        self.assertIn("status='FAIL'\n          reason=\"Installed WebView2 three-angle", ps)
+        self.assertNotIn("SetValue($value)", ps)
+
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "package.deb"
@@ -169,6 +188,25 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertNotIn("$list.SetFocus()", choose)
         self.assertNotIn("Find-ExactInstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::List)", choose)
 
+    def test_windows_unavailable_clickable_point_requires_real_native_pointer(self):
+        # Source-only regression contract: a UIA GetClickablePoint exception
+        # cannot mean success, an unchecked click, or a skipped native event.
+        # Fresh installed WebView2 evidence is still mandatory.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = script.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1
+        )[0]
+        self.assertIn("FindAll([System.Windows.Automation.TreeScope]::Subtree", click)
+        self.assertIn("$candidate.Current.IsOffscreen", click)
+        self.assertIn("$candidate.Current.IsEnabled", click)
+        self.assertIn("$ownerRect = $owner.Current.BoundingRectangle", click)
+        self.assertIn("$element.GetClickablePoint()", click)
+        self.assertIn("} catch {", click)
+        self.assertIn("[NativeWebViewWindow]::NativeClick", click)
+        self.assertIn('throw "No visible, enabled, bounded UIA control', click)
+        self.assertNotIn("Stop-Process", click)
+        self.assertNotIn("return # skip", click)
+
     def test_windows_candidate_switch_requires_rendered_selected_label(self):
         # A candidate copy has identical body text. A pass requires the
         # selected label inside the combobox plus the closed listbox, rather
@@ -182,7 +220,72 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $providerHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
         self.assertIn("Wait-InstalledPopupClosed $hwnd $name", script)
+        self.assertIn("$stillOpen = Test-InstalledPopupOptionVisible $hwnd $expected", script)
+        self.assertIn("TreeWalker]::ControlViewWalker.GetParent($ancestor)", script)
+        self.assertIn("ControlType]::List", script)
+        # The actual popup List may be named 'Project' even when its ComboBox
+        # is 'PROJECT'; checking $label as a List name would silently accept
+        # a still-open candidate popup and give a false selection PASS.
+        self.assertNotIn("NameProperty, $label),\n        [System.Windows.Automation.PropertyCondition]::new(\n          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,\n          [System.Windows.Automation.ControlType]::List)", script)
         self.assertNotIn("$list.SetFocus()", script)
+
+    def test_windows_post_restart_negative_ui_and_escape_are_gated(self):
+        # These are real installed WebView2 user interactions, not mocks
+        # or a bypass for project/draft persistence failure.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.quit_relaunch_persistence.status -eq 'PASS')", script)
+        self.assertIn("if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", script)
+        self.assertIn("Choose-InstalledProject $restoredHwnd $second", script)
+        self.assertIn("Foreign Study '$studyTitle' visible within project B's native Studio", script)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", script)
+        self.assertIn("Test-InstalledPopupOptionVisible $restoredHwnd $studyTitle", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('{ESC}')", script)
+        self.assertIn("Wait-InstalledPopupClosed $restoredHwnd $studyTitle", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Script candidates' $copyTitle", script)
+        self.assertNotIn("$list.SetFocus()", script)
+
+    def test_windows_uia_failure_evidence_records_actual_focus_and_patterns(self):
+        # UIA diagnostics must distinguish a non-focusable List from a
+        # supporting Edit/ComboBox. Pattern enumeration is evidence only.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$info.keyboard_focusable = [bool]$element.Current.IsKeyboardFocusable", source)
+        self.assertIn("$info.has_keyboard_focus = [bool]$element.Current.HasKeyboardFocus", source)
+        self.assertIn("$info.supported_patterns = @($element.GetSupportedPatterns()", source)
+        self.assertIn("$info.bounds = @{", source)
+        self.assertIn("$probe.child_webview_provider_nodes += $info", source)
+
+    def test_windows_theme_uses_real_restart_and_exact_selected_value(self):
+        # Feature-level source contract; only a fresh installed NSIS/UIA run
+        # can certify the actual interactions and screenshot.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("if ($cases.keyboard_custom_controls.status -eq 'PASS')", script)
+        self.assertIn("foreach ($choice in @('System', 'Dark'))", script)
+        self.assertIn("Choose-InstalledOption $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Theme' $choice", script)
+        self.assertIn("if ($saveTheme.Current.IsEnabled)", script)
+        self.assertIn("[System.Windows.Forms.SendKeys]::SendWait('%{F4}')", script)
+        self.assertIn("$themeProbe = Find-InstalledDocumentAndStudio $proc", script)
+        self.assertIn("Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'", script)
+        self.assertIn("windows-theme-dark-reopened.png", script)
+        self.assertIn("$cases.theme_mode_control = @{", script)
+
+    def test_windows_arabic_persisted_relaunch_and_english_restore_fail_closed(self):
+        # Native UIA evidence, not a simulated DOM locale toggle. Studio
+        # main-content heading must follow locale, not just the topbar label.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Find-InstalledDocumentAndStudio([object]$process, [string]$studioName='Studio')", source)
+        self.assertIn("function Wait-InstalledStudioPageText(", source)
+        self.assertIn("if ($cases.theme_mode_control.status -eq 'PASS')", source)
+        self.assertIn("Choose-InstalledOption $themeHwnd 'Interface language' 'ع'", source)
+        self.assertIn("Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'", source)
+        self.assertIn("Find-InstalledDocumentAndStudio $proc 'الاستوديو'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'", source)
+        self.assertIn("Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'", source)
+        self.assertIn("Wait-InstalledStudioPageText $arabicHwnd 'Studio'", source)
+        self.assertIn("Arabic Studio text still visibly mounted after English restoration", source)
+        self.assertIn("$cases.arabic_locale_control = @{", source)
+        self.assertIn("windows-arabic-reopened.png", source)
+        self.assertIn("windows-english-restored.png", source)
 
     def test_webkit_theme_selected_state_is_required_not_click_only(self):
         # The real Settings selector uses aria-selected; unsupported or
@@ -218,7 +321,9 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn('a.heading("الاستوديو")', source)
         self.assertIn('a.heading("Studio", timeout=12)', source)
         self.assertIn('"Arabic Studio heading remains mounted after restoring English"', source)
-        self.assertIn('a.choose("Interface language", "EN")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
+        self.assertNotIn('a.choose("Interface language", "EN")', source)
         self.assertIn('session.screenshot("arabic-reopened")', source)
 
     def test_webkit_option_rejects_zero_size_bounds(self):
@@ -407,12 +512,373 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(native.NativeFailure):
             ax.heading("NativeQA-abc-A", timeout=0.01)
 
-    def test_document_alone_cannot_satisfy_startup(self):
+    def test_webkit_waits_for_canonical_immutable_save_without_writing_db(self):
+        # Native screenshot in run #44150090373 showed the actual draft text
+        # while Save changes was still "Saving..."; version 1 was still empty.
+        # A bounded read-only wait must retry and never downgrade DB proof.
+        expected = "Canonical SQLite stores exact GUI draft body and immutable version 2"
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=[native.NativeFailure("revision=1, persisted_len=0"), expected],
+        ) as verify, mock.patch.object(native.time, "sleep") as sleeper:
+            actual = native.wait_for_canonical_saved_draft(
+                Path("/unused"), "QA-A", "QA-Study", "Exact typed body"
+            )
+        self.assertEqual(actual, expected)
+        self.assertEqual(verify.call_count, 2)
+        sleeper.assert_called_once()
+
+        with mock.patch.object(
+            native, "verify_canonical_saved_draft",
+            side_effect=native.NativeFailure("revision=1, persisted_len=0"),
+        ), mock.patch.object(native.time, "monotonic",
+                             side_effect=[0.0, 0.0, 2.0]), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(native.NativeFailure, "persisted_len=0"):
+                native.wait_for_canonical_saved_draft(
+                    Path("/unused"), "QA-A", "QA-Study", "Exact typed body",
+                    timeout_seconds=1.0,
+                )
         import inspect
-        source = inspect.getsource(native.Session.start)
-        self.assertIn('web_document()', source)
-        self.assertIn('available("Studio", "button")', source)
-        self.assertIn('available("Studio", "link")', source)
+        source = inspect.getsource(native.exercise)
+        self.assertIn('ax.read_text("Script draft") != body', source)
+        self.assertIn("wait_for_canonical_saved_draft(", source)
+
+    def test_linux_sigsegv_forensics_keep_native_failure_and_no_db_writes(self):
+        # An exit code -11 must preserve core/journal availability and remain
+        # FAIL; coredumpctl is optional on GitHub's actual hosted runner.
+        import inspect
+        probe = inspect.getsource(native.native_crash_context)
+        start = inspect.getsource(native.Session.start)
+        main = inspect.getsource(native.main)
+        self.assertIn("resource.RLIMIT_CORE", probe)
+        module = (Path(__file__).resolve().parent / "linux_webkit.py").read_text()
+        self.assertIn("except ImportError:", module)
+        self.assertIn("resource = None", module)
+        self.assertIn('shutil.which("coredumpctl")', probe)
+        self.assertIn('["coredumpctl_tail"]', probe)
+        self.assertIn('signal.Signals(-exit_code)', start)
+        self.assertIn('native_crash_context(self.proc.pid)', start)
+        self.assertIn('raise NativeFailure(', start)
+        self.assertIn('root / "process-exit.json"', main)
+        self.assertNotIn("UPDATE creative_drafts", probe)
+        self.assertNotIn("INSERT INTO", probe)
+        with mock.patch.object(native.shutil, "which", return_value=None):
+            details = native.native_crash_context(1234)
+        self.assertEqual(details["pid"], 1234)
+        self.assertFalse(details["coredumpctl_available"])
+        self.assertFalse(details["gdb_available"])
+
+    def test_linux_graphical_quit_sigsegv_records_real_process_exit(self):
+        import json
+        import inspect
+
+        class FakeProc:
+            pid = 4321
+            returncode = None
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout):
+                self.returncode = -11
+                return self.returncode
+
+        def fake_xdotool(*arguments, **_kwargs):
+            if arguments[1] == "search":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
+            if arguments[1] == "getwindowname":
+                return SimpleNamespace(stdout="Scriptotar\n", returncode=0)
+            if arguments[1] == "getactivewindow":
+                return SimpleNamespace(stdout="24680\n", returncode=0)
+            return SimpleNamespace(stdout="", returncode=0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = object.__new__(native.Session)
+            session.proc = FakeProc()
+            session.root = Path(tmp)
+            with mock.patch.object(native, "command", side_effect=fake_xdotool), \
+                 mock.patch.object(native, "native_crash_context",
+                                   return_value={"pid": 4321}):
+                with self.assertRaisesRegex(
+                        native.NativeFailure, "graphical shutdown crashed"):
+                    session.stop()
+            self.assertIsNone(session.proc)
+            proof = json.loads((Path(tmp) / "process-exit.json").read_text())
+            self.assertEqual(proof["pid"], 4321)
+            self.assertEqual(proof["returncode"], -11)
+            self.assertEqual(proof["signal"], "SIGSEGV")
+            self.assertEqual(
+                proof["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+
+        source = inspect.getsource(native.exercise)
+        self.assertIn("original_error = exc", source)
+        self.assertIn('"original_error"', source)
+        self.assertIn('"restoration_error"', source)
+        self.assertIn('"failed_phase"', source)
+        self.assertIn('root / "arabic-transition.json"', source)
+        main = inspect.getsource(native.main)
+        self.assertIn('"native_arabic_transition_evidence"', main)
+        self.assertIn('args.output / "arabic-transition.json"', main)
+
+    def test_linux_graphical_quit_requires_real_focus_without_blocking_sync(self):
+        # The hosted Openbox/WebKit X11 activation may deadlock under --sync.
+        # A nonblocking request is not enough: actual focus must be observed
+        # before dispatching the genuine native Alt+F4.
+        session = native.Session(SimpleNamespace(), Path("/unused"))
+        proc = mock.Mock(pid=1234)
+        proc.poll.return_value = None
+        proc.wait.return_value = 0
+        session.proc = proc
+        seen = []
+
+        def installed_command(*argv, **_kwargs):
+            seen.append(argv)
+            if argv[1] == "search":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            if argv[1] == "getwindowname":
+                return SimpleNamespace(returncode=0, stdout="Scriptotar")
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="4196049\n")
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with mock.patch.object(native, "command", side_effect=installed_command):
+            session.stop()
+        self.assertIsNone(session.proc)
+        self.assertIn(("xdotool", "windowactivate", "4196049"), seen)
+        self.assertIn(("xdotool", "getactivewindow"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+        self.assertLess(
+            seen.index(("xdotool", "getactivewindow")),
+            seen.index(("xdotool", "key", "--clearmodifiers", "alt+F4")),
+        )
+        proc.terminate.assert_not_called()
+
+        # A SIGSEGV on real Alt+F4 must never be accepted as normal quit.
+        # Preserve the signal for independent installed-run diagnostics.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session.root = Path(temp_dir)
+            session.proc = proc
+            proc.wait.return_value = -11
+            with mock.patch.object(native, "command", side_effect=installed_command):
+                with self.assertRaisesRegex(
+                    native.NativeFailure, r"Installed native graphical shutdown crashed: -11 \(SIGSEGV\)"
+                ):
+                    session.stop()
+            import json
+            crash = json.loads((Path(temp_dir) / "process-exit.json").read_text())
+            self.assertEqual(crash["pid"], 1234)
+            self.assertEqual(crash["returncode"], -11)
+            self.assertEqual(crash["signal"], "SIGSEGV")
+            self.assertEqual(
+                crash["stage"], "installed native graphical Alt+F4 shutdown"
+            )
+        proc.wait.return_value = 0
+
+        session.proc = proc
+        seen.clear()
+        keyboard_requested = [False]
+        def keyboard_focused_command(*argv, **_kwargs):
+            if argv[1] in ("getactivewindow", "windowfocus", "getwindowfocus"):
+                seen.append(argv)
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\n")
+            if argv[1] == "windowfocus":
+                keyboard_requested[0] = True
+                return SimpleNamespace(returncode=0, stdout="")
+            if argv[1] == "getwindowfocus":
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="4196049\n" if keyboard_requested[0] else "999999\n",
+                )
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=keyboard_focused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 7]),
+        ):
+            session.stop()
+        self.assertIn(("xdotool", "windowfocus", "4196049"), seen)
+        self.assertIn(("xdotool", "getwindowfocus"), seen)
+        self.assertIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        self.assertFalse(any("--sync" in call for call in seen))
+
+        session.proc = proc
+        seen.clear()
+        def unfocused_command(*argv, **_kwargs):
+            if argv[1] == "getactivewindow":
+                return SimpleNamespace(returncode=0, stdout="999999\n")
+            return installed_command(*argv, **_kwargs)
+        with (
+            mock.patch.object(native, "command", side_effect=unfocused_command),
+            mock.patch.object(native.time, "monotonic", side_effect=[0, 5, 6, 11]),
+        ):
+            with self.assertRaisesRegex(native.NativeFailure, r"refusing Alt\+F4"):
+                session.stop()
+        self.assertNotIn(("xdotool", "key", "--clearmodifiers", "alt+F4"), seen)
+        proc.terminate.assert_called()
+
+    def test_webkit_global_locale_selector_is_native_and_label_agnostic(self):
+        # Native Arabic accessibility may expose localized project and language
+        # names. Read actual EN/ع options in the top bar, close each popup
+        # with Escape and never select project/script language by position alone.
+        class Rect:
+            def __init__(self, y):
+                self.y, self.width, self.height = y, 90, 40
+
+        class Node:
+            def __init__(self, name, role, y):
+                self.name, self.role, self.y = name, role, y
+
+            def getRoleName(self):
+                return self.role
+
+            def queryComponent(self):
+                return SimpleNamespace(getExtents=lambda _coord: Rect(self.y))
+
+        project = Node("المشروع", "combo box", 77)
+        locale = Node("لغة الواجهة", "combo box", 81)
+        script_language = Node("لغة النص", "combo box", 620)
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(DESKTOP_COORDS=0)
+        ax.nodes = lambda: iter([project, locale, script_language])
+        active = [None]
+        clicked = []
+        def native_click(label, role):
+            self.assertEqual(role, "combo")
+            active[0] = label
+            clicked.append(label)
+        ax.click = native_click
+        ax.available = lambda name, role: (
+            role == "list item" and name in ("EN", "ع")
+            and active[0] == "لغة الواجهة"
+        )
+        with mock.patch.object(native, "command") as commands, \
+             mock.patch.object(native.time, "sleep"):
+            self.assertEqual(ax.global_locale_control(), "لغة الواجهة")
+            self.assertEqual(clicked, ["المشروع", "لغة الواجهة"])
+            self.assertEqual(commands.call_count, 2)
+            ax.nodes = lambda: iter([project, script_language])
+            with self.assertRaisesRegex(native.NativeFailure, "both EN/ع"):
+                ax.global_locale_control()
+
+        import inspect
+        helper = inspect.getsource(native.AxWebKit.global_locale_control)
+        source = inspect.getsource(native.exercise)
+        self.assertNotIn('self.find("PROJECT"', helper)
+        self.assertIn('self.available("EN", "list item")', helper)
+        self.assertIn('self.available("ع", "list item")', helper)
+        self.assertIn('a.choose(a.global_locale_control(), "ع")', source)
+        self.assertIn('a.choose(a.global_locale_control(), "EN")', source)
+        self.assertLess(source.index('def arabic():'), source.index('def theme():'))
+        self.assertNotIn('a.choose("Interface language"', source)
+
+    def test_windows_project_switch_requires_eventual_exact_native_draft(self):
+        # Real installed integration #44176696340 already showed Project A,
+        # the correct Study and Scripts 2, but immediate ValuePattern content
+        # mismatched. Poll actual UIA text, not a DB-only/screenshot shortcut.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        waiter = source.split("function Wait-InstalledEditExact(", 1)[1].split(
+            "function Verify-InstalledCanonicalDb(", 1
+        )[0]
+        isolation = source.split(
+            "if ($cases.quit_relaunch_persistence.status -eq 'PASS')", 1
+        )[1].split(
+            "if ($cases.wrong_project_ui_isolation.status -eq 'PASS')", 1
+        )[0]
+        self.assertIn("Read-InstalledEdit $hwnd $name", waiter)
+        self.assertIn("$actual -ceq $expected", waiter)
+        self.assertIn("Start-Sleep -Milliseconds 350", waiter)
+        self.assertIn("throw \"Installed UIA edit", waiter)
+        self.assertNotIn("SetValue(", waiter)
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody",
+            isolation,
+        )
+        self.assertIn(
+            "Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle",
+            isolation,
+        )
+
+    def test_windows_offscreen_study_candidate_requires_native_scroll_and_recheck(self):
+        # Actual restored screenshot at run #44150090373 was scrolled above
+        # the script candidate editor. A real UIA ScrollItemPattern is allowed,
+        # but no invisible-element click, direct DOM injection or skipped proof.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        click = source.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1)[0]
+        self.assertIn("[System.Windows.Automation.ScrollItemPattern]::Pattern", click)
+        self.assertIn("$scrollItem.ScrollIntoView()", click)
+        # Native WebView2 can expose ScrollItemPattern while refusing to
+        # move an offscreen element. Use the visible workflow link and still
+        # require actual candidate selection plus canonical immutable proof.
+        self.assertIn(
+            "Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)",
+            source,
+        )
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle", source)
+        self.assertIn("reopened-scripts-navigation.png", source)
+        self.assertIn("$owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)", click)
+        self.assertIn("-not $candidate.Current.IsOffscreen", click)
+        self.assertIn("No visible, enabled, bounded UIA control", click)
+        self.assertNotIn("SetValue(", click)
+        self.assertNotIn("return # skip", click)
+
+    def test_document_alone_cannot_satisfy_startup(self):
+        # Exercise Session.start's actual fail-closed gate, not an obsolete
+        # English source-code literal. This is a mocked *contract* test only;
+        # installed WebKitGTK acceptance is separately required in CI.
+        def startup(document, controls, expected_studio="Studio"):
+            observed = []
+            ax = SimpleNamespace(
+                web_document=lambda: document,
+                available=lambda name, role: (
+                    observed.append((name, role)) or (name, role) in controls
+                ),
+                diagnostics=lambda: {"desktop_apps": [], "x11_windows": []},
+            )
+            proc = SimpleNamespace(pid=34567, poll=lambda: None)
+            with tempfile.TemporaryDirectory() as tmp:
+                session = native.Session(
+                    SimpleNamespace(executable="/synthetic/not-executed"), Path(tmp)
+                )
+                session.screenshot = lambda _name: None
+                with mock.patch.object(native.subprocess, "Popen", return_value=proc), \
+                     mock.patch.object(native, "AxWebKit", return_value=ax), \
+                     mock.patch.object(native.time, "monotonic",
+                                       side_effect=[0.0, 0.0, 36.0]), \
+                     mock.patch.object(native.time, "sleep"):
+                    try:
+                        session.start(expected_studio=expected_studio)
+                    except native.NativeUnavailable:
+                        return False, observed
+                    return True, observed
+
+        # A document without the requested native rail button/link must fail.
+        passed, calls = startup(True, set())
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("Studio", "button"), ("Studio", "link")])
+
+        # A matching control without a real WebKit document must also fail.
+        passed, calls = startup(False, {("Studio", "button")})
+        self.assertFalse(passed)
+        self.assertEqual(calls, [])
+
+        # The persisted Arabic locale must reject an English-only control.
+        passed, calls = startup(True, {("Studio", "button")}, "الاستوديو")
+        self.assertFalse(passed)
+        self.assertEqual(calls, [("الاستوديو", "button"), ("الاستوديو", "link")])
+
+        # Either accessible role is valid, but only with a real document.
+        for language, role in (("Studio", "button"), ("الاستوديو", "link")):
+            passed, calls = startup(True, {(language, role)}, language)
+            self.assertTrue(passed)
+            self.assertIn((language, role), calls)
 
 
 

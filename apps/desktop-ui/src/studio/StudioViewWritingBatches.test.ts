@@ -88,4 +88,59 @@ describe('Studio read-only canonical three-script receipts', () => {
     expect(await screen.findByText('This study belongs to a different project.')).toHaveAttribute('role', 'alert');
     expect(screen.queryByRole('button', { name: 'Generated 2' })).not.toBeInTheDocument();
   });
+  it('exports the exact three receipt-linked scripts locally without AI egress', async () => {
+    const { projectId, gateway, api, getStudy } = setup();
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:receipt-export');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const runAi = vi.spyOn(api, 'runAi');
+    render(StudioView, { props: { api, projectId, gateway } });
+    await openStudy();
+    const exportButton = await screen.findByRole('button', { name: 'Export 3 scripts' });
+    await fireEvent.click(exportButton);
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expect(getStudy.mock.calls.filter(call => !!call[2]).map(call => call[2]))
+      .toEqual(['first-generated', 'second-generated', 'third-generated']);
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('text/markdown;charset=utf-8');
+    expect(anchorClick).toHaveBeenCalledOnce();
+    expect(runAi).not.toHaveBeenCalled();
+    anchorClick.mockRestore();
+  });
+
+  it('refuses a mixed-revision batch without creating a download', async () => {
+    const { projectId, gateway, api, getStudy, study } = setup();
+    const createObjectURL = vi.fn((_blob: Blob) => 'blob:should-not-exist');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    getStudy.mockImplementation(async (_project, _study, draftId) => ({
+      ...study,
+      revision: draftId === 'second-generated' ? study.revision + 1 : study.revision,
+      draftId: draftId || 'manual',
+      draft: draftId ? 'Exact ' + draftId : 'Manual body'
+    }));
+    render(StudioView, { props: { api, projectId, gateway } });
+    await openStudy();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Export 3 scripts' }));
+    expect(await screen.findByText('This study belongs to a different project.')).toHaveAttribute('role', 'alert');
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('denies export if any returned script belongs to another project', async () => {
+    const { projectId, gateway, api, getStudy, study } = setup();
+    const createObjectURL = vi.fn(() => 'blob:should-not-exist');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+    getStudy.mockImplementation(async (_project, _study, draftId) => ({
+      ...study,
+      projectId: draftId === 'third-generated' ? 'foreign-project' : projectId,
+      draftId: draftId || 'manual',
+      draft: draftId ? 'Exact ' + draftId : 'Manual body'
+    }));
+    render(StudioView, { props: { api, projectId, gateway } });
+    await openStudy();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Export 3 scripts' }));
+    expect(await screen.findByText('This study belongs to a different project.')).toHaveAttribute('role', 'alert');
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
 });

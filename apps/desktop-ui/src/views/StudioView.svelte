@@ -37,6 +37,8 @@
   let previewVersion: DraftSnapshot | null = null;
   let writingBatches: StudyWritingBatch[] = [];
   let writingBatchError = '';
+  let batchExportError = '';
+  let exportingBatchId = '';
   let writingBatchEpoch = 0;
   let renameDraftOpen = false;
   let renameDraftTitle = '';
@@ -63,6 +65,8 @@
   let scriptError = '';
   let angleError = '';
   let angleBusy = false;
+  // Invalidate an in-flight validation when its pasted input changes.
+  let angleResponseEpoch = 0;
   let angleScopeEpoch = 0;
   let historical: HistoricalAiArtifact | null = null;
   let historyLoading = false;
@@ -265,6 +269,7 @@
     const epoch = ++writingBatchEpoch;
     writingBatches = [];
     writingBatchError = '';
+    batchExportError = '';
     if (!gateway?.listStudyWritingBatches) return;
     try {
       const result = await gateway.listStudyWritingBatches(projectId, id);
@@ -870,17 +875,24 @@
 
   async function reviewPastedAngles(selectedAngleId?: string) {
     if (!gateway?.interpretStudyAngles || !record || !anglePromptSource ||
-        !angleResponseJson.trim() || angleBusy || preparing || busy || saving) return;
+        !angleResponseJson.trim()) return;
+    if (angleBusy || preparing || busy || saving) {
+      angleError = t.angleReviewBusy;
+      return;
+    }
     const ownerStudy = studyId;
     const epoch = promptRequest;
+    const responseEpoch = angleResponseEpoch;
+    const responseJson = angleResponseJson;
     angleBusy = true;
     angleError = '';
     draftAnglePrompt = '';
     try {
       const result = await gateway.interpretStudyAngles(
         projectId, ownerStudy, angleStudyRevision,
-        anglePromptSource, angleResponseJson, selectedAngleId);
-      if (studyId !== ownerStudy || epoch !== promptRequest) return;
+        anglePromptSource, responseJson, selectedAngleId);
+      if (studyId !== ownerStudy || epoch !== promptRequest ||
+          responseEpoch !== angleResponseEpoch) return;
       if (result.angles.length !== 3 ||
           result.angles.some((angle) => !angle.id || !angle.approach || !angle.hook) ||
           (selectedAngleId && (!result.draftPrompt || result.draftPrompt.length > 100_000))) {
@@ -894,9 +906,13 @@
       confirmScriptSave = false;
       scriptError = '';
       status = selectedAngleId ? t.draftAngleReady : t.anglesReviewed;
-    } catch (cause) {
-      if (studyId === ownerStudy && epoch === promptRequest) {
-        angleError = message(cause, t.invalidAngles);
+    } catch {
+      // Tauri can reject with a string or an Error. Never expose its unlocalized
+      // diagnostic as the primary native message: the installed WebView must
+      // display an accessible, stable EN/AR rejection for every invalid reply.
+      if (studyId === ownerStudy && epoch === promptRequest &&
+          responseEpoch === angleResponseEpoch) {
+        angleError = t.invalidAngles;
         reviewedAngles = [];
       }
     } finally {
@@ -1018,6 +1034,72 @@
     } finally {
       importingSavedResult = false;
       busy = false;
+    }
+  }
+
+  /** Export only the exact three existing v11 receipt-linked drafts.
+   * This is a read-only local action, never a writing/provider dispatch. */
+  async function exportWritingBatch(batch: StudyWritingBatch): Promise<void> {
+    const source = gateway;
+    const current = record;
+    if (!source || !current || exportingBatchId || busy || saving ||
+        loading || dirty || importingSavedResult) return;
+    const ownerProject = projectId;
+    const ownerStudy = current.id;
+    const ownerEpoch = writingBatchEpoch;
+    const ids = batch.draftIds;
+    const validReceipt = batch.projectId === ownerProject &&
+      batch.studyId === ownerStudy && current.projectId === ownerProject &&
+      writingBatches.includes(batch) && Array.isArray(ids) &&
+      ids.length === 3 && ids.every(id => typeof id === 'string' && !!id) &&
+      new Set(ids).size === 3;
+    const candidates = validReceipt
+      ? ids.map(id => current.drafts?.find(candidate => candidate.id === id))
+      : [];
+    if (!validReceipt || candidates.length !== 3 || candidates.some(item => !item)) {
+      batchExportError = t.invalidStudy;
+      return;
+    }
+    exportingBatchId = batch.runId;
+    batchExportError = '';
+    try {
+      const snapshots = await Promise.all(ids.map(id => source.getStudy(ownerProject, ownerStudy, id)));
+      // A project switch, a different Study, or a refreshed receipt list
+      // invalidates an in-flight read; never download another project's text.
+      if (ownerEpoch !== writingBatchEpoch || projectId !== ownerProject ||
+          studyId !== ownerStudy || record?.id !== ownerStudy ||
+          record?.revision !== current.revision ||
+          !writingBatches.includes(batch)) return;
+      if (snapshots.some((item, index) =>
+        item.id !== ownerStudy || item.projectId !== ownerProject ||
+        item.revision !== current.revision ||
+        item.draftId !== ids[index] ||
+        item.draftRevision !== candidates[index]?.revision ||
+        !item.drafts?.some(candidate => candidate.id === ids[index]) ||
+        typeof item.draft !== 'string' || !item.draft.trim() ||
+        item.draft.length > 100_000)) {
+        throw new Error(t.invalidStudy);
+      }
+      const sections = snapshots.map((item, index) => {
+        const title = (candidates[index]?.title || (t.writingCandidate + ' ' + (index + 1)))
+          .replace(/[\r\n]+/g, ' ').trim().slice(0, 200);
+        return '## ' + (index + 1) + '. ' + title + '\n\n' + item.draft;
+      });
+      const content = '# ' + current.brief.title.replace(/[\r\n]+/g, ' ') +
+        '\n\n> ' + t.mixedWarning + '\n\n' + sections.join('\n\n---\n\n') + '\n';
+      const basename = (current.brief.title || 'study')
+        .replace(/[^a-zA-Z0-9\u0600-\u06FF_-]+/g, '-').slice(0, 60) || 'study';
+      const url = URL.createObjectURL(new Blob([content], { type: 'text/markdown;charset=utf-8' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = basename + '-three-scripts.md';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (cause) {
+      if (ownerEpoch === writingBatchEpoch && projectId === ownerProject &&
+          studyId === ownerStudy) batchExportError = message(cause, t.errorLoad);
+    } finally {
+      if (exportingBatchId === batch.runId) exportingBatchId = '';
     }
   }
 
@@ -1292,6 +1374,7 @@
         <section class="writing-batch-history" aria-label={t.writingBatches}>
           <h3>{t.writingBatches}</h3>
           <p>{t.writingBatchesPrivacy}</p>
+          {#if batchExportError}<p role="alert" class="error">{batchExportError}</p>{/if}
           {#if writingBatchError}
             <p role="alert" class="error">{writingBatchError}</p>
           {:else if writingBatches.length === 0}
@@ -1311,6 +1394,10 @@
                         (t.writingCandidate + ' ' + (index + 1))}
                     </button>
                   {/each}
+                  <button type="button" class="button secondary"
+                    disabled={!!exportingBatchId || busy || saving || dirty || loading || importingSavedResult ||
+                      !batch.draftIds.every(id => record?.drafts?.some(candidate => candidate.id === id))}
+                    on:click={() => void exportWritingBatch(batch)}>{t.exportAllThree}</button>
                 </div>
               </div>
             {/each}
@@ -1369,14 +1456,16 @@
               maxlength="100000" bind:value={angleResponseJson}
               on:input={() => { reviewedAngles = []; draftAnglePrompt = '';
                 selectedWritingAngleId = ''; reviewedScript = null;
-                scriptResponseJson = ''; confirmScriptSave = false; angleError = ''; }}
+                scriptResponseJson = ''; confirmScriptSave = false;
+                angleResponseEpoch++; angleError = ''; }}
               placeholder={t.pasteAnglesPlaceholder}></textarea>
           </label>
           <p class="muted">{t.pasteAnglesPrivacy}</p>
           <button type="button" class="button secondary"
-            disabled={angleBusy || preparing || !angleResponseJson.trim()}
+            disabled={angleBusy || preparing || busy || saving || !angleResponseJson.trim()}
             on:click={() => void reviewPastedAngles()}>{t.reviewAngles}</button>
-          {#if angleError}<p role="alert" class="studio-error">{angleError}</p>{/if}
+          {#if angleError}<p role="alert" aria-live="assertive" aria-atomic="true"
+            aria-label={angleError} class="studio-error" dir="auto">{angleError}</p>{/if}
           {#if reviewedAngles.length}
             <div class="angle-options">
               {#each reviewedAngles as angle (angle.id)}

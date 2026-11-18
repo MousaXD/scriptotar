@@ -24,6 +24,7 @@
   let manualPath = '';
   let sourceUrl = '';
   let actionError = '';
+  let urlRejected = false;
   let actionStatus = '';
   let busy = false;
   let dragActive = false;
@@ -53,6 +54,7 @@
     if (busy) return;
     busy = true;
     actionError = '';
+    urlRejected = false;
     actionStatus = '';
     try { await action(); }
     catch (error) { actionError = error instanceof Error ? error.message : String(error); }
@@ -108,7 +110,18 @@
     return run(async () => {
       const url = sourceUrl.trim();
       if (!url) return;
-      await onEnqueueUrl(url);
+      try {
+        // Keep Rust as the authority for URL admission: even unsupported schemes
+        // must reach the backend and must never enqueue a canonical job.
+        await onEnqueueUrl(url);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        if (detail.includes('research URL is invalid: only http and https are supported')) {
+          urlRejected = true;
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
+        throw error;
+      }
       sourceUrl = '';
       actionStatus = $translator('queue.queuedUrl');
     });
@@ -228,7 +241,7 @@
     <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
       <form class="url-form" on:submit|preventDefault={enqueueUrl}>
         <label for="queue-url">{$translator('queue.supportedUrl')}</label>
-        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} bind:value={sourceUrl} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
         <div class="capture-actions">
           <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
           <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
@@ -245,7 +258,7 @@
   </details>
 </section>
 
-{#if actionError}<p class="queue-feedback error-message" role="alert" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionError}<p id="queue-action-error" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError} dir="auto" data-i18n-ignore>{actionError}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>

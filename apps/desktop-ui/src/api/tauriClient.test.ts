@@ -85,6 +85,16 @@ describe('Tauri client command contract', () => {
     await api.reviewStudyEvidence('project-id', 'study-id', 'evidence-id', {
       expectedCertainty: 'unverified', action: 'dispute', note: 'Original audio contradicts this'
     });
+    const noCostBudget = {
+      max_tokens: 50000, max_tool_calls: 1, max_elapsed_ms: 30000,
+      max_cost_microusd: 20000
+    };
+    await api.prepareProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'gpt-4o-mini', 128, noCostBudget);
+    await api.decideProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'sealed-fingerprint', false);
+    await api.executeProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'sealed-fingerprint', 'fixture-not-a-real-key');
     await api.startLocalInspection('project-id', 'study-id', 'transcript-id');
     await api.listLocalInspections('project-id', 'study-id');
     await api.decideLocalInspection('project-id', 'study-id', 'run-id', 'approve');
@@ -186,6 +196,22 @@ describe('Tauri client command contract', () => {
         preparedDraftPrompt: 'draft prompt', scriptResponseJson: '{"beats":[]}',
         acceptAsNewCandidate: false
       }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      model: 'gpt-4o-mini', maxOutputTokens: 128,
+      limits: {
+        max_tokens: 50000, max_tool_calls: 1, max_elapsed_ms: 30000,
+        max_cost_microusd: 20000
+      }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('decide_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      fingerprint: 'sealed-fingerprint', approve: false
+    });
+    expect(invokeMock).toHaveBeenCalledWith('execute_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      fingerprint: 'sealed-fingerprint', requestTimeApiKey: 'fixture-not-a-real-key'
     });
     expect(invokeMock).toHaveBeenCalledWith('prepare_study_angles', {
       projectId: 'project-id', studyId: 'study-id'
