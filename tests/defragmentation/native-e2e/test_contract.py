@@ -652,6 +652,50 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Ran 5 tests", output)
         self.assertIn("OK", output)
 
+    def test_windows_candidate_pointer_cannot_select_through_fixed_search_overlay(self):
+        # Reproduced on installed f34ae367 / #44389766717: a genuine native
+        # ScrollItemIntoView aligned the candidate under the sticky header
+        # and a real pointer click opened Command palette, not the popup.
+        # This contract test cannot itself prove a native GUI success.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        native_wheel = script.split("public static void NativeScrollUp(", 1)[1].split(
+            "public static void NativeClick(", 1)[0]
+        self.assertIn("SetCursorPos(x, y)", native_wheel)
+        self.assertIn("mouse_event(0x0800", native_wheel)
+        guard = script.split("function Ensure-InstalledCandidateViewport(", 1)[1].split(
+            "function Choose-InstalledOption(", 1)[0]
+        for clause in (
+            "Assert-InstalledCommandPaletteClosed $hwnd",
+            "Find-ExactInstalledControl $hwnd 'Script candidates'",
+            "[System.Windows.Automation.ScrollItemPattern]::Pattern",
+            "$candidate.Current.IsOffscreen",
+            "$candidate.Current.IsEnabled",
+            "$safeTop = $window.Y + 135",
+            "'Search workspace and commands'",
+            "$centerY -ge $safeTop -and $centerY -le $safeBottom",
+            "[NativeWebViewWindow]::NativeScrollUp($wheelX, $wheelY)",
+            "throw 'Installed Script candidates could not be moved clear",
+        ):
+            self.assertIn(clause, guard)
+        choose = script.split("function Choose-InstalledOption(", 1)[1].split(
+            "function Test-InstalledPopupOptionVisible(", 1)[0]
+        self.assertLess(
+            choose.index("Ensure-InstalledCandidateViewport $hwnd"),
+            choose.index("Click-InstalledControl $hwnd $label"),
+        )
+        self.assertLess(
+            choose.index("Assert-InstalledCommandPaletteClosed $hwnd"),
+            choose.index("Find-InstalledPopupOption $hwnd $name"),
+        )
+        self.assertIn("Native WebView2 option '$name' is not owned by an accessible popup List", choose)
+        click = script.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1)[0]
+        self.assertIn("if ($pointer -and $name -eq 'Script candidates')", click)
+        self.assertIn("Assert-InstalledCommandPaletteClosed $hwnd", click)
+        self.assertIn("throw \"Installed Script candidates pointer would strike fixed toolbar", click)
+        self.assertNotIn("SetValue(", guard + choose)
+        self.assertNotIn("ExecuteScript", guard + choose)
+
     def test_windows_native_denial_proof_requires_fresh_input_distinct_host_receipts_and_order(self):
         # Source-contract regression only. An installed UIA/real Rust process
         # run (not these tests) must establish genuine native certification.
