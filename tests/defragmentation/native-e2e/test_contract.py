@@ -863,5 +863,47 @@ class NativeEvidenceContractTests(unittest.TestCase):
 
 
 
+    def test_native_error_recovery_requires_real_queue_denial_and_db_readback(self):
+        # Static regression contract only; a source check never turns the
+        # installed scenario green. The OS runners must perform the actual UI.
+        from pathlib import Path
+        root = Path(__file__).resolve().parent
+        linux = (root / "linux_webkit.py").read_text(encoding="utf-8")
+        windows = (root / "windows_webview2.ps1").read_text(encoding="utf-8")
+        for source in (linux, windows):
+            self.assertIn("file:///scriptotar-native-qa-denied-media.mp4", source)
+            self.assertIn("rejected-url-error.png", source)
+            self.assertIn("recovered-studio-after-denial.png", source)
+            self.assertIn("Script draft", source)
+            self.assertIn("error_recovery", source)
+        self.assertIn('a.click("Queue", "button")', linux)
+        self.assertIn('a.heading("Jobs", timeout=15)', linux)
+        self.assertIn('a.click("Queue URL", "button")', linux)
+        self.assertIn('count_canonical_jobs(root / "data", name_a)', linux)
+        self.assertIn('a.choose("Open study", study)', linux)
+        self.assertIn('verify_canonical_reopened_candidates(', linux)
+        self.assertIn("Click-InstalledControl $arabicHwnd 'Queue URL'", windows)
+        self.assertIn("Verify-InstalledCanonicalDb 'jobs'", windows)
+        self.assertIn("Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody", windows)
+        self.assertIn("Verify-InstalledCanonicalDb 'candidates'", windows)
+        # Do not accept an ordinary 'Supported media URL' label as an error.
+        self.assertIn("$value -ne 'Supported media URL'", windows)
+        self.assertIn("status='FAIL'", windows)
+        self.assertNotIn('"error_recovery", "PASS"', linux)
+
+    def test_visual_menu_captures_do_not_self_certify(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parent
+        linux = (root / "linux_webkit.py").read_text(encoding="utf-8")
+        windows = (root / "windows_webview2.ps1").read_text(encoding="utf-8")
+        self.assertIn('session.screenshot("arabic-locale-menu-open")', linux)
+        self.assertIn('session.screenshot("dark-theme-menu-open")', linux)
+        self.assertIn('windows-arabic-menu-open.png', windows)
+        self.assertIn('windows-theme-menu-open.png', windows)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', linux)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', linux)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
+
+
 if __name__ == "__main__":
     unittest.main()
