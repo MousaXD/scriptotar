@@ -22,9 +22,9 @@ const expected = {
 };
 const definitions = [
   { workflow: 'linux-tauri.yml', platform: 'linux', target: 'deb', generator: "cat > src-tauri/tauri.linux.conf.json <<'JSON'", end: 'JSON' },
-  { workflow: 'windows-tauri.yml', platform: 'windows', target: 'nsis', generator: "@' | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json", end: "@'" },
+  { workflow: 'windows-tauri.yml', platform: 'windows', target: 'nsis', generator: "'@ | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json", end: "@'" },
   { workflow: 'installed-webview-acceptance.yml', platform: 'linux', target: 'deb', generator: "cat > src-tauri/tauri.linux.conf.json <<'JSON'", end: 'JSON' },
-  { workflow: 'installed-webview-acceptance.yml', platform: 'windows', target: 'nsis', generator: "@' | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json", end: "@'" }
+  { workflow: 'installed-webview-acceptance.yml', platform: 'windows', target: 'nsis', generator: "'@ | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json", end: "@'" }
 ];
 function extractConfig(content, def) {
   const lines = content.split(/\r?\n/);
