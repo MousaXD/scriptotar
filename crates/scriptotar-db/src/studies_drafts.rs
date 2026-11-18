@@ -9,7 +9,10 @@ use scriptotar_core::{
 use uuid::Uuid;
 
 use crate::{
-    studies::{database, db_error, optional_text, require_active_study, required_text, uuid_at},
+    studies::{
+        database, db_error, optional_text, require_active_study,
+        require_available_study_source, required_text, uuid_at,
+    },
     SqliteStore,
 };
 
@@ -1010,10 +1013,35 @@ impl SqliteStore {
                 "cannot attach to archived draft".into(),
             ));
         }
-        self.get_study_source(project_id, draft.study_id, study_source_id)?;
-        let db = database(self)?;
-        require_active_study(&db, project_id, draft.study_id)?;
-        db.execute(
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, draft.study_id)?;
+        require_available_study_source(&tx, project_id, draft.study_id, study_source_id)?;
+        // Revalidate draft state inside this lock, not only in the earlier
+        // lookup: concurrent archive/ownership edits may have intervened.
+        let active_draft: i64 = tx
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM creative_drafts
+                    WHERE id=?1 AND project_id=?2 AND study_id=?3
+                      AND archived_at IS NULL
+                )",
+                params![
+                    draft_id.to_string(),
+                    project_id.to_string(),
+                    draft.study_id.to_string()
+                ],
+                |row| row.get(0),
+            )
+            .map_err(db_error)?;
+        if active_draft != 1 {
+            return Err(RepositoryError::Conflict(
+                "draft changed or is no longer active".into(),
+            ));
+        }
+        tx.execute(
             "INSERT INTO draft_source_links(project_id,draft_id,study_source_id,attached_at)
              VALUES(?1,?2,?3,?4)",
             params![
@@ -1024,7 +1052,7 @@ impl SqliteStore {
             ],
         )
         .map_err(db_error)?;
-        Ok(())
+        tx.commit().map_err(db_error)
     }
 
     pub fn list_draft_source_ids(

@@ -576,6 +576,40 @@ fn evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceReference> {
     })
 }
 
+
+/// Perform source permission validation on the *same write transaction* that
+/// creates a new evidence or draft link. Historical tombstones remain readable,
+/// but their missing origin FK must never authorize a fresh attachment.
+pub(crate) fn require_available_study_source(
+    db: &Connection,
+    project_id: Uuid,
+    study_id: Uuid,
+    source_id: Uuid,
+) -> RepositoryResult<()> {
+    let sql = format!(
+        "SELECT {SOURCE_COLUMNS} FROM study_sources
+         WHERE id=?1 AND project_id=?2 AND study_id=?3"
+    );
+    let source = db
+        .query_row(
+            &sql,
+            params![
+                source_id.to_string(),
+                project_id.to_string(),
+                study_id.to_string()
+            ],
+            source_row,
+        )
+        .optional()
+        .map_err(db_error)?;
+    match source {
+        Some(source) if source.available => Ok(()),
+        _ => Err(RepositoryError::NotFound(
+            "available Study source permission".into(),
+        )),
+    }
+}
+
 impl SqliteStore {
     pub fn add_evidence_reference(
         &self,
@@ -594,11 +628,14 @@ impl SqliteStore {
                 "invalid evidence timestamp".into(),
             ));
         }
-        self.get_study_source(project_id, study_id, input.study_source_id)?;
-        let db = database(self)?;
-        require_active_study(&db, project_id, study_id)?;
+        let mut db = database(self)?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(db_error)?;
+        require_active_study(&tx, project_id, study_id)?;
+        require_available_study_source(&tx, project_id, study_id, input.study_source_id)?;
         let id = Uuid::new_v4();
-        db.execute(
+        tx.execute(
             "INSERT INTO study_evidence (
                 id,project_id,study_id,study_source_id,claim,locator,timestamp_seconds,
                 certainty,uncertainty_note,created_at
@@ -617,6 +654,7 @@ impl SqliteStore {
             ],
         )
         .map_err(db_error)?;
+        tx.commit().map_err(db_error)?;
         self.get_evidence_reference(project_id, study_id, id)
     }
 
