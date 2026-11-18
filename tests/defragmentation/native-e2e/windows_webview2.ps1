@@ -1449,6 +1449,18 @@ try {
           Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference
           $priorDenial = @(Get-InstalledReferenceDenials $restoredHwnd)
           $beforeReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          # Preserve the full read-only 39-table canonical digest snapshot even
+          # when UIA throws after the native click. No private DB rows included.
+          $referenceHash = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData(
+              [Text.Encoding]::UTF8.GetBytes($reference))).ToLowerInvariant()
+          $report.foreign_study_reference_probe = @{
+            status = 'NOT TESTED'
+            native_input_readback = 'exact ValuePattern verified'
+            reference_sha256 = $referenceHash
+            preexisting_denial_count = $priorDenial.Count
+            canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
+          }
           Click-InstalledControl $restoredHwnd 'Open reference' ([System.Windows.Automation.ControlType]::Button)
           $denied = $false
           $deadline = [DateTime]::UtcNow.AddSeconds(12)
@@ -1463,9 +1475,11 @@ try {
             native_input_readback = 'exact ValuePattern verified'
             denial_accessible_text_new = $denied
             canonical_unchanged = ($beforeReferenceCanonical -ceq $afterReferenceCanonical)
-            reference_sha256 = [Convert]::ToHexString(
-              [System.Security.Cryptography.SHA256]::HashData(
-                [Text.Encoding]::UTF8.GetBytes($reference))).ToLowerInvariant()
+            canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
+            canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
+            preexisting_denial_count = $priorDenial.Count
+            postclick_denial_count = $now.Count
+            reference_sha256 = $referenceHash
             missing = 'forged mutating Tauri IPC and real backend request identity'
           }
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-foreign-study-reference-denial.png')
@@ -1482,10 +1496,13 @@ try {
           Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody
           Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle | Out-Null
         } catch {
-          $report.foreign_study_reference_probe = @{
-            status='FAIL'
-            reason="Native installed foreign Study reference probe: $($_.Exception.Message)"
-          }
+          # Do not destroy original canonical digests or native readback after
+          # a missing/stale UIA alert, unexpected DB write or later relaunch.
+          $priorProof = $report.foreign_study_reference_probe
+          if (-not ($priorProof -is [System.Collections.IDictionary])) { $priorProof = @{} }
+          $priorProof['status'] = 'FAIL'
+          $priorProof['reason'] = "Native installed foreign Study reference probe: $($_.Exception.Message)"
+          $report.foreign_study_reference_probe = $priorProof
           $cases.wrong_project_ipc_denial = @{
             status='FAIL'
             reason="Optional installed read-only foreign reference probe failed: $($_.Exception.Message)"
