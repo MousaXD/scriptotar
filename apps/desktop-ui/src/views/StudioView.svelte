@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import Checkbox from '../components/ui/Checkbox.svelte';
@@ -11,6 +11,7 @@
   import { evidencePromptContext } from '../studio/evidencePrompt';
   import { sanitizeSelection, sameRefs, sourceLabel } from '../studio/selection';
   import { studioStrings } from '../studio/strings';
+  import { newNativeRequestId, matchesNativeDenial } from '../utils/nativeDenial';
   import StudioAgentReview from '../studio/StudioAgentReview.svelte';
   import StudioCandidateCompare from '../studio/StudioCandidateCompare.svelte';
   import StudioResearchReview from '../studio/StudioResearchReview.svelte';
@@ -64,6 +65,8 @@
   let scriptBusy = false;
   let scriptError = '';
   let angleError = '';
+  let angleDenialId = '';
+  let angleErrorElement: HTMLParagraphElement | undefined;
   let angleBusy = false;
   // Invalidate an in-flight validation when its pasted input changes.
   let angleResponseEpoch = 0;
@@ -880,18 +883,21 @@
       angleError = t.angleReviewBusy;
       return;
     }
+    const ownerProject = projectId;
     const ownerStudy = studyId;
     const epoch = promptRequest;
     const responseEpoch = angleResponseEpoch;
     const responseJson = angleResponseJson;
+    const requestId = newNativeRequestId();
     angleBusy = true;
     angleError = '';
+    angleDenialId = '';
     draftAnglePrompt = '';
     try {
       const result = await gateway.interpretStudyAngles(
-        projectId, ownerStudy, angleStudyRevision,
-        anglePromptSource, responseJson, selectedAngleId);
-      if (studyId !== ownerStudy || epoch !== promptRequest ||
+        ownerProject, ownerStudy, angleStudyRevision,
+        anglePromptSource, responseJson, selectedAngleId, requestId);
+      if (projectId !== ownerProject || studyId !== ownerStudy || epoch !== promptRequest ||
           responseEpoch !== angleResponseEpoch) return;
       if (result.angles.length !== 3 ||
           result.angles.some((angle) => !angle.id || !angle.approach || !angle.hook) ||
@@ -906,14 +912,23 @@
       confirmScriptSave = false;
       scriptError = '';
       status = selectedAngleId ? t.draftAngleReady : t.anglesReviewed;
-    } catch {
+    } catch (cause) {
       // Tauri can reject with a string or an Error. Never expose its unlocalized
       // diagnostic as the primary native message: the installed WebView must
       // display an accessible, stable EN/AR rejection for every invalid reply.
-      if (studyId === ownerStudy && epoch === promptRequest &&
+      if (projectId === ownerProject && studyId === ownerStudy && epoch === promptRequest &&
           responseEpoch === angleResponseEpoch) {
         angleError = t.invalidAngles;
+        angleDenialId = matchesNativeDenial(cause, 'INVALID_STUDY_ANGLES', requestId)
+          ? requestId : '';
         reviewedAngles = [];
+        // Move keyboard and assistive-tech focus to the actual rejection.
+        // Recheck the scope after the DOM commit so stale replies never steal focus.
+        await tick();
+        if (angleError && projectId === ownerProject && studyId === ownerStudy &&
+            epoch === promptRequest && responseEpoch === angleResponseEpoch) {
+          angleErrorElement?.focus();
+        }
       }
     } finally {
       angleBusy = false;
@@ -1453,8 +1468,10 @@
         <div class="angle-review">
           <label>{t.pasteAngles}
             <textarea rows="7" dir="auto" aria-label={t.pasteAngles}
+              aria-invalid={angleError ? 'true' : undefined}
+              aria-describedby={angleError ? 'studio-angle-error' : undefined}
               maxlength="100000" bind:value={angleResponseJson}
-              on:input={() => { reviewedAngles = []; draftAnglePrompt = '';
+              on:input={() => { angleDenialId = ''; reviewedAngles = []; draftAnglePrompt = '';
                 selectedWritingAngleId = ''; reviewedScript = null;
                 scriptResponseJson = ''; confirmScriptSave = false;
                 angleResponseEpoch++; angleError = ''; }}
@@ -1464,8 +1481,9 @@
           <button type="button" class="button secondary"
             disabled={angleBusy || preparing || busy || saving || !angleResponseJson.trim()}
             on:click={() => void reviewPastedAngles()}>{t.reviewAngles}</button>
-          {#if angleError}<p role="alert" aria-live="assertive" aria-atomic="true"
-            aria-label={angleError} class="studio-error" dir="auto">{angleError}</p>{/if}
+          {#if angleError}<p id="studio-angle-error" bind:this={angleErrorElement} tabindex="-1"
+            role="alert" aria-live="assertive" aria-atomic="true"
+            aria-label={angleError + (angleDenialId ? ' · request ' + angleDenialId : '')} class="studio-error" dir="auto">{angleError}{#if angleDenialId}<small dir="ltr"> Request ID: {angleDenialId}</small>{/if}</p>{/if}
           {#if reviewedAngles.length}
             <div class="angle-options">
               {#each reviewedAngles as angle (angle.id)}

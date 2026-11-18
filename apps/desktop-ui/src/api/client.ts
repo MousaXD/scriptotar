@@ -84,7 +84,8 @@ export interface ScriptotarApi {
   setStudyDraftArchived(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, archived: boolean): Promise<ContentStudy>;
   prepareStudyAngles(projectId: string, studyId: string): Promise<StudyAnglePrompt>;
   interpretStudyAngles(projectId: string, studyId: string, expectedStudyRevision: number,
-    preparedPrompt: string, responseJson: string, selectedAngleId?: string): Promise<StudyAngleInterpretation>;
+    preparedPrompt: string, responseJson: string, selectedAngleId?: string,
+    requestId?: string): Promise<StudyAngleInterpretation>;
   reviewStudyScript(projectId: string, studyId: string, expectedStudyRevision: number,
     anglePrompt: string, anglesResponseJson: string, selectedAngleId: string,
     preparedDraftPrompt: string, scriptResponseJson: string,
@@ -120,7 +121,7 @@ export interface ScriptotarApi {
   chooseLocalMedia(): Promise<string | null>;
   chooseOutputDirectory(): Promise<string | null>;
   enqueueLocalMedia(projectId: string, path: string): Promise<BackendJob>;
-  enqueueUrl(projectId: string, url: string): Promise<BackendJob>;
+  enqueueUrl(projectId: string, url: string, requestId?: string): Promise<BackendJob>;
   retryJob(jobId: string): Promise<BackendJob>;
   saveWatchlist(query: ResearchQuery): Promise<BootstrapData>;
   scanCreator(query: ResearchQuery): Promise<void>;
