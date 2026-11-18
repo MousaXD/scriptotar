@@ -131,9 +131,10 @@ jobs:
           echo 'Official upstream tag 4.0.7 source matches installed npm package parse.js'
       - name: Verify isolated experimental patch and apply ONLY to throwaway node_modules
         run: |
-          echo '10862a65fefb1466c91774f2517b4ce7fd3a7f433b91ac2aa5f360ebf49b7933  scripts/experimental/picomatch-4.0.7-pr237.patch' | sha256sum --check
-          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
-          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/picomatch-4.0.7-pr237.patch
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch > scripts/experimental/.ci-pr237-lf.patch
+          echo '10862a65fefb1466c91774f2517b4ce7fd3a7f433b91ac2aa5f360ebf49b7933  scripts/experimental/.ci-pr237-lf.patch' | sha256sum --check
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr237-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr237-lf.patch
           test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
           echo 'Experimental candidate based on unmerged micromatch/picomatch PR #237; NOT a published patch'
       - name: Inspect actual patched parser and emitted regex (debug-only)
