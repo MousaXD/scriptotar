@@ -172,6 +172,37 @@ describe('Content Study Studio', () => {
       .not.toBeInTheDocument();
   });
 
+  it('discards a stale Study-reference result when the pasted target changes during the native read', async () => {
+    const project = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const studyId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    let answer: ((value: ContentStudy) => void) | undefined;
+    const getStudy = vi.fn(() => new Promise<ContentStudy>((resolve) => { answer = resolve; }));
+    const gateway: StudioGateway = {
+      listStudies: async () => [],
+      createStudy: async () => { throw new Error('not used'); },
+      getStudy,
+      saveStudy: async () => { throw new Error('not used'); }
+    };
+    mount(gateway, { projectId: project, research: [], transcripts: [], jobs: [] });
+    await fireEvent.click(screen.getByText('Open Study reference', { selector: 'summary' }));
+    const input = screen.getByRole('textbox', { name: 'Paste Study reference' });
+    await fireEvent.input(input, {
+      target: { value: 'scriptotar://study/' + project + '/' + studyId }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined));
+    await fireEvent.input(input, { target: { value: 'scriptotar://study/edited-before-host-return' } });
+    answer?.({
+      id: studyId, projectId: project, revision: 1,
+      brief: { ...emptyBrief(), title: 'STALE PRIVATE STUDY' },
+      sources: [], draft: 'STALE PRIVATE BODY', draftVersions: []
+    });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open reference' })).not.toBeDisabled());
+    expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
+    expect(screen.queryByText('STALE PRIVATE STUDY')).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('rejects noncanonical Study references without invoking the native gateway', async () => {
     const gateway: StudioGateway = {
       listStudies: async () => [],

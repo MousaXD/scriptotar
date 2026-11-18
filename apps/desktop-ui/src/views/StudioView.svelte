@@ -246,10 +246,15 @@
     const claimedStudy = matched[2].toLowerCase();
     const claimedDraft = matched[3]?.toLowerCase();
     const activeProject = projectId;
+    const activeEpoch = currentRequest;
     referenceBusy = true;
     try {
       const loaded = await gateway.getStudy(claimedProject, claimedStudy, claimedDraft);
-      if (activeProject !== projectId) return;
+      // A later Study navigation/project switch or edited paste invalidates
+      // this response even when the claimed project happens to match again.
+      if (activeProject !== projectId || activeEpoch !== currentRequest ||
+          referenceInput.trim() !== raw) return;
+      if (changed()) { referenceError = t.unsavedStudyReference; return; }
       if (loaded.projectId !== activeProject || loaded.projectId !== claimedProject ||
           loaded.id !== claimedStudy || (claimedDraft && loaded.draftId !== claimedDraft)) {
         throw new Error(t.invalidStudyReference);
@@ -257,7 +262,8 @@
       await openStudy(claimedStudy, claimedDraft, loaded);
       if (studyId === claimedStudy) referenceInput = '';
     } catch {
-      if (activeProject === projectId) referenceError = t.deniedStudyReference;
+      if (activeProject === projectId && activeEpoch === currentRequest &&
+          referenceInput.trim() === raw) referenceError = t.deniedStudyReference;
     } finally {
       referenceBusy = false;
     }
