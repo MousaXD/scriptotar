@@ -94,6 +94,17 @@ def build(template: Path, output: Path, rows: int, source_sha: str) -> dict:
             if db.execute("PRAGMA quick_check").fetchone()[0] != "ok":
                 raise ValueError("fixture failed quick_check")
             db.commit()
+            # The production-migrated blank DB can inherit WAL journal mode.
+            # A subsequent mode=ro SQL profile may create *persistent* -wal/-shm
+            # sidecars even when it only SELECTs. Freeze this disposable synthetic
+            # fixture as a self-contained main DB before hashing or staging it.
+            # Never suppress a WAL/SHM staging rejection: that would risk
+            # dropping committed frames outside the hashed main DB.
+            journal = db.execute("PRAGMA journal_mode=DELETE").fetchone()[0]
+            if journal.lower() != "delete":
+                raise ValueError(f"could not finalize synthetic fixture journal mode: {journal}")
+        if any(Path(str(output) + suffix).exists() for suffix in ("-wal", "-shm")):
+            raise ValueError("synthetic fixture still has WAL/SHM after journal finalization")
         return {
             "dataset": "SYNTHETIC_ONLY", "source_sha_operator_supplied": source_sha,
             "schema_version": version, "per_collection": rows, "study_tables": list(STUDY_TABLES),
