@@ -1226,6 +1226,19 @@ def status(report: dict, scenario: str, state: str, reason: str, image: str | No
     report["cases"][scenario] = record
 
 
+def preserve_foreign_reference_failure(report: dict, exc: Exception) -> None:
+    """Retain read-only canonical evidence on a genuine installed probe failure.
+
+    Never convert a missing native denial into PASS or lose evidence of a
+    prohibited SQLite mutation when the exception propagates to the gate.
+    """
+    prior = report.get("foreign_study_reference_probe")
+    preserved = dict(prior) if isinstance(prior, dict) else {}
+    preserved["status"] = "FAIL"
+    preserved["reason"] = f"{type(exc).__name__}: {exc}"
+    report["foreign_study_reference_probe"] = preserved
+
+
 def checked(report: dict, key: str, fn):
     try:
         detail = fn()
@@ -2042,11 +2055,7 @@ def exercise(args, report: dict, root: Path):
                 # Do not discard the original before/after 39-table evidence
                 # when the native semantic alert is absent or a write occurs.
                 # No screenshot or read-only denial can upgrade to IPC PASS.
-                original = report.get("foreign_study_reference_probe")
-                preserved = dict(original) if isinstance(original, dict) else {}
-                preserved["status"] = "FAIL"
-                preserved["reason"] = f"{type(exc).__name__}: {exc}"
-                report["foreign_study_reference_probe"] = preserved
+                preserve_foreign_reference_failure(report, exc)
                 # This is a genuine native probe failure, never silently PASS.
                 status(report, "wrong_project_ipc_denial", "FAIL",
                        f"Installed foreign-reference preflight failed: {exc}")
