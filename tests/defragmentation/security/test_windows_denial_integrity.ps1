@@ -18,7 +18,7 @@ $script:qaSource = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $NativeRunn
 $boundSource = Match-NativeFunction 'Get-InstalledBoundDenialAlerts' 'Wait-InstalledBoundDenial'
 $waitSource = Match-NativeFunction 'Wait-InstalledBoundDenial' 'Get-InstalledAngleRejectionAlerts'
 $hostSource = Match-NativeFunction 'Get-InstalledHostDenial' 'Get-InstalledReferenceDenials'
-Require ($boundSource.Contains("[regex]::Escape($localizedText)")) 'native alert must match exact localized text'
+Require ($boundSource.Contains('[regex]::Escape($localizedText)')) 'native alert must match exact localized text'
 Require ($boundSource.Contains("' · request [0-9a-f]{32}$'")) 'native alert must carry exact 128-bit ID'
 Require ($boundSource.Contains('IsOffscreen')) 'offscreen alerts must not be certified'
 Require ($waitSource.Contains('$_ -cnotin $prior')) 'preexisting native alert must not be recycled'
