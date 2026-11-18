@@ -175,7 +175,7 @@ describe('Content Study Studio', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This Study reference cannot be opened in the active project.');
-    expect(getStudy).toHaveBeenCalledWith(projectB, studyId, undefined);
+    expect(getStudy).toHaveBeenCalledWith(projectB, studyId, undefined, expect.stringMatching(/^[0-9a-f]{32}$/));
     expect(screen.getByRole('textbox', { name: 'Script draft' })).toHaveValue('');
     expect(screen.queryByText('Foreign Study')).not.toBeInTheDocument();
   });
@@ -203,7 +203,8 @@ describe('Content Study Studio', () => {
       target: { value: ref }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
-    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, draftId));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(
+      project, studyId, draftId, expect.stringMatching(/^[0-9a-f]{32}$/)));
     expect(screen.getByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('Correct stored draft');
     expect(screen.queryByText('This Study reference cannot be opened in the active project.'))
@@ -228,7 +229,8 @@ describe('Content Study Studio', () => {
       target: { value: 'scriptotar://study/' + project + '/' + studyId }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Open reference' }));
-    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(project, studyId, undefined));
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(
+      project, studyId, undefined, expect.stringMatching(/^[0-9a-f]{32}$/)));
     await fireEvent.input(input, { target: { value: 'scriptotar://study/edited-before-host-return' } });
     answer?.({
       id: studyId, projectId: project, revision: 1,
