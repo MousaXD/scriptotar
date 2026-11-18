@@ -18,6 +18,12 @@ case "$gate:$pr" in
     test -f target/tests/defragmentation/native-e2e/linux_webkit.py
     python3 audit/tests/defragmentation/security/test_native_visual_adjudication.py \
       target/tests/defragmentation/native-e2e/linux_webkit.py
+    if [[ "$pr" == "131" ]]; then
+      # Read-only all-table snapshot MUST be one committed SQLite state,
+      # including while a real independent WAL writer commits between scans.
+      python3 audit/tests/defragmentation/security/native_sqlite_snapshot_atomicity_probe.py \
+        target/tests/defragmentation/native-e2e/linux_webkit.py
+    fi
     ;;
   provider:118)
     test -f target/crates/scriptotar-ai/src/provider_consent.rs
