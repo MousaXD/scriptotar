@@ -239,7 +239,12 @@
       return;
     }
     if (changed()) { referenceError = t.unsavedStudyReference; return; }
-    const [, claimedProject, claimedStudy, claimedDraft] = matched;
+    // UUIDs have case-insensitive hexadecimal syntax. Convert references to
+    // canonical lowercase before the authenticated native read and before
+    // checking returned scope, or a legitimate uppercase link rejects itself.
+    const claimedProject = matched[1].toLowerCase();
+    const claimedStudy = matched[2].toLowerCase();
+    const claimedDraft = matched[3]?.toLowerCase();
     const activeProject = projectId;
     referenceBusy = true;
     try {
