@@ -59,8 +59,8 @@ jobs:
           else
             echo 'No parser-name indicator in static dist; absence alone does not prove runtime unreachability'
           fi
-      - name: Candidate security regression — MUST fail if vulnerable
-        run: node scripts/probe-picomatch-redos.mjs --assert-patched
+      - name: Expanded security regression — MUST fail if vulnerable
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
       - name: Mandatory unfiltered npm advisory gate — NEVER masked
         if: always()
         run: |
@@ -106,6 +106,8 @@ jobs:
           pip-audit -r sidecars/transcription/requirements-engine.txt
 
   upstream-pr237-experiment:
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
     # A demonstration against a throwaway node_modules, NOT a supported dependency fix.
     # The npm lockfile still resolves vulnerable picomatch@4.0.7, and npm audit must fail.
     name: Unmerged upstream PR237 experiment (${{ matrix.os }}) — NOT RELEASE
@@ -165,6 +167,8 @@ jobs:
           echo 'Do not label this patched, accept an npm audit waiver, or release.'
 
   upstream-pr274-experiment:
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
     # Independent, experimental candidate comparison. No npm lockfile or build pipeline mutation.
     name: Unmerged upstream PR274 comparison (${{ matrix.os }}) — NOT RELEASE
     runs-on: ${{ matrix.os }}
@@ -209,9 +213,11 @@ jobs:
           echo 'Original unfiltered npm audit MUST remain failing; do NOT ship this experiment.'
 
   upstream-pr259-experiment:
-    # Upstream proposal is unmerged and materially changes glob compatibility.
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
+    # Upstream proposal was CLOSED WITHOUT MERGE on 2026-11-18; materially changes glob compatibility.
     # Do not promote to production or use this as a substitute for unfiltered npm audit.
-    name: Unmerged upstream PR259 broader parser experiment (${{ matrix.os }}) — NOT RELEASE
+    name: Closed unmerged upstream PR259 laboratory comparison (${{ matrix.os }}) — NOT RELEASE
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
