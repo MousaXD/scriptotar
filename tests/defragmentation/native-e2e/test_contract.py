@@ -634,6 +634,56 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # The tests above are source-level; not a forged host log or native PASS.
         self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
 
+    def test_windows_native_denial_proof_requires_fresh_input_distinct_host_receipts_and_order(self):
+        # Source-contract regression only. An installed UIA/real Rust process
+        # run (not these tests) must establish genuine native certification.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        receipt = script.split("function Assert-InstalledNativeInputReceipt(", 1)[1].split(
+            "function Get-InstalledBoundDenialAlerts(", 1)[0]
+        self.assertIn("Find-ExactInstalledControl $hwnd $name", receipt)
+        self.assertIn("[System.Windows.Automation.ValuePattern]::Pattern", receipt)
+        self.assertIn("if ($actual -cne $expected)", receipt)
+        self.assertIn("[System.Security.Cryptography.SHA256]::HashData(", receipt)
+        deny = script.split("function Get-InstalledHostDenial(", 1)[1].split(
+            "function Get-InstalledReferenceDenials(", 1)[0]
+        self.assertIn("$markers.Count -ne 1", deny)
+        self.assertIn("$markers[0].Code -cne $code", deny)
+        self.assertIn("$markers[0].Id -cne $native.Groups[1].Value", deny)
+        self.assertIn("installedDenialLog", deny)
+        # Both UIA readings must be taken AFTER the real paste and BEFORE the
+        # respective native button click; stale clipboard/semantic flags fail.
+        self.assertLess(
+            script.index("$angleReadbackSha = Assert-InstalledNativeInputReceipt"),
+            script.index("Click-InstalledControl $arabicHwnd 'Validate 3 angles'"))
+        self.assertLess(
+            script.index("$queueReadbackSha = Assert-InstalledNativeInputReceipt"),
+            script.index("Click-InstalledControl $arabicHwnd 'Queue URL'"))
+        gate = script.split("$nativeInputsAndTimingProven = (", 1)[1].split(
+            "$report.error_recovery_observations.windows_strict_binding_valid", 1)[0]
+        for requirement in (
+            "$angleSubmissionSha -ceq $angleReadbackSha",
+            "$queueSubmissionSha -ceq $queueReadbackSha",
+            "$priorAngleAlerts.Count -eq 0",
+            "$priorAngleBoundAlerts.Count -eq 0",
+            "$priorQueueBoundAlerts.Count -eq 0",
+            "$angleHostId -ceq $angleUiaId",
+            "$queueHostId -ceq $queueUiaId",
+            "$angleHostId -cne $queueHostId",
+            "$angleObservedTicks -gt $angleClickTicks",
+            "$queueClickTicks -gt $angleObservedTicks",
+            "$queueObservedTicks -gt $queueClickTicks",
+            "$beforeAnglesCanonical -ceq $afterAnglesCanonical",
+            "$beforeQueueCanonical -ceq $afterQueueCanonical",
+            "$beforeJobs -eq $afterJobs",
+        ):
+            self.assertIn(requirement, gate)
+        outcome = script.split("if ($angleHostId -and $queueHostId) {", 1)[1].split(
+            "} catch {\n        $cases.error_recovery", 1)[0]
+        self.assertIn("if ($nativeInputsAndTimingProven)", outcome)
+        self.assertIn("status='PASS'", outcome)
+        self.assertIn("status='NOT TESTED'", outcome)
+        self.assertNotIn("native_semantic_flag", outcome)
+
     def test_windows_native_saved_draft_checks_canonical_before_clicking_autosaved_button(self):
         # Real installed run #44357622512 showed visible Save changes but its
         # enabled state raced native Svelte auto-save. A native text edit must
