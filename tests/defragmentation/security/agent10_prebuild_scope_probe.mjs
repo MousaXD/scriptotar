@@ -37,6 +37,7 @@ function write(path, value) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, value);
 }
+const bypasses = [];
 function verdict(label, output, requiredDenial) {
   const success = output.status === 0;
   const evidence = {
@@ -44,7 +45,7 @@ function verdict(label, output, requiredDenial) {
     findings: output.stdout.includes('findings') ? output.stdout.slice(0, 1700) : output.stderr.slice(0, 700),
   };
   console.log(JSON.stringify(evidence));
-  if (requiredDenial) assert.notEqual(output.status, 0, 'UNBLOCKED SOURCE-ROOT ESCAPE: ' + label);
+  if (requiredDenial && success) bypasses.push(label);
 }
 try {
   mkdirSync(ws, { recursive: true });
@@ -85,6 +86,7 @@ try {
   const normalized = run();
   verdict('normalized ./staging/../../qa/hostile.ts bypass', normalized, true);
   write(main, original);
+  assert.deepEqual(bypasses, [], 'UNBLOCKED PREBUILD GUARD SCOPES: ' + bypasses.join(', '));
   console.log('PASS: both out-of-scope malicious source import shapes were denied before build');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
