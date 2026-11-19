@@ -36,11 +36,13 @@ class AttachedMemoryGateTests(unittest.TestCase):
             "measurement_started_monotonic_ns": 10_000_000_000,
             "measurement_finished_monotonic_ns": 11_100_000_000,
             "requested_duration_seconds": 1.0,
+            "interval_seconds": 0.25,
             "monotonic_clock": "python.time.perf_counter_ns",
             "study_count_operator_supplied": 100,
             "sample_count": 3, "complete_tree_sample_count": 3,
             "raw_samples": [
                 {"provider": "linux-proc-smaps_rollup",
+                 "elapsed_ms": i * 300.0,
                  "sample_started_monotonic_ns": 10_000_000_000 + i * 300_000_000,
                  "sample_finished_monotonic_ns": 10_100_000_000 + i * 300_000_000,
                  "sampled_process_count": 2, "tree_memory_complete": True,
@@ -101,6 +103,37 @@ class AttachedMemoryGateTests(unittest.TestCase):
         self.exe.write_bytes(b"replaced executable")
         with self.assertRaisesRegex(ValueError, "executable.*checksum"):
             self.check()
+
+    def test_sparse_cadence_unbounded_tail_and_elapsed_replay_are_rejected(self):
+        # Three genuine-looking early samples cannot certify 180 seconds.
+        bad = copy.deepcopy(self.report)
+        bad["requested_duration_seconds"] = 180.0
+        bad["measurement_finished_monotonic_ns"] = 190_000_000_000
+        with self.assertRaisesRegex(ValueError, "sparse memory sampling cadence"):
+            self.check(bad)
+
+        bad = copy.deepcopy(self.report)
+        bad["raw_samples"][1]["sample_started_monotonic_ns"] = 14_000_000_000
+        bad["raw_samples"][1]["sample_finished_monotonic_ns"] = 14_100_000_000
+        bad["raw_samples"][1]["elapsed_ms"] = 4000.0
+        bad["requested_duration_seconds"] = 10.0
+        bad["measurement_finished_monotonic_ns"] = 20_000_000_000
+        with self.assertRaisesRegex(ValueError, "sparse memory sampling cadence"):
+            self.check(bad)
+
+        for interval in (None, 0, 2.01, float("nan")):
+            with self.subTest(interval=interval):
+                bad = copy.deepcopy(self.report)
+                bad["interval_seconds"] = interval
+                with self.assertRaisesRegex(ValueError, "native sampler interval"):
+                    self.check(bad)
+
+        for elapsed_ms in (None, -1, float("nan"), 9000.0):
+            with self.subTest(elapsed_ms=elapsed_ms):
+                bad = copy.deepcopy(self.report)
+                bad["raw_samples"][1]["elapsed_ms"] = elapsed_ms
+                with self.assertRaisesRegex(ValueError, "elapsed/monotonic timestamp"):
+                    self.check(bad)
 
     def test_windows_private_memory_is_not_linux_pss(self):
         bad = copy.deepcopy(self.report)

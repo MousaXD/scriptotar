@@ -87,6 +87,14 @@ def preflight(report: dict, package: Path, executable: Path,
             or type(seconds) not in (float, int) or isinstance(seconds, bool)
             or not 1 <= seconds <= 180 or end - begin < seconds * 900_000_000):
         raise ValueError("invalid or truncated monotonic measurement interval")
+    interval = report.get("interval_seconds")
+    if (type(interval) not in (float, int) or not math.isfinite(interval)
+            or not 0.1 <= interval <= 2):
+        raise ValueError("invalid native sampler interval")
+    # Catch a sample train that stops early while its nominal measurement
+    # deadline still advances. A truthful 180-second window containing three
+    # early observations is not complete memory coverage.
+    max_idle_ns = max(3_000_000_000, math.ceil(4 * interval * 1_000_000_000))
     rows = report.get("raw_samples")
     if (not isinstance(rows, list) or len(rows) < 3
             or not _int(report.get("sample_count")) or report["sample_count"] != len(rows)
@@ -106,6 +114,13 @@ def preflight(report: dict, package: Path, executable: Path,
         if (not _int(started) or not _int(finished)
                 or started < previous_end or started >= finished or finished > end):
             raise ValueError(f"sample {i}: replayed, overlapping or unbounded clock interval")
+        if started - previous_end > max_idle_ns:
+            raise ValueError(f"sample {i}: sparse memory sampling cadence")
+        elapsed_ms = row.get("elapsed_ms")
+        if (type(elapsed_ms) not in (float, int) or not math.isfinite(elapsed_ms)
+                or elapsed_ms < 0
+                or abs(elapsed_ms - (started - begin) / 1_000_000) > 1_000):
+            raise ValueError(f"sample {i}: elapsed/monotonic timestamp mismatch")
         previous_end = finished
         if (row.get("tree_memory_complete") is not True
                 or not _int(row.get("sampled_process_count")) or row["sampled_process_count"] < 1):
@@ -117,6 +132,8 @@ def preflight(report: dict, package: Path, executable: Path,
             series[name].append(value)
         if (row[required[1]] < row[required[0]] or row[required[3]] < row[required[2]]):
             raise ValueError(f"sample {i}: process-tree memory below main process")
+    if end - previous_end > max_idle_ns:
+        raise ValueError("sparse memory sampling cadence at window tail")
     return {
         "scope": "ATTACHED_MEMORY_PRECHECK_ONLY_NOT_INSTALLED_CERTIFICATION",
         "status": "ELIGIBLE_FOR_INDEPENDENT_AGENT07_REVIEW_NOT_CERTIFIED",
