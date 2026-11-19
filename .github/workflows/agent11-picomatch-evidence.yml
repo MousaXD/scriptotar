@@ -1,0 +1,401 @@
+name: Agent 11 picomatch exploit evidence (non-release)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-supply-chain-recovery-20261118
+    paths:
+      - 'apps/desktop-ui/scripts/probe-picomatch-redos.mjs'
+      - 'apps/desktop-ui/scripts/audit-desktop-runtime-exposure.mjs'
+      - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
+      - 'apps/desktop-ui/scripts/test-tauri-manifest-inventory.mjs'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_DECISION_20261118.md'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260-backport.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264.patch'
+      - 'apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264-backport.patch'
+      - 'apps/desktop-ui/package.json'
+      - 'apps/desktop-ui/package-lock.json'
+      - '.github/workflows/agent11-picomatch-evidence.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exploit-and-audit-evidence:
+    name: Real installed dependency — expected vulnerable / NO RELEASE
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Clean reproducible install
+        run: npm ci
+      - name: Exact resolved dependency provenance
+        run: |
+          npm explain picomatch
+          npm ls picomatch fdir tinyglobby vite vitest
+          node - <<'NODE'
+          const fs = require('fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const p = lock.packages['node_modules/picomatch'];
+          console.log(JSON.stringify({ version: p.version, resolved: p.resolved, integrity: p.integrity, dev: p.dev }, null, 2));
+          NODE
+      - name: Bounded real picomatch ReDoS diagnostic (NOT remediation)
+        run: |
+          node --check scripts/probe-picomatch-redos.mjs
+          node scripts/probe-picomatch-redos.mjs --report
+      - name: Build and inspect actual Tauri frontend static boundary (never an audit waiver)
+        run: |
+          npm run check
+          npm run test
+          npm run build
+          node scripts/audit-desktop-runtime-exposure.mjs
+          node scripts/audit-tauri-bundle-resources.mjs
+      - name: Expanded security regression — MUST fail if vulnerable
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Mandatory unfiltered npm advisory gate — NEVER masked
+        if: always()
+        run: |
+          if [ ! -d node_modules ]; then
+            echo 'Dependency install unavailable: cannot claim a passing audit'
+            exit 1
+          fi
+          set +e
+          npm audit --audit-level=high --json > /tmp/agent11-npm-audit.json
+          audit_rc=$?
+          set -e
+          node - <<'NODE'
+          const fs = require('fs');
+          const d = JSON.parse(fs.readFileSync('/tmp/agent11-npm-audit.json', 'utf8'));
+          const issues = Object.entries(d.vulnerabilities || {}).map(([name, v]) => ({
+            name,
+            severity: v.severity,
+            via: (v.via || []).map(x => typeof x === 'string' ? x : { name: x.name, source: x.source, url: x.url, range: x.range })
+          }));
+          console.log('AUDIT SECURITY EVIDENCE (not a waiver):');
+          console.log(JSON.stringify({ metadata: d.metadata?.vulnerabilities, issues }, null, 2));
+          NODE
+          exit "$audit_rc"
+
+  python-advisory-independent:
+    name: Python audit (independent; never overrides npm failure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install and identify auditor
+        run: |
+          python -m pip install pip-audit
+          python -m pip show pip-audit
+          pip-audit --version
+      - name: Execute full existing Python requirement audit independently
+        run: |
+          test -s sidecars/transcription/requirements-engine.txt
+          sha256sum sidecars/transcription/requirements-engine.txt
+          pip-audit -r sidecars/transcription/requirements-engine.txt
+
+  upstream-pr237-experiment:
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
+    # A demonstration against a throwaway node_modules, NOT a supported dependency fix.
+    # The npm lockfile still resolves vulnerable picomatch@4.0.7, and npm audit must fail.
+    name: Unmerged upstream PR237 experiment (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned action
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Recreate exact published vulnerable baseline
+        run: |
+          npm ci
+          node -e "const p=require('./node_modules/picomatch/package.json'); if(p.version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+          echo 'Official upstream tag 4.0.7 source matches installed npm package parse.js'
+      - name: Verify isolated experimental patch and apply ONLY to throwaway node_modules
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr237.patch > scripts/experimental/.ci-pr237-lf.patch
+          echo '10862a65fefb1466c91774f2517b4ce7fd3a7f433b91ac2aa5f360ebf49b7933  scripts/experimental/.ci-pr237-lf.patch' | sha256sum --check
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr237-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr237-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+          echo 'Experimental candidate based on unmerged micromatch/picomatch PR #237; NOT a published patch'
+      - name: Inspect actual patched parser and emitted regex (debug-only)
+        run: |
+          git hash-object node_modules/picomatch/lib/parse.js
+          grep -n 'isSelfRepeatingStarBranch\|analysis.collapse' node_modules/picomatch/lib/parse.js
+          node - <<'NODE'
+          const path = require.resolve('picomatch');
+          const pm = require('picomatch');
+          console.log('Loaded matcher entry:', path);
+          for (const pattern of ['+(*a)', '*(*a)', '+(a*b)']) {
+            console.log(pattern, pm.makeRe(pattern).source);
+          }
+          NODE
+      - name: Exercise candidate with expanded bounded exploit probes
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Check frontend compatibility on experimental candidate
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Explicit release and advisory boundary
+        run: |
+          echo 'EXPERIMENT ONLY: npm package version and lockfile remain advisory-affected.'
+          echo 'Do not label this patched, accept an npm audit waiver, or release.'
+
+  upstream-pr274-experiment:
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
+    # Independent, experimental candidate comparison. No npm lockfile or build pipeline mutation.
+    name: Unmerged upstream PR274 comparison (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4 immutable pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0 pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Install published original with reproducible lockfile
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Apply pinned PR274 parser experiment to transient node_modules
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr274.patch > scripts/experimental/.ci-pr274-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr274-lf.patch)" = 9314177918b9d5b9a2d1e70bade7c2c9bc574bc8
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr274-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr274-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Mandatory bounded original and extended attack corpus
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Experimental Svelte, Vitest and build compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Do not promote advisory-affected graph
+        run: |
+          echo 'Unmerged upstream experimental diff only. Package 4.0.7 and original lockfile remain advisory-affected.'
+          echo 'Original unfiltered npm audit MUST remain failing; do NOT ship this experiment.'
+
+  upstream-pr259-experiment:
+    # Retained for reproducibility; rejected/unmerged patches are manually tested only.
+    if: github.event_name == 'workflow_dispatch'
+    # Upstream proposal was CLOSED WITHOUT MERGE on 2026-11-18; materially changes glob compatibility.
+    # Do not promote to production or use this as a substitute for unfiltered npm audit.
+    name: Closed unmerged upstream PR259 laboratory comparison (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Reproduce unpatched, official parser byte provenance
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Apply experimental upstream PR259 source to ephemeral node_modules only
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr259.patch > scripts/experimental/.ci-pr259-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr259-lf.patch)" = 8d12d987655d3b7298c64e4bb27899a8291d6097
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr259-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr259-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" != 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Extended bounded exploit regression must be clean
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Broad experimental application compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Preserve original strict audit failure and release veto
+        run: |
+          echo 'Unreleased unreviewed upstream comparison only; npm package-lock unchanged.'
+          echo 'Mandatory strict npm audit remains a known fail; release NO-GO.'
+
+  upstream-pr260-experiment:
+    # Both candidate proposals failed the 19-case Linux/Windows corpus; retain manually only.
+    if: github.event_name == 'workflow_dispatch'
+    # Active upstream experimental proposal, no production dependency change or audit exception.
+    name: Active upstream PR260 parser trial (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Validate original registry-installed parser and graph
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Verify upstream PR260 source provenance and apply ephemeral parser patch
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr260-backport.patch > scripts/experimental/.ci-pr260-backport-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr260-backport-lf.patch)" = 0f1c920e2352a6fe09b90ac3f915c8ae3fb75e09
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr260-backport-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 1e992b2d41d91aa62a06f69c3e1dab42a727517c
+      - name: Require actual expanded bounded ReDoS corpus to pass
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Require Svelte, all Vitest and production build compatibility
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Retain release veto on unmerged source-only experiment
+        run: |
+          echo 'PR260 source is unmerged and not in npm lockfile or build output.'
+          echo 'Unfiltered npm audit remains mandatory and FAILED on the original unpatched graph.'
+          echo 'Never claim this test proves a released/advisory-cleared remediation.'
+
+  upstream-pr264-experiment:
+    # Both candidate proposals failed the 19-case Linux/Windows corpus; retain manually only.
+    if: github.event_name == 'workflow_dispatch'
+    # A genuinely open upstream parser proposal, applied only in ephemeral CI node_modules.
+    # This is NOT a lockfile change, supported distribution or audit remediation.
+    name: Active upstream PR264 parser trial (${{ matrix.os }}) — NOT RELEASE
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Reproduce official registry-locked 4.0.7 parser and dependency provenance
+        run: |
+          npm ci
+          node -e "if(require('picomatch/package.json').version!=='4.0.7') process.exit(1)"
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = 29207512c60183b4bb9bf5112be3b9b5f4a9a9fd
+      - name: Verify pinned PR264 source and apply only to transient node_modules
+        run: |
+          git show HEAD:apps/desktop-ui/scripts/experimental/picomatch-4.0.7-pr264-backport.patch > scripts/experimental/.ci-pr264-backport-lf.patch
+          test "$(git hash-object scripts/experimental/.ci-pr264-backport-lf.patch)" = 8a54ef54ddaf9b176c8b6bf30562140cc955c153
+          git apply --check -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-backport-lf.patch
+          git apply -p1 --directory=apps/desktop-ui/node_modules/picomatch scripts/experimental/.ci-pr264-backport-lf.patch
+          test "$(git hash-object node_modules/picomatch/lib/parse.js)" = b9eaa6dbc4a52c931e8ec5d7bb216d0eeb8c61a8
+      - name: Expanded hostile-pattern corpus must complete without timeouts
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Run complete frontend checker and test suite with candidate parser
+        run: |
+          npm run check
+          npm run test
+          npm run build
+      - name: Explicitly retain npm advisory and release NO-GO
+        run: |
+          echo 'Experiment is unmerged PR264 source, not an npm-published patched version.'
+          echo 'No package-lock modification. Original strict npm audit still FAILS.'
+
+  desktop-frontend-exposure:
+    # Independent, read-only reachability inventory. This never overrides npm audit.
+    name: Static release-input boundary (${{ matrix.os }}) — NOT CERTIFICATION
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/desktop-ui
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+      - name: Install exact original locked frontend dependencies
+        run: npm ci
+      - name: Build actual static Tauri frontend input
+        run: npm run build
+      - name: Fail if parser module surfaces in output or lockfile runtime edges
+        run: |
+          node --check scripts/audit-desktop-runtime-exposure.mjs
+          node scripts/audit-desktop-runtime-exposure.mjs
+      - name: Independently inspect generated Linux and Windows bundle resource configs
+        run: |
+          node --check scripts/audit-tauri-bundle-resources.mjs
+          node scripts/audit-tauri-bundle-resources.mjs
+      - name: Exercise real manifest validator with synthetic adversarial and clean test inputs
+        run: |
+          node --check scripts/test-tauri-manifest-inventory.mjs
+          node scripts/test-tauri-manifest-inventory.mjs
+      - name: Explicit non-release scope
+        run: |
+          echo 'Dev-only dependency graph/static bundle absence does not prove parser safe.'
+          echo 'A build tool can still evaluate untrusted globs; independent security review required.'
+          echo 'Original mandatory unfiltered npm advisory gate remains active and must not be bypassed.'

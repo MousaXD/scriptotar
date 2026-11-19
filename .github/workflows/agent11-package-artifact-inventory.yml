@@ -1,0 +1,263 @@
+name: Agent 11 pinned real-package manifest inventory (non-release)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-supply-chain-recovery-20261118
+    paths:
+      - '.github/workflows/agent11-package-artifact-inventory.yml'
+      - '.github/workflows/agent11-vite-pattern-reachability.yml'
+      - 'apps/desktop-ui/scripts/guard-vite-build-patterns.mjs'
+      - 'apps/desktop-ui/scripts/probe-vite-pattern-reachability.mjs'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_20261118.md'
+      - 'apps/desktop-ui/SECURITY_SUPPLY_CHAIN_AGENT11_DECISION_20261118.md'
+      - 'apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs'
+      - 'apps/desktop-ui/scripts/attest-pr-package-checkout.mjs'
+      - 'apps/desktop-ui/src/**'
+      - 'apps/desktop-ui/vite.config.ts'
+      - 'apps/desktop/src-tauri/**'
+      - '.github/workflows/linux-tauri.yml'
+      - '.github/workflows/windows-tauri.yml'
+      - '.github/workflows/installed-webview-acceptance.yml'
+      - '.github/workflows/gui-visual-qa.yml'
+      - '.github/workflows/mcp-e2e.yml'
+      - 'tests/defragmentation/benchmarks/**'
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  linux-real-deb-manifest:
+    name: Pinned real .deb file paths and SHA256 — source 531c5e2 only
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify original installed artifact exact source identity
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44363867237" --jq '.head_sha')" = 531c5e2fb6f2eb17df80de1cc40a48fc24b551d8
+      - name: Download original real Linux package artifact (not rebuilt or fabricated)
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent11-real-linux"
+          gh run download 44363867237 --repo "$GITHUB_REPOSITORY" -n scriptotar-linux-tauri -D "$RUNNER_TEMP/agent11-real-linux"
+      - name: Verify real Debian bytes, manifest and origin checksums
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/agent11-real-linux"
+          test -f "$ROOT/SHA256SUMS.txt"
+          test -f "$ROOT/DEB-CONTENTS.txt"
+          (cd "$ROOT" && sha256sum -c SHA256SUMS.txt)
+          DEB="$(find "$ROOT" -maxdepth 1 -name '*.deb' -type f -print -quit)"
+          test -n "$DEB"
+          dpkg-deb --contents "$DEB" > "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          cmp "$ROOT/DEB-CONTENTS.txt" "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs --platform linux \
+            --manifest "$RUNNER_TEMP/agent11-actual-deb-contents.txt" --package "$DEB"
+          sha256sum "$DEB" "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          echo 'This evidence is for pinned artifact source 531c5e2, not current integration/latest head.'
+
+  windows-real-nsis-manifest:
+    name: Pinned NSIS extracted file paths and SHA256 — source 531c5e2 only
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify original Windows artifact run exact immutable source
+        run: |
+          $source = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/44363867107" --jq '.head_sha'
+          if ($LASTEXITCODE -ne 0 -or $source.Trim() -ne '531c5e2fb6f2eb17df80de1cc40a48fc24b551d8') {
+            throw 'Windows installer is not the exact expected source SHA'
+          }
+      - name: Download real installed Windows NSIS artifact
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'agent11-real-windows'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          gh run download 44363867107 --repo $env:GITHUB_REPOSITORY -n scriptotar-windows-tauri -D $root
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub installed NSIS artifact retrieval failed' }
+      - name: Independently inspect actual installer byte hash and read-only NSIS archive manifest
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'agent11-real-windows'
+          $installer = Get-ChildItem -LiteralPath $root -File -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Real NSIS setup executable missing from downloaded artifact' }
+          $checksumFile = Join-Path $root 'SHA256SUMS.txt'
+          if (-not (Test-Path $checksumFile)) { throw 'Original production package SHA256SUMS absent' }
+          $record = Get-Content $checksumFile | Where-Object { $_ -like "*$($installer.Name)" } | Select-Object -First 1
+          if (-not $record) { throw 'No source-builder SHA256 record for real installer' }
+          $expected = ($record -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw 'Downloaded actual installer SHA256 mismatch' }
+          $sevenCommand = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          $seven = if ($sevenCommand) { $sevenCommand.Source } else { Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
+          if (-not $seven -or -not (Test-Path -LiteralPath $seven -PathType Leaf)) {
+            throw 'Read-only NSIS extractor binary unavailable; keep installer inventory NOT CERTIFIED'
+          }
+          Write-Host "Read-only NSIS extractor: $seven"
+          $listing = Join-Path $root 'NSIS-EXTRACTED-FILES.txt'
+          & $seven l -slt $installer.FullName | Set-Content -Encoding utf8 $listing
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only NSIS extraction/manifest listing failed; remain NOT CERTIFIED' }
+          node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs --platform windows --manifest $listing --package $installer.FullName --expected-package-sha256 $expected
+          if ($LASTEXITCODE -ne 0) { throw 'Real NSIS manifest provenance failed; not certified' }
+          Write-Host "Real NSIS source 531c5e2 file inventory and SHA256 checked: $actual"
+          Write-Host 'Not a final integration-source package certification or binary content scan.'
+
+  linux-current-head-deb-manifest:
+    name: Current PR-head real .deb paths/hash — NON-RELEASE
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Select successful original PR-head Linux packaging run
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            json="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/linux-tauri.yml/runs?branch=$GITHUB_REF_NAME&per_page=100")"
+            record="$(printf '%s' "$json" | jq -r --arg sha "$GITHUB_SHA" --arg branch "$GITHUB_REF_NAME" '
+              .workflow_runs | map(select(.head_sha == $sha and .head_branch == $branch and .event == "pull_request"))
+              | sort_by(.created_at) | reverse | first
+              | if . == null then "none none none" else "\(.id) \(.status) \(.conclusion)" end
+            ')"
+            read -r run_id status outcome <<< "$record"
+            if [ "$status" = completed ]; then
+              if [ "$outcome" != success ]; then
+                echo "Original matching Linux packager $run_id: $outcome, NOT CERTIFIED"
+                exit 1
+              fi
+              echo "LINUX_RUN_ID=$run_id" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'No completed successful Linux installer for this exact PR head; NOT CERTIFIED'
+          exit 1
+      - name: Verify original installed artifact exact source identity
+        run: |
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$LINUX_RUN_ID" --jq '.head_sha')" = "$GITHUB_SHA"
+      - name: Verify actual original Linux packager checkout Git TREE matches PR HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check apps/desktop-ui/scripts/attest-pr-package-checkout.mjs
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --self-test
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --run-id "$LINUX_RUN_ID" --pr 132 --job-name "Build and validate Tauri deb" --expected-head "$GITHUB_SHA" --expected-branch "$GITHUB_REF_NAME"
+      - name: Download original real Linux package artifact (not rebuilt or fabricated)
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent11-real-linux"
+          gh run download $LINUX_RUN_ID --repo "$GITHUB_REPOSITORY" -n scriptotar-linux-tauri -D "$RUNNER_TEMP/agent11-real-linux"
+      - name: Verify real Debian bytes, manifest and origin checksums
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/agent11-real-linux"
+          test -f "$ROOT/SHA256SUMS.txt"
+          test -f "$ROOT/DEB-CONTENTS.txt"
+          (cd "$ROOT" && sha256sum -c SHA256SUMS.txt)
+          DEB="$(find "$ROOT" -maxdepth 1 -name '*.deb' -type f -print -quit)"
+          test -n "$DEB"
+          dpkg-deb --contents "$DEB" > "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          cmp "$ROOT/DEB-CONTENTS.txt" "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs --platform linux \
+            --manifest "$RUNNER_TEMP/agent11-actual-deb-contents.txt" --package "$DEB"
+          sha256sum "$DEB" "$RUNNER_TEMP/agent11-actual-deb-contents.txt"
+          echo "PR-head Linux artifact verified: $GITHUB_SHA run $LINUX_RUN_ID. Checkout may use GitHub PR merge-ref; no binary embedded-code attestation."
+
+  windows-current-head-nsis-manifest:
+    name: Current PR-head real NSIS paths/hash — NON-RELEASE
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Select successful original PR-head Windows packaging run
+        run: |
+          $matchFound = $false
+          for ($attempt = 1; $attempt -le 180; $attempt++) {
+            $raw = gh api "repos/$env:GITHUB_REPOSITORY/actions/workflows/windows-tauri.yml/runs?branch=$env:GITHUB_REF_NAME&per_page=100"
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect original Windows packaging runs' }
+            $runs = $raw | ConvertFrom-Json
+            $matches = @($runs.workflow_runs | Where-Object {
+              $_.head_sha -eq $env:GITHUB_SHA -and $_.head_branch -eq $env:GITHUB_REF_NAME -and $_.event -eq 'pull_request'
+            } | Sort-Object created_at -Descending)
+            if ($matches.Count -gt 0 -and $matches[0].status -eq 'completed') {
+              $run = $matches[0]
+              if ($run.conclusion -ne 'success') {
+                throw "Original matching Windows packager $($run.id): $($run.conclusion); NOT CERTIFIED"
+              }
+              Add-Content -LiteralPath $env:GITHUB_ENV -Value "WINDOWS_RUN_ID=$($run.id)"
+              $matchFound = $true
+              break
+            }
+            Start-Sleep -Seconds 10
+          }
+          if (-not $matchFound) { throw 'No successful original NSIS package for exact PR head; NOT CERTIFIED' }
+      - name: Verify original Windows artifact run exact immutable source
+        run: |
+          $source = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:WINDOWS_RUN_ID" --jq '.head_sha'
+          if ($LASTEXITCODE -ne 0 -or $source.Trim() -ne $env:GITHUB_SHA) {
+            throw 'Windows installer is not the exact expected source SHA'
+          }
+      - name: Verify actual original Windows packager checkout Git TREE matches PR HEAD
+        run: |
+          node --check apps/desktop-ui/scripts/attest-pr-package-checkout.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Attestor syntax failure' }
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --self-test
+          if ($LASTEXITCODE -ne 0) { throw 'Attestor regression failure' }
+          node apps/desktop-ui/scripts/attest-pr-package-checkout.mjs --run-id $env:WINDOWS_RUN_ID --pr 132 --job-name 'Build and smoke-test NSIS setup.exe' --expected-head $env:GITHUB_SHA --expected-branch $env:GITHUB_REF_NAME
+          if ($LASTEXITCODE -ne 0) { throw 'Package checkout tree cannot be attested to original PR head' }
+      - name: Download real installed Windows NSIS artifact
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'agent11-real-windows'
+          New-Item -ItemType Directory -Force $root | Out-Null
+          gh run download $env:WINDOWS_RUN_ID --repo $env:GITHUB_REPOSITORY -n scriptotar-windows-tauri -D $root
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub installed NSIS artifact retrieval failed' }
+      - name: Independently inspect actual installer byte hash and read-only NSIS archive manifest
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'agent11-real-windows'
+          $installer = Get-ChildItem -LiteralPath $root -File -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Real NSIS setup executable missing from downloaded artifact' }
+          $checksumFile = Join-Path $root 'SHA256SUMS.txt'
+          if (-not (Test-Path $checksumFile)) { throw 'Original production package SHA256SUMS absent' }
+          $record = Get-Content $checksumFile | Where-Object { $_ -like "*$($installer.Name)" } | Select-Object -First 1
+          if (-not $record) { throw 'No source-builder SHA256 record for real installer' }
+          $expected = ($record -split '\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName).Hash.ToLowerInvariant()
+          if ($expected -ne $actual) { throw 'Downloaded actual installer SHA256 mismatch' }
+          $sevenCommand = Get-Command 7z.exe -ErrorAction SilentlyContinue
+          $seven = if ($sevenCommand) { $sevenCommand.Source } else { Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
+          if (-not $seven -or -not (Test-Path -LiteralPath $seven -PathType Leaf)) {
+            throw 'Read-only NSIS extractor binary unavailable; keep installer inventory NOT CERTIFIED'
+          }
+          Write-Host "Read-only NSIS extractor: $seven"
+          $listing = Join-Path $root 'NSIS-EXTRACTED-FILES.txt'
+          & $seven l -slt $installer.FullName | Set-Content -Encoding utf8 $listing
+          if ($LASTEXITCODE -ne 0) { throw 'Read-only NSIS extraction/manifest listing failed; remain NOT CERTIFIED' }
+          node apps/desktop-ui/scripts/audit-tauri-bundle-resources.mjs --platform windows --manifest $listing --package $installer.FullName --expected-package-sha256 $expected
+          if ($LASTEXITCODE -ne 0) { throw 'Real NSIS manifest provenance failed; not certified' }
+          Write-Host "Real PR-head NSIS $env:GITHUB_SHA run $env:WINDOWS_RUN_ID digest $actual"
+          Write-Host 'GitHub PR checkout may include merge-ref base; no embedded-binary code or runtime reachability certification.'
