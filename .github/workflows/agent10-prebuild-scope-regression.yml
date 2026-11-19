@@ -1,0 +1,47 @@
+name: Agent10 independent prebuild import-scope red test
+
+on:
+  push:
+    branches:
+      - agent-10/p0-prebuild-absolute-import-probe-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  absolute-import-escape:
+    name: Independent trusted-guard scope probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable Agent10 test source
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='${{ github.sha }}')process.exit(1)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch immutable reviewed Agent11 production guard (separate checkout)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 75ec9eab2ec19f9f687aca06d9e4a1f5554c322d
+          path: .agent10-trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Ensure actual fixed guard commit before testing
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent10-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='75ec9eab2ec19f9f687aca06d9e4a1f5554c322d')process.exit(1)"
+          node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+      - name: Probe PostCSS control and two Vite source-root escapes, fail closed
+        run: node tests/defragmentation/security/agent10_prebuild_scope_probe.mjs
