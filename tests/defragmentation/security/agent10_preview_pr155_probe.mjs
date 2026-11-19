@@ -28,7 +28,7 @@ const expected="github.event_name == 'workflow_run' && "+
   "vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && "+
   "vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'";
 assert.equal(expression,expected,'Only exact AND condition is accepted');
-assert.doesNotMatch(block(candidate),/head_commit\.message|\|\|/);
+assert.doesNotMatch(expression,/head_commit\.message|\|\|/);
 assert.match(block(candidate),/contents:\s*write/);
 assert.match(block(candidate),/ref:\s*\$\{\{ github\.event\.workflow_run\.head_sha \}\}/);
 assert.match(block(candidate),/python3 scripts\/release_ci_gate\.py/);
