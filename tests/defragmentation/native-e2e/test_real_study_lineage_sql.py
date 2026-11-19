@@ -56,12 +56,15 @@ class SqlReadbackContractUnitTests(unittest.TestCase):
                 # NOT a real audio file; unit tests must never call this a
                 # native transcription or media fixture.
                 path.write_bytes(bytes([n]) * 40000)
+                original = self.root / ("origin" + str(n) + ".ogg")
+                original.write_bytes(b"OggS" + bytes([n]) * 40000)
                 key = str(n)
                 sources.append({
                     "source_id": "commons:origin" + key,
                     "original_url": "https://upload.wikimedia.org/wikipedia/commons/"
                                     + key + "/source.ogg",
-                    "original_sha256": hashlib.sha256(bytes([n])).hexdigest(),
+                    "original_filename": original.name,
+                    "original_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
                     "webm_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
                     "webm_filename": path.name,
                 })
