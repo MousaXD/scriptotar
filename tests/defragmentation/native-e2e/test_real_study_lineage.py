@@ -106,12 +106,15 @@ class NativeReadOnlyLineageUnitTests(unittest.TestCase):
             for i in (1, 2):
                 path = base / ("source" + str(i) + ".webm")
                 path.write_bytes(bytes([i]) * 40000)
+                original = base / ("source" + str(i) + ".ogg")
+                original.write_bytes(b"OggS" + bytes([i]) * 40000)
                 sha = hashlib.sha256(path.read_bytes()).hexdigest()
                 origins.append({
                     "source_id": "commons:origin-" + str(i),
                     "original_url": "https://upload.wikimedia.org/wikipedia/commons/"
                                     + str(i) + "/origin.ogg",
-                    "original_sha256": hashlib.sha256(bytes([i])).hexdigest(),
+                    "original_filename": original.name,
+                    "original_sha256": hashlib.sha256(original.read_bytes()).hexdigest(),
                     "webm_sha256": sha,
                     "webm_filename": path.name,
                 })
