@@ -1,0 +1,120 @@
+# Agent11 exploratory only: NOT a patched npm package, dependency remediation, or release authorization.
+# Tests upstream proposed changes against the original Scriptotar strict 19-case corpus.
+name: Agent11 upstream picomatch candidate evaluation (test-only, release veto)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-parser-regression:
+    name: Original 19-case and compatibility (${{ matrix.label }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: "upstream-pr260", pr: "260", sha: "d10c0e5003aabed2d81427dd6c125af50bf920ab", os: "ubuntu-22.04" }
+          - { label: "upstream-pr260", pr: "260", sha: "d10c0e5003aabed2d81427dd6c125af50bf920ab", os: "windows-2022" }
+          - { label: "upstream-pr261", pr: "261", sha: "b911986d9fb69c39ac203a1d08b7436057508058", os: "ubuntu-22.04" }
+          - { label: "upstream-pr261", pr: "261", sha: "b911986d9fb69c39ac203a1d08b7436057508058", os: "windows-2022" }
+    steps:
+      - name: Checkout exact candidate test branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact candidate test source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Checkout immutable reviewed Agent11 guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Fetch immutable original 19-case exploit probe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 292e408087d8b48bc012e52d1f3e7ab0c8b89650
+          path: .agent11-original-exploit
+          sparse-checkout: |
+            apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Fetch upstream proposed parser source; never use mutable HEAD
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: micromatch/picomatch
+          ref: refs/pull/${{ matrix.pr }}/head
+          path: .agent11-proposed-upstream
+          persist-credentials: false
+      - name: Check every immutable input and trusted guard before npm ci
+        shell: bash
+        env:
+          EXPECT_UPSTREAM_SHA: ${{ matrix.sha }}
+        run: |
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git -C .agent11-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
+          test "$(git -C .agent11-proposed-upstream rev-parse HEAD)" = "$EXPECT_UPSTREAM_SHA"
+          node --check .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install real locked vulnerable npm dependency tree (baseline)
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Preserve original npm audit metadata observation
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm audit --audit-level=high
+      - name: Install immutable original exploit test without changing tracked test or lockfile
+        shell: bash
+        run: |
+          test ! -e apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          cp .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          test "$(node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version")" = "4.0.7"
+      - name: Baseline original 19-case report (expected RED but keep evidence)
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: node scripts/probe-picomatch-redos.mjs --report --extended
+      - name: Apply source-exact experimental upstream parser files to disposable node_modules only
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.label }}
+        run: |
+          cp .agent11-proposed-upstream/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          if [ "$CANDIDATE" = "upstream-pr261" ]; then
+            cp .agent11-proposed-upstream/lib/picomatch.js apps/desktop-ui/node_modules/picomatch/lib/picomatch.js
+            cp .agent11-proposed-upstream/lib/safe-repetition.js apps/desktop-ui/node_modules/picomatch/lib/safe-repetition.js
+          fi
+          node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo "EXPERIMENTAL NODE_MODULES MUTATION ONLY; NOT A PUBLISHED PATCHED PACKAGE"
+      - name: ORIGINAL unmodified strict 19-case --assert-patched --extended (mandatory)
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Check Svelte and TS compatibility if and only if original 19-case is green
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm run check
+      - name: Run complete frontend unit tests if and only if original 19-case is green
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm test
+      - name: Run genuine Vite production build if and only if original 19-case is green
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm run build
