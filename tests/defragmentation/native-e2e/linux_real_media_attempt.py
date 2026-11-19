@@ -20,10 +20,11 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+import urllib.error
 from uuid import uuid4
 
 from linux_webkit import NativeFailure, Session, sha256
-from real_source_fixtures import prepare
+from real_source_fixtures import SOURCES, prepare, probe_audio
 from real_study_lineage import (
     LineageUnavailable, expected_media, read_installed_lineage,
     verify_revocation,
@@ -110,10 +111,82 @@ def real_sidecar_processes() -> list[dict]:
     return rows
 
 
+def verify_prepared_originals(
+    source_dir: Path, pinned_manifest_sha256: str, ffprobe: str,
+) -> tuple[dict, list[dict]]:
+    """Operator-supplied original recordings; only a reviewed SHA is accepted.
+
+    The caller MUST independently authenticate artifact acquisition and trust.
+    The manifest itself cannot prove the claimed download origin. Never mark
+    native transcription PASS on this check or on synthetic file bytes.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", pinned_manifest_sha256):
+        raise NativeFailure("Offline media requires independently pinned manifest SHA-256")
+    if source_dir.is_symlink() or not source_dir.is_dir():
+        raise NativeFailure("Offline media bundle must be a real directory")
+    manifest_path = source_dir / "origin-manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise NativeFailure("Offline media manifest missing or symlinked")
+    if sha256(manifest_path) != pinned_manifest_sha256:
+        raise NativeFailure("Offline media manifest differs from independently pinned SHA")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("installed_two_source_acceptance") != "NOT TESTED":
+        raise NativeFailure("Offline manifest must not claim installed native acceptance")
+    records = manifest.get("sources")
+    approved = {s["source_id"]: s for s in SOURCES}
+    if (not isinstance(records, list) or len(records) != len(approved)
+            or {r.get("source_id") for r in records if isinstance(r, dict)}
+               != set(approved)):
+        raise NativeFailure("Offline bundle does not contain two approved original recordings")
+    for record in records:
+        original = approved[record["source_id"]]
+        if (record.get("original_url") != original["original_url"] or
+                record.get("page") != original["page"] or
+                record.get("narrator") != original["narrator"] or
+                record.get("title") != original["title"] or
+                record.get("media_provenance") !=
+                "original-source-downloaded-and-ffprobe-verified"):
+            raise NativeFailure("Offline origin identity does not match reviewed source")
+        for key, ext in (("original_filename", ".ogg"), ("webm_filename", ".webm")):
+            name = record.get(key)
+            if not isinstance(name, str) or Path(name).name != name or not name.endswith(ext):
+                raise NativeFailure("Unsafe or unexpected original media filename")
+            if (source_dir / name).is_symlink():
+                raise NativeFailure("Offline original media cannot be symlinked")
+        original_path = source_dir / record["original_filename"]
+        webm_path = source_dir / record["webm_filename"]
+        origin_duration = probe_audio(original_path, ffprobe)
+        opus_duration = probe_audio(webm_path, ffprobe, codec="opus")
+        if abs(origin_duration - opus_duration) > 2:
+            raise NativeFailure("Offline original WebM transcoding duration differs")
+        if abs(origin_duration - float(record.get("original_duration_seconds", -1))) > 1:
+            raise NativeFailure("Original audio duration differs from reviewed manifest")
+        if abs(opus_duration - float(record.get("webm_duration_seconds", -1))) > 1:
+            raise NativeFailure("Opus audio duration differs from reviewed manifest")
+    return manifest, expected_media(manifest_path, source_dir)
+
+
 def exercise_installed(args, root: Path, result: dict) -> None:
-    fixture_dir = args.evidence_dir / "two-real-origins"
-    original = prepare(fixture_dir, args.ffmpeg, args.ffprobe)
-    sources = expected_media(fixture_dir / "origin-manifest.json", fixture_dir)
+    result["stage"] = "origin-acquisition"
+    if args.prepared_fixture_dir is not None:
+        fixture_dir = args.prepared_fixture_dir
+        original, sources = verify_prepared_originals(
+            fixture_dir, args.prepared_manifest_sha256, args.ffprobe,
+        )
+        result["source_acquisition"] = "offline-reviewed-manifest-sha256"
+        result["prepared_manifest_sha256"] = args.prepared_manifest_sha256
+        result["origin_trust_requires_independent_review"] = True
+    else:
+        if not args.allow_origin_fetch:
+            raise NativeFailure(
+                "No independently authenticated offline real-media bundle supplied; "
+                "automatic Wikimedia fetch disabled after HTTP 429 on run 44568353251"
+            )
+        fixture_dir = args.evidence_dir / "two-real-origins"
+        original = prepare(fixture_dir, args.ffmpeg, args.ffprobe)
+        sources = expected_media(fixture_dir / "origin-manifest.json", fixture_dir)
+        result["source_acquisition"] = "live-original-wikimedia-without-redirects"
+    result["stage"] = "two-real-origins-validated"
     result["prepared"] = {
         "origin_sha256": [row["original_sha256"] for row in sources],
         "webm_sha256": [row["webm_sha256"] for row in sources],
@@ -123,6 +196,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
     tag = uuid4().hex[:12]
     project_name = "Real Origin QA " + tag
     study_name = "Two Source Study " + tag
+    result["stage"] = "native-installed-project-and-study"
     session = Session(args, root)
     db_path = root / "data" / "scriptotar.sqlite3"
     try:
@@ -148,6 +222,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
         result["created_by_real_native_ui"] = True
         session.screenshot("real-two-source-study-created")
 
+        result["stage"] = "native-installed-queue"
         a.click("Queue", "button")
         a.heading("Jobs")
         a.click("Advanced: enter a local path manually")
@@ -159,6 +234,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
             a.click("Queue path", "button")
             session.screenshot("real-queue-submitted-" + source["source_id"].split(":")[-1])
 
+        result["stage"] = "bundled-real-transcription-wait"
         last_jobs = []
         runtime_pids = set()
         deadline = time.monotonic() + args.transcription_timeout_seconds
@@ -196,6 +272,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
         result["queue_and_completed_transcripts"] = "OBSERVED"
         session.screenshot("real-queue-two-completed")
 
+        result["stage"] = "native-studio-source-attachment"
         a.click("Studio", "button")
         a.heading("Studio")
         a.choose("Open study", study_name)
@@ -243,6 +320,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
         result["two_source_canonical_readback"] = before
         session.screenshot("real-two-sources-attached")
 
+        result["stage"] = "native-study-relaunch"
         session.stop()
         session.start()
         a = session.ax
@@ -262,6 +340,7 @@ def exercise_installed(args, root: Path, result: dict) -> None:
         # The production UI can expose a revoke action, but the complete
         # stale-access denial also needs separate authenticated host/native
         # correlation. Never promote this addendum to PASS on DB proof alone.
+        result["stage"] = "native-revoke-selected-source"
         a.click(last_jobs[0]["title"], "button")
         a.click("Revoke source access", "button")
         a.click("Confirm revoke", "button")
@@ -321,6 +400,18 @@ def main() -> None:
     parser.add_argument("--run-url", required=True)
     parser.add_argument("--evidence-dir", required=True, type=Path)
     parser.add_argument("--ffmpeg", default="ffmpeg")
+    parser.add_argument(
+        "--prepared-fixture-dir", type=Path,
+        help="Previously acquired real Ogg+WebM bundle; never implies a native PASS",
+    )
+    parser.add_argument(
+        "--prepared-manifest-sha256", default="",
+        help="Independently reviewed exact sha256 of offline origin-manifest.json",
+    )
+    parser.add_argument(
+        "--allow-origin-fetch", action="store_true",
+        help="Explicit opt-in only; avoid repeated rate-limit requests in unattended CI",
+    )
     parser.add_argument("--ffprobe", default="ffprobe")
     parser.add_argument("--transcription-timeout-seconds", type=int, default=1200)
     args = parser.parse_args()
@@ -349,14 +440,31 @@ def main() -> None:
         try:
             exercise_installed(args, Path(td), report)
             report["attempt_outcome"] = "PARTIAL_NATIVE_PROOF_REQUIRES_ADJUDICATION"
+        except urllib.error.HTTPError as exc:
+            report["attempt_outcome"] = "INCOMPLETE"
+            report["blocker_code"] = ("EXTERNAL_ORIGIN_RATE_LIMIT"
+                                      if exc.code == 429 else "ORIGIN_HTTP_ERROR")
+            report["blocker"] = "Original media HTTP response " + str(exc.code)
         except Exception as exc:
             report["attempt_outcome"] = "INCOMPLETE"
+            report["blocker_code"] = type(exc).__name__
             report["blocker"] = type(exc).__name__ + ": " + str(exc)
         finally:
             (args.evidence_dir / "two-source-attempt.json").write_text(
                 json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True)
                 + "\n", encoding="utf-8",
             )
+            print(json.dumps({
+                "exact_source_sha": report["source_sha"],
+                "attempt_outcome": report.get("attempt_outcome", "INCOMPLETE"),
+                "stage": report.get("stage", "not-started"),
+                "blocker_code": report.get("blocker_code"),
+                "blocker": report.get("blocker"),
+                "native_multi_source_transcript": "NOT TESTED",
+                "native_source_revocation": "NOT TESTED",
+            }, ensure_ascii=False, sort_keys=True), flush=True)
+    if report.get("attempt_outcome") != "PARTIAL_NATIVE_PROOF_REQUIRES_ADJUDICATION":
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":
