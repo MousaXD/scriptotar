@@ -110,6 +110,36 @@ try {
     return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
   },/Unreviewed out-of-scope relative source reference/); count++;
 
+  // Adversarial first-party module path controls. These import spellings
+  // previously escaped the narrow ../ string prefix scanner and could lead
+  // Vite outside the reviewed source subtree without touching pinned configs.
+  for (const [label, importStatement, expected] of [
+    ["disguised first-party path traversal", "import './../qa/hostile.ts';", "Unreviewed out-of-scope relative source reference"],
+    ["nested first-party path traversal", "import './nested/../../qa/hostile.ts';", "Unreviewed out-of-scope relative source reference"],
+    ["root-absolute first-party import", "import '/qa/hostile.ts';", "Unreviewed absolute/root-relative module import"],
+    ["root-absolute from specifier", "import { hostile } from '/qa/hostile.ts';", "Unreviewed absolute/root-relative module import"],
+    ["root-absolute dynamic import", "void import('/qa/hostile.ts');", "Unreviewed absolute/root-relative module import"],
+    ["root-absolute export specifier", "export { hostile } from '/qa/hostile.ts';", "Unreviewed absolute/root-relative module import"],
+  ]) {
+    checkBlocked(label,()=>{
+      const p='apps/desktop-ui/src/main.ts',before=read(p);
+      fixtureWrite(p,before+'\n'+importStatement+'\n');
+      fixtureWrite('apps/desktop-ui/qa/hostile.ts',
+        "const hostile = import.meta.glob('./+(*a)'); export { hostile };\n");
+      return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
+    },new RegExp(expected));
+    count++;
+  }
+  // Ordinary absolute URL strings do not represent source module imports.
+  {
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    fixtureWrite(p,before+"\nconst agent11SafeRoute = '/api/status';\n");
+    const result=runGuard(workspace);
+    assert.equal(result.status,0,'Ordinary absolute route value should not be rejected');
+    fixtureWrite(p,before);
+    count++;
+  }
+
   // Agent10 P0-149-01: cosmiconfig dotfiles escaped prior filename filters.
   // Each disposable candidate must be rejected before any compiler invocation.
   for (const config of [
