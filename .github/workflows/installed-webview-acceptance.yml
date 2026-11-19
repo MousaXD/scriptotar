@@ -41,6 +41,8 @@ jobs:
       - name: Verify native runner without faking application tests
         run: |
           /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/linux_webkit.py
+          /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/linux_real_media_attempt.py
+          /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/real_study_lineage.py
           # Use the pinned Python 3.12 for the TOML lockfile regression tests;
           # /usr/bin/python3 remains the actual native pyatspi interpreter.
           python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*.py' -v
@@ -122,6 +124,38 @@ jobs:
                 --run-url "$EXACT_RUN" \
                 --output native-evidence/linux
           '
+      # This is an independent optional, fail-closed evidence addendum after
+      # the 16-case runner. It never edits native result.json or promotes an
+      # unproven test to PASS; a blocked media/model/UI step stays NOT TESTED.
+      - name: Attempt genuine two-origin native Queue + bundled sidecar + Study (noncertifying)
+        if: always()
+        timeout-minutes: 32
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_BIN:-}" ] || [ ! -x "${APP_BIN:-/not-found}" ] || [ ! -f native-evidence/linux/installed.deb ]; then
+            echo "Native package unavailable: two-source real media addendum NOT TESTED"
+            exit 0
+          fi
+          FFMPEG=apps/desktop/src-tauri/resources/transcription-runtime/ffmpeg/ffmpeg
+          FFPROBE=apps/desktop/src-tauri/resources/transcription-runtime/ffmpeg/ffprobe
+          if [ ! -x "$FFMPEG" ]; then FFMPEG="$(command -v ffmpeg || echo ffmpeg)"; fi
+          if [ ! -x "$FFPROBE" ]; then FFPROBE="$(command -v ffprobe || echo ffprobe)"; fi
+          export FFMPEG FFPROBE
+          xvfb-run -a -s '-screen 0 1440x900x24' dbus-run-session -- bash -c '
+            openbox --sm-disable > native-evidence/linux/two-source-openbox.log 2>&1 &
+            wm_pid=$!
+            trap "kill $wm_pid 2>/dev/null || true" EXIT
+            sleep 1
+            env NO_AT_BRIDGE=0 GTK_A11Y=1 GTK_MODULES=atk-bridge \
+              /usr/bin/python3 tests/defragmentation/native-e2e/linux_real_media_attempt.py \
+                --executable "$APP_BIN" \
+                --package native-evidence/linux/installed.deb \
+                --source-sha "$EXACT_SHA" \
+                --run-url "$EXACT_RUN" \
+                --evidence-dir native-evidence/linux \
+                --ffmpeg "$FFMPEG" --ffprobe "$FFPROBE"
+          '
+          echo "Two-source addendum produces partial evidence, never a native PASS"
       - name: Remove installed test package
         if: always()
         run: |
@@ -149,6 +183,9 @@ jobs:
             native-evidence/linux/openbox.log
             native-evidence/linux/SHA256SUMS.txt
             native-evidence/linux/host.txt
+            native-evidence/linux/two-source-attempt.json
+            native-evidence/linux/two-source-desktop.log
+            native-evidence/linux/two-real-origins/origin-manifest.json
             native-evidence/linux/*.png
           if-no-files-found: warn
           retention-days: 30
