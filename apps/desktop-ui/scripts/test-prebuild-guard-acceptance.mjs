@@ -140,6 +140,53 @@ try {
     count++;
   }
 
+  // P0-149-06: a single JS import string longer than 400 characters can
+  // normalize outside reviewed src. Do not skip long literals.
+  const longEscape='./staging/'+'./'.repeat(220)+'../../qa/hostile.ts';
+  const longAbsolute='/'+'./'.repeat(220)+'qa/hostile.ts';
+  assert.ok(longEscape.length>400 && longAbsolute.length>400,
+    'Long-import negatives must exceed the previous regex cap');
+  for (const [label,importStatement,reason] of [
+    ['over-400-byte relative import traversal','import '+JSON.stringify(longEscape)+';',
+      /Unreviewed out-of-scope relative source reference/],
+    ['over-400-byte root absolute import','import '+JSON.stringify(longAbsolute)+';',
+      /Unreviewed absolute\/root-relative module import/],
+  ]) {
+    checkBlocked(label,()=>{
+      const p='apps/desktop-ui/src/main.ts',before=read(p);
+      fixtureWrite(p,before+'\n'+importStatement+'\n');
+      fixtureWrite('apps/desktop-ui/qa/hostile.ts',
+        "const hostile = import.meta.glob('./+(*a)'); export { hostile };\n");
+      return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
+    },reason);
+    count++;
+  }
+  // An overlength but normalized in-root module import is not malicious.
+  {
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    const safeFile='apps/desktop-ui/src/agent11-reviewed-long-source.ts';
+    const longSafe='./'.repeat(220)+'agent11-reviewed-long-source.ts';
+    assert.ok(longSafe.length>400);
+    fixtureWrite(safeFile,'export const longSafe = true;\n');
+    try {
+      fixtureWrite(p,before+'\nimport '+JSON.stringify(longSafe)+';\n');
+      const safe=runGuard(workspace);
+      assert.equal(safe.status,0,'Valid long in-root import rejected: '+safe.stdout);
+    } finally {fixtureWrite(p,before);rmSync(join(temp,safeFile));}
+    count++;
+  }
+  // An ordinary long URL string must not masquerade as a module import.
+  {
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    const longUrl='/api/'+'./'.repeat(220)+'status';
+    fixtureWrite(p,before+'\nconst agent11LongUrl = '+JSON.stringify(longUrl)+';\n');
+    try {
+      const safe=runGuard(workspace);
+      assert.equal(safe.status,0,'Long ordinary URL string rejected: '+safe.stdout);
+    } finally {fixtureWrite(p,before);}
+    count++;
+  }
+
   // Vite/esbuild can import TypeScript module variants .mts and .cts.
   // The previous extension whitelist omitted both and did not inspect
   // a hostile import.meta.glob inside these first-party source files.
