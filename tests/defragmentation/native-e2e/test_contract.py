@@ -108,6 +108,36 @@ class NativeEvidenceContractTests(unittest.TestCase):
             with self.assertRaisesRegex(native.NativeFailure, "stayed unavailable or disabled"):
                 ax.wait_for_actionable_button("Rename script", timeout_seconds=1)
 
+
+    def test_native_layout_observation_never_autocertifies_rtl_or_visual(self):
+        # Source-only coverage for installed AT-SPI + UIA observation wiring;
+        # snapshots and focus rectangles MUST NOT turn 16-case NOT TESTED green.
+        import inspect
+        helper = inspect.getsource(native.AxWebKit.native_layout_observation)
+        self.assertIn("for node in self.nodes()", helper)
+        self.assertIn("queryComponent().getExtents(", helper)
+        self.assertIn("STATE_FOCUSABLE", helper)
+        self.assertIn("certifies_rtl_or_visual", helper)
+        self.assertIn('"certifies_rtl_or_visual": False', helper)
+        self.assertIn("if name not in wanted", helper)
+        exercise = inspect.getsource(native.exercise)
+        for source_key in ("arabic_studio", "arabic_queue", "arabic_settings",
+                           "theme_system", "theme_dark", "theme_dark_reopened"):
+            self.assertIn(f'"{source_key}"', exercise)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', exercise)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', exercise)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledSemanticLayout(", windows)
+        self.assertIn("AutomationElement]::FromHandle($hwnd)", windows)
+        self.assertIn("BoundingRectangle", windows)
+        self.assertIn("IsKeyboardFocusable", windows)
+        self.assertIn("certifies_rtl_or_visual = $false", windows)
+        self.assertIn("function Save-InstalledSemanticLayout(", windows)
+        self.assertIn("native_layout_observation_errors = @{}", windows)
+        self.assertIn("Save-InstalledSemanticLayout $themeHwnd", windows)
+        self.assertIn("Save-InstalledSemanticLayout $restoredHwnd", windows)
+        self.assertIn('NOT TESTED', windows)
+
     def test_catalog_covers_release_blockers(self):
         for name in (
             "installed_webview", "create_switch_projects", "create_study",

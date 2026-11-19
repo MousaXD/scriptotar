@@ -941,6 +941,65 @@ class AxWebKit:
             f"for {timeout_seconds:g}s; latest actual AT-SPI states: {samples[-5:]}"
         )
 
+
+    def native_layout_observation(self, labels: tuple[str, ...], purpose: str) -> dict:
+        """Bounded, read-only PID-owned AT-SPI geometry for independent review.
+
+        Exact allowlisted UI labels only: never collect Study titles, editable
+        contents, file paths, arbitrary accessibility text or screen pixels.
+        Native positions alone are not proof of RTL, contrast or clipping.
+        """
+        if not labels or len(labels) > 16 or len(set(labels)) != len(labels):
+            raise ValueError("Native layout requires bounded distinct UI labels")
+        wanted = set(labels)
+        matches = []
+        visited = 0
+        for node in self.nodes():
+            visited += 1
+            if visited > 3500 or len(matches) >= 64:
+                break
+            try:
+                name = (node.name or "").strip()
+                if name not in wanted:
+                    continue
+                role = node.getRoleName().lower()
+                state = node.getState()
+                entry = {
+                    "name": name,
+                    "role": role,
+                    "visible": bool(state.contains(self.atspi.STATE_VISIBLE)),
+                    "showing": bool(state.contains(self.atspi.STATE_SHOWING)),
+                    "focusable": bool(state.contains(self.atspi.STATE_FOCUSABLE)),
+                    "focused": bool(state.contains(self.atspi.STATE_FOCUSED)),
+                }
+                try:
+                    ext = node.queryComponent().getExtents(
+                        getattr(self.atspi, "DESKTOP_COORDS", 0)
+                    )
+                    entry["bounds"] = {
+                        "x": int(ext.x), "y": int(ext.y),
+                        "width": int(ext.width), "height": int(ext.height),
+                    }
+                    entry["nonpositive_bounds"] = (
+                        ext.width <= 0 or ext.height <= 0
+                    )
+                except Exception as exc:
+                    entry["bounds_error"] = type(exc).__name__
+                matches.append(entry)
+            except Exception:
+                continue
+        observed = {entry["name"] for entry in matches}
+        return {
+            "purpose": purpose,
+            "kind": "installed-process-AT-SPI-read-only",
+            "pid": self.pid,
+            "visited_nodes": visited,
+            "labels_requested": list(labels),
+            "missing_labels": sorted(wanted - observed),
+            "matches": matches,
+            "certifies_rtl_or_visual": False,
+        }
+
     def edit_field(self, label: str, timeout: float = 12):
         """Find an actual input/textarea, not a coincidental text label.
 
@@ -1187,6 +1246,19 @@ class AxWebKit:
             raise NativeFailure(
                 f"Installed native selector {label!r} remained expanded after Escape"
             )
+
+
+
+def capture_installed_layout(report: dict, ax: AxWebKit, key: str, labels: tuple[str, ...]) -> None:
+    """Store real native observations without upgrading either P0 visual gate."""
+    try:
+        report.setdefault("native_layout_observations", {})[key] = (
+            ax.native_layout_observation(labels, key)
+        )
+    except Exception as exc:
+        report.setdefault("native_layout_observation_errors", {})[key] = (
+            f"{type(exc).__name__}: {exc}"
+        )
 
 
 class Session:
@@ -1633,6 +1705,10 @@ def exercise(args, report: dict, root: Path):
                 # Observe actual native translated navigation and page heading.
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
+                capture_installed_layout(
+                    report, a, "arabic_studio",
+                    ("الاستوديو", "الطابور", "الإعدادات", "لغة الواجهة"),
+                )
                 session.screenshot("arabic-locale")
                 # Independently review a *genuinely open* native Arabic
                 # toolbar popup; switching language alone is not RTL review.
@@ -1659,11 +1735,19 @@ def exercise(args, report: dict, root: Path):
                 # mixed Arabic/Latin form editing remain separately untested.
                 a.click("الطابور", "button")
                 a.heading("المهام")
+                capture_installed_layout(
+                    report, a, "arabic_queue",
+                    ("الاستوديو", "الطابور", "الإعدادات", "المهام"),
+                )
                 report.setdefault("visual_capture", {})["arabic_queue"] = (
                     session.screenshot("arabic-queue")
                 )
                 a.click("الإعدادات", "button")
                 a.heading("الإعدادات")
+                capture_installed_layout(
+                    report, a, "arabic_settings",
+                    ("الاستوديو", "الطابور", "الإعدادات", "لغة الواجهة"),
+                )
                 report.setdefault("visual_capture", {})["arabic_settings"] = (
                     session.screenshot("arabic-settings")
                 )
@@ -1772,6 +1856,10 @@ def exercise(args, report: dict, root: Path):
             a.choose("Theme", "System")
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "System")
+            capture_installed_layout(
+                report, a, "theme_system",
+                ("Theme", "System", "Light", "Dark", "Settings", "Save changes"),
+            )
             session.screenshot("system-theme")
             # A separately selectable Light mode is required by native release
             # acceptance. PR #136 adds the production option; on older installed
@@ -1792,12 +1880,20 @@ def exercise(args, report: dict, root: Path):
                 a.choose("Theme", "Light")
                 a.click("Save changes", "button")
                 a.assert_selected_option("Theme", "Light")
+                capture_installed_layout(
+                    report, a, "theme_light",
+                    ("Theme", "System", "Light", "Dark", "Settings", "Save changes"),
+                )
                 report.setdefault("visual_capture", {})["light_theme"] = (
                     session.screenshot("light-theme")
                 )
             a.choose("Theme", "Dark")
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "Dark")
+            capture_installed_layout(
+                report, a, "theme_dark",
+                ("Theme", "System", "Light", "Dark", "Settings", "Save changes"),
+            )
             session.screenshot("dark-theme")
             # Capture actual installed theme popup and native options for
             # independent contrast/stacking inspection. The System/Dark
@@ -1822,6 +1918,10 @@ def exercise(args, report: dict, root: Path):
             a = session.ax
             a.click("Settings", "button")
             a.assert_selected_option("Theme", "Dark")
+            capture_installed_layout(
+                report, a, "theme_dark_reopened",
+                ("Theme", "System", "Light", "Dark", "Settings", "Save changes"),
+            )
             session.screenshot("dark-theme-reopened")
             return (
                 "Real Settings System/Dark selection, saved changes, installed "

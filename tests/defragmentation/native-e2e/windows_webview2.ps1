@@ -36,6 +36,8 @@ $report = [ordered]@{
   cases = $cases
   visual_capture = @{}
   visual_capture_errors = @{}
+  native_layout_observations = @{}
+  native_layout_observation_errors = @{}
   verdict = 'NOT TESTED'
 }
 function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess) {
@@ -509,6 +511,68 @@ function Assert-InstalledNativeInputReceipt([IntPtr]$hwnd, [string]$name, [strin
     [System.Security.Cryptography.SHA256]::HashData(
       [Text.Encoding]::UTF8.GetBytes($actual))).ToLowerInvariant()
 }
+
+function Get-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
+                                     [string]$purpose) {
+  # Read only actual installed WebView2 UIA. Capture ONLY exact predefined UI
+  # labels: no user data, draft text, arbitrary DOM or stored credentials.
+  # Bounds/focus are review evidence, NEVER RTL/contrast certification.
+  if (-not $labels -or $labels.Count -gt 16 -or
+      @($labels | Select-Object -Unique).Count -ne $labels.Count) {
+    throw 'Invalid bounded semantic layout label set'
+  }
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $root) { throw 'Installed UIA root not found for semantic layout capture' }
+  $nodes = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Subtree,
+    [System.Windows.Automation.Condition]::TrueCondition)
+  $matches = @()
+  $seen = @{}
+  $visited = 0
+  foreach ($element in $nodes) {
+    if ($visited -ge 3500 -or $matches.Count -ge 64) { break }
+    $visited++
+    try {
+      $name = [string]$element.Current.Name
+      if ($name -cnotin $labels) { continue }
+      $seen[$name] = $true
+      $rect = $element.Current.BoundingRectangle
+      $matches += @{
+        name = $name
+        role = [string]$element.Current.ControlType.ProgrammaticName
+        offscreen = [bool]$element.Current.IsOffscreen
+        focusable = [bool]$element.Current.IsKeyboardFocusable
+        focused = [bool]$element.Current.HasKeyboardFocus
+        bounds = @{
+          x = [double]$rect.X; y = [double]$rect.Y
+          width = [double]$rect.Width; height = [double]$rect.Height
+        }
+        nonpositive_bounds = ($rect.Width -le 0 -or $rect.Height -le 0)
+      }
+    } catch { }
+  }
+  $missing = @($labels | Where-Object { -not $seen.ContainsKey($_) })
+  return @{
+    purpose = $purpose
+    kind = 'installed-WebView2-UIA-read-only'
+    visited_nodes = $visited
+    labels_requested = @($labels)
+    missing_labels = @($missing)
+    matches = @($matches)
+    certifies_rtl_or_visual = $false
+  }
+}
+
+function Save-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
+                                      [string]$purpose) {
+  try {
+    $report.native_layout_observations[$purpose] = (
+      Get-InstalledSemanticLayout $hwnd $labels $purpose)
+  } catch {
+    $report.native_layout_observation_errors[$purpose] = $_.Exception.Message
+  }
+}
+
 function Get-InstalledBoundDenialAlerts([IntPtr]$hwnd, [string]$localizedText) {
   # Real Tauri #135 places the request nonce in role=alert's aria-label.
   # Installed WebView2 exposed only plain error in the child Text node; read
@@ -1650,6 +1714,7 @@ try {
           if ($saveTheme.Current.IsEnabled) {
             Click-InstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
           }
+          Save-InstalledSemanticLayout $restoredHwnd @("Theme", "System", "Light", "Dark", "Settings", "Save changes") ("theme_" + $choice.ToLowerInvariant())
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir ("windows-theme-" + $choice.ToLowerInvariant() + ".png"))
         }
         # Capture the genuine installed open theme menu (not a web mock).
@@ -1698,6 +1763,7 @@ try {
         $themeHwnd = [IntPtr]$themeProbe.hwnd
         Click-InstalledControl $themeHwnd 'Settings' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'
+        Save-InstalledSemanticLayout $themeHwnd @('Theme', 'System', 'Light', 'Dark', 'Settings', 'Save changes') 'theme_dark_reopened'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-theme-dark-reopened.png')
         $cases.theme_mode_control = @{
           status='PASS'
@@ -1722,6 +1788,7 @@ try {
         Wait-InstalledComboValue $themeHwnd 'لغة الواجهة' 'ع'
         Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
+        Save-InstalledSemanticLayout $themeHwnd @('الاستوديو', 'الطابور', 'الإعدادات', 'لغة الواجهة') 'arabic_studio'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-locale.png')
         # Preserve actual native RTL popup placement for independent review.
         # Not a PASS assertion: dialog, focus, and offscreen views still matter.
@@ -1746,9 +1813,11 @@ try {
         # These captures are human-review evidence; not whole-app RTL PASS.
         Click-InstalledControl $themeHwnd 'الطابور' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'المهام'
+        Save-InstalledSemanticLayout $themeHwnd @('الاستوديو', 'الطابور', 'الإعدادات', 'المهام') 'arabic_queue'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-queue.png')
         Click-InstalledControl $themeHwnd 'الإعدادات' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'الإعدادات'
+        Save-InstalledSemanticLayout $themeHwnd @('الاستوديو', 'الطابور', 'الإعدادات', 'لغة الواجهة') 'arabic_settings'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-settings.png')
         Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
