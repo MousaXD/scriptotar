@@ -170,6 +170,14 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         if remaining > 0:
             time.sleep(min(interval_seconds, remaining))
     finished_monotonic_ns = time.perf_counter_ns()
+    # A process may die or have its PID recycled after the final accepted
+    # sample but before the collection deadline. Recheck the kernel identity
+    # once at the end too; otherwise the last time window can be mislabeled
+    # as completed, even though each individual sample was bracketed.
+    if (end_reason == "duration_elapsed"
+            and (not same_image(process_image(pid), expected)
+                 or process_instance_id(pid) != instance)):
+        end_reason = "process_gone_or_identity_changed_at_collection_end"
     # Keep a changed artifact out of the result entirely; returning only the
     # final hash would silently misbind previously collected raw samples.
     if sha256(package_path) != package_sha256:
