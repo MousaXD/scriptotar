@@ -70,7 +70,29 @@ try {
       'Did not reproduce a bounded hostile-pattern Vite timeout via '+variant.specifier+
       '; this is NOT PASS, independently review import resolution and compiler logs');
   }
-  console.log('Both Vite build-time pattern reachability probes TIMED OUT; parser NOT fixed.');
+  // Independent compiler-side confirmation for the .mts scanner blind spot.
+  // The .mts file is inside src (not an out-of-root import); only its suffix
+  // prevents the current guard from reading its import.meta.glob macro.
+  const mtsDir=join(ui,'src','agent10-unreviewed-mts');
+  assert.equal(existsSync(mtsDir),false,'Refusing to overwrite a real source directory');
+  mkdirSync(mtsDir,{recursive:false});
+  try {
+    writeFileSync(join(mtsDir,'hostile.mts'),
+      "export const modules = import.meta.glob('./+(*a)');\n");
+    writeFileSync(join(mtsDir,'a'.repeat(36)+'b'),'near miss only\n');
+    writeFileSync(main,original+"\nimport './agent10-unreviewed-mts/hostile.mts';\n");
+    const hostileMts=build(12000);
+    const mtsTimeout=hostileMts.error?.code==='ETIMEDOUT';
+    console.log(JSON.stringify({test:'Vite imports unreviewed .mts module containing malicious glob',
+      timeout_ms:12000, outcome:mtsTimeout?'HOSTILE_VITE_BUILD_TIMEOUT (real compiler reachability)':
+        hostileMts.status===0?'BUILD_FINISHED (not reproduced)':'BUILD_ERROR (not reproduced)',
+      exit_code:hostileMts.status,error_code:hostileMts.error?.code||null,log_tail:excerpt(hostileMts)}));
+    assert.ok(mtsTimeout,'Vite .mts hostile module was not shown to time out; review logs before claiming exploitability');
+  } finally {
+    writeFileSync(main,original);
+    rmSync(mtsDir,{recursive:true,force:true});
+  }
+  console.log('Three independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
 } finally {
   writeFileSync(main, original);
   if (!saveQa) rmSync(qa, { recursive: true, force: true });

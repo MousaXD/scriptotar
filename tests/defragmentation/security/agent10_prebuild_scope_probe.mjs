@@ -164,6 +164,26 @@ try {
       assert.match(out.stdout,/Source symlink requires review/);
     } finally {rmSync(symlinkPath,{force:true});}
   }
+  // Distinct completeness probe: Vite compiles .mts (ES module TypeScript),
+  // but the reviewed guard's extensions Set omits .mts and .cts.
+  // Keep a real hostile glob only in the .mts file and a near-miss sibling.
+  const mtsDir = join(ws, 'src', 'agent10-unreviewed-mts');
+  const mtsFile = join(mtsDir, 'hostile.mts');
+  mkdirSync(mtsDir, {recursive:true});
+  write(mtsFile, "export const modules = import.meta.glob('./+(*a)');\n");
+  write(join(mtsDir, 'a'.repeat(36) + 'b'), 'near miss only\n');
+  try {
+    write(main, original + "\nimport './agent10-unreviewed-mts/hostile.mts';\n");
+    const outcome = run();
+    verdict('Vite-compilable .mts source missing from scanned extension set', outcome, true);
+    assert.notEqual(outcome.status, 0,
+      'UNBLOCKED: .mts file with hostile Vite macro passes pinned prebuild guard');
+    assert.match(outcome.stdout,/Vite import.meta.glob macro|Unreviewed/);
+  } finally {
+    write(main,original);
+    rmSync(mtsDir,{recursive:true,force:true});
+  }
+
   // Deliberately demonstrate the boundary of this tool: the scanner does not
   // inspect workflow files. A malicious PR can bypass an unenforced workflow.
   // This is a governance RED, not an exploit result against the new source scanner.
