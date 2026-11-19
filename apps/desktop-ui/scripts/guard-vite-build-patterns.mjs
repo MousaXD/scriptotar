@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const argv = process.argv.slice(2);
@@ -22,6 +22,7 @@ const trustedGitBlobShas = Object.freeze({
   'apps/desktop-ui/package.json': '19edb804b2c442be96311e2f39f7788dfb286dda',
   'apps/desktop-ui/package-lock.json': 'eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa',
   'apps/desktop-ui/tsconfig.json': 'aab6eff7f7e345f6fb93b86e16d69aa328d8e140',
+  'apps/desktop-ui/index.html': '250619c2983d104116bbc976222b59888b99ad80',
   'apps/desktop/src-tauri/tauri.conf.json': 'b28cc6a5057032479f94d5b94ed01f2ea23fa03e'
 });
 const trustedConfigSha256 = '252cb3b99585c239741cc3590c9636da49f087cc6e6ed07a5c6fcef7b89e4300';
@@ -134,10 +135,25 @@ function audit() {
       findings.push('New unreviewed build configuration file: '+item.name);
   }
   if (files.length < 40) findings.push('Unexpectedly few reviewed frontend sources: '+files.length);
+  const reviewedSource = resolve(root, 'src');
+  // Vite can compile ../qa/evil.ts imported by a reviewed module even though
+  // qa/ is outside this scanner's source root. Fail closed on escape literals.
+  // Conservative including comments/strings; deliberate manual review required.
+  const relativeLiteral = /(["'\x60])(\.\.\/[^"'\x60\r\n]{1,400})\1/g;
   for (const path of files.sort()) {
     const bytes = readFileSync(path);
     if (bytes.length > 1000000) { findings.push('Large source requires review: '+relative(root,path)); continue; }
-    for (const hit of inspectText(bytes.toString('utf8'))) findings.push(hit+': '+relative(root,path));
+    const sourceText = bytes.toString('utf8');
+    for (const hit of inspectText(sourceText)) findings.push(hit+': '+relative(root,path));
+    if (path !== html) {
+      relativeLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(relativeLiteral)) {
+        const resolved = resolve(dirname(path), match[2]);
+        if (resolved !== reviewedSource && !resolved.startsWith(reviewedSource + sep)) {
+          findings.push('Unreviewed out-of-scope relative source reference: '+relative(root,path)+' -> '+match[2]);
+        }
+      }
+    }
   }
   console.log(JSON.stringify({
     check:'Agent11 PRE-BUILD first-party Vite source-pattern review guard',

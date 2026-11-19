@@ -98,6 +98,18 @@ try {
     const p='apps/desktop-ui/tsconfig.json',before=read(p);
     fixtureWrite(p,before+' \n');return ()=>fixtureWrite(p,before);
   },/Unreviewed build manifest\/lock\/Tauri contract/); count++;
+  checkBlocked('alternate Vite HTML module entrypoint',()=>{
+    const p='apps/desktop-ui/index.html',before=read(p);
+    fixtureWrite(p,before.replace('/src/main.ts','/qa/hostile.ts'));return ()=>fixtureWrite(p,before);
+  },/Unreviewed build manifest\/lock\/Tauri contract/); count++;
+  checkBlocked('out-of-scope malicious relative import',()=>{
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    fixtureWrite(p,before+"\nimport '../qa/hostile.ts';\n");
+    fixtureWrite('apps/desktop-ui/qa/hostile.ts',
+      "const modules = import.meta.glob('./+(*a)'); export { modules };\n");
+    return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
+  },/Unreviewed out-of-scope relative source reference/); count++;
+
   checkBlocked('new PostCSS build config',()=>{
     const p='apps/desktop-ui/postcss.config.js';
     fixtureWrite(p,'export default {};\n');return ()=>rmSync(join(temp,p));
