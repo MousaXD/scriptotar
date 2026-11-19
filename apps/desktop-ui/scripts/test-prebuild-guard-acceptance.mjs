@@ -236,11 +236,13 @@ try {
   // grammar permits thousands of distinct import/export aliases in one
   // declaration, placing a decoded traversal after the former scan bound.
   const manyBindings=Array.from({length:1100},(_,i)=>'hostile as agent11Alias'+i).join(', ');
+  const escapedUnicodePath='.'+String.fromCharCode(92)+'u002e/qa/hostile.ts';
+  const escapedBracePath='.'+String.fromCharCode(92)+'u{2e}/qa/hostile.ts';
   for (const [label, statement] of [
     ['overlong import-from encoded escape',
-      'import {'+manyBindings+'} from '+String.raw'.\u002e/qa/hostile.ts';'],
+      'import {'+manyBindings+"} from '"+escapedUnicodePath+"';"],
     ['overlong export-from encoded escape',
-      'export {'+manyBindings+'} from '+String.raw'.\u{2e}/qa/hostile.ts';'],
+      'export {'+manyBindings+"} from '"+escapedBracePath+"';"],
   ]) {
     checkBlocked(label,()=>{
       const p='apps/desktop-ui/src/main.ts',before=read(p);
