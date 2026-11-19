@@ -15,6 +15,7 @@ from .native_trials import summary
 from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
 from . import native_attach as native_attach_module
 from .native_attach import attach, process_image, same_image, process_instance_id
+from .test_attached_memory_gate import AttachedMemoryGateTests  # run with current P2 CI suite
 
 SHA = "3" * 40
 HASH = "a" * 64
