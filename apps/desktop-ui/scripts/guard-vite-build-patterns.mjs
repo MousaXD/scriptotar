@@ -145,13 +145,21 @@ function audit() {
   // Vite can compile ../qa/evil.ts imported by a reviewed module even though
   // qa/ is outside this scanner's source root. Fail closed on escape literals.
   // Conservative including comments/strings; deliberate manual review required.
-  const relativeLiteral = /(["'\x60])(\.\.\/[^"'\x60\r\n]{1,400})\1/g;
+  const relativeLiteral = /(["'\x60])(\.{1,2}\/[^"'\x60\r\n]{1,400})\1/g;
+  // Root-relative Vite specifiers can compile unreviewed workspace modules.
+  // Restrict known import/from forms; computed/alias/plugin imports still
+  // require independent review rather than a blanket safety claim.
+  const absoluteModuleLiteral = /\b(?:from|import)(?:\s|\/\*[\s\S]*?\*\/)*(?:\((?:\s|\/\*[\s\S]*?\*\/)*)?(["'\x60])\/[^"'\x60\r\n]{1,400}\1/g;
   for (const path of files.sort()) {
     const bytes = readFileSync(path);
     if (bytes.length > 1000000) { findings.push('Large source requires review: '+relative(root,path)); continue; }
     const sourceText = bytes.toString('utf8');
     for (const hit of inspectText(sourceText)) findings.push(hit+': '+relative(root,path));
     if (path !== html) {
+      absoluteModuleLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(absoluteModuleLiteral)) {
+        findings.push('Unreviewed absolute/root-relative module import: '+relative(root,path)+' -> '+match[0]);
+      }
       relativeLiteral.lastIndex = 0;
       for (const match of sourceText.matchAll(relativeLiteral)) {
         const resolved = resolve(dirname(path), match[2]);

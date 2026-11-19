@@ -4,13 +4,13 @@
  *
  * Drives the actual separately checked-out immutable guard against disposable
  * copies of the real source/config, without installing npm or invoking Vite.
- * This test is intentionally RED until every source-root import escape is
- * rejected. It does not prove the original 19-pattern parser vulnerability is
+ * This test explicitly revalidates the previous RED against the newer
+ * hardened 9dd384 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
  * patched or establish installed desktop-app security.
  */
 import assert from 'node:assert/strict';
 import {
-  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -86,8 +86,97 @@ try {
   const normalized = run();
   verdict('normalized ./staging/../../qa/hostile.ts bypass', normalized, true);
   write(main, original);
+
+  // Independent Agent10 negative controls beyond Agent11's fixture matrix.
+  // Require a typed source/config finding, not just an arbitrary nonzero exit.
+  function requireBlocked(label, mutate, reason) {
+    const undo = mutate();
+    try {
+      const out = run();
+      verdict(label, out, true);
+      assert.notEqual(out.status, 0, label + ' unexpectedly accepted');
+      assert.match(out.stdout, reason, label + ': missing expected finding');
+    } finally { undo(); }
+  }
+  for (const [label, stmt, reason] of [
+    ['static absolute import', "import '/qa/hostile.ts';", /Unreviewed absolute\/root-relative module import/],
+    ['export-from absolute', "export { modules } from '/qa/hostile.ts';", /Unreviewed absolute\/root-relative module import/],
+    ['dynamic absolute', "void import('/qa/hostile.ts');", /Unreviewed absolute\/root-relative module import/],
+    ['commented dynamic absolute', "void import(/* review */ '/qa/hostile.ts');", /Unreviewed absolute\/root-relative module import/],
+    ['absolute backtick dynamic', "void import(\x60/qa/hostile.ts\x60);", /Unreviewed absolute\/root-relative module import/],
+    ['nested relative traversal', "import './stage/../../qa/hostile.ts';", /Unreviewed out-of-scope relative source reference/],
+    ['export-from traversal', "export { modules } from '../qa/hostile.ts';", /Unreviewed out-of-scope relative source reference/],
+  ]) {
+    requireBlocked(label, () => {
+      write(main, original + '\n' + stmt + '\n');
+      return () => write(main, original);
+    }, reason);
+  }
+  // Policy/config paths that independently influence actual source compilation.
+  for (const [label, path, body] of [
+    ['shadow workspace npmrc', join(ws, '.npmrc'), 'ignore-scripts=false\n'],
+    ['shadow ancestor npmrc', join(tmp, 'apps', '.npmrc'), 'registry=https://example.invalid\n'],
+    ['shadow package shrinkwrap', join(ws, 'npm-shrinkwrap.json'), '{}\n'],
+    ['shadow ancestor PostCSS', join(tmp, '.postcssrc.yaml'), 'plugins: []\n'],
+    ['unreviewed PostCSS TOML', join(ws, '.postcssrc.toml'), 'plugins = []\n'],
+    ['alternate PostCSS YAML config', join(ws, 'postcss.config.yaml'), 'plugins: []\n'],
+    ['unreviewed alternate Vite config', join(ws, 'vite.config.mjs'), 'export default {}\n'],
+    ['shadow Vite environment', join(ws, '.env.production'), 'VITE_MODE=evil\n'],
+  ]) {
+    requireBlocked(label, () => {
+      write(path, body);
+      return () => rmSync(path, {force:true});
+    }, /Unreviewed shadow npm\/build configuration|New unreviewed build configuration file/);
+  }
+  const pkg = join(ws, 'package.json');
+  const pkgOriginal = readFileSync(pkg, 'utf8');
+  requireBlocked('alternate npm compiler command', () => {
+    write(pkg, pkgOriginal.replace('"vite build"', '"vite build --config evil.config.ts"'));
+    return () => write(pkg, pkgOriginal);
+  }, /Unreviewed build manifest\/lock\/Tauri contract/);
+  const viteConfig = join(ws, 'vite.config.ts');
+  const viteOriginal = readFileSync(viteConfig, 'utf8');
+  requireBlocked('unreviewed Vite plugin and source alias', () => {
+    write(viteConfig, viteOriginal + '\n// eslint-plugin dynamic alias\n');
+    return () => write(viteConfig, viteOriginal);
+  }, /Unreviewed Vite config SHA-256/);
+  const index = join(ws, 'index.html');
+  const htmlOriginal = readFileSync(index, 'utf8');
+  requireBlocked('alternate HTML module entrypoint', () => {
+    write(index, htmlOriginal + '\n<script type="module" src="/qa/hostile.ts"></script>\n');
+    return () => write(index, htmlOriginal);
+  }, /Unreviewed build manifest\/lock\/Tauri contract/);
+  // Windows runners may disallow creating symlinks without privilege. Record
+  // NOT TESTED rather than silently converting unsupported into PASS.
+  const symlinkPath = join(ws, 'src', 'agent10-hostile-symlink.ts');
+  let linked = false;
+  try {
+    symlinkSync(qa, symlinkPath, 'file');
+    linked = true;
+  } catch (error) {
+    console.log(JSON.stringify({test:'source symlink escape',outcome:'NOT TESTED',reason:error.code}));
+  }
+  if (linked) {
+    try {
+      const out = run();
+      verdict('source symlink escape', out, true);
+      assert.notEqual(out.status,0);
+      assert.match(out.stdout,/Source symlink requires review/);
+    } finally {rmSync(symlinkPath,{force:true});}
+  }
+  // Deliberately demonstrate the boundary of this tool: the scanner does not
+  // inspect workflow files. A malicious PR can bypass an unenforced workflow.
+  // This is a governance RED, not an exploit result against the new source scanner.
+  const untrustedWorkflow = join(tmp,'.github','workflows','ci.yml');
+  write(untrustedWorkflow,'name: bypassed-guard\njobs: {}\n');
+  const workflowGap=run();
+  console.log(JSON.stringify({test:'PR-authored workflow replacement',guard_status:workflowGap.status,
+    classification:'UNPROTECTED CI POLICY GAP: scanner cannot independently enforce its own invocation'}));
+  assert.equal(workflowGap.status,0,'Workflow-file-only change must not be misclassified as scanner coverage');
+  rmSync(join(tmp,'.github'),{recursive:true,force:true});
+  
   assert.deepEqual(bypasses, [], 'UNBLOCKED PREBUILD GUARD SCOPES: ' + bypasses.join(', '));
-  console.log('PASS: both out-of-scope malicious source import shapes were denied before build');
+  console.log('PASS: hardened guard rejected tested source and build-config escapes; workflow governance remains separate');
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }

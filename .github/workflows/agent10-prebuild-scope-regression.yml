@@ -1,4 +1,4 @@
-name: Agent10 independent prebuild import-scope red test
+name: Agent10 independent hardened prebuild adversarial verification
 
 on:
   push:
@@ -33,17 +33,18 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 75ec9eab2ec19f9f687aca06d9e4a1f5554c322d
+          ref: 9dd3844c57a6e000d6f2b779c909a5662f2dfbbb
           path: .agent10-trusted-guard
           persist-credentials: false
           sparse-checkout: |
             apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
           sparse-checkout-cone-mode: false
-      - name: Ensure actual fixed guard commit before testing
+      - name: Verify latest immutable hardened guard commit before testing
         run: |
-          node -e "if(require('child_process').execFileSync('git',['-C','.agent10-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='75ec9eab2ec19f9f687aca06d9e4a1f5554c322d')process.exit(1)"
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent10-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='9dd3844c57a6e000d6f2b779c909a5662f2dfbbb')process.exit(1)"
           node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
-      - name: Probe PostCSS control and two Vite source-root escapes, fail closed
+          node .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+      - name: Probe first-party import forms, shadow configs, symlinks, and workflow policy gap
         run: node tests/defragmentation/security/agent10_prebuild_scope_probe.mjs
 
   bounded-actual-vite-reachability:
