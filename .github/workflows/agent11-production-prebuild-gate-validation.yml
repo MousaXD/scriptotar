@@ -1,0 +1,48 @@
+name: Agent11 production prebuild source gate validation (DRAFT, not release)
+
+on:
+  push:
+    branches: [agent-11/p0-prebuild-gate-candidate-20261119]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  independent-boundary:
+    name: Trusted prebuild guard boundary and actual safe Vite build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout immutable independently reviewed gate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: f87633a99282d3dd198e62997b6c2e86393e669e
+          path: .agent11-trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Exact pinned guard and clean source before ANY npm install
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='f87633a99282d3dd198e62997b6c2e86393e669e')process.exit(1)"
+          node --check .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Disposable hostile source and config negative controls (compiler never invoked)
+        run: node apps/desktop-ui/scripts/test-prebuild-guard-acceptance.mjs
+      - name: Only AFTER guard install pinned actual application dependencies
+        working-directory: apps/desktop-ui
+        run: npm ci
+      - name: Only AFTER guard run the actual clean Vite production build
+        working-directory: apps/desktop-ui
+        run: npm run build

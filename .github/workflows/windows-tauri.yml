@@ -101,6 +101,22 @@ jobs:
             }
           }
           '@ | Set-Content -Encoding utf8 src-tauri/tauri.windows.conf.json
+      - name: Checkout immutable reviewed Agent11 pre-Vite gate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: f87633a99282d3dd198e62997b6c2e86393e669e
+          path: .agent11-trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Validate pinned prebuild guard and audited PR source before npm/Vite
+        working-directory: .
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='f87633a99282d3dd198e62997b6c2e86393e669e')process.exit(1)"
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - name: Build frontend assets
         working-directory: apps/desktop-ui
         run: |
