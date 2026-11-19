@@ -36,7 +36,7 @@ try {
   mkdirSync(workspace,{recursive:true});
   mkdirSync(tauriDir,{recursive:true});
   cpSync(join(realSource,'src'),join(workspace,'src'),{recursive:true});
-  for(const file of ['vite.config.ts','package.json','package-lock.json','index.html']) {
+  for(const file of ['vite.config.ts','package.json','package-lock.json','tsconfig.json','index.html']) {
     cpSync(join(realSource,file),join(workspace,file));
   }
   cpSync(join(repo,'apps','desktop','src-tauri','tauri.conf.json'),join(tauriDir,'tauri.conf.json'));
@@ -78,6 +78,26 @@ try {
     const p='apps/desktop-ui/vite.config.ts',before=read(p);
     fixtureWrite(p,before+'\n// manual review required\n');return ()=>fixtureWrite(p,before);
   },/Unreviewed Vite config SHA-256/); count++;
+  checkBlocked('shadow npm-shrinkwrap overrides pinned lock',()=>{
+    const p='apps/desktop-ui/npm-shrinkwrap.json';
+    fixtureWrite(p,'{}\n');return ()=>rmSync(join(temp,p));
+  },/Unreviewed shadow npm\/build configuration/); count++;
+  checkBlocked('workspace npmrc override',()=>{
+    const p='apps/desktop-ui/.npmrc';
+    fixtureWrite(p,'ignore-scripts=false\n');return ()=>rmSync(join(temp,p));
+  },/Unreviewed shadow npm\/build configuration/); count++;
+  checkBlocked('parent npmrc override',()=>{
+    const p='apps/.npmrc';
+    fixtureWrite(p,'registry=https:\/\/example.invalid\/\n');return ()=>rmSync(join(temp,p));
+  },/Unreviewed shadow npm\/build configuration/); count++;
+  checkBlocked('Vite env override',()=>{
+    const p='apps/desktop-ui/.env.production';
+    fixtureWrite(p,'VITE_SOURCE=unreviewed\n');return ()=>rmSync(join(temp,p));
+  },/Unreviewed shadow npm\/build configuration/); count++;
+  checkBlocked('TypeScript build config drift',()=>{
+    const p='apps/desktop-ui/tsconfig.json',before=read(p);
+    fixtureWrite(p,before+' \n');return ()=>fixtureWrite(p,before);
+  },/Unreviewed build manifest\/lock\/Tauri contract/); count++;
   checkBlocked('new PostCSS build config',()=>{
     const p='apps/desktop-ui/postcss.config.js';
     fixtureWrite(p,'export default {};\n');return ()=>rmSync(join(temp,p));

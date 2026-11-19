@@ -21,6 +21,7 @@ const repo = resolve(root, '..', '..');
 const trustedGitBlobShas = Object.freeze({
   'apps/desktop-ui/package.json': '19edb804b2c442be96311e2f39f7788dfb286dda',
   'apps/desktop-ui/package-lock.json': 'eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa',
+  'apps/desktop-ui/tsconfig.json': 'aab6eff7f7e345f6fb93b86e16d69aa328d8e140',
   'apps/desktop/src-tauri/tauri.conf.json': 'b28cc6a5057032479f94d5b94ed01f2ea23fa03e'
 });
 const trustedConfigSha256 = '252cb3b99585c239741cc3590c9636da49f087cc6e6ed07a5c6fcef7b89e4300';
@@ -78,8 +79,9 @@ function audit() {
   const configFile = join(root,'vite.config.ts');
   const packageFile = join(root,'package.json');
   const packageLockFile = join(root,'package-lock.json');
+  const tsconfigFile = join(root,'tsconfig.json');
   const tauriFile = join(repo,'apps','desktop','src-tauri','tauri.conf.json');
-  for (const path of [configFile,packageFile,packageLockFile,tauriFile]) {
+  for (const path of [configFile,packageFile,packageLockFile,tsconfigFile,tauriFile]) {
     if (!existsSync(path)) findings.push('Missing build contract: '+relative(repo,path));
   }
   if (!findings.length) {
@@ -103,6 +105,24 @@ function audit() {
       findings.push('Unreviewed Tauri beforeBuildCommand');
     if (tauri.build?.frontendDist !== '../../desktop-ui/dist')
       findings.push('Unreviewed Tauri frontendDist');
+  }
+  // npm-shrinkwrap.json overrides package-lock.json. A PR adding .npmrc or a
+  // parent workspace manifest may also change the install graph despite a
+  // correctly pinned package-lock. Reject these BEFORE npm ci in every job.
+  // Unreviewed Vite/rollup/PostCSS configs or Vite .env files also change
+  // compiler behavior before the ordinary frontend import scanner can help.
+  const shadowInstall = /^(?:npm-shrinkwrap\.json|\.npmrc|\.yarnrc(?:\.yml)?|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lock(?:b)?|\.pnp\.(?:cjs|js)|\.env(?:\..*)?)$/i;
+  const extraBuildConfig = /^(?:vite|svelte|postcss|tailwind|rollup|webpack|esbuild)\.config\.[mc]?[jt]sx?$/i;
+  for (const dir of [repo,join(repo,'apps'),root]) {
+    if (!existsSync(dir)) { findings.push('Missing reviewed source parent: '+dir); continue; }
+    for (const entry of readdirSync(dir,{withFileTypes:true})) {
+      const file = join(dir,entry.name);
+      if (shadowInstall.test(entry.name) ||
+          (extraBuildConfig.test(entry.name) && file !== configFile) ||
+          (dir !== root && (entry.name === 'package.json' || entry.name === 'package-lock.json'))) {
+        findings.push('Unreviewed shadow npm/build configuration: '+relative(repo,file));
+      }
+    }
   }
   const files = [];
   collect(join(root,'src'),findings,files);
