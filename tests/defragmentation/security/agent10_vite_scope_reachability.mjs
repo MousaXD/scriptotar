@@ -71,13 +71,32 @@ try {
   assert.equal(harmlessLongBuild.status, 0,
     'Overlength import did not resolve harmless source; malicious timeout could be confounded: '+excerpt(harmlessLongBuild));
 
+  // Positive control: Vite must resolve decoded JS unicode import specifiers
+  // before blaming malicious glob patterns for a timeout.
+  const escapedBenign=String.raw`.\u002e/agent10-scope-fixture/benign.ts`;
+  writeFileSync(main, original + "\nimport '" + escapedBenign + "';\n");
+  const escapedBenignBuild=build(45000);
+  console.log(JSON.stringify({
+    test:'JS Unicode-escaped ../ safe module import',
+    outcome:escapedBenignBuild.status===0?'PASS':'NOT VALIDATED',
+    status:escapedBenignBuild.status,
+    error_code:escapedBenignBuild.error?.code||null,
+    log_tail:excerpt(escapedBenignBuild)
+  }));
+  assert.equal(escapedBenignBuild.status,0,
+    'Unicode-escaped relative import failed safe resolution: '+excerpt(escapedBenignBuild));
+
   const variants = [
+    { label:'Vite Unicode-escaped relative traversal import',
+      specifier:String.raw`.\u002e/agent10-scope-fixture/hostile.ts`,
+      directLiteral:true },
     { label: 'Vite project-root-absolute import', specifier: '/agent10-scope-fixture/hostile.ts' },
     { label: 'Vite normalized relative import escape', specifier: './agent10-staging/../../agent10-scope-fixture/hostile.ts' },
     { label: 'Vite over-400-character normalized relative import escape', specifier: './agent10-staging/' + './'.repeat(220) + '../../agent10-scope-fixture/hostile.ts' },
   ];
   for (const variant of variants) {
-    writeFileSync(main, original + '\nimport ' + JSON.stringify(variant.specifier) + ';\n');
+    const sourceLiteral = variant.directLiteral ? ("'" + variant.specifier + "'") : JSON.stringify(variant.specifier);
+    writeFileSync(main, original + '\nimport ' + sourceLiteral + ';\n');
     const hostile = build(12000);
     const timeout = hostile.error?.code === 'ETIMEDOUT';
     console.log(JSON.stringify({
@@ -113,7 +132,7 @@ try {
     writeFileSync(main,original);
     rmSync(mtsDir,{recursive:true,force:true});
   }
-  console.log('Four independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
+  console.log('Five independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
 } finally {
   writeFileSync(main, original);
   if (!saveQa) rmSync(qa, { recursive: true, force: true });

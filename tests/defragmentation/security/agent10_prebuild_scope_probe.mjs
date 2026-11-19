@@ -112,6 +112,16 @@ try {
       return () => write(main, original);
     }, reason);
   }
+  // JavaScript import strings decode \u002e to '.' before module resolution,
+  // but the source scanner sees the raw escape. This must be rejected if
+  // normalized to ../qa outside the reviewed src root.
+  const escapedDot = String.raw`.\u002e/qa/hostile.ts`;
+  assert.ok(escapedDot.includes('\\u002e') && !escapedDot.startsWith('../'));
+  requireBlocked('Unicode-escaped relative traversal module specifier', () => {
+    write(main, original + "\nimport '" + escapedDot + "';\n");
+    return () => write(main, original);
+  }, /Unreviewed out-of-scope relative source reference/);
+
   // Policy/config paths that independently influence actual source compilation.
   for (const [label, path, body] of [
     ['shadow workspace npmrc', join(ws, '.npmrc'), 'ignore-scripts=false\n'],
