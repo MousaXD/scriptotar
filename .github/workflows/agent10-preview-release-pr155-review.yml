@@ -1,0 +1,52 @@
+name: Agent10 independent PR155 preview authorization correction (read-only)
+
+on:
+  push:
+    branches: [agent-10/p0-prebuild-absolute-import-probe-20261119]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owner-approval-correction:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify independent Agent10 test checkout
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          node --check tests/defragmentation/security/agent10_preview_pr155_probe.mjs
+      - name: Checkout exact unmerged Agent00 PR155 source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 1f9e661f3c72c28a5695d1c7dfa124280f5b1494
+          path: .agent10-preview-pr155
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/tauri-next-release.yml
+            scripts/release_ci_gate.py
+          sparse-checkout-cone-mode: false
+      - name: Checkout exact original main vulnerable source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 69e60f91c0b00560332dac06b732fc2259c1d632
+          path: .agent10-preview-main
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/tauri-next-release.yml
+            scripts/release_ci_gate.py
+          sparse-checkout-cone-mode: false
+      - name: Prove exact source identity, unchanged SHA gate and 48 no-side-effect controls
+        shell: bash
+        run: |
+          test "$(git -C .agent10-preview-pr155 rev-parse HEAD)" = "1f9e661f3c72c28a5695d1c7dfa124280f5b1494"
+          test "$(git -C .agent10-preview-main rev-parse HEAD)" = "69e60f91c0b00560332dac06b732fc2259c1d632"
+          node tests/defragmentation/security/agent10_preview_pr155_probe.mjs
