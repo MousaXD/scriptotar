@@ -231,6 +231,40 @@ try {
     return ()=>fixtureWrite(p,before);
   },/Ambiguous\/unsupported dynamic module specifier/); count++;
 
+
+  // P0-149-08: 2048-token declaration cap must fail closed. Actual JS
+  // grammar permits thousands of distinct import/export aliases in one
+  // declaration, placing a decoded traversal after the former scan bound.
+  const manyBindings=Array.from({length:1100},(_,i)=>'hostile as agent11Alias'+i).join(', ');
+  for (const [label, statement] of [
+    ['overlong import-from encoded escape',
+      'import {'+manyBindings+'} from '+String.raw'.\u002e/qa/hostile.ts';'],
+    ['overlong export-from encoded escape',
+      'export {'+manyBindings+'} from '+String.raw'.\u{2e}/qa/hostile.ts';'],
+  ]) {
+    checkBlocked(label,()=>{
+      const p='apps/desktop-ui/src/main.ts',before=read(p);
+      fixtureWrite(p,before+'\n'+statement+'\n');
+      fixtureWrite('apps/desktop-ui/qa/hostile.ts',
+        "export const hostile = import.meta.glob('./+(*a)');\n");
+      return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
+    },/Ambiguous\/overlong module declaration requires review/);
+    count++;
+  }
+  // A shorter valid named-binding declaration and local module remain legal.
+  {
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    const safePath='apps/desktop-ui/src/agent11-safe-named-bindings.ts';
+    fixtureWrite(safePath,'export const safe = 42;\n');
+    const bindings=Array.from({length:100},(_,i)=>'safe as agent11SafeAlias'+i).join(', ');
+    try {
+      fixtureWrite(p,before+'\nimport {'+bindings+"} from './agent11-safe-named-bindings.ts';\n");
+      const accepted=runGuard(workspace);
+      assert.equal(accepted.status,0,'Normal named-binding import incorrectly blocked: '+accepted.stdout);
+    } finally {fixtureWrite(p,before);rmSync(join(temp,safePath));}
+    count++;
+  }
+
   // Vite/esbuild can import TypeScript module variants .mts and .cts.
   // The previous extension whitelist omitted both and did not inspect
   // a hostile import.meta.glob inside these first-party source files.

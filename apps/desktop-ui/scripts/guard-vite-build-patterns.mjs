@@ -192,14 +192,20 @@ function inspectEffectiveModules(sourceText,path,reviewedSource,findings) {
     }
   }
   function fromClause(start) {
+    // A source file can contain a syntactically valid import declaration with
+    // thousands of named bindings. Never silently stop before its from-clause:
+    // encoded traversal beyond the old 2048-token scan cap was unexamined.
     let depth=0;
-    for (let j=start;j<ts.length && j<start+2048;j++) {
+    const limit=Math.min(ts.length,start+2048);
+    for (let j=start;j<limit;j++) {
       const t=ts[j],v=t.value;
       if (v==='{'||v==='('||v==='[') depth++;
       else if (v==='}'||v===')'||v===']') depth=Math.max(0,depth-1);
       if (depth===0 && v==='from') {check(j+1);return;}
-      if (depth===0&&(v===';'||(j>start&&(v==='import'||v==='export')))) break;
+      if (depth===0&&(v===';'||(j>start&&(v==='import'||v==='export')))) return;
     }
+    if (limit<ts.length)
+      findings.push('Ambiguous/overlong module declaration requires review: '+location);
   }
   for (let i=0;i<ts.length;i++) {
     const t=ts[i],n=ts[i+1];
