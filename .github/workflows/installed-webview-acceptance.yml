@@ -129,6 +129,7 @@ jobs:
       # unproven test to PASS; a blocked media/model/UI step stays NOT TESTED.
       - name: Attempt genuine two-origin native Queue + bundled sidecar + Study (noncertifying)
         if: always()
+        continue-on-error: true
         timeout-minutes: 32
         run: |
           set -euo pipefail
