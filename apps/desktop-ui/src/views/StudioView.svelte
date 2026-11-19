@@ -34,6 +34,7 @@
   let studyId = '';
   let referenceInput = '';
   let referenceError = '';
+  let referenceDenialId = '';
   let referenceBusy = false;
   const studyUuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
   let brief: CreativeBrief = emptyBrief();
@@ -235,6 +236,7 @@
   async function openStudyReference() {
     if (!gateway || referenceBusy || busy || saving || loading) return;
     referenceError = '';
+    referenceDenialId = '';
     const raw = referenceInput.trim();
     const matched = /^scriptotar:\/\/study\/([^/?#]+)\/([^/?#]+)(?:\?draft=([^/?#]+))?$/i.exec(raw);
     if (raw.length > 240 || !matched ||
@@ -252,9 +254,11 @@
     const claimedDraft = matched[3]?.toLowerCase();
     const activeProject = projectId;
     const activeEpoch = currentRequest;
+    let requestId = '';
     referenceBusy = true;
     try {
-      const loaded = await gateway.getStudy(claimedProject, claimedStudy, claimedDraft);
+      requestId = newNativeRequestId();
+      const loaded = await gateway.getStudy(claimedProject, claimedStudy, claimedDraft, requestId);
       // A later Study navigation/project switch or edited paste invalidates
       // this response even when the claimed project happens to match again.
       if (activeProject !== projectId || activeEpoch !== currentRequest ||
@@ -266,9 +270,16 @@
       }
       await openStudy(claimedStudy, claimedDraft, loaded);
       if (studyId === claimedStudy) referenceInput = '';
-    } catch {
+    } catch (cause) {
       if (activeProject === projectId && activeEpoch === currentRequest &&
-          referenceInput.trim() === raw) referenceError = t.deniedStudyReference;
+          referenceInput.trim() === raw) {
+        referenceError = t.deniedStudyReference;
+        // Show a host-correlated ID ONLY for the exact native authorization
+        // denial. Never place the pasted link, private Study or raw exception
+        // text in the AT-SPI/UIA accessible name.
+        referenceDenialId = matchesNativeDenial(cause, 'FOREIGN_STUDY_REFERENCE', requestId)
+          ? requestId : '';
+      }
     } finally {
       referenceBusy = false;
     }
@@ -1284,7 +1295,7 @@
             <button type="submit" class="button secondary"
               disabled={!referenceInput.trim() || referenceBusy || busy || saving || loading}>{t.openStudyReference}</button>
           </form>
-          {#if referenceError}<p role="alert" class="studio-error">{referenceError}</p>{/if}
+          {#if referenceError}<p id="studio-reference-error" role="alert" aria-label={referenceError + (referenceDenialId ? ' · request ' + referenceDenialId : '')} aria-live="assertive" aria-atomic="true" class="studio-error">{referenceError}</p>{/if}
         </details>
       {:else}
         <span class="muted">{t.workNotSaved}</span>

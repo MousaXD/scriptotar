@@ -77,7 +77,7 @@ export interface ScriptotarApi {
   saveCopyPrompt(projectId: string, input: AiPromptInput): Promise<AiRunDetail>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
-  getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  getStudy(projectId: string, studyId: string, draftId?: string, requestId?: string): Promise<ContentStudy>;
   listStudyWritingBatches(projectId: string, studyId: string): Promise<StudyWritingBatch[]>;
   duplicateStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;
   renameStudyDraft(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number, title: string): Promise<ContentStudy>;

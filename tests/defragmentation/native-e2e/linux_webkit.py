@@ -53,6 +53,105 @@ def command(*argv: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(argv, capture_output=True, text=True, check=check, timeout=15)
 
 
+
+
+def count_native_angle_actions(ax) -> int:
+    """Count real AT-SPI angle-card action buttons, not DOM/source or screenshots.
+
+    WebKitGTK's installed provider exposes the three actual button nodes
+    but not the <strong> angle-title text as named AT-SPI nodes (run
+    #44299491028). These buttons only mount for each reviewed angle in
+    StudioView.svelte after public Rust validation succeeds.
+    """
+    count = 0
+    for node in ax.nodes():
+        try:
+            if ((node.name or "").strip() == "Prepare script for this angle"
+                    and node.getRoleName().lower() in ("push button", "button")):
+                count += 1
+        except Exception:
+            continue
+    return count
+
+
+def native_new_alert_border(before_rgb, after_rgb, image_width: int,
+                            image_height: int, button_bounds) -> dict:
+    """Require a NEW red-outlined error surface immediately below the real button.
+
+    The June 2026 WebKitGTK AT-SPI provider exposes the editor and button but
+    omitted the rendered role=alert text on installed Linux run #44278805547.
+    This independent pixel proof is intentionally strict: two new horizontal
+    borders must bracket an alert immediately below the *AT-SPI-located* native
+    Validate button. A screenshot existing on disk cannot satisfy it.
+    Database and successful recovery are checked separately.
+    """
+    bx, by = int(button_bounds.x), int(button_bounds.y)
+    bw, bh = int(button_bounds.width), int(button_bounds.height)
+    if bw < 100 or bh < 15 or bx < 0 or by < 0:
+        raise NativeFailure("Invalid real AT-SPI Validate button bounds for alert proof")
+    left = max(bx + 8, 0)
+    right = min(bx + bw - 8, image_width)
+    top = max(by + bh + 3, 0)
+    bottom = min(by + bh + 130, image_height)
+    if right - left < 80 or bottom - top < 40:
+        raise NativeFailure("Native screenshot does not contain button-adjacent alert region")
+
+    def red(rgb):
+        r, g, b = rgb
+        return r >= 190 and r - g >= 55 and r - b >= 55
+
+    rows = []
+    width = right - left
+    for y in range(top, bottom):
+        now = sum(bool(red(after_rgb(x, y))) for x in range(left, right))
+        earlier = sum(bool(red(before_rgb(x, y))) for x in range(left, right))
+        # Reject old banners, random red pixels, isolated borders and changed
+        # content outside the installed native button's expected alert zone.
+        if now >= int(width * 0.75) and earlier <= int(width * 0.08):
+            rows.append(y)
+    for top_edge in rows:
+        for bottom_edge in rows:
+            if 20 <= bottom_edge - top_edge <= 100:
+                return {
+                    "proof": "new bordered error region immediately below native Validate control",
+                    "button_bounds": [bx, by, bw, bh],
+                    "alert_y_edges": [top_edge, bottom_edge],
+                    "native_screenshot_dimensions": [image_width, image_height],
+                }
+    raise NativeFailure(
+        "Malformed angle submission had no new native red-bordered error "
+        "surface at the actual AT-SPI Validate button; do not infer denial"
+    )
+
+
+def native_angle_alert_image_proof(before: Path, after: Path, button_bounds) -> dict:
+    """Decode two actual scrot PNGs via installed GTK/GdkPixbuf, not OCR or a DOM mock."""
+    try:
+        import gi
+        gi.require_version("GdkPixbuf", "2.0")
+        from gi.repository import GdkPixbuf
+        old = GdkPixbuf.Pixbuf.new_from_file(str(before))
+        new = GdkPixbuf.Pixbuf.new_from_file(str(after))
+    except (ImportError, OSError, ValueError) as exc:
+        raise NativeFailure(f"Cannot decode native WebKit screenshots: {exc}") from exc
+    if (old.get_width(), old.get_height()) != (new.get_width(), new.get_height()):
+        raise NativeFailure("Native before/after screenshot sizes differ")
+
+    def reader(pixbuf):
+        pixels = pixbuf.get_pixels()
+        rowstride, channels = pixbuf.get_rowstride(), pixbuf.get_n_channels()
+        if channels < 3:
+            raise NativeFailure("Native screenshot does not contain RGB pixels")
+        def rgb(x, y):
+            i = y * rowstride + x * channels
+            return pixels[i], pixels[i + 1], pixels[i + 2]
+        return rgb
+
+    return native_new_alert_border(
+        reader(old), reader(new), new.get_width(), new.get_height(), button_bounds
+    )
+
+
 def native_crash_context(pid: int) -> dict:
     """Read bounded Linux crash metadata after a real installed-process exit.
 
@@ -116,6 +215,301 @@ def verify_canonical_projects(data_dir: Path, expected_names: tuple[str, str]) -
         raise NativeFailure("Canonical SQLite contains invalid created project ID") from exc
     return "Two distinct nonarchived real project rows persisted in installed application SQLite"
 
+
+
+def count_canonical_jobs(data_dir: Path, project_name: str) -> int:
+    """Read-only count of jobs for the actual installed project's SQLite."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Installed canonical SQLite missing during denied URL test")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4) as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM jobs j JOIN projects p ON p.id=j.project_id "
+                "WHERE p.name=? AND p.archived_at IS NULL", (project_name,)
+            ).fetchone()
+            if row is None:
+                raise NativeFailure("Could not count installed canonical jobs")
+            return int(row[0])
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Installed canonical jobs read-only probe failed: {exc}") from exc
+
+
+
+def canonical_records_snapshot(data_dir: Path) -> dict:
+    """Read-only identity/content fingerprint of every canonical SQLite table.
+
+    Unlike a job count, this detects rewrites, extra rows and modified draft,
+    effect, receipt and audit records. No raw user data is written to evidence.
+    """
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Installed canonical SQLite missing for no-write snapshot")
+    tables = {}
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro",
+                             uri=True, timeout=8) as db:
+            db.execute("PRAGMA query_only=ON")
+            # A single deferred READ transaction pins one committed SQLite
+            # snapshot across the sqlite_master scan and every table SELECT.
+            # In WAL, an actual concurrent writer can commit without tearing
+            # our content_studies/jobs/effects readback; never acquire a write
+            # lock or copy user rows into the evidence artifact.
+            db.execute("BEGIN")
+            names = [r[0] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )]
+            if not names or "content_studies" not in names or "jobs" not in names:
+                raise NativeFailure("Installed canonical DB lacks required tables")
+            for name in names:
+                quoted = '"' + name.replace('"', '""') + '"'
+                row_hashes = []
+                for row in db.execute(f"SELECT * FROM {quoted}"):
+                    typed = [
+                        {"blob_sha256": hashlib.sha256(v).hexdigest(), "length": len(v)}
+                        if isinstance(v, bytes) else v for v in row
+                    ]
+                    payload = json.dumps(typed, ensure_ascii=False,
+                                         separators=(",", ":"), default=str)
+                    row_hashes.append(hashlib.sha256(payload.encode("utf-8")).hexdigest())
+                row_hashes.sort()
+                tables[name] = {
+                    "rows": len(row_hashes),
+                    "sha256": hashlib.sha256("\n".join(row_hashes).encode()).hexdigest(),
+                }
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Read-only canonical snapshot failed: {exc}") from exc
+    digest = hashlib.sha256(json.dumps(tables, sort_keys=True).encode()).hexdigest()
+    return {"digest": digest, "tables": tables}
+
+
+# Real installed WebKitGTK (Agent 00 run #44313725742) sometimes maps
+# Svelte role=alert to an AT-SPI "image map". Admit that provider mapping ONLY
+# for an exact production-localized error label. Never admit an arbitrary
+# similarly named button/image map as a native rejection.
+PRODUCTION_ERROR_LABELS = frozenset({
+    "The angle response is invalid or its Study evidence changed.",
+    "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
+    "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
+    "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
+    "This Study reference cannot be opened in the active project.",
+    "لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
+})
+
+
+def production_native_error_id(label: str, localized_text: str) -> str | None:
+    """Only exact production text plus its real 128-bit accessible request ID."""
+    if not isinstance(label, str) or localized_text not in PRODUCTION_ERROR_LABELS:
+        return None
+    match = re.fullmatch(
+        re.escape(localized_text) + r" · request ([a-f0-9]{32})", label
+    )
+    return match.group(1) if match else None
+
+
+def native_host_log_offset(log_path: Path) -> int:
+    """Record byte offset BEFORE clicking a real installed Tauri action."""
+    return log_path.stat().st_size if log_path.is_file() else 0
+
+
+def native_host_denial_ids(log_path: Path, offset: int, code: str) -> list[str]:
+    """Read only new Rust stderr, never trust a test-supplied 'host replied' bit."""
+    if not isinstance(offset, int) or offset < 0 or code not in (
+        "INVALID_STUDY_ANGLES", "INVALID_MEDIA_URL",
+        "FOREIGN_STUDY_REFERENCE",
+    ):
+        return []
+    if not log_path.is_file() or log_path.stat().st_size < offset:
+        return []
+    with log_path.open("rb") as stream:
+        stream.seek(offset)
+        tail = stream.read(65537)
+    if len(tail) > 65536:
+        return []  # unbounded native log is not a certificate
+    prefix = r"\[scriptotar-native-denial\] code=" + re.escape(code)
+    marker = re.compile(r"^" + prefix + r" request_id=([a-f0-9]{32})$")
+    return [
+        match.group(1) for line in tail.decode("utf-8", errors="replace").splitlines()
+        if (match := marker.fullmatch(line.strip()))
+    ]
+
+
+def observed_host_denial(
+    log_path: Path, offset: int, code: str, names: list[str],
+    localized_text: str,
+) -> dict | None:
+    """Correlate two *independent* real installed surfaces by the same nonce.
+
+    Rust writes the typed denial ID on its own process stderr, while the
+    Svelte alert's AT-SPI accessible name must expose that exact ID. Both must
+    arise only after the native click. A screenshot-only or unrelated alert
+    can never manufacture this return value. This is request-correlation
+    evidence, not additional authorization or provider consent.
+    """
+    from_host = native_host_denial_ids(log_path, offset, code)
+    from_accessibility = [
+        proof for text in names
+        if (proof := production_native_error_id(text, localized_text))
+    ]
+    if (len(from_host) != 1 or len(from_accessibility) != 1
+            or from_host[0] != from_accessibility[0]):
+        return None
+    return {
+        "submitted_request_id": from_accessibility[0],
+        "tauri_denial_request_id": from_host[0],
+        "native_alert_request_id": from_accessibility[0],
+        "error_code": code,
+        "host_source": "installed-process-stderr",
+        "accessibility_source": "installed-AT-SPI-alert",
+    }
+
+
+def native_named_alerts(ax, keywords: tuple[str, ...]) -> list[str]:
+    """Find current installed semantic alert names, including strict WebKit mapping.
+
+    An ImageMap node is evidence of accessible displayed text only when its
+    exact name matches production's error. This cannot authenticate the
+    underlying Tauri invocation; separate request ID proof is still required.
+    """
+    found = set()
+    for node in ax.nodes():
+        try:
+            role = node.getRoleName().lower()
+            label = (node.name or "").strip()
+            if not label and "alert" in role:
+                try:
+                    label = node.queryText().getText(0, -1).strip()
+                except Exception:
+                    continue
+            if role == "image map" and (
+                label not in PRODUCTION_ERROR_LABELS and not any(
+                    production_native_error_id(label, localized) is not None
+                    for localized in PRODUCTION_ERROR_LABELS
+                )
+            ):
+                continue
+            if "alert" not in role and role != "image map":
+                continue
+            if label and any(word in label.lower() for word in keywords):
+                found.add(label[:400])
+        except Exception:
+            continue
+    return sorted(found)
+
+
+def valid_native_angle_request_binding(proof: object) -> bool:
+    """Fail closed unless installed UI exposes the exact backend rejection ID.
+
+    Temporal proximity, a correct-looking localized alert and unchanged SQLite
+    cannot authenticate WHICH Tauri invocation failed. Agent 10's unrelated
+    fresh-alert adversarial test demonstrated this distinction. The production
+    owner must expose one opaque client-request nonce echoed in the rejected
+    Tauri result and the accessible alert, not a QA-only mock or fabricated
+    semantic bit.
+    """
+    if not isinstance(proof, dict):
+        return False
+    if proof.get("human_review_required") is True or proof.get("atspi_error_text_exposed") is not True:
+        return False
+    binding = proof.get("request_correlation")
+    if not isinstance(binding, dict):
+        return False
+    payload = binding.get("submitted_payload_sha256")
+    host_receipt = binding.get("authoritative_denial")
+    if not isinstance(host_receipt, dict):
+        return False
+    # Both values must come from the actual installed production command/UI.
+    # The current Studio IPC does not expose this contract; the runner retains
+    # NOT TESTED rather than inventing a request ID from a screenshot.
+    opaque_id = host_receipt.get("submitted_request_id")
+    if not (isinstance(opaque_id, str)
+            and bool(re.fullmatch(r"[a-f0-9]{32}", opaque_id))
+            and host_receipt.get("tauri_denial_request_id") == opaque_id
+            and host_receipt.get("native_alert_request_id") == opaque_id
+            and host_receipt.get("error_code") == "INVALID_STUDY_ANGLES"):
+        return False
+    return (
+        host_receipt.get("host_source") == "installed-process-stderr"
+        and host_receipt.get("accessibility_source") == "installed-AT-SPI-alert"
+        and isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
+        and binding.get("native_readback_sha256") == payload
+        and binding.get("native_action") == "Validate 3 angles"
+        and binding.get("prior_alerts") == []
+        and isinstance(binding.get("new_alerts"), list)
+        and len(binding["new_alerts"]) == 1
+        and production_native_error_id(
+            binding["new_alerts"][0],
+            "The angle response is invalid or its Study evidence changed."
+        ) == opaque_id
+        and type(binding.get("action_monotonic_ns")) is int
+        and type(binding.get("observed_monotonic_ns")) is int
+        and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
+        and isinstance(binding.get("canonical_before_digest"), str)
+        and bool(re.fullmatch(r"[a-f0-9]{64}", binding["canonical_before_digest"]))
+        and binding.get("canonical_after_digest") == binding["canonical_before_digest"]
+    )
+
+
+
+def canonical_study_reference_ids(data_dir: Path, project_name: str,
+                                  study_title: str) -> tuple[str, str, str]:
+    """Get IDs already created by genuine installed GUI, never seed a row."""
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Canonical SQLite missing for foreign-reference probe")
+    try:
+        with sqlite3.connect(database.resolve().as_uri() + "?mode=ro",
+                             uri=True, timeout=4) as db:
+            rows = db.execute("""
+                SELECT p.id, st.id, d.id
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                 ORDER BY d.id LIMIT 2
+            """, (project_name, study_title)).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(f"Foreign-reference canonical read failed: {exc}") from exc
+    if not rows or len(rows[0]) != 3:
+        raise NativeFailure("No GUI-created Study/draft IDs found for reference probe")
+    ids = rows[0]
+    if any(not isinstance(value, str) for value in ids):
+        raise NativeFailure("Foreign-reference IDs have invalid types")
+    try:
+        for value in ids:
+            uuid.UUID(value)
+    except (ValueError, TypeError) as exc:
+        raise NativeFailure("Noncanonical real Study reference ID") from exc
+    return tuple(ids)
+
+
+def valid_native_url_request_binding(proof: object) -> bool:
+    """URL denial must have real Rust stderr + exact fresh accessible request ID."""
+    if not isinstance(proof, dict):
+        return False
+    host = proof.get("authoritative_denial")
+    if not isinstance(host, dict):
+        return False
+    ident = host.get("tauri_denial_request_id")
+    return (
+        isinstance(ident, str)
+        and bool(re.fullmatch(r"[a-f0-9]{32}", ident))
+        and host.get("native_alert_request_id") == ident
+        and host.get("submitted_request_id") == ident
+        and host.get("error_code") == "INVALID_MEDIA_URL"
+        and host.get("host_source") == "installed-process-stderr"
+        and host.get("accessibility_source") == "installed-AT-SPI-alert"
+        and production_native_error_id(
+            proof.get("new_alert_text", ""),
+            "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        ) == ident
+        and proof.get("canonical_unchanged") is True
+        and proof.get("job_count_unchanged") is True
+        and proof.get("native_input_readback_exact") is True
+    )
 
 
 def verify_canonical_saved_draft(
@@ -434,14 +828,58 @@ class AxWebKit:
         raise NativeFailure(f"AT-SPI editable field not found for label {label!r}")
 
     def type_into(self, name: str, value: str) -> None:
-        node = self.edit_field(name)
+        """Native X11 input with readback; do not drop long JSON keystrokes.
+
+        A real installed WebKitGTK .deb run #44343815684 delivered only 711 of
+        801 bytes from a 2-ms xdotool burst, despite the earlier malformed
+        JSON input reaching the editor. Long text is sent in bounded native
+        keyboard chunks and each completed prefix must appear through AT-SPI.
+        On transport loss retry once at a slower *real keyboard* rate. Never
+        write through AT-SPI SetText, the DOM, JavaScript or the database.
+        """
+        if not isinstance(value, str):
+            raise NativeFailure("Installed native input must be text")
         try:
-            focused = node.queryComponent().grabFocus()
-            if focused is False:
-                raise NativeFailure(f"Cannot focus field {name!r}")
-            command("xdotool", "key", "--clearmodifiers", "ctrl+a")
-            command("xdotool", "type", "--clearmodifiers", "--delay", "2", "--", value)
-            time.sleep(0.65)
+            attempts = (12, 35) if len(value) >= 256 else (2,)
+            last = "no delivery attempted"
+            for delay in attempts:
+                node = self.edit_field(name)
+                focused = node.queryComponent().grabFocus()
+                if focused is False:
+                    raise NativeFailure(f"Cannot focus field {name!r}")
+                command("xdotool", "key", "--clearmodifiers", "ctrl+a")
+                time.sleep(0.15)
+                chunks = ([value[i:i + 64] for i in range(0, len(value), 64)]
+                          if len(value) >= 256 else [value])
+                delivered = ""
+                for chunk in chunks:
+                    command("xdotool", "type", "--clearmodifiers", "--delay",
+                            str(delay), "--", chunk)
+                    delivered += chunk
+                    if len(value) >= 256:
+                        # WebKitGTK renders asynchronously; observe the exact
+                        # native editable field, not an optimistic key count.
+                        deadline = time.monotonic() + 2
+                        observed = ""
+                        while time.monotonic() < deadline:
+                            observed = self.read_text(name)
+                            if observed == delivered:
+                                break
+                            time.sleep(0.1)
+                        if observed != delivered:
+                            last = (f"native prefix mismatch at {len(delivered)} "
+                                    f"characters (observed {len(observed)}), delay={delay}ms")
+                            break
+                else:
+                    time.sleep(0.4)
+                    actual = self.read_text(name)
+                    if actual == value:
+                        return
+                    last = (f"native final text mismatch (expected {len(value)} "
+                            f"characters, observed {len(actual)}), delay={delay}ms")
+            raise NativeFailure(
+                f"Installed WebKitGTK text transport lost exact input in {name!r}: {last}"
+            )
         except NativeFailure:
             raise
         except Exception as exc:
@@ -795,107 +1233,17 @@ def status(report: dict, scenario: str, state: str, reason: str, image: str | No
     report["cases"][scenario] = record
 
 
-# P0 certification guard: only authoritative installed Rust denial IDs and
-# exact new AT-SPI error labels can certify error_recovery. This narrow
-# integrated runner does not yet collect these proofs; NOT TESTED is required.
-PRODUCTION_ERROR_LABELS = frozenset({
-    "The angle response is invalid or its Study evidence changed.",
-    "استجابة الزوايا غير صالحة أو تغير دليل الدراسة.",
-    "Invalid media URL. Only HTTP and HTTPS URLs are supported.",
-    "رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.",
-    "This Study reference cannot be opened in the active project.",
-    "لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
-})
+def preserve_foreign_reference_failure(report: dict, exc: Exception) -> None:
+    """Retain read-only canonical evidence on a genuine installed probe failure.
 
-
-def production_native_error_id(label: str, localized_text: str) -> str | None:
-    """Only exact production text plus its real 128-bit accessible request ID."""
-    if not isinstance(label, str) or localized_text not in PRODUCTION_ERROR_LABELS:
-        return None
-    match = re.fullmatch(
-        re.escape(localized_text) + r" · request ([a-f0-9]{32})", label
-    )
-    return match.group(1) if match else None
-
-
-def valid_native_angle_request_binding(proof: object) -> bool:
-    """Fail closed unless installed UI exposes the exact backend rejection ID.
-
-    Temporal proximity, a correct-looking localized alert and unchanged SQLite
-    cannot authenticate WHICH Tauri invocation failed. Agent 10's unrelated
-    fresh-alert adversarial test demonstrated this distinction. The production
-    owner must expose one opaque client-request nonce echoed in the rejected
-    Tauri result and the accessible alert, not a QA-only mock or fabricated
-    semantic bit.
+    Never convert a missing native denial into PASS or lose evidence of a
+    prohibited SQLite mutation when the exception propagates to the gate.
     """
-    if not isinstance(proof, dict):
-        return False
-    if proof.get("human_review_required") is True or proof.get("atspi_error_text_exposed") is not True:
-        return False
-    binding = proof.get("request_correlation")
-    if not isinstance(binding, dict):
-        return False
-    payload = binding.get("submitted_payload_sha256")
-    host_receipt = binding.get("authoritative_denial")
-    if not isinstance(host_receipt, dict):
-        return False
-    # Both values must come from the actual installed production command/UI.
-    # The current Studio IPC does not expose this contract; the runner retains
-    # NOT TESTED rather than inventing a request ID from a screenshot.
-    opaque_id = host_receipt.get("submitted_request_id")
-    if not (isinstance(opaque_id, str)
-            and bool(re.fullmatch(r"[a-f0-9]{32}", opaque_id))
-            and host_receipt.get("tauri_denial_request_id") == opaque_id
-            and host_receipt.get("native_alert_request_id") == opaque_id
-            and host_receipt.get("error_code") == "INVALID_STUDY_ANGLES"):
-        return False
-    return (
-        host_receipt.get("host_source") == "installed-process-stderr"
-        and host_receipt.get("accessibility_source") == "installed-AT-SPI-alert"
-        and isinstance(payload, str) and bool(re.fullmatch(r"[a-f0-9]{64}", payload))
-        and binding.get("native_readback_sha256") == payload
-        and binding.get("native_action") == "Validate 3 angles"
-        and binding.get("prior_alerts") == []
-        and isinstance(binding.get("new_alerts"), list)
-        and len(binding["new_alerts"]) == 1
-        and production_native_error_id(
-            binding["new_alerts"][0],
-            "The angle response is invalid or its Study evidence changed."
-        ) == opaque_id
-        and type(binding.get("action_monotonic_ns")) is int
-        and type(binding.get("observed_monotonic_ns")) is int
-        and 0 < binding["observed_monotonic_ns"] - binding["action_monotonic_ns"] < 20_000_000_000
-        and isinstance(binding.get("canonical_before_digest"), str)
-        and bool(re.fullmatch(r"[a-f0-9]{64}", binding["canonical_before_digest"]))
-        and binding.get("canonical_after_digest") == binding["canonical_before_digest"]
-    )
-
-
-
-def valid_native_url_request_binding(proof: object) -> bool:
-    """URL denial must have real Rust stderr + exact fresh accessible request ID."""
-    if not isinstance(proof, dict):
-        return False
-    host = proof.get("authoritative_denial")
-    if not isinstance(host, dict):
-        return False
-    ident = host.get("tauri_denial_request_id")
-    return (
-        isinstance(ident, str)
-        and bool(re.fullmatch(r"[a-f0-9]{32}", ident))
-        and host.get("native_alert_request_id") == ident
-        and host.get("submitted_request_id") == ident
-        and host.get("error_code") == "INVALID_MEDIA_URL"
-        and host.get("host_source") == "installed-process-stderr"
-        and host.get("accessibility_source") == "installed-AT-SPI-alert"
-        and production_native_error_id(
-            proof.get("new_alert_text", ""),
-            "Invalid media URL. Only HTTP and HTTPS URLs are supported."
-        ) == ident
-        and proof.get("canonical_unchanged") is True
-        and proof.get("job_count_unchanged") is True
-        and proof.get("native_input_readback_exact") is True
-    )
+    prior = report.get("foreign_study_reference_probe")
+    preserved = dict(prior) if isinstance(prior, dict) else {}
+    preserved["status"] = "FAIL"
+    preserved["reason"] = f"{type(exc).__name__}: {exc}"
+    report["foreign_study_reference_probe"] = preserved
 
 
 def checked(report: dict, key: str, fn):
@@ -1128,7 +1476,45 @@ def exercise(args, report: dict, root: Path):
                 a.click("الاستوديو", "button")
                 a.heading("الاستوديو")
                 session.screenshot("arabic-locale")
-                reached("arabic_studio_observed")
+                # Independently review a *genuinely open* native Arabic
+                # toolbar popup; switching language alone is not RTL review.
+                # This capture is not a PASS assertion for the visual gate.
+                try:
+                    locale_combo = a.global_locale_control()
+                    a.click(locale_combo, "combo")
+                    try:
+                        a.find("EN", "list item", timeout=5)
+                        a.find("ع", "list item", timeout=5)
+                        report.setdefault("visual_capture", {})["arabic_menu"] = (
+                            session.screenshot("arabic-locale-menu-open")
+                        )
+                    finally:
+                        command("xdotool", "key", "--clearmodifiers", "Escape")
+                        time.sleep(0.3)
+                except Exception as capture_error:
+                    report.setdefault("visual_capture_errors", {})["arabic_menu"] = (
+                        f"{type(capture_error).__name__}: {capture_error}"
+                    )
+                # Inspect actual Arabic native Queue and Settings navigation
+                # before relaunch, not merely a localized Studio heading.
+                # Screenshots are review artifacts; dialogs, focus order and
+                # mixed Arabic/Latin form editing remain separately untested.
+                a.click("الطابور", "button")
+                a.heading("المهام")
+                report.setdefault("visual_capture", {})["arabic_queue"] = (
+                    session.screenshot("arabic-queue")
+                )
+                a.click("الإعدادات", "button")
+                a.heading("الإعدادات")
+                report.setdefault("visual_capture", {})["arabic_settings"] = (
+                    session.screenshot("arabic-settings")
+                )
+                a.click("الاستوديو", "button")
+                a.heading("الاستوديو")
+                report.setdefault("visual_capture", {})["arabic_studio_return"] = (
+                    session.screenshot("arabic-studio-return")
+                )
+                reached("arabic_studio_queue_settings_observed")
 
                 # Real Alt+F4, then a new PID; do not write settings or
                 # replace graphical actions with a process restart shortcut.
@@ -1229,10 +1615,50 @@ def exercise(args, report: dict, root: Path):
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "System")
             session.screenshot("system-theme")
+            # A separately selectable Light mode is required by native release
+            # acceptance. PR #136 adds the production option; on older installed
+            # packages keep Light NOT TESTED rather than inferring it from
+            # System on a light OS.
+            light_offered = False
+            try:
+                a.click("Theme", "combo")
+                try:
+                    light_offered = a.available("Light", "list item")
+                finally:
+                    command("xdotool", "key", "--clearmodifiers", "Escape")
+                    time.sleep(0.3)
+            except (NativeFailure, NativeUnavailable):
+                raise
+            report.setdefault("visual_capture", {})["explicit_light_option"] = light_offered
+            if light_offered:
+                a.choose("Theme", "Light")
+                a.click("Save changes", "button")
+                a.assert_selected_option("Theme", "Light")
+                report.setdefault("visual_capture", {})["light_theme"] = (
+                    session.screenshot("light-theme")
+                )
             a.choose("Theme", "Dark")
             a.click("Save changes", "button")
             a.assert_selected_option("Theme", "Dark")
             session.screenshot("dark-theme")
+            # Capture actual installed theme popup and native options for
+            # independent contrast/stacking inspection. The System/Dark
+            # persistence PASS and visual-review verdict stay separate.
+            try:
+                a.click("Theme", "combo")
+                try:
+                    a.find("System", "list item", timeout=5)
+                    a.find("Dark", "list item", timeout=5)
+                    report.setdefault("visual_capture", {})["dark_theme_menu"] = (
+                        session.screenshot("dark-theme-menu-open")
+                    )
+                finally:
+                    command("xdotool", "key", "--clearmodifiers", "Escape")
+                    time.sleep(0.3)
+            except Exception as capture_error:
+                report.setdefault("visual_capture_errors", {})["dark_theme_menu"] = (
+                    f"{type(capture_error).__name__}: {capture_error}"
+                )
             session.stop()
             session.start()
             a = session.ax
@@ -1248,12 +1674,107 @@ def exercise(args, report: dict, root: Path):
         if not checked(report, "theme_mode_control", theme):
             return
 
-
-        # A real installed, offline negative-to-recovery path. The malformed
-        # JSON is typed into the actual WebKitGTK editor; Rust's public
-        # interpret_study_angles command rejects it. The next three angles
-        # must be accepted by the same public UI without egress or DB edits
-        # to the already saved script.
+        # This run deliberately has no fabricated downloads or media transcripts.
+        # The following steps require source fixtures and dedicated adversarial UI inputs.
+        status(report, "multi_source_transcript", "NOT TESTED",
+               "Disposable profile has no real research/transcript sources; no mock material injected")
+        status(report, "source_revocation", "NOT TESTED",
+               "Needs a real source with revocable availability, verified after project reload")
+        status(report, "wrong_project_ipc_denial", "NOT TESTED",
+               "Native UI scoping is not an authorization probe for forged foreign IDs")
+        def denied_url_recovery():
+            # A genuine GUI request reaches production NetworkPolicy. An
+            # unsupported file: URL is rejected before JobService enqueue.
+            # No database seeding, debug bypass, or synthetic success.
+            a = session.ax
+            old_count = count_canonical_jobs(root / "data", name_a)
+            a.click("Queue", "button")
+            a.heading("Jobs", timeout=15)
+            rejected_url = "file:///scriptotar-native-qa-denied-media.mp4"
+            a.type_into("Media URL", rejected_url)
+            if a.read_text("Media URL") != rejected_url:
+                raise NativeFailure("Native Queue field lacks exact submitted URL readback")
+            prior_queue_alerts = native_named_alerts(
+                a, ("url", "scheme", "protocol", "unsupported", "invalid", "blocked"))
+            before_records = canonical_records_snapshot(root / "data")
+            queue_log = root / "desktop.log"
+            queue_log_offset = native_host_log_offset(queue_log)
+            a.click("Queue URL", "button")
+            error_text = ""
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                candidates = native_named_alerts(
+                    a, ("url", "scheme", "protocol", "unsupported", "invalid", "blocked"))
+                fresh = [label for label in candidates if label not in prior_queue_alerts]
+                if fresh:
+                    error_text = fresh[0]
+                    break
+                time.sleep(0.35)
+            # Run the independent read-only canonical SQLite check even if
+            # the accessible alert is missing. The failure screenshot and
+            # final AT-SPI snapshot are retained for production triage.
+            new_count = count_canonical_jobs(root / "data", name_a)
+            after_records = canonical_records_snapshot(root / "data")
+            report["denied_url_canonical_job_count"] = {
+                "before": old_count, "after": new_count,
+                "unchanged": new_count == old_count,
+            }
+            report["denied_url_canonical_snapshot"] = {
+                "before": before_records, "after": after_records,
+                "unchanged": before_records == after_records,
+            }
+            if before_records != after_records:
+                changed = [key for key in sorted(set(before_records["tables"]) |
+                                                 set(after_records["tables"]))
+                           if before_records["tables"].get(key) !=
+                              after_records["tables"].get(key)]
+                raise NativeFailure(
+                    "Rejected Queue URL modified existing canonical SQLite "
+                    f"records (changed tables: {changed})"
+                )
+            if new_count != old_count:
+                session.screenshot("failed-denied-url-job-created")
+                raise NativeFailure(
+                    "Unsupported URL created a canonical job despite GUI rejection "
+                    f"(before={old_count}, after={new_count})"
+                )
+            if not error_text:
+                session.screenshot("failed-denied-url-no-error")
+                raise NativeFailure(
+                    "Unsupported URL was submitted through installed Queue; "
+                    "read-only canonical job count is unchanged, but no named "
+                    "native AT-SPI error alert was exposed. A screenshot "
+                    "cannot automatically substitute for semantic evidence"
+                )
+            session.screenshot("rejected-url-error")
+            queue_receipt = observed_host_denial(
+                queue_log, queue_log_offset, "INVALID_MEDIA_URL",
+                [error_text], "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+            )
+            report["denied_url_host_proof"] = {
+                "authoritative_denial": queue_receipt,
+                "new_alert_text": error_text,
+                "canonical_unchanged": before_records == after_records,
+                "job_count_unchanged": new_count == old_count,
+                "native_input_readback_exact": True,
+                "native_source": "real UI Queue URL and installed stderr",
+            }
+            # Recover through ordinary user navigation and readback. Previously
+            # edited immutable candidate rows must still hold the exact body.
+            a.click("Studio", "button")
+            a.heading("Studio")
+            a.choose("Open study", study)
+            if a.read_text("Script draft") != body:
+                raise NativeFailure("Original native draft changed after denied URL")
+            verify_canonical_reopened_candidates(
+                root / "data", name_a, study, body, tag + "-copy"
+            )
+            session.screenshot("recovered-studio-after-denial")
+            report["denied_url_error"] = error_text[:300]
+            return (
+                "Production Queue rejected unsupported URL with visible native alert, "
+                "job count unchanged, and original Study/candidate text recovered"
+            )
         def error_recovery():
             a = session.ax
             a.click("Studio", "button")
@@ -1263,34 +1784,168 @@ def exercise(args, report: dict, root: Path):
             a.type_into("Audience", "People learning video editing")
             a.click("Prepare 3 creative angles", "button")
             a.edit_field("Paste three-angle JSON response", timeout=12)
-            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}')
+            malformed_angle_json = '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+            a.type_into("Paste three-angle JSON response", malformed_angle_json)
+            observed_angle_json = a.read_text("Paste three-angle JSON response")
+            if observed_angle_json != malformed_angle_json:
+                raise NativeFailure(
+                    "Real WebKitGTK paste editor did not receive exact malformed JSON "
+                    f"(expected length={len(malformed_angle_json)}, "
+                    f"observed length={len(observed_angle_json)})"
+                )
+            # Bind visual proof to the installed AT-SPI button before the
+            # malformed action: a screenshot alone is never validation.
+            control = a.find("Validate 3 angles", "button")
+            try:
+                button_bounds = control.queryComponent().getExtents(a.atspi.DESKTOP_COORDS)
+            except Exception as exc:
+                raise NativeFailure(f"Cannot read native Validate button bounds: {exc}") from exc
+            previous_angle_alerts = native_named_alerts(a, ("angle", "invalid"))
+            # A stale named error is never treated as a fresh rejection.
+            previous_angle_alerts = [
+                value for value in previous_angle_alerts
+                if "angle" in value.lower() and "invalid" in value.lower()
+            ]
+            angle_db_before = canonical_records_snapshot(root / "data")
+            native_log = root / "desktop.log"
+            angle_log_offset = native_host_log_offset(native_log)
+            pre_image = session.screenshot("pre-negative-angles")
+            if not pre_image:
+                raise NativeFailure("No actual installed WebKit pre-rejection screenshot")
+            submission_ns = time.monotonic_ns()
             a.click("Validate 3 angles", "button")
-            # Observe a visible native accessibility error, never infer a
-            # backend rejection from a disabled button or malformed input.
+            # Prefer a named AT-SPI alert. The real WebKitGTK #44278805547
+            # screenshot shows the rejection while the AT-SPI tree omits it.
             deadline = time.monotonic() + 12
-            saw_error = False
+            new_angle_alerts = []
+            observed_ns = 0
             while time.monotonic() < deadline:
-                for node in a.nodes():
-                    try:
-                        label = (node.name or "").lower()
-                        if ("angle" in label and "invalid" in label
-                                and node.getRoleName().lower() in
-                                ("alert", "text", "static", "paragraph", "section")):
-                            saw_error = True
-                            break
-                    except Exception:
-                        continue
-                if saw_error:
+                candidates = native_named_alerts(a, ("angle", "invalid"))
+                new_angle_alerts = [
+                    value for value in candidates
+                    if "angle" in value.lower() and "invalid" in value.lower()
+                    and value not in previous_angle_alerts
+                ]
+                if new_angle_alerts:
+                    observed_ns = time.monotonic_ns()
                     break
                 time.sleep(0.3)
-            if not saw_error:
+            saw_error = bool(new_angle_alerts)
+            angle_db_after = canonical_records_snapshot(root / "data")
+            report["angle_rejection_canonical_snapshot"] = {
+                "before": angle_db_before,
+                "after": angle_db_after,
+                "unchanged": angle_db_before == angle_db_after,
+            }
+            if angle_db_before != angle_db_after:
                 raise NativeFailure(
-                    "Malformed three-angle JSON produced no visible native rejection"
+                    "Malformed three-angle validation modified canonical SQLite records"
                 )
-            session.screenshot("negative-angles-rejected")
-            a.type_into("Paste three-angle JSON response", '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}')
+            post_image = session.screenshot("negative-angles-rejected")
+            if not post_image:
+                raise NativeFailure("No actual installed WebKit rejection screenshot")
+            # A pixel fallback is allowed ONLY when an alert visibly appears
+            # newly below the native Validate control. This is a UI assertion,
+            # never a substitute for the subsequent accepted response, read-only
+            # immutable SQLite verification, or denied Queue job count.
+            if not saw_error:
+                proof = native_angle_alert_image_proof(
+                    root / pre_image, root / post_image, button_bounds
+                )
+                report["angle_rejection_visual_proof"] = {
+                    **proof, "before": pre_image, "after": post_image,
+                    "atspi_error_text_exposed": False,
+                    "human_review_required": True,
+                }
+            else:
+                angle_denial = observed_host_denial(
+                    native_log, angle_log_offset, "INVALID_STUDY_ANGLES",
+                    new_angle_alerts,
+                    "The angle response is invalid or its Study evidence changed."
+                )
+                report["angle_rejection_visual_proof"] = {
+                    "proof": "fresh named AT-SPI alert after real native action",
+                    "screenshot": post_image, "atspi_error_text_exposed": True,
+                    "request_correlation": {
+                        "native_action": "Validate 3 angles",
+                        "authoritative_denial": angle_denial,
+                        "submitted_payload_sha256": hashlib.sha256(
+                            malformed_angle_json.encode()).hexdigest(),
+                        "native_readback_sha256": hashlib.sha256(
+                            observed_angle_json.encode()).hexdigest(),
+                        "prior_alerts": previous_angle_alerts,
+                        "new_alerts": new_angle_alerts,
+                        "action_monotonic_ns": submission_ns,
+                        "observed_monotonic_ns": observed_ns,
+                        "canonical_before_digest": angle_db_before["digest"],
+                        "canonical_after_digest": angle_db_after["digest"],
+                    },
+                }
+            # A rejected one-angle response must leave zero native action
+            # cards: do not accept previously rendered/stale model output.
+            cards_after_rejection = count_native_angle_actions(a)
+            if cards_after_rejection != 0:
+                raise NativeFailure(
+                    f"Malformed response retained {cards_after_rejection} "
+                    "interactive angle cards after native rejection"
+                )
+            valid_angle_json = '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}'
+            a.type_into("Paste three-angle JSON response", valid_angle_json)
+            observed_angle_json = a.read_text("Paste three-angle JSON response")
+            if observed_angle_json != valid_angle_json:
+                raise NativeFailure(
+                    "Real WebKitGTK paste editor did not receive exact corrected JSON "
+                    f"(expected length={len(valid_angle_json)}, "
+                    f"observed length={len(observed_angle_json)})"
+                )
             a.click("Validate 3 angles", "button")
-            a.find("Share a practical checklist", timeout=12)
+            # Actual installed WebKitGTK AT-SPI does not expose <strong>
+            # card titles as names; run #44299491028 *rendered all three*
+            # cards but a title-name query falsely failed. Count the three
+            # native rendered action buttons (no synthetic rows or DOM).
+            deadline = time.monotonic() + 12
+            count = 0
+            while time.monotonic() < deadline:
+                count = count_native_angle_actions(a)
+                if count == 3:
+                    break
+                time.sleep(0.3)
+            if count != 3:
+                # Preserve real, bounded AT-SPI surface information before
+                # raising. The top-of-page screenshot cannot establish
+                # whether the validation region rendered below the fold.
+                review_nodes = []
+                for node in a.nodes():
+                    try:
+                        name = (node.name or "").strip()
+                        role = node.getRoleName()
+                        if any(word in name.lower() for word in (
+                                "angle", "invalid", "validation", "script")):
+                            review_nodes.append({
+                                "name": name[:160], "role": role,
+                            })
+                    except Exception:
+                        continue
+                report["angle_recovery_native_diagnostics"] = {
+                    "observed_action_count": count,
+                    "related_atspi_nodes": review_nodes[:45],
+                    "exact_json_input_prechecked": True,
+                }
+                session.screenshot("failed-valid-three-angles-not-mounted")
+                try:
+                    # Pointer-wheel scrolling is native screenshot collection
+                    # only; it does not reclassify a failure as PASS.
+                    command("xdotool", "mousemove", "1100", "650")
+                    for _ in range(4):
+                        command("xdotool", "click", "5")
+                    session.screenshot("failed-valid-three-angles-scrolled")
+                except Exception as exc:
+                    report["angle_failure_capture_warning"] = type(exc).__name__
+                raise NativeFailure(
+                    f"Valid three-angle response did not mount exactly "
+                    f"three native AT-SPI card actions (observed {count})"
+                )
+            report["valid_three_angle_native_action_count"] = count
             # The original immutable script must remain intact. This local
             # response review cannot create a draft or send an AI request.
             if a.read_text("Script draft") != body:
@@ -1301,6 +1956,7 @@ def exercise(args, report: dict, root: Path):
                 root / "data", name_a, study, body, tag + "-copy"
             )
             session.screenshot("three-angles-recovered")
+            denied_url_recovery()
             return (
                 "Real WebKitGTK malformed JSON rejected through public Rust IPC, "
                 "three deterministic angles subsequently validated in installed "
@@ -1309,19 +1965,144 @@ def exercise(args, report: dict, root: Path):
             )
         if not checked(report, "error_recovery", error_recovery):
             return
-
-        # The remaining scenarios require separate genuine fixtures/probes.
-        # Do not grant PASS based on the unrelated local writing recovery case.
-        status(report, "multi_source_transcript", "NOT TESTED",
-               "Disposable profile has no real research/transcript sources; no mock material injected")
-        status(report, "source_revocation", "NOT TESTED",
-               "Needs a real source with revocable availability, verified after project reload")
-        status(report, "wrong_project_ipc_denial", "NOT TESTED",
-               "Native UI scoping is not an authorization probe for forged foreign IDs")
         status(report, "arabic_rtl", "NOT TESTED",
                "AT-SPI labels alone cannot certify document direction, mixed-text order or visual RTL")
         status(report, "light_dark_visual", "NOT TESTED",
                "Native visual appearance requires independent screenshot inspection; app offers dark/system")
+
+        # This optional, read-only foreign Study reference is deliberately
+        # exercised LAST. A real AT-SPI/production accessibility failure still
+        # FAILS the total installed run, but cannot hide independent native
+        # keyboard, locale, theme and error-recovery evidence. Never promote a
+        # read denial into the required forged mutating Tauri IPC PASS.
+        ax = session.ax
+        report["foreign_study_reference_probe"] = {
+            "status": "NOT TESTED",
+            "reason": "Open Study reference is not exposed in this installed source",
+        }
+        if ax.available("Open Study reference"):
+            def foreign_study_reference_probe():
+                active = session.ax
+                project_id, study_id, draft_id = canonical_study_reference_ids(
+                    root / "data", name_a, study
+                )
+                reference = (
+                    f"scriptotar://study/{project_id}/{study_id}?draft={draft_id}"
+                )
+                # We are in A following isolation(); activate B for a genuine
+                # foreign A reference attempted through the installed UI.
+                active.choose("PROJECT", name_b)
+                # Require the real installed native project selector to expose
+                # B as selected; a generic Studio heading alone is not proof.
+                active.assert_selected_option("PROJECT", name_b)
+                active.heading("Studio")
+                active.click("Open Study reference")
+                active.type_into("Paste Study reference", reference)
+                if active.read_text("Paste Study reference") != reference:
+                    raise NativeFailure(
+                        "Foreign Study reference native input did not match canonical IDs"
+                    )
+                expected_error = (
+                    "This Study reference cannot be opened in the active project."
+                )
+                before_alerts = native_named_alerts(
+                    active, ("study reference", "active project")
+                )
+                before = canonical_records_snapshot(root / "data")
+                host_log = root / "desktop.log"
+                host_offset = native_host_log_offset(host_log)
+                # Persist authentic pre-dispatch evidence before any possible
+                # UIA/AT-SPI, screenshot or post-click failure can throw.
+                report["foreign_study_reference_probe"] = {
+                    "status": "NOT TESTED",
+                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+                    "canonical_before": before,
+                    "native_input_readback": "exact AT-SPI Text verified",
+                    "preexisting_exact_denial": expected_error in before_alerts,
+                }
+                active.click("Open reference", "button")
+                found_error = False
+                reference_host_proof = None
+                fresh_native_alerts = []
+                deadline = time.monotonic() + 12
+                while time.monotonic() < deadline:
+                    alerts = native_named_alerts(
+                        active, ("study reference", "active project")
+                    )
+                    # The named native alert must have the exact generic
+                    # production denial + a genuine fresh 128-bit host ID.
+                    # A plain error, stale name or arbitrary image map cannot
+                    # stand in for authenticated Tauri authorization.
+                    fresh_native_alerts = [label for label in alerts
+                        if label not in before_alerts and
+                        production_native_error_id(label, expected_error) is not None]
+                    if len(fresh_native_alerts) == 1:
+                        reference_host_proof = observed_host_denial(
+                            host_log, host_offset, "FOREIGN_STUDY_REFERENCE",
+                            fresh_native_alerts, expected_error,
+                        )
+                        if reference_host_proof is not None:
+                            found_error = True
+                            break
+                    time.sleep(0.35)
+                after = canonical_records_snapshot(root / "data")
+                # Verify the attempted foreign read did not populate Project B's
+                # empty unsaved editor or disclose Project A's Study heading.
+                # The exact private strings are used only for native comparison,
+                # never published as evidence or included in error messages.
+                foreign_title_absent = not active.available(study)
+                foreign_draft_absent = active.read_text("Script draft") == ""
+                protected = foreign_title_absent and foreign_draft_absent
+                report["foreign_study_reference_probe"] = {
+                    "status": ("PARTIAL" if found_error and before == after and protected
+                               else "FAIL"),
+                    "source": "installed UI A reference while B active",
+                    "canonical_before": before,
+                    "canonical_after": after,
+                    "unchanged": before == after,
+                    "foreign_study_title_absent": foreign_title_absent,
+                    "foreign_draft_text_absent": foreign_draft_absent,
+                    "visible_new_native_denial": found_error,
+                    "preexisting_exact_denial": expected_error in before_alerts,
+                    "postclick_exact_denial": bool(fresh_native_alerts),
+                    "host_request_correlation": reference_host_proof,
+                    "native_input_readback": "exact AT-SPI Text verified",
+                    "reference_sha256": hashlib.sha256(reference.encode()).hexdigest(),
+                    "missing": ("forged mutating cross-project IPC" if reference_host_proof
+                                else "host request identity and forged mutating IPC"),
+                }
+                session.screenshot("foreign-study-reference-denial")
+                if after != before or not found_error or not protected:
+                    raise NativeFailure(
+                        "Installed foreign reference lacked fresh host-correlated "
+                        "native denial, rewrote canonical data or disclosed "
+                        "foreign Study content in Project B; forged mutation "
+                        "authorization remains NOT TESTED"
+                    )
+                active.choose("PROJECT", name_a)
+                active.heading("Studio")
+                active.choose("Open study", study)
+                verify_canonical_reopened_candidates(
+                    root / "data", name_a, study, body, tag + "-copy"
+                )
+                # Restore Project A so subsequent native keyboard/locale
+                # tests continue with the original real Study.
+                return "Partial real installed foreign Study read denial; write IPC not tested"
+            try:
+                detail = foreign_study_reference_probe()
+                report["foreign_study_reference_probe"]["detail"] = detail
+            except (NativeFailure, NativeUnavailable, Exception) as exc:
+                # Do not discard the original before/after 39-table evidence
+                # when the native semantic alert is absent or a write occurs.
+                # No screenshot or read-only denial can upgrade to IPC PASS.
+                preserve_foreign_reference_failure(report, exc)
+                # This is a genuine native probe failure, never silently PASS.
+                status(report, "wrong_project_ipc_denial", "FAIL",
+                       f"Installed foreign-reference preflight failed: {exc}")
+                return
+        status(report, "wrong_project_ipc_denial", "NOT TESTED",
+               "Read-only foreign Study navigation is not forged mutating "
+               "Tauri IPC; exact write-denial and backend-ID evidence absent")
     finally:
         # Preserve the first genuine *interaction* failure while the installed
         # app is still on the exact failing screen. A boot screenshot alone

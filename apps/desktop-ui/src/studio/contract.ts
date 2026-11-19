@@ -145,7 +145,7 @@ export interface StudioGateway {
   reviewStudyEvidence?(projectId: string, studyId: string, evidenceId: string, input: StudyEvidenceReviewInput): Promise<StudyEvidence>;
   listStudies(projectId: string): Promise<Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>[]>;
   createStudy(projectId: string, brief: CreativeBrief): Promise<ContentStudy>;
-  getStudy(projectId: string, studyId: string, draftId?: string): Promise<ContentStudy>;
+  getStudy(projectId: string, studyId: string, draftId?: string, requestId?: string): Promise<ContentStudy>;
   /** Read-only history of committed three-script v11 batches, no AI/network. */
   listStudyWritingBatches?(projectId: string, studyId: string): Promise<StudyWritingBatch[]>;
   duplicateStudyDraft?(projectId: string, studyId: string, draftId: string, expectedDraftRevision: number): Promise<ContentStudy>;

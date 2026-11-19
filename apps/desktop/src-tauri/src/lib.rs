@@ -62,6 +62,23 @@ fn native_denial(code: &str, request_id: Option<&str>, fallback: String) -> Stri
     }
 }
 
+/// The authenticated active-project mutex rejects a foreign project before any
+/// Study/draft data read. Only that exact denial receives a native request
+/// marker; ordinary missing Studies, invalid IDs and storage failures retain
+/// their existing redacted/default error behavior.
+fn study_reference_denial(error: RepositoryError, request_id: Option<&str>) -> String {
+    let wrong_project = matches!(
+        &error,
+        RepositoryError::NotFound(reason) if reason == "project is not active"
+    );
+    let fallback = command_error(error);
+    if wrong_project {
+        native_denial("FOREIGN_STUDY_REFERENCE", request_id, fallback)
+    } else {
+        fallback
+    }
+}
+
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
 static MIGRATION_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -689,8 +706,10 @@ async fn get_study(
     project_id: String,
     study_id: String,
     draft_id: Option<String>,
+    request_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<UiStudioStudy, String> {
+    validate_native_request_id(request_id.as_deref())?;
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
     let draft_id = draft_id
@@ -702,7 +721,7 @@ async fn get_study(
             Some(id) => services.get_studio_study_draft(project_id, study_id, id),
             None => services.get_studio_study(project_id, study_id),
         }
-        .map_err(command_error)
+        .map_err(|error| study_reference_denial(error, request_id.as_deref()))
     })
     .await
 }
@@ -1929,6 +1948,29 @@ mod native_denial_identity_tests {
         }
         assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
         assert!(validate_native_request_id(None).is_ok());
+    }
+
+    #[test]
+    fn only_active_project_study_reference_denial_gets_correlated_marker() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            study_reference_denial(
+                RepositoryError::NotFound("project is not active".into()),
+                Some(id),
+            ),
+            format!("SCRIPTOTAR_DENIAL:FOREIGN_STUDY_REFERENCE:{id}")
+        );
+        let missing = study_reference_denial(
+            RepositoryError::NotFound("selected draft in this Study".into()),
+            Some(id),
+        );
+        assert!(missing.contains("selected draft in this Study"));
+        assert!(!missing.contains("SCRIPTOTAR_DENIAL:"));
+        let internal = study_reference_denial(
+            RepositoryError::Storage("test storage failure".into()),
+            Some(id),
+        );
+        assert!(!internal.contains("SCRIPTOTAR_DENIAL:"));
     }
 
     #[test]

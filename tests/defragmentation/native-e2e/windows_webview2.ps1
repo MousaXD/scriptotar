@@ -34,6 +34,8 @@ $report = [ordered]@{
   }
   native_ui_probe = $null
   cases = $cases
+  visual_capture = @{}
+  visual_capture_errors = @{}
   verdict = 'NOT TESTED'
 }
 function Write-UiaDiagnostics([object]$root, [string]$path, [object]$appProcess) {
@@ -183,6 +185,13 @@ public static class NativeWebViewWindow {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+    public static void NativeScrollUp(int x, int y) {
+        // Genuine OS wheel motion in the installed WebView2 viewport, not
+        // browser JavaScript, UIA SetValue, or a synthetic ScrollPattern PASS.
+        if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position native Studio wheel pointer");
+        System.Threading.Thread.Sleep(100);
+        mouse_event(0x0800, 0, 0, 480, UIntPtr.Zero); // MOUSEEVENTF_WHEEL: four 120-unit detents up.
+    }
     public static void NativeClick(int x, int y) {
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("Cannot position pointer at UIA option");
         System.Threading.Thread.Sleep(120);
@@ -408,21 +417,66 @@ function Click-InstalledControl([IntPtr]$hwnd, [string]$name, [object]$kind, [sw
   } catch {
     Write-Host "UIA GetClickablePoint unsupported for '$name'; using visible, enabled HWND-bounded UIA rectangle"
   }
+  if ($pointer -and $name -eq 'Script candidates') {
+    # Refuse a pointer event on a UIA combobox aligned beneath the fixed
+    # global workspace search bar. WebView2 can label this IsOffscreen=false.
+    $nativeOwner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    $screen = $nativeOwner.Current.BoundingRectangle
+    $safeTop = $screen.Y + 135
+    if ($cy -lt $safeTop -or $cy -gt ($screen.Y + $screen.Height - 25)) {
+      throw "Installed Script candidates pointer would strike fixed toolbar or viewport edge (y=$cy, safe_top=$safeTop)"
+    }
+    Assert-InstalledCommandPaletteClosed $hwnd
+  }
   [NativeWebViewWindow]::NativeClick([int][Math]::Round($cx), [int][Math]::Round($cy))
   Start-Sleep -Milliseconds 650
 }
 function Type-InstalledEdit([IntPtr]$hwnd, [string]$name, [string]$value) {
-  $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
-  $element.SetFocus()
-  # Keyboard dispatch triggers the real Svelte input listeners. UIA SetValue
-  # alone can replace a DOM value without emitting input events.
+  # Installed WebView2 PR #135 run #44353033303 found real UIA Edit
+  # 'Creative goal' but SetFocus + SendKeys sent nothing into that editor.
+  # The existing native Queue URL test already proved HWND-bounded pointer
+  # click followed by Windows clipboard keyboard paste is necessary.
+  # Never replace this with UIA ValuePattern.SetValue or injected JavaScript;
+  # those bypass the real Svelte event path and could counterfeit success.
+  $actual = ''
+  $lastFocus = $false
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    Click-InstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit) -pointer
+    $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+    $element.SetFocus()
+    Set-Clipboard -Value $value
+    [System.Windows.Forms.SendKeys]::SendWait('^a')
+    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    $deadline = [DateTime]::UtcNow.AddSeconds(3)
+    do {
+      Start-Sleep -Milliseconds 250
+      # Requery native ValuePattern after the real WebView2 renderer updated;
+      # stale AutomationElements must not satisfy this exact-input assertion.
+      $element = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit) 3
+      $actual = [string]$element.GetCurrentPattern(
+        [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+      if ($actual -ceq $value) { return }
+      $lastFocus = [bool]$element.Current.HasKeyboardFocus
+    } while ([DateTime]::UtcNow -lt $deadline)
+  }
+  throw "Installed Edit control '$name' did not receive exact native pointer/clipboard input (expected length $($value.Length), actual length $($actual.Length), focused=$lastFocus)"
+}
+function Paste-InstalledQueueUrl([IntPtr]$hwnd, [string]$url) {
+  # Installed WebView2 sometimes keeps the URL placeholder after SetFocus +
+  # SendKeys.SendWait (run #44308361975, attached screenshot + UIA Edit).
+  # Demand an actual HWND-bounded pointer click and native clipboard paste.
+  # Never use ValuePattern.SetValue, JavaScript injection, or direct backend API.
+  Click-InstalledControl $hwnd 'Media URL' ([System.Windows.Automation.ControlType]::Edit) -pointer
+  $field = Find-ExactInstalledControl $hwnd 'Media URL' ([System.Windows.Automation.ControlType]::Edit)
+  $field.SetFocus()
+  Set-Clipboard -Value $url
   [System.Windows.Forms.SendKeys]::SendWait('^a')
-  [System.Windows.Forms.SendKeys]::SendWait($value)
-  Start-Sleep -Milliseconds 650
-  $actual = $element.GetCurrentPattern(
+  [System.Windows.Forms.SendKeys]::SendWait('^v')
+  Start-Sleep -Milliseconds 750
+  $actual = [string]$field.GetCurrentPattern(
     [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
-  if ($actual -ne $value) {
-    throw "Installed Edit control '$name' did not receive actual user text"
+  if ($actual -cne $url) {
+    throw "Installed Media URL did not receive actual native clipboard input (expected length $($url.Length), actual length $($actual.Length), focused=$($field.Current.HasKeyboardFocus))"
   }
 }
 function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
@@ -441,28 +495,191 @@ function Paste-InstalledJson([IntPtr]$hwnd, [string]$name, [string]$value) {
     throw "Installed JSON editor '$name' did not receive exact native pasted text"
   }
 }
-function Wait-InstalledAngleRejection([IntPtr]$hwnd) {
-  # Match only a visible rendered error associated with angle validation.
-  # A malformed fixture alone is not proof of a denied IPC.
+function Assert-InstalledNativeInputReceipt([IntPtr]$hwnd, [string]$name, [string]$expected) {
+  # Re-read the actual installed UIA edit control immediately before dispatch.
+  # A caller-owned flag, clipboard contents or earlier paste assertion is not
+  # evidence that THIS native request used the submitted input.
+  $field = Find-ExactInstalledControl $hwnd $name ([System.Windows.Automation.ControlType]::Edit)
+  $actual = [string]$field.GetCurrentPattern(
+    [System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+  if ($actual -cne $expected) {
+    throw "Installed native input '$name' changed before dispatch (expected length $($expected.Length), observed length $($actual.Length))"
+  }
+  return [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+      [Text.Encoding]::UTF8.GetBytes($actual))).ToLowerInvariant()
+}
+function Get-InstalledBoundDenialAlerts([IntPtr]$hwnd, [string]$localizedText) {
+  # Real Tauri #135 places the request nonce in role=alert's aria-label.
+  # Installed WebView2 exposed only plain error in the child Text node; read
+  # the actual current visible native alert container, not its screenshot.
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $owner) { return @() }
+  $pattern = '^' + [regex]::Escape($localizedText) + ' · request [0-9a-f]{32}$'
+  $found = @()
+  $nodes = $owner.FindAll(
+    [System.Windows.Automation.TreeScope]::Subtree,
+    [System.Windows.Automation.Condition]::TrueCondition)
+  foreach ($node in $nodes) {
+    try {
+      $role = $node.Current.ControlType.ProgrammaticName
+      if ($role -notin @('ControlType.Group', 'ControlType.Text',
+                        'ControlType.Custom', 'ControlType.Pane')) { continue }
+      $label = [string]$node.Current.Name
+      if ($label -cnotmatch $pattern -or $node.Current.IsOffscreen) { continue }
+      $rect = $node.Current.BoundingRectangle
+      if ($rect.Width -le 3 -or $rect.Height -le 3) { continue }
+      $found += $label
+    } catch { }
+  }
+  return @($found | Sort-Object -Unique)
+}
+function Wait-InstalledBoundDenial([IntPtr]$hwnd, [string]$localizedText,
+                                  [string[]]$prior) {
+  # Require an exact newly rendered real UIA aria-label after clicking.
+  # Host stderr is then independently checked for the identical typed ID.
+  $deadline = [DateTime]::UtcNow.AddSeconds(8)
+  do {
+    try {
+      $fresh = @(Get-InstalledBoundDenialAlerts $hwnd $localizedText |
+        Where-Object { $_ -cnotin $prior })
+      if ($fresh.Count -eq 1) { return [string]$fresh[0] }
+      if ($fresh.Count -gt 1) { return $null }
+    } catch { }
+    Start-Sleep -Milliseconds 300
+  } while ([DateTime]::UtcNow -lt $deadline)
+  return $null
+}
+
+function Get-InstalledAngleRejectionAlerts([IntPtr]$hwnd) {
+  # Read actual visible UIA error text before/after the native click.
+  # A historical 'angle invalid' label must never certify a newer request.
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
   $textCondition = [System.Windows.Automation.PropertyCondition]::new(
     [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
     [System.Windows.Automation.ControlType]::Text)
+  $labels = @()
+  $nodes = $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
+  foreach ($item in $nodes) {
+    try {
+      $label = [string]$item.Current.Name
+      if ($label -match '(?i)(angle.*invalid|invalid.*angle)' -and
+          -not $item.Current.IsOffscreen) { $labels += $label }
+    } catch { }
+  }
+  return @($labels | Sort-Object -Unique)
+}
+function Wait-InstalledAngleRejection([IntPtr]$hwnd, [string[]]$priorAlerts) {
+  # Temporal binding: an accessible denial must appear NEW after the actual
+  # malformed input and clicked native Validate action, not already before.
   $deadline = [DateTime]::UtcNow.AddSeconds(12)
   do {
     try {
-      $tree = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
-      if ($tree) {
-        $nodes = $tree.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
-        foreach ($item in $nodes) {
-          $label = [string]$item.Current.Name
-          if ($label -match '(?i)(angle.*invalid|invalid.*angle)' -and
-              -not $item.Current.IsOffscreen) { return }
-        }
-      }
+      $candidates = @(Get-InstalledAngleRejectionAlerts $hwnd)
+      $newAlerts = @($candidates | Where-Object { $_ -cnotin $priorAlerts })
+      if ($newAlerts.Count -gt 0) { return [string]$newAlerts[0] }
     } catch { }
     Start-Sleep -Milliseconds 350
   } while ([DateTime]::UtcNow -lt $deadline)
-  throw 'Malformed three-angle JSON produced no visible installed UIA validation error'
+  throw 'Malformed three-angle JSON has no NEW installed UIA validation alert for this request'
+}
+# Observe actual installed GUI process stderr; no synthetic Tauri IPC.
+$script:installedDenialLog = $null
+$script:installedLaunchIndex = 0
+function Start-InstalledDesktop([string]$exe) {
+  $script:installedLaunchIndex++
+  $script:installedDenialLog = Join-Path $EvidenceDir (
+    'installed-host-stderr-' + $script:installedLaunchIndex + '.txt')
+  return Start-Process -FilePath $exe -PassThru -RedirectStandardError $script:installedDenialLog
+}
+function Get-InstalledHostLogOffset {
+  if (-not $script:installedDenialLog) { return [long]0 }
+  try {
+    if (Test-Path $script:installedDenialLog) {
+      return [long](Get-Item $script:installedDenialLog).Length
+    }
+  } catch { }
+  return [long]0
+}
+function Get-InstalledHostDenial([long]$beforeOffset, [string]$code,
+                                 [string]$nativeAlert, [string]$expectedText) {
+  if ($code -cnotin @('INVALID_STUDY_ANGLES','INVALID_MEDIA_URL',
+                         'FOREIGN_STUDY_REFERENCE') -or
+      -not $script:installedDenialLog -or -not $nativeAlert) { return $null }
+  $native = [regex]::Match(
+    $nativeAlert,
+    '^' + [regex]::Escape($expectedText) + ' · request ([0-9a-f]{32})$')
+  if (-not $native.Success) { return $null }
+  try {
+    $log = [IO.File]::Open(
+      $script:installedDenialLog, [IO.FileMode]::Open,
+      [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+    try {
+      if ($log.Length -lt $beforeOffset -or
+          ($log.Length - $beforeOffset) -gt 65536) { return $null }
+      $log.Seek($beforeOffset, [IO.SeekOrigin]::Begin) | Out-Null
+      $reader = [IO.StreamReader]::new($log, [Text.Encoding]::UTF8, $false, 1024, $true)
+      try { $fresh = $reader.ReadToEnd() }
+      finally { $reader.Dispose() }
+    } finally { $log.Dispose() }
+  } catch { return $null }
+  # Treat ANY additional typed denial in the post-click host log as
+  # ambiguous, even when its code differs. A later unrelated request must
+  # not authenticate the malformed-angle/Queue submission.
+  $pattern = '^\[scriptotar-native-denial\] code=([A-Z_]+) request_id=([0-9a-f]{32})$'
+  $markers = @()
+  foreach ($line in ($fresh -split '\r?\n')) {
+    $match = [regex]::Match($line.Trim(), $pattern)
+    if ($match.Success) {
+      $markers += [pscustomobject]@{
+        Code = $match.Groups[1].Value
+        Id = $match.Groups[2].Value
+      }
+    }
+  }
+  if ($markers.Count -ne 1 -or $markers[0].Code -cne $code -or
+      $markers[0].Id -cne $native.Groups[1].Value) {
+    return $null
+  }
+  return [string]$markers[0].Id
+}
+
+function Get-InstalledReferenceDenials([IntPtr]$hwnd) {
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $root) { return @() }
+  $condition = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Text),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty,
+      'This Study reference cannot be opened in the active project.'))
+  $nodes = $root.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)
+  $values = @()
+  foreach ($node in $nodes) {
+    try {
+      if (-not $node.Current.IsOffscreen) { $values += [string]$node.Current.Name }
+    } catch { }
+  }
+  return @($values)
+}
+function Get-InstalledQueueRejectionAlerts([IntPtr]$hwnd) {
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  $textCondition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Text)
+  $values = @()
+  $tree = $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $textCondition)
+  foreach ($element in $tree) {
+    try {
+      if ($element.Current.IsOffscreen) { continue }
+      $value = [string]$element.Current.Name
+      if ($value.Length -gt 12 -and
+          $value -match '(?i)(scheme|protocol|unsupported|invalid|blocked|not allowed|denied|file:)' -and
+          $value -ne 'Supported media URL') { $values += $value }
+    } catch { }
+  }
+  return @($values | Sort-Object -Unique)
 }
 function Wait-InstalledDashboard([IntPtr]$hwnd, [string]$name) {
   # In the captured WebView2 tree the current project is twice exposed as
@@ -519,8 +736,89 @@ function Find-InstalledPopupOption([IntPtr]$hwnd, [string]$name, [int]$timeoutSe
   } while ([DateTime]::UtcNow -lt $deadline)
   throw "Installed popup option not found with actionable UIA role: $name"
 }
+function Assert-InstalledCommandPaletteClosed([IntPtr]$hwnd) {
+  # A previous native misclick opened the global palette in #44389766717.
+  # It is an obstructing native modal, never a legitimate Studio selection.
+  $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+  if (-not $owner) { throw 'Installed UIA WebView provider lost before candidate click' }
+  $condition = [System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::NameProperty, 'Command palette')
+  foreach ($modal in $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $condition)) {
+    try {
+      $bounds = $modal.Current.BoundingRectangle
+      if (-not $modal.Current.IsOffscreen -and
+          $bounds.Width -gt 50 -and $bounds.Height -gt 50) {
+        throw 'Installed Command palette obstructs native Studio candidate selection'
+      }
+    } catch [System.Runtime.InteropServices.COMException] { }
+  }
+}
+function Ensure-InstalledCandidateViewport([IntPtr]$hwnd) {
+  # A genuine UIA ScrollItemIntoView can place this combobox UNDER the fixed
+  # workspace search header. Requery native bounds and move the actual page
+  # using OS wheel events; never presume a scroll request was successful.
+  for ($attempt = 0; $attempt -lt 7; $attempt++) {
+    Assert-InstalledCommandPaletteClosed $hwnd
+    $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    $window = $owner.Current.BoundingRectangle
+    if ($window.Width -le 150 -or $window.Height -le 200) {
+      throw 'Installed WebView2 viewport has no actionable UIA bounds'
+    }
+    $candidate = Find-ExactInstalledControl $hwnd 'Script candidates' (
+      [System.Windows.Automation.ControlType]::ComboBox) 3
+    $rect = $candidate.Current.BoundingRectangle
+    $safeTop = $window.Y + 135
+    # Use the actual installed global-search control to expand the fixed
+    # toolbar exclusion when its observable bounds are taller than usual.
+    $search = [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty,
+      'Search workspace and commands')
+    foreach ($header in $owner.FindAll([System.Windows.Automation.TreeScope]::Subtree, $search)) {
+      try {
+        if ($header.Current.IsOffscreen) { continue }
+        $headerBounds = $header.Current.BoundingRectangle
+        if ($headerBounds.Width -gt 50 -and $headerBounds.Height -gt 5) {
+          $safeTop = [Math]::Max($safeTop, $headerBounds.Y + $headerBounds.Height + 18)
+        }
+      } catch { }
+    }
+    $safeBottom = $window.Y + $window.Height - 28
+    $centerX = $rect.X + $rect.Width / 2
+    $centerY = $rect.Y + $rect.Height / 2
+    if ($candidate.Current.IsEnabled -and -not $candidate.Current.IsOffscreen -and
+        $rect.Width -gt 5 -and $rect.Height -gt 5 -and
+        $centerX -gt $window.X -and $centerX -lt ($window.X + $window.Width) -and
+        $centerY -ge $safeTop -and $centerY -le $safeBottom) {
+      Write-Host "Native candidate combobox verified toolbar-clear by fresh UIA: center_y=$centerY safe_top=$safeTop safe_bottom=$safeBottom"
+      return
+    }
+    if ($attempt -eq 0) {
+      try {
+        $scrollItem = $candidate.GetCurrentPattern(
+          [System.Windows.Automation.ScrollItemPattern]::Pattern)
+        if ($scrollItem) { $scrollItem.ScrollIntoView() }
+      } catch { }
+    } elseif ($centerY -lt $safeTop -or $candidate.Current.IsOffscreen) {
+      $wheelX = [int][Math]::Round($window.X + $window.Width * 0.7)
+      $wheelY = [int][Math]::Round($window.Y + $window.Height * 0.55)
+      [NativeWebViewWindow]::NativeScrollUp($wheelX, $wheelY)
+    } else {
+      # A still-below-viewport or invalid native control must remain a FAIL.
+      # No simulated DOM click and no unbounded scrolling.
+      throw "Installed Script candidates native center remains outside safe viewport (y=$centerY, top=$safeTop, bottom=$safeBottom)"
+    }
+    Start-Sleep -Milliseconds 450
+  }
+  throw 'Installed Script candidates could not be moved clear of the fixed toolbar by genuine native scroll'
+}
 function Choose-InstalledOption([IntPtr]$hwnd, [string]$label, [string]$name) {
+  if ($label -eq 'Script candidates') {
+    Ensure-InstalledCandidateViewport $hwnd
+  }
   Click-InstalledControl $hwnd $label ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+  if ($label -eq 'Script candidates') {
+    Assert-InstalledCommandPaletteClosed $hwnd
+  }
   $option = Find-InstalledPopupOption $hwnd $name 7
   $actualRole = $option.Current.ControlType.ProgrammaticName
   if ($actualRole -notin @('ControlType.ListItem', 'ControlType.Button')) {
@@ -681,6 +979,9 @@ from linux_webkit import (
     verify_canonical_projects,
     verify_canonical_saved_draft,
     verify_canonical_reopened_candidates,
+    count_canonical_jobs,
+    canonical_records_snapshot,
+    canonical_study_reference_ids,
 )
 kind, root, a, b, c, copy = sys.argv[2:8]
 if kind == "projects":
@@ -689,6 +990,14 @@ elif kind == "draft":
     print(verify_canonical_saved_draft(Path(root), a, b, c))
 elif kind == "candidates":
     print(verify_canonical_reopened_candidates(Path(root), a, b, c, copy))
+elif kind == "jobs":
+    print(count_canonical_jobs(Path(root), a))
+elif kind == "snapshot":
+    import json
+    print(json.dumps(canonical_records_snapshot(Path(root)), sort_keys=True))
+elif kind == "study_reference":
+    import json
+    print(json.dumps(canonical_study_reference_ids(Path(root), a, b)))
 else:
     raise ValueError("Unsupported canonical installed DB probe")
 '@
@@ -731,7 +1040,7 @@ try {
   $report.executable_sha256 = (Get-FileHash -Algorithm SHA256 $app.FullName).Hash.ToLowerInvariant()
   New-Item -ItemType Directory -Force $dataDir | Out-Null
   $env:SCRIPTOTAR_DATA_DIR = $dataDir
-  $proc = Start-Process -FilePath $app.FullName -PassThru
+  $proc = Start-InstalledDesktop $app.FullName
   Add-Type -AssemblyName UIAutomationClient
   Add-Type -AssemblyName UIAutomationTypes
   Add-Type -AssemblyName System.Drawing
@@ -944,14 +1253,24 @@ try {
       try {
         $draftBody = 'Original installed WebView2 user-edit candidate ' + $tag
         Type-InstalledEdit $providerHwnd 'Script draft' $draftBody
-        $saveButton = Find-ExactInstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
-        # The editor also auto-saves after 900ms; avoid failing when native UI
-        # has already saved and disabled the manual button. Database proof is
-        # mandatory in either case.
-        if ($saveButton.Current.IsEnabled) {
+        # The installed Studio auto-saves after a real native Edit change.
+        # Real run #44357622512 showed 'Save changes' visible at bounded
+        # UIA coordinates but became non-invokable while we were checking it.
+        # First VERIFY genuine canonical SQLite persistence rather than racing
+        # a transiently disabled manual button. No direct database mutations.
+        $savedProof = $null
+        $saveMode = 'autosave'
+        try {
+          $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        } catch {
+          # If auto-save has NOT actually persisted the exact user text,
+          # invoke the real native visible manual Save action, then require
+          # the canonical rows. An unavailable button remains a true failure.
+          $saveMode = 'manual'
           Click-InstalledControl $providerHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
+          $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
         }
-        $savedProof = Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody
+        $report['native_draft_save_mode'] = $saveMode
         Click-InstalledControl $providerHwnd 'Duplicate current script' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button) | Out-Null
         Click-InstalledControl $providerHwnd 'Rename script' ([System.Windows.Automation.ControlType]::Button)
@@ -996,7 +1315,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed Windows app did not exit from graphical Alt+F4'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $probeRestored = $null
         $deadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
@@ -1101,7 +1420,143 @@ try {
         Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
+    # PR #138 provides a legitimate *read-only* installed-host authorization
+    # path through Studio. This never substitutes for forged write IPC denial.
+    $report.foreign_study_reference_probe = @{
+      status = 'NOT TESTED'
+      reason = 'Normal Open Study reference action absent from installed production'
+    }
     if ($cases.wrong_project_ui_isolation.status -eq 'PASS') {
+      $referenceDisclosure = $null
+      try {
+        $referenceDisclosure = Find-ExactInstalledControl $restoredHwnd 'Open Study reference' $null 2
+      } catch { }
+      if ($referenceDisclosure) {
+        try {
+          $identifiers = @(Verify-InstalledCanonicalDb 'study_reference' $first $studyTitle '' |
+            ConvertFrom-Json)
+          if ($identifiers.Count -ne 3) {
+            throw 'Real canonical source has no distinct project, Study and draft identifiers'
+          }
+          $reference = "scriptotar://study/$($identifiers[0])/$($identifiers[1])?draft=$($identifiers[2])"
+          # Current project A has a saved Study. Try its true A reference
+          # while B is active; never fabricate IDs or bypass project selection.
+          Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+          Wait-InstalledDashboard $restoredHwnd $first
+          Choose-InstalledProject $restoredHwnd $second
+          Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+          $disclosure = Find-ExactInstalledControl $restoredHwnd 'Open Study reference' $null 4
+          Click-InstalledControl $restoredHwnd 'Open Study reference' $disclosure.Current.ControlType -pointer
+          Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference
+          $referenceError = 'This Study reference cannot be opened in the active project.'
+          $priorDenial = @(Get-InstalledReferenceDenials $restoredHwnd)
+          $priorBound = @(Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError)
+          $beforeReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          $hostOffset = Get-InstalledHostLogOffset
+          # Preserve the full read-only 39-table canonical digest snapshot even
+          # when UIA throws after the native click. No private DB rows included.
+          $referenceHash = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData(
+              [Text.Encoding]::UTF8.GetBytes($reference))).ToLowerInvariant()
+          $report.foreign_study_reference_probe = @{
+            status = 'NOT TESTED'
+            native_input_readback = 'exact ValuePattern verified'
+            reference_sha256 = $referenceHash
+            preexisting_denial_count = $priorDenial.Count
+            preexisting_bound_count = $priorBound.Count
+            canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
+          }
+          Click-InstalledControl $restoredHwnd 'Open reference' ([System.Windows.Automation.ControlType]::Button)
+          $denied = $false
+          $hostReferenceId = $null
+          $hostBoundAlert = $null
+          $now = @()
+          $visible = @()
+          $deadline = [DateTime]::UtcNow.AddSeconds(12)
+          do {
+            # Check BOTH the original visible generic Text rejection and a
+            # NEW accessible alert container with a 128-bit opaque request ID.
+            $visible = @(Get-InstalledReferenceDenials $restoredHwnd)
+            $now = @(Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError |
+              Where-Object { $_ -cnotin $priorBound })
+            if ($visible.Count -eq 1 -and $priorDenial.Count -eq 0 -and
+                $now.Count -eq 1) {
+              $id = Get-InstalledHostDenial $hostOffset `
+                'FOREIGN_STUDY_REFERENCE' $now[0] $referenceError
+              if ($id) {
+                $hostReferenceId = $id
+                $hostBoundAlert = $now[0]
+                $denied = $true
+                break
+              }
+            }
+            Start-Sleep -Milliseconds 350
+          } while ([DateTime]::UtcNow -lt $deadline)
+          $afterReferenceCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+          # Preserve post-click canonical evidence even if native UIA readback
+          # throws during the additional private Study non-disclosure check.
+          $report.foreign_study_reference_probe['canonical_after'] = (
+            $afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
+          $foreignDraftEmpty = ((Read-InstalledEdit $restoredHwnd 'Script draft').Length -eq 0)
+          $report.foreign_study_reference_probe = @{
+            status = $(if ($denied -and $beforeReferenceCanonical -ceq $afterReferenceCanonical -and
+                           $foreignDraftEmpty) { 'PARTIAL' } else { 'FAIL' })
+            native_input_readback = 'exact ValuePattern verified'
+            denial_accessible_text_new = $denied
+            canonical_unchanged = ($beforeReferenceCanonical -ceq $afterReferenceCanonical)
+            foreign_draft_text_absent = $foreignDraftEmpty
+            canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)
+            canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)
+            preexisting_denial_count = $priorDenial.Count
+            postclick_denial_count = $visible.Count
+            postclick_bound_count = $now.Count
+            host_request_id = $hostReferenceId
+            native_bound_alert_name = $hostBoundAlert
+            reference_sha256 = $referenceHash
+            missing = $(if ($hostReferenceId) {
+              'forged mutating Tauri IPC'
+            } else {
+              'host request identity and forged mutating Tauri IPC'
+            })
+          }
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-foreign-study-reference-denial.png')
+          if (-not $denied -or $beforeReferenceCanonical -cne $afterReferenceCanonical -or
+              -not $foreignDraftEmpty) {
+            throw 'Installed foreign A reference lacked host-correlated denial, changed canonical SQLite or disclosed foreign draft in Project B'
+          }
+          # Restore A and original verified Study for the rest of the journey.
+          Click-InstalledControl $restoredHwnd 'Home' ([System.Windows.Automation.ControlType]::Button)
+          Wait-InstalledDashboard $restoredHwnd $second
+          Choose-InstalledProject $restoredHwnd $first
+          Click-InstalledControl $restoredHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+          Choose-InstalledOption $restoredHwnd 'Open study' $studyTitle
+          Click-InstalledControl $restoredHwnd 'Scripts 2' ([System.Windows.Automation.ControlType]::Hyperlink)
+          Wait-InstalledEditExact $restoredHwnd 'Script draft' $draftBody
+          Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle | Out-Null
+        } catch {
+          # Do not destroy original canonical digests or native readback after
+          # a missing/stale UIA alert, unexpected DB write or later relaunch.
+          $priorProof = $report.foreign_study_reference_probe
+          if (-not ($priorProof -is [System.Collections.IDictionary])) { $priorProof = @{} }
+          $priorProof['status'] = 'FAIL'
+          $priorProof['reason'] = "Native installed foreign Study reference probe: $($_.Exception.Message)"
+          $report.foreign_study_reference_probe = $priorProof
+          $cases.wrong_project_ipc_denial = @{
+            status='FAIL'
+            reason="Optional installed read-only foreign reference probe failed: $($_.Exception.Message)"
+          }
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-foreign-reference-probe.png')
+        }
+      }
+    }
+    if ($cases.wrong_project_ipc_denial.status -ne 'FAIL') {
+      $cases.wrong_project_ipc_denial = @{
+        status='NOT TESTED'
+        reason='Installed read-only Study reference does not cover forged mutating Tauri IPC'
+      }
+    }
+    if ($cases.wrong_project_ui_isolation.status -eq 'PASS' -and
+        $cases.wrong_project_ipc_denial.status -ne 'FAIL') {
       try {
         # Actual artifact #14378911964 shows the real candidate ComboBox at
         # y=80, partially hidden behind the fixed Studio toolbar (bottom=111),
@@ -1179,9 +1634,16 @@ try {
       try {
         Click-InstalledControl $restoredHwnd 'Settings' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) 12 | Out-Null
-        # SettingsView in this exact app source offers System and Dark only.
-        # A Light label is not invented or accepted as evidence.
-        foreach ($choice in @('System', 'Dark')) {
+        # Detect a genuinely rendered native Light option. Older installed
+        # builds have System/Dark only; System must not be relabeled Light.
+        # Later production PR #136 introduces a separately selectable Light.
+        Click-InstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+        $lightOffered = [bool](Test-InstalledPopupOptionVisible $restoredHwnd 'Light')
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 200
+        $report.visual_capture['explicit_light_option'] = $lightOffered
+        $actualThemeChoices = if ($lightOffered) { @('System', 'Light', 'Dark') } else { @('System', 'Dark') }
+        foreach ($choice in $actualThemeChoices) {
           Choose-InstalledOption $restoredHwnd 'Theme' $choice
           Wait-InstalledComboValue $restoredHwnd 'Theme' $choice
           $saveTheme = Find-ExactInstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
@@ -1189,6 +1651,23 @@ try {
             Click-InstalledControl $restoredHwnd 'Save changes' ([System.Windows.Automation.ControlType]::Button)
           }
           Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir ("windows-theme-" + $choice.ToLowerInvariant() + ".png"))
+        }
+        # Capture the genuine installed open theme menu (not a web mock).
+        # A screenshot is review material, NEVER automatic visual PASS.
+        try {
+          Click-InstalledControl $restoredHwnd 'Theme' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+          if (-not (Test-InstalledPopupOptionVisible $restoredHwnd 'System')) {
+            throw 'Expected actual System option in open native theme menu'
+          }
+          $themeMenuShot = Join-Path $EvidenceDir 'windows-theme-menu-open.png'
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) $themeMenuShot
+          if (-not (Test-Path $themeMenuShot)) { throw 'Installed theme menu screenshot not captured' }
+          $report.visual_capture['dark_theme_menu'] = 'captured'
+        } catch {
+          $report.visual_capture_errors['dark_theme_menu'] = $_.Exception.Message
+        } finally {
+          [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+          Start-Sleep -Milliseconds 200
         }
         # Certify saved theme state across a SECOND genuine installed process
         # shutdown/relaunch. A visual selector click in one process is not enough.
@@ -1200,7 +1679,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed Windows app did not close with Alt+F4 during theme persistence check'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $themeProbe = $null
         $themeDeadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
@@ -1244,6 +1723,37 @@ try {
         Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-locale.png')
+        # Preserve actual native RTL popup placement for independent review.
+        # Not a PASS assertion: dialog, focus, and offscreen views still matter.
+        try {
+          Click-InstalledControl $themeHwnd 'لغة الواجهة' ([System.Windows.Automation.ControlType]::ComboBox) -pointer
+          if (-not (Test-InstalledPopupOptionVisible $themeHwnd 'EN')) {
+            throw 'Expected actual EN option in open Arabic locale menu'
+          }
+          $arabicMenuShot = Join-Path $EvidenceDir 'windows-arabic-menu-open.png'
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) $arabicMenuShot
+          if (-not (Test-Path $arabicMenuShot)) { throw 'Installed Arabic menu screenshot not captured' }
+          $report.visual_capture['arabic_menu'] = 'captured'
+        } catch {
+          $report.visual_capture_errors['arabic_menu'] = $_.Exception.Message
+        } finally {
+          [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+          Start-Sleep -Milliseconds 200
+        }
+
+        # Independently traverse genuine Arabic Queue, Settings and Studio
+        # via installed UIA controls, not just the translated toolbar marker.
+        # These captures are human-review evidence; not whole-app RTL PASS.
+        Click-InstalledControl $themeHwnd 'الطابور' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'المهام'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-queue.png')
+        Click-InstalledControl $themeHwnd 'الإعدادات' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'الإعدادات'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-settings.png')
+        Click-InstalledControl $themeHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $themeHwnd 'الاستوديو'
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-studio-return.png')
+        $report.visual_capture['arabic_queue_settings_studio'] = 'captured-native-screens-not-RTL-certification'
 
         # Genuinely quit and relaunch with saved Arabic locale. The native
         # document/rail gate must now seek Arabic rather than English.
@@ -1255,7 +1765,7 @@ try {
         if (-not $proc.WaitForExit(12000)) {
           throw 'Installed app did not quit through Alt+F4 while Arabic'
         }
-        $proc = Start-Process -FilePath $app.FullName -PassThru
+        $proc = Start-InstalledDesktop $app.FullName
         $arabicProbe = $null
         $arabicDeadline = [DateTime]::UtcNow.AddSeconds(45)
         do {
@@ -1308,7 +1818,6 @@ try {
         }
       }
     }
-  }
     if ($cases.arabic_locale_control.status -eq 'PASS') {
       try {
         # Deterministic no-cost negative/recovery through actual installed
@@ -1319,9 +1828,53 @@ try {
         Type-InstalledEdit $arabicHwnd 'Audience' 'People learning video editing'
         Click-InstalledControl $arabicHwnd 'Prepare 3 creative angles' ([System.Windows.Automation.ControlType]::Button)
         Find-ExactInstalledControl $arabicHwnd 'Paste three-angle JSON response' ([System.Windows.Automation.ControlType]::Edit) | Out-Null
-        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+        $malformedAngleJson = '{"angles":[{"id":"only-one-angle","approach":"Invalid","hook":"Incomplete","promise":"Missing two angles","outline":[{"role":"hook","intent":"Should be rejected","estimated_seconds":7}],"evidence_ids":[]}]}'
+        Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' $malformedAngleJson
+        $priorAngleAlerts = @(Get-InstalledAngleRejectionAlerts $arabicHwnd)
+        $angleLocalizedText = 'The angle response is invalid or its Study evidence changed.'
+        $priorAngleBoundAlerts = @(Get-InstalledBoundDenialAlerts $arabicHwnd $angleLocalizedText)
+        if ($priorAngleBoundAlerts.Count -ne 0) {
+          throw 'Stale installed request-bound angle alert existed BEFORE the click'
+        }
+        if ($priorAngleAlerts.Count -ne 0) {
+          throw 'Cannot bind installed malformed request: stale angle error already exposed'
+        }
+        $angleSubmissionSha = [Convert]::ToHexString(
+          [System.Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($malformedAngleJson))).ToLowerInvariant()
+        $angleReadbackSha = Assert-InstalledNativeInputReceipt $arabicHwnd 'Paste three-angle JSON response' $malformedAngleJson
+        $beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $angleHostLogOffset = Get-InstalledHostLogOffset
+        $angleClickUtc = [DateTime]::UtcNow.ToString('o')
+        $angleClickTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
-        Wait-InstalledAngleRejection $arabicHwnd
+        $currentAngleError = Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts
+        $angleBoundAlert = Wait-InstalledBoundDenial $arabicHwnd $angleLocalizedText $priorAngleBoundAlerts
+        $angleHostId = Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $angleBoundAlert $angleLocalizedText
+        $angleUiaId = if ($angleBoundAlert -match ' · request ([0-9a-f]{32})$') { $Matches[1] } else { $null }
+        $angleObservedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+        $angleErrorUtc = [DateTime]::UtcNow.ToString('o')
+        $afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $report.angle_rejection_request_correlation = @{
+          input_sha256 = $angleSubmissionSha
+          native_readback_sha256 = $angleReadbackSha
+          exact_native_input_readback = ($angleSubmissionSha -ceq $angleReadbackSha)
+          input_readback_source = 'installed-UIA-ValuePattern-immediately-before-dispatch'
+          action_stopwatch_ticks = $angleClickTicks
+          observed_stopwatch_ticks = $angleObservedTicks
+          prior_alert_count = $priorAngleAlerts.Count
+          fresh_alert_text = $currentAngleError
+          real_native_alert_aria_label = $angleBoundAlert
+          installed_rust_stderr_request_id = $angleHostId
+          native_accessible_error_request_id = $angleUiaId
+          action_utc = $angleClickUtc
+          observed_utc = $angleErrorUtc
+          canonical_before = ($beforeAnglesCanonical | ConvertFrom-Json)
+          canonical_after = ($afterAnglesCanonical | ConvertFrom-Json)
+        }
+        if ($beforeAnglesCanonical -cne $afterAnglesCanonical) {
+          throw 'Malformed three-angle submission changed canonical SQLite rows'
+        }
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-negative-angles-rejected.png')
         Paste-InstalledJson $arabicHwnd 'Paste three-angle JSON response' '{"angles":[{"id":"angle-recovery-problem","approach":"Explain an everyday problem","hook":"Start with the overlooked problem","promise":"Make the context clear","outline":[{"role":"hook","intent":"Introduce the everyday problem","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-contrast","approach":"Contrast two useful approaches","hook":"Compare two possible choices","promise":"Show a practical distinction","outline":[{"role":"hook","intent":"Open with an original contrast","estimated_seconds":7}],"evidence_ids":[]},{"id":"angle-recovery-checklist","approach":"Share a practical checklist","hook":"Three steps to get started","promise":"Give practical next actions","outline":[{"role":"hook","intent":"Introduce a practical checklist","estimated_seconds":7}],"evidence_ids":[]}]}'
         Click-InstalledControl $arabicHwnd 'Validate 3 angles' ([System.Windows.Automation.ControlType]::Button)
@@ -1329,19 +1882,148 @@ try {
         Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody
         $proof = Wait-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-three-angles-recovered.png')
-        $cases.error_recovery = @{
-          status='PASS'
-          reason="Installed WebView2 malformed JSON rejected; three deterministic angles validated by public Rust Studio, saved canonical drafts remain unchanged ($proof). No provider call"
+        # Use real installed UIA against the production URL admission path.
+        # file: is deliberately unsupported. This must NOT create a job or
+        # mutate the previously persisted Study/candidates.
+        $beforeJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
+        Click-InstalledControl $arabicHwnd 'Queue' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'Jobs'
+        $rejectedUrl = 'file:///scriptotar-native-qa-denied-media.mp4'
+        Paste-InstalledQueueUrl $arabicHwnd $rejectedUrl
+        $priorQueueAlerts = @(Get-InstalledQueueRejectionAlerts $arabicHwnd)
+        $queueLocalizedText = 'Invalid media URL. Only HTTP and HTTPS URLs are supported.'
+        $priorQueueBoundAlerts = @(Get-InstalledBoundDenialAlerts $arabicHwnd $queueLocalizedText)
+        if ($priorQueueBoundAlerts.Count -ne 0) {
+          throw 'Stale installed request-bound URL alert existed BEFORE the click'
+        }
+        $queueSubmissionSha = [Convert]::ToHexString(
+          [System.Security.Cryptography.SHA256]::HashData(
+            [Text.Encoding]::UTF8.GetBytes($rejectedUrl))).ToLowerInvariant()
+        $queueReadbackSha = Assert-InstalledNativeInputReceipt $arabicHwnd 'Media URL' $rejectedUrl
+        $beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $queueHostLogOffset = Get-InstalledHostLogOffset
+        $queueClickUtc = [DateTime]::UtcNow.ToString('o')
+        $queueClickTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+        Click-InstalledControl $arabicHwnd 'Queue URL' ([System.Windows.Automation.ControlType]::Button)
+        $deniedError = ''
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        do {
+          $currentQueueAlerts = @(Get-InstalledQueueRejectionAlerts $arabicHwnd)
+          $freshQueueAlerts = @($currentQueueAlerts | Where-Object { $_ -cnotin $priorQueueAlerts })
+          if ($freshQueueAlerts.Count -gt 0) {
+            $deniedError = [string]$freshQueueAlerts[0]
+            break
+          }
+          Start-Sleep -Milliseconds 350
+        } while ([DateTime]::UtcNow -lt $deadline)
+        # Perform full canonical readback EVEN if the expected error is missing.
+        $afterJobs = [int](Verify-InstalledCanonicalDb 'jobs' $first '' '')
+        $afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot' $first '' ''
+        $report.denied_url_canonical_snapshot = @{
+          before = ($beforeQueueCanonical | ConvertFrom-Json)
+          after = ($afterQueueCanonical | ConvertFrom-Json)
+          unchanged = ($beforeQueueCanonical -ceq $afterQueueCanonical)
+          before_jobs = $beforeJobs
+          after_jobs = $afterJobs
+          url = $rejectedUrl
+          clicked_utc = $queueClickUtc
+        }
+        if ($afterJobs -ne $beforeJobs -or $beforeQueueCanonical -cne $afterQueueCanonical) {
+          throw "Denied URL changed canonical SQLite data or job count (before_jobs=$beforeJobs, after_jobs=$afterJobs)"
+        }
+        if (-not $deniedError) {
+          Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-denied-url-no-error.png')
+          throw 'Unsupported URL submitted through installed Queue but no fresh visible UIA error text appeared'
+        }
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'rejected-url-error.png')
+        $queueBoundAlert = Wait-InstalledBoundDenial $arabicHwnd $queueLocalizedText $priorQueueBoundAlerts
+        $queueHostId = Get-InstalledHostDenial $queueHostLogOffset 'INVALID_MEDIA_URL' $queueBoundAlert $queueLocalizedText
+        $queueUiaId = if ($queueBoundAlert -match ' · request ([0-9a-f]{32})$') { $Matches[1] } else { $null }
+        $queueObservedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+        Click-InstalledControl $arabicHwnd 'Studio' ([System.Windows.Automation.ControlType]::Button)
+        Wait-InstalledStudioPageText $arabicHwnd 'Studio'
+        Choose-InstalledOption $arabicHwnd 'Open study' $studyTitle
+        Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody
+        $recovered = Verify-InstalledCanonicalDb 'candidates' $first $studyTitle $draftBody $copyTitle
+        Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'recovered-studio-after-denial.png')
+        $report.denied_url_error = $deniedError.Substring(0, [Math]::Min(300, $deniedError.Length))
+        # A human-visible error is not proof of WHICH native Rust request
+        # failed. Only the actual installed process stderr marker and a
+        # freshly observed, matching UIA accessible request ID can certify
+        # both negative requests. The existing exact ValuePattern input,
+        # canonical rows, valid retry and original draft checks still apply.
+        $report.error_recovery_observations = @{
+          malformed_json_native_input = 'exact UIA ValuePattern readback'
+          visible_angle_error = $currentAngleError
+          native_bound_angle_alert = $angleBoundAlert
+          accessible_angle_request_id = $angleUiaId
+          unsupported_url = $rejectedUrl
+          visible_queue_error = $deniedError
+          native_bound_queue_alert = $queueBoundAlert
+          accessible_queue_request_id = $queueUiaId
+          canonical_snapshot_unchanged = $true
+          persisted_study_recovered = $recovered
+          backend_angle_denial_id = $angleHostId
+          backend_url_denial_id = $queueHostId
+          url_input_sha256 = $queueSubmissionSha
+          url_native_readback_sha256 = $queueReadbackSha
+          url_input_readback_source = 'installed-UIA-ValuePattern-immediately-before-dispatch'
+          queue_action_stopwatch_ticks = $queueClickTicks
+          queue_observed_stopwatch_ticks = $queueObservedTicks
+          host_provenance = 'installed Windows native process stderr; not QA-generated'
+        }
+        # Do not trust a semantic flag or stale alert: certify only two
+        # separately authenticated Rust/UIA request IDs, each from its own
+        # actual native input and strictly ordered, bounded installed actions.
+        $maxReceiptTicks = [long]([System.Diagnostics.Stopwatch]::Frequency * 35)
+        $nativeInputsAndTimingProven = (
+          $angleSubmissionSha -ceq $angleReadbackSha -and
+          $queueSubmissionSha -ceq $queueReadbackSha -and
+          $priorAngleAlerts.Count -eq 0 -and
+          $priorAngleBoundAlerts.Count -eq 0 -and
+          $priorQueueBoundAlerts.Count -eq 0 -and
+          $angleHostId -ceq $angleUiaId -and
+          $queueHostId -ceq $queueUiaId -and
+          $angleHostId -cne $queueHostId -and
+          $angleClickTicks -gt 0 -and
+          $angleObservedTicks -gt $angleClickTicks -and
+          ($angleObservedTicks - $angleClickTicks) -lt $maxReceiptTicks -and
+          $queueClickTicks -gt $angleObservedTicks -and
+          $queueObservedTicks -gt $queueClickTicks -and
+          ($queueObservedTicks - $queueClickTicks) -lt $maxReceiptTicks -and
+          $beforeAnglesCanonical -ceq $afterAnglesCanonical -and
+          $beforeQueueCanonical -ceq $afterQueueCanonical -and
+          $beforeJobs -eq $afterJobs
+        )
+        $report.error_recovery_observations.windows_strict_binding_valid = [bool]$nativeInputsAndTimingProven
+        if ($angleHostId -and $queueHostId) {
+          if ($nativeInputsAndTimingProven) {
+            $cases.error_recovery = @{
+              status='PASS'
+              reason='Two distinct, ordered installed Rust typed denial IDs matched fresh UIA alerts; exact per-action edit readback, recovery and canonical SQLite nonmutation verified.'
+            }
+          } else {
+            $cases.error_recovery = @{
+              status='NOT TESTED'
+              reason='Installed typed IDs existed, but strict distinct request identity, native input readback, timing, freshness or canonical nonmutation binding was incomplete.'
+            }
+          }
+        } else {
+          $cases.error_recovery = @{
+            status='NOT TESTED'
+            reason='Actual installed UIA rejection/recovery and unchanged SQLite observed, but one or both typed Rust stderr request IDs were absent or not identical to the newly accessible error IDs.'
+          }
         }
       } catch {
         $cases.error_recovery = @{
           status='FAIL'
-          reason="Installed WebView2 three-angle negative/recovery: $($_.Exception.Message)"
+          reason="Installed WebView2 three-angle and URL recovery: $($_.Exception.Message)"
         }
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'failed-error_recovery.png')
         Write-UiaDiagnostics ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'uia-diagnostics.json') $proc
       }
     }
+  }
 } catch {
   $message = $_.Exception.Message
   $cases.installed_webview = @{ status='FAIL'; reason="Native probe failed: $message" }
