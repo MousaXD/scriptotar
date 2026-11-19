@@ -91,23 +91,66 @@ def job_states(db: Path, project_id: str, files: list[dict]) -> list[dict]:
     return result
 
 
-def real_sidecar_processes() -> list[dict]:
+def is_process_descendant(
+    parents: dict[int, int], child_pid: int, installed_pid: int,
+) -> bool:
+    """A process-name collision is never sufficient to prove bundled inference."""
+    seen = set()
+    current = child_pid
+    while current in parents and current not in seen and len(seen) <= 64:
+        if current == installed_pid:
+            return child_pid != installed_pid
+        seen.add(current)
+        current = parents[current]
+    return current == installed_pid and child_pid != installed_pid
+
+
+def real_sidecar_processes(installed_pid: int) -> list[dict]:
+    """Require exact executable identity AND ancestry below the launched app.
+
+    Reading a random CI process with 'scriptotar-engine' in argv would be
+    synthetic evidence. Only actual executable symlinks whose real path has
+    a bundled executable basename and whose parents lead to the installed
+    PID can enter the observation record. No command-line content is logged.
+    """
     result = subprocess.run(
         ["ps", "-eo", "pid,ppid,args"], text=True, capture_output=True,
         check=True, timeout=6,
     )
-    rows = []
+    processes = {}
     for line in result.stdout.splitlines()[1:]:
-        if not any(token in line for token in (
-                "scriptotar-transcription", "scriptotar-engine")):
-            continue
-        parts = line.split(maxsplit=2)
+        parts = line.strip().split(maxsplit=2)
         if len(parts) != 3:
             continue
-        # Do not include a potentially sensitive command line in evidence.
-        rows.append({"pid": int(parts[0]), "ppid": int(parts[1]),
-                     "command_sha256": hashlib.sha256(
-                         parts[2].encode()).hexdigest()})
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        processes[pid] = (ppid, parts[2])
+    parents = {pid: item[0] for pid, item in processes.items()}
+    rows = []
+    for pid, (ppid, args) in processes.items():
+        if not is_process_descendant(parents, pid, installed_pid):
+            continue
+        if not any(token in args for token in (
+                "scriptotar-transcription", "scriptotar-engine")):
+            continue
+        try:
+            executable = Path("/proc") / str(pid) / "exe"
+            resolved = executable.resolve(strict=True)
+            name = resolved.name
+            if name not in ("scriptotar-transcription", "scriptotar-engine"):
+                continue
+            if not resolved.is_file():
+                continue
+            exe_digest = sha256(resolved)
+        except (OSError, RuntimeError):
+            continue
+        rows.append({
+            "pid": pid, "ppid": ppid,
+            "executable_name": name,
+            "executable_sha256": exe_digest,
+        })
     return rows
 
 
@@ -241,9 +284,10 @@ def exercise_installed(args, root: Path, result: dict) -> None:
         while time.monotonic() < deadline:
             if session.proc.poll() is not None:
                 raise NativeFailure("Installed desktop exited during real transcription")
-            for process in real_sidecar_processes():
+            for process in real_sidecar_processes(session.proc.pid):
                 runtime_pids.add((process["pid"], process["ppid"],
-                                  process["command_sha256"]))
+                                  process["executable_name"],
+                                  process["executable_sha256"]))
             last_jobs = job_states(db_path, project_id, sources)
             result["observed_jobs"] = last_jobs
             if any(job["state"] in ("failed", "cancelled", "interrupted")
@@ -262,8 +306,9 @@ def exercise_installed(args, root: Path, result: dict) -> None:
                 "job/transcript links within bounded native timeout"
             )
         result["observed_sidecar_processes"] = [
-            {"pid": pid, "ppid": ppid, "command_sha256": exe}
-            for pid, ppid, exe in sorted(runtime_pids)
+            {"pid": pid, "ppid": ppid, "executable_name": name,
+             "executable_sha256": exe}
+            for pid, ppid, name, exe in sorted(runtime_pids)
         ]
         if not runtime_pids:
             raise NativeFailure(
