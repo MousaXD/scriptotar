@@ -22,8 +22,8 @@ assert.ok(existsSync(viteBin), 'Run npm ci in apps/desktop-ui before the Vite re
 
 const main = join(ui, 'src', 'main.ts');
 const original = readFileSync(main, 'utf8');
-const qa = join(ui, 'qa');
-const staging = join(ui, 'src', 'staging');
+const qa = join(ui, 'agent10-scope-fixture');
+const staging = join(ui, 'src', 'agent10-staging');
 const saveQa = existsSync(qa);
 const saveStaging = existsSync(staging);
 assert.equal(saveQa, false, 'Do not touch an existing qa directory');
@@ -52,8 +52,8 @@ try {
   writeFileSync(join(qa, 'a'.repeat(36) + 'b'),
     'near-miss name, NOT a pattern; the pattern is in hostile.ts\n');
   const variants = [
-    { label: 'Vite project-root-absolute import', specifier: '/qa/hostile.ts' },
-    { label: 'Vite normalized relative import escape', specifier: './staging/../../qa/hostile.ts' },
+    { label: 'Vite project-root-absolute import', specifier: '/agent10-scope-fixture/hostile.ts' },
+    { label: 'Vite normalized relative import escape', specifier: './agent10-staging/../../agent10-scope-fixture/hostile.ts' },
   ];
   for (const variant of variants) {
     writeFileSync(main, original + '\nimport ' + JSON.stringify(variant.specifier) + ';\n');
