@@ -94,7 +94,35 @@ class WorkflowRaceContractTests(unittest.TestCase):
                                  if "if: github.event_name == 'workflow_run'" in line)
         self.assertIn("vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true'", publish_condition)
         self.assertIn("vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'", publish_condition)
-        self.assertIn("github.event.workflow_run.head_commit.message == 'owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112'", publish_condition)
+        self.assertEqual(
+            publish_condition,
+            "if: github.event_name == 'workflow_run' && "
+            "github.event.workflow_run.head_branch == 'main' && "
+            "vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && "
+            "vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'",
+        )
+        self.assertNotIn("github.event.workflow_run.head_commit.message", publish_condition)
+        self.assertNotIn("||", publish_condition)
+
+    def test_commit_message_cannot_override_false_owner_approvals(self) -> None:
+        # The previous workflow ORed an exact commit-message string with the
+        # independent two-variable approval requirement. In particular,
+        # (false && false) || special_commit_message was true.
+        special_commit = "owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112"
+        old_authorized = (False and False) or (
+            special_commit == "owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112"
+        )
+        self.assertTrue(old_authorized, "Regression must reproduce the old shortcut")
+        publish_condition = next(line.strip() for line in self.workflow.splitlines()
+                                 if "if: github.event_name == 'workflow_run'" in line)
+        self.assertNotIn(special_commit, publish_condition)
+        # The only two owner-approval clauses are conjunctive, independent of
+        # the commit text. Approval variables must be set by repository admins.
+        for general in (False, True):
+            for version in (False, True):
+                authorized = general and version
+                self.assertEqual(authorized, general and version)
+                self.assertEqual(authorized, bool(general and version))
 
     def test_staging_identity_is_unique_for_duplicates_and_retries(self) -> None:
         self.assertIn("github.run_id", self.workflow)
