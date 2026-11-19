@@ -118,6 +118,8 @@ try {
   // Compiler-side control: a valid 1150-name static import whose from-clause
   // appears beyond the scanner's bounded initial 2048 tokens. Every symbol
   // really exists in both original external modules.
+  // Keep one named binding live: otherwise Rollup legitimately tree-shakes
+  // an unused import and never resolves/compiles the external module.
   const allNames=Array.from({length:1150},(_,i)=>'s'+String(i).padStart(4,'0'));
   const exports=allNames.map((key,i)=>'export const '+key+' = '+i+';').join('\n')+'\n';
   writeFileSync(join(qa,'benign.ts'),'export const expectedSafe = 1;\n'+exports);
@@ -125,7 +127,7 @@ try {
     "export const modules = import.meta.glob('./+(*a)');\n"+exports);
   const benignWide="import { "+allNames.join(', ')+" } from '"+
     ('.'+'\\u002e/agent10-scope-fixture/benign.ts')+"';";
-  writeFileSync(main,original+'\n'+benignWide+'\n');
+  writeFileSync(main,original+'\n'+benignWide+'\nconsole.log(s0000);\n');
   const wideSafe=build(45000);
   console.log(JSON.stringify({test:'real Vite benign 1150-binding escaped import',
     outcome:wideSafe.status===0?'PASS':'NOT VALIDATED',status:wideSafe.status,
@@ -134,7 +136,7 @@ try {
     'Legal wide escaped import did not compile safely: '+excerpt(wideSafe));
   const hostileWide="import { "+allNames.join(', ')+" } from '"+
     ('.'+'\\u002e/agent10-scope-fixture/hostile.ts')+"';";
-  writeFileSync(main,original+'\n'+hostileWide+'\n');
+  writeFileSync(main,original+'\n'+hostileWide+'\nconsole.log(s0000);\n');
   const wideHostile=build(12000);
   const wideTimeout=wideHostile.error?.code==='ETIMEDOUT';
   console.log(JSON.stringify({test:'real Vite hostile 1150-binding escaped import',
