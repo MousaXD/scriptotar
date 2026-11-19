@@ -51,6 +51,26 @@ try {
     "export const modules = import.meta.glob('./+(*a)');\n");
   writeFileSync(join(qa, 'a'.repeat(36) + 'b'),
     'near-miss name, NOT a pattern; the pattern is in hostile.ts\n');
+  // Independent false-positive control: the same >400-byte normalized path
+  // must resolve and compile when its target is ordinary benign source.
+  // Otherwise a malicious-build timeout could be attributed to path length.
+  writeFileSync(join(qa, 'benign.ts'), 'export const expectedSafe = 1;\n');
+  const harmlessLongSpecifier = './agent10-staging/' + './'.repeat(220) +
+    '../../agent10-scope-fixture/benign.ts';
+  assert.ok(harmlessLongSpecifier.length > 400);
+  writeFileSync(main, original + '\nimport ' + JSON.stringify(harmlessLongSpecifier) + ';\n');
+  const harmlessLongBuild = build(45000);
+  console.log(JSON.stringify({
+    test: 'long import path resolves to safe TypeScript module',
+    specifier_length: harmlessLongSpecifier.length,
+    outcome: harmlessLongBuild.status === 0 ? 'PASS' : 'NOT VALIDATED',
+    status: harmlessLongBuild.status,
+    error_code: harmlessLongBuild.error?.code || null,
+    log_tail: excerpt(harmlessLongBuild)
+  }));
+  assert.equal(harmlessLongBuild.status, 0,
+    'Overlength import did not resolve harmless source; malicious timeout could be confounded: '+excerpt(harmlessLongBuild));
+
   const variants = [
     { label: 'Vite project-root-absolute import', specifier: '/agent10-scope-fixture/hostile.ts' },
     { label: 'Vite normalized relative import escape', specifier: './agent10-staging/../../agent10-scope-fixture/hostile.ts' },
