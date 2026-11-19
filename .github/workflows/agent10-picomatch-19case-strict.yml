@@ -1,0 +1,75 @@
+name: Agent10 strict original picomatch 19-case exploit regression (release veto)
+
+on:
+  push:
+    branches:
+      - agent-10/p0-prebuild-absolute-import-probe-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  original-19-case-assert-patched:
+    name: Original 19-case --assert-patched is mandatory (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Verify exact independent Agent10 source
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Checkout immutable hardened guard (separate source)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 9dd3844c57a6e000d6f2b779c909a5662f2dfbbb
+          path: .agent10-trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Checkout ORIGINAL 19-case immutable exploit test (do not alter)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 292e408087d8b48bc012e52d1f3e7ab0c8b89650
+          path: .agent10-original-exploit
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          sparse-checkout-cone-mode: false
+      - name: Verify immutable probe and guard, then scan BEFORE npm ci
+        shell: bash
+        run: |
+          test "$(git -C .agent10-trusted-guard rev-parse HEAD)" = "9dd3844c57a6e000d6f2b779c909a5662f2dfbbb"
+          test "$(git -C .agent10-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
+          node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          node --check .agent10-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          node .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install actual checked-in pinned npm tree
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Report original locked installed picomatch version
+        shell: bash
+        run: |
+          node -e "const x=require('./apps/desktop-ui/package-lock.json'); const v=x.packages['node_modules/picomatch'].version; console.log('EXACT LOCKED picomatch version: '+v)"
+          node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version"
+      - name: Run original unchanged 19-case --assert-patched --extended (FAIL while vulnerable)
+        shell: bash
+        run: |
+          test ! -e apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          cp .agent10-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          cd apps/desktop-ui
+          node scripts/probe-picomatch-redos.mjs --assert-patched --extended
