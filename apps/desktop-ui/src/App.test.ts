@@ -40,6 +40,45 @@ describe('desktop workstation', () => {
     expect(select).toHaveTextContent('Client A');
   });
 
+  it('forwards a foreign Study request identity through the real App adapter without exposing private IDs', async () => {
+    const foreignProject = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const foreignStudy = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const foreignDraft = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const reference = `scriptotar://study/${foreignProject}/${foreignStudy}?draft=${foreignDraft}`;
+    const api = createMockClient();
+    // Simulate ONLY the exact native denial receipt. This checks the real
+    // App -> StudioView -> ScriptotarApi argument transport; it is NOT proof
+    // of installed Rust authorization or a forged mutating IPC.
+    const getStudy = vi.spyOn(api, 'getStudy').mockImplementation(async (_project, _study, _draft, requestId) => {
+      if (!requestId) throw new Error('Native request identity was not forwarded');
+      throw `SCRIPTOTAR_DENIAL:FOREIGN_STUDY_REFERENCE:${requestId}`;
+    });
+    await ready(api);
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    await screen.findByRole('heading', { name: 'Studio' });
+    await fireEvent.click(screen.getByText('Open Study reference'));
+    await fireEvent.input(screen.getByLabelText('Paste Study reference'), {
+      target: { value: reference }
+    });
+    const open = screen.getByRole('button', { name: 'Open reference' });
+    await waitFor(() => expect(open).toBeEnabled());
+    await fireEvent.click(open);
+
+    await waitFor(() => expect(getStudy).toHaveBeenCalledWith(
+      foreignProject, foreignStudy, foreignDraft,
+      expect.stringMatching(/^[0-9a-f]{32}$/)
+    ));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('This Study reference cannot be opened in the active project.');
+    expect(alert.getAttribute('aria-label')).toMatch(
+      /^This Study reference cannot be opened in the active project\. · request [0-9a-f]{32}$/
+    );
+    expect(alert.getAttribute('aria-label')).not.toContain(foreignProject);
+    expect(alert.getAttribute('aria-label')).not.toContain(foreignStudy);
+    expect(alert.getAttribute('aria-label')).not.toContain(foreignDraft);
+    expect(alert.getAttribute('aria-label')).not.toContain(reference);
+  });
+
   it('keeps the previous project usable when project switching fails', async () => {
     const api = createMockClient();
     vi.spyOn(api, 'selectProject').mockRejectedValueOnce(new Error('Project unavailable'));
