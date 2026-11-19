@@ -123,7 +123,7 @@ class WorkflowRaceContractTests(unittest.TestCase):
             "SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED",
         )
         import re
-        clauses = re.findall(r"vars\\.([A-Z_0-9]+) == 'true'", publish_condition)
+        clauses = re.findall(r"vars[.]([A-Z_0-9]+) == 'true'", publish_condition)
         self.assertEqual(clauses, list(required))
         for general in (False, True):
             for version in (False, True):
