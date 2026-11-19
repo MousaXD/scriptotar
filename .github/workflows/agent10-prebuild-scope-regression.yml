@@ -45,3 +45,27 @@ jobs:
           node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
       - name: Probe PostCSS control and two Vite source-root escapes, fail closed
         run: node tests/defragmentation/security/agent10_prebuild_scope_probe.mjs
+
+  bounded-actual-vite-reachability:
+    name: Bounded actual Vite compiler source-escape evidence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact adversarial source checkout
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='${{ github.sha }}')process.exit(1)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install the real locked Vite frontend dependencies
+        run: npm ci --prefix apps/desktop-ui
+      - name: Run real baseline then two bounded hostile build-time reachability cases
+        run: node tests/defragmentation/security/agent10_vite_scope_reachability.mjs
