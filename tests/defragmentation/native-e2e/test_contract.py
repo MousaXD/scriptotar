@@ -1,8 +1,10 @@
 """Contract tests for the evidence collector, NOT native GUI certification."""
 import hashlib
-from pathlib import Path
+import re
 import subprocess
 import sys
+import sqlite3
+from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
@@ -13,6 +15,129 @@ import linux_webkit as native
 
 
 class NativeEvidenceContractTests(unittest.TestCase):
+    def test_root_app_forwards_native_study_reference_request_id(self):
+        # Source-only fail-fast security contract, NEVER installed-WebView proof.
+        # The root App adapter is a distinct forwarding boundary between
+        # StudioView and createTauriClient. TS structural typing permits a
+        # function taking fewer arguments, so "satisfies StudioGateway" alone
+        # cannot detect an accidentally dropped request ID.
+        app = (Path(__file__).resolve().parents[3] /
+               "apps/desktop-ui/src/App.svelte").read_text(encoding="utf-8")
+        adapter = re.search(
+            r"\bgetStudy:\s*\(([^)]*)\)\s*=>\s*api\.getStudy\(([^)]*)\)",
+            app, re.S,
+        )
+        self.assertIsNotNone(
+            adapter, "Root App Studio getStudy adapter must be reviewed explicitly"
+        )
+        declared = [item.strip().split(":", 1)[0].rstrip("?")
+                    for item in adapter.group(1).split(",") if item.strip()]
+        forwarded = [item.strip() for item in adapter.group(2).split(",")
+                     if item.strip()]
+        self.assertEqual(
+            declared, ["projectId", "studyId", "draftId", "requestId"],
+            "Root App must accept the native Study reference request ID",
+        )
+        self.assertEqual(
+            forwarded, declared,
+            "Root App must forward the exact per-click request ID to Tauri; "
+            "dropping it makes a generic error indistinguishable from an "
+            "authenticated FOREIGN_STUDY_REFERENCE host denial",
+        )
+
+
+    def test_native_duplicate_requires_real_canonical_rows_and_actionable_atspi(self):
+        # Unit-level source/control contract ONLY; not an installed PASS.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('wait_for_canonical_duplicated_draft(', source)
+        self.assertIn('ax.wait_for_actionable_button("Rename script", "button")', source)
+        self.assertLess(
+            source.index('wait_for_canonical_duplicated_draft('),
+            source.index('ax.wait_for_actionable_button("Rename script", "button")'),
+        )
+        self.assertLess(
+            source.index('ax.wait_for_actionable_button("Rename script", "button")'),
+            source.index('ax.click("Rename script", "button")'),
+        )
+        self.assertIn('candidate_duplicate_transition', source)
+        verifier = inspect.getsource(native.verify_canonical_duplicated_draft)
+        self.assertIn('"?mode=ro"', verifier)
+        self.assertIn('JOIN draft_versions', verifier)
+        self.assertNotIn('INSERT INTO ', verifier)
+
+    def test_native_rename_wait_requires_enabled_sensitive_real_action(self):
+        # Fake accessibility nodes test ONLY refusal/polling logic; no mock
+        # is ever substituted into the installed native runner.
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(STATE_ENABLED=1, STATE_SENSITIVE=2)
+        attempt = [0]
+        class States:
+            def __init__(self, enabled):
+                self.enabled = enabled
+            def contains(self, state):
+                return self.enabled if state in (1, 2) else False
+        class Node:
+            name = "Rename script"
+            def getRoleName(self):
+                return "push button"
+            def getState(self):
+                attempt[0] += 1
+                return States(attempt[0] >= 3)
+            def queryAction(self):
+                return SimpleNamespace(nActions=1, getName=lambda _i: "click")
+        ax.find = lambda *_args, **_kw: Node()
+        with mock.patch.object(native.time, "sleep"):
+            proof = ax.wait_for_actionable_button("Rename script", timeout_seconds=2)
+        self.assertGreaterEqual(attempt[0], 3)
+        self.assertFalse(proof["initial"]["enabled"])
+        self.assertTrue(proof["ready"]["enabled"])
+        self.assertTrue(proof["ready"]["sensitive"])
+        self.assertIn("click", proof["ready"]["actions"])
+        ax.find = lambda *_args, **_kw: SimpleNamespace(
+            name="Rename script", getRoleName=lambda: "push button",
+            getState=lambda: States(False),
+            queryAction=lambda: SimpleNamespace(nActions=1, getName=lambda _i: "click"),
+        )
+        ticks = [0]
+        def monotonic():
+            ticks[0] += 0.2
+            return ticks[0]
+        with mock.patch.object(native.time, "monotonic", side_effect=monotonic), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(native.NativeFailure, "stayed unavailable or disabled"):
+                ax.wait_for_actionable_button("Rename script", timeout_seconds=1)
+
+
+    def test_native_layout_observation_never_autocertifies_rtl_or_visual(self):
+        # Source-only coverage for installed AT-SPI + UIA observation wiring;
+        # snapshots and focus rectangles MUST NOT turn 16-case NOT TESTED green.
+        import inspect
+        helper = inspect.getsource(native.AxWebKit.native_layout_observation)
+        self.assertIn("for node in self.nodes()", helper)
+        self.assertIn("queryComponent().getExtents(", helper)
+        self.assertIn("STATE_FOCUSABLE", helper)
+        self.assertIn("certifies_rtl_or_visual", helper)
+        self.assertIn('"certifies_rtl_or_visual": False', helper)
+        self.assertIn("if name not in wanted", helper)
+        exercise = inspect.getsource(native.exercise)
+        for source_key in ("arabic_studio", "arabic_queue", "arabic_settings",
+                           "theme_system", "theme_dark", "theme_dark_reopened"):
+            self.assertIn(f'"{source_key}"', exercise)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', exercise)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', exercise)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledSemanticLayout(", windows)
+        self.assertIn("AutomationElement]::FromHandle($hwnd)", windows)
+        self.assertIn("BoundingRectangle", windows)
+        self.assertIn("IsKeyboardFocusable", windows)
+        self.assertIn("certifies_rtl_or_visual = $false", windows)
+        self.assertIn("function Save-InstalledSemanticLayout(", windows)
+        self.assertIn("native_layout_observation_errors = @{}", windows)
+        self.assertIn("Save-InstalledSemanticLayout $themeHwnd", windows)
+        self.assertIn("Save-InstalledSemanticLayout $restoredHwnd", windows)
+        self.assertIn('NOT TESTED', windows)
+
     def test_catalog_covers_release_blockers(self):
         for name in (
             "installed_webview", "create_switch_projects", "create_study",
@@ -33,7 +158,6 @@ class NativeEvidenceContractTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             native.status(record, "installed_webview", "SKIPPED_BUT_PASS", "forged")
 
-
     def test_offline_native_three_angle_recovery_is_real_and_denies_fake_success(self):
         # Source contract ONLY. Native PASS needs an actual installed WebView,
         # confirmed rejection, accepted replacement and canonical SQLite proof.
@@ -51,6 +175,208 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledCanonicalDb 'candidates'", ps)
         self.assertIn("status='FAIL'\n          reason=\"Installed WebView2 three-angle", ps)
         self.assertNotIn("SetValue($value)", ps)
+
+
+    def test_long_webkit_native_input_uses_bounded_real_key_chunks(self):
+        # This is a transport contract, not an installed-app PASS. Prior run
+        # #44343815684 lost 90 of 801 real keyboard characters at 2 ms.
+        editor = [""]
+        typed = []
+        class Node:
+            def queryComponent(self):
+                return SimpleNamespace(grabFocus=lambda: True)
+        ax = object.__new__(native.AxWebKit)
+        ax.edit_field = lambda _label: Node()
+        ax.read_text = lambda _label: editor[0]
+        def keys(*argv, **_kwargs):
+            self.assertEqual(argv[0], "xdotool")
+            if argv[1] == "key":
+                editor[0] = ""
+            elif argv[1] == "type":
+                self.assertEqual(argv[2], "--clearmodifiers")
+                self.assertEqual(argv[-2], "--")
+                self.assertLessEqual(len(argv[-1]), 64)
+                typed.append(int(argv[argv.index("--delay") + 1]))
+                editor[0] += argv[-1]
+            else:
+                raise AssertionError(f"Unexpected nonnative input method: {argv}")
+        value = "Study original JSON: " + "0123456789abcdef" * 52
+        with mock.patch.object(native, "command", side_effect=keys), \
+             mock.patch.object(native.time, "sleep"):
+            ax.type_into("Paste three-angle JSON response", value)
+        self.assertEqual(editor[0], value)
+        self.assertEqual(len(typed), (len(value) + 63) // 64)
+        self.assertTrue(all(delay == 12 for delay in typed))
+
+    def test_long_webkit_input_retries_only_with_exact_semantic_readback(self):
+        # First native keyboard attempt loses a character; retry is a real
+        # Ctrl+A + slower native key route, never UIA SetValue or direct DB.
+        editor = [""]
+        delays = []
+        class Node:
+            def queryComponent(self):
+                return SimpleNamespace(grabFocus=lambda: True)
+        ax = object.__new__(native.AxWebKit)
+        ax.edit_field = lambda _label: Node()
+        ax.read_text = lambda _label: editor[0]
+        def keys(*argv, **_kwargs):
+            if argv[1] == "key":
+                editor[0] = ""
+            else:
+                delay = int(argv[argv.index("--delay") + 1])
+                delays.append(delay)
+                text = argv[-1]
+                editor[0] += (text[:-1] if delay == 12 else text)
+        # Fake monotonic advancement is scoped to this unit-level regression,
+        # never to any installed runtime or QA evidence collector.
+        clock = [0]
+        def monotonic():
+            # Advance inside the real two-second prefix-read deadline;
+            # the dropped first chunk must be observed before retry.
+            clock[0] += 0.5
+            return clock[0]
+        value = "abcdefghij" * 81
+        with mock.patch.object(native, "command", side_effect=keys), \
+             mock.patch.object(native.time, "sleep"), \
+             mock.patch.object(native.time, "monotonic", side_effect=monotonic):
+            ax.type_into("Paste three-angle JSON response", value)
+        self.assertEqual(editor[0], value)
+        self.assertIn(12, delays)
+        self.assertIn(35, delays)
+
+    def test_rendered_native_angle_alert_requires_new_button_adjacent_rectangle(self):
+        # Pure pixel contract; real certification still requires installed
+        # AT-SPI button bounds, genuine before/after scrot PNGs and SQLite.
+        bounds = SimpleNamespace(x=20, y=20, width=120, height=25)
+        after = {(x, y): (255, 141, 141)
+                 for y in (55, 96) for x in range(30, 130)}
+        before_rgb = lambda _x, _y: (21, 28, 35)
+        after_rgb = lambda x, y: after.get((x, y), (21, 28, 35))
+        proof = native.native_new_alert_border(
+            before_rgb, after_rgb, 200, 165, bounds
+        )
+        self.assertEqual(proof["alert_y_edges"], [55, 96])
+        # An unchanged alert present before the click cannot be green.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                after_rgb, after_rgb, 200, 165, bounds
+            )
+        # Red pixels elsewhere on the native desktop are not a relevant alert.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                before_rgb, lambda x, y: (255, 141, 141) if y == 4
+                else (21, 28, 35), 200, 165, bounds
+            )
+        # Only one red line / no bounded red notice is insufficient.
+        with self.assertRaises(native.NativeFailure):
+            native.native_new_alert_border(
+                before_rgb,
+                lambda x, y: (255, 141, 141) if y == 55 and 30 <= x < 130
+                else (21, 28, 35), 200, 165, bounds
+            )
+
+    def test_native_angle_visual_fallback_never_replaces_immutable_db_and_queue_checks(self):
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('native_angle_alert_image_proof(', source)
+        self.assertIn('session.screenshot("pre-negative-angles")', source)
+        self.assertIn('session.screenshot("negative-angles-rejected")', source)
+        self.assertIn('denied_url_recovery()', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        self.assertIn('if not checked(report, "error_recovery", error_recovery):', source)
+
+
+
+    def test_webkit_reviewed_three_angles_require_exact_native_action_count(self):
+        # This tests only the AT-SPI evidence collector; a native PASS still
+        # requires three real buttons after rejected input cleared old state,
+        # valid public Rust response and read-only immutable DB/Queue checks.
+        class Node:
+            def __init__(self, label, role):
+                self.name, self.role = label, role
+            def getRoleName(self):
+                return self.role
+
+        class Ax:
+            def __init__(self, nodes):
+                self._nodes = nodes
+            def nodes(self):
+                return iter(self._nodes)
+
+        button = lambda: Node("Prepare script for this angle", "push button")
+        self.assertEqual(native.count_native_angle_actions(Ax([])), 0)
+        self.assertEqual(native.count_native_angle_actions(Ax([
+            Node("Prepare script for this angle", "label"),
+            Node("Other action", "push button"),
+            Node("Share a practical checklist", "document frame"),
+        ])), 0)
+        self.assertEqual(native.count_native_angle_actions(Ax([
+            button(), button(), button(),
+        ])), 3)
+        import inspect
+        exercise = inspect.getsource(native.exercise)
+        self.assertIn('cards_after_rejection = count_native_angle_actions(a)', exercise)
+        self.assertIn('if cards_after_rejection != 0:', exercise)
+        self.assertIn('if count == 3:', exercise)
+        self.assertIn('if count != 3:', exercise)
+        self.assertNotIn('a.find("Share a practical checklist"', exercise)
+        self.assertIn('verify_canonical_reopened_candidates(', exercise)
+        self.assertIn('denied_url_recovery()', exercise)
+
+
+    def test_webkit_image_map_can_expose_only_exact_production_error_label(self):
+        # Actual installed WebKitGTK at run #44313725742 exposed a named
+        # native image-map node for Svelte role=alert. Never accept arbitrary
+        # similarly named map controls, even with 'angle invalid' tokens.
+        class Node:
+            def __init__(self, role, name):
+                self.role, self.name = role, name
+            def getRoleName(self):
+                return self.role
+        class Ax:
+            def nodes(self):
+                return iter([
+                    Node("image map",
+                         "The angle response is invalid or its Study evidence changed."),
+                    Node("image map", "Unrelated angle invalid warning in another panel"),
+                    Node("button", "The angle response is invalid or its Study evidence changed."),
+                ])
+        labels = native.native_named_alerts(Ax(), ("angle", "invalid"))
+        self.assertEqual(labels, [
+            "The angle response is invalid or its Study evidence changed."
+        ])
+        # This is accessible text evidence, NOT the authenticated Tauri ID.
+        report = {"cases": {}}
+        def only_webkit_image_map():
+            report["angle_rejection_visual_proof"] = {
+                "atspi_error_text_exposed": True,
+                "request_correlation": {
+                    "new_alerts": labels,
+                    "prior_alerts": [],
+                }
+            }
+            return "a WebKit image map is still not host denial correlation"
+        self.assertFalse(native.checked(report, "error_recovery",
+                                        only_webkit_image_map))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+
+    def test_agent10_unreviewed_screenshot_never_autocertifies_recovery(self):
+        # Mirror Agent 10's adversarial callback against the REAL QA checked
+        # helper. Neither a correct-looking red border nor downstream SQLite
+        # success can upgrade unresolved visual adjudication to PASS.
+        report = {"cases": {}}
+
+        def screenshot_only():
+            report["angle_rejection_visual_proof"] = {
+                "proof": "new bordered error region below Validate",
+                "atspi_error_text_exposed": False,
+                "human_review_required": True,
+            }
+            return "three recovery cards; SQLite unchanged"
+
+        self.assertFalse(native.checked(report, "error_recovery", screenshot_only))
+        self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
+        self.assertIn("screenshot", report["cases"]["error_recovery"]["reason"])
 
     def test_review_flag_false_does_not_replace_native_semantic_evidence(self):
         # A manually flipped flag is not proof that the installed Tauri IPC
@@ -159,6 +485,74 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertFalse(native.checked(report, "error_recovery", no_host_binding))
         self.assertEqual(report["cases"]["error_recovery"]["status"], "NOT TESTED")
 
+    def test_host_stderr_and_native_alert_identity_must_independently_agree(self):
+        # Deterministic SOURCE unit fixtures only. No native PASS is created.
+        angle_text = "The angle response is invalid or its Study evidence changed."
+        url_text = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
+        ident = "d" * 32
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "installed-stderr.log"
+            path.write_text("unrelated host startup\n")
+            offset = native.native_host_log_offset(path)
+            alert = angle_text + " · request " + ident
+            self.assertEqual(native.native_host_denial_ids(
+                path, offset, "INVALID_STUDY_ANGLES"), [])
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text))
+            # Only actual bytes appended after the native action count.
+            with path.open("a") as f:
+                f.write("[scriptotar-native-denial] code=INVALID_STUDY_ANGLES "
+                        "request_id=" + ident + "\n")
+            self.assertEqual(native.native_host_denial_ids(
+                path, offset, "INVALID_STUDY_ANGLES"), [ident])
+            receipt = native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text)
+            self.assertIsNotNone(receipt)
+            self.assertEqual(receipt["tauri_denial_request_id"], ident)
+            self.assertEqual(receipt["native_alert_request_id"], ident)
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES",
+                [angle_text + " · request " + "e" * 32], angle_text))
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES",
+                ["Unrelated angle invalid warning · request " + ident], angle_text))
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_MEDIA_URL", [url_text + " · request " + ident],
+                url_text))
+            # A new unrelated marker cannot be used as the claimed host ID.
+            with path.open("a") as f:
+                f.write("[scriptotar-native-denial] code=INVALID_STUDY_ANGLES "
+                        "request_id=" + "f" * 32 + "\n")
+            self.assertIsNone(native.observed_host_denial(
+                path, offset, "INVALID_STUDY_ANGLES", [alert], angle_text))
+
+    def test_foreign_study_reference_requires_real_fresh_host_and_native_id(self):
+        # Unit proof only: never a substitute for a real installed WebView.
+        label = "This Study reference cannot be opened in the active project."
+        req = "e" * 32
+        named = label + " · request " + req
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "installed-host-stderr.txt"
+            log.write_text("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
+                           "request_id=" + req + "\n")
+            offset = native.native_host_log_offset(log)
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [named], label))
+            with log.open("a") as stream:
+                stream.write("[scriptotar-native-denial] code=FOREIGN_STUDY_REFERENCE "
+                             "request_id=" + req + "\n")
+            receipt = native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [named], label)
+            self.assertEqual(receipt["tauri_denial_request_id"], req)
+            self.assertEqual(receipt["native_alert_request_id"], req)
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE", [label], label))
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "FOREIGN_STUDY_REFERENCE",
+                [label + " · request " + "f" * 32], label))
+            self.assertIsNone(native.observed_host_denial(
+                log, offset, "INVALID_STUDY_ANGLES", [named], label))
+
     def test_native_queue_denial_requires_exact_real_host_and_accessibility_proof(self):
         ident = "b" * 32
         label = "Invalid media URL. Only HTTP and HTTPS URLs are supported."
@@ -188,6 +582,326 @@ class NativeEvidenceContractTests(unittest.TestCase):
         ]:
             self.assertFalse(native.valid_native_url_request_binding(bad))
 
+    def test_canonical_snapshot_is_one_real_wal_read_transaction(self):
+        # Deterministic real SQLite concurrency; unit evidence only, never an
+        # installed native PASS. A torn two-table fingerprint must be rejected.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            filename = root / "scriptotar.sqlite3"
+            with sqlite3.connect(filename) as writer:
+                writer.execute("PRAGMA journal_mode=WAL")
+                writer.executescript("""
+                    CREATE TABLE content_studies (id INTEGER PRIMARY KEY, value TEXT);
+                    CREATE TABLE jobs (id INTEGER PRIMARY KEY, value TEXT);
+                    INSERT INTO content_studies VALUES (1, 'old');
+                    INSERT INTO jobs VALUES (1, 'old');
+                """)
+            initial = native.canonical_records_snapshot(root)
+            real_connect = sqlite3.connect
+            injected = []
+
+            class ConcurrentReader:
+                def __init__(self, conn):
+                    self.conn = conn
+                def __enter__(self):
+                    self.conn.__enter__()
+                    return self
+                def __exit__(self, *args):
+                    return self.conn.__exit__(*args)
+                def execute(self, statement, *args):
+                    if 'SELECT * FROM "jobs"' in statement and not injected:
+                        injected.append(True)
+                        with real_connect(filename) as writer:
+                            writer.execute("UPDATE content_studies SET value='new'")
+                            writer.execute("UPDATE jobs SET value='new'")
+                    return self.conn.execute(statement, *args)
+
+            def wrapped_connect(*args, **kwargs):
+                return ConcurrentReader(real_connect(*args, **kwargs))
+
+            with mock.patch.object(native.sqlite3, "connect", side_effect=wrapped_connect):
+                observed = native.canonical_records_snapshot(root)
+            latest = native.canonical_records_snapshot(root)
+            self.assertTrue(injected, "Real WAL writer was not interleaved")
+            self.assertNotEqual(initial["digest"], latest["digest"])
+            self.assertEqual(observed, initial)
+            self.assertNotEqual(observed, latest)
+
+    def test_canonical_snapshot_detects_rewrites_and_appended_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dbfile = Path(tmp) / "scriptotar.sqlite3"
+            with sqlite3.connect(dbfile) as db:
+                db.executescript("""
+                    CREATE TABLE content_studies (id TEXT PRIMARY KEY, title TEXT);
+                    CREATE TABLE jobs (id TEXT PRIMARY KEY, state TEXT);
+                    CREATE TABLE draft_versions (id TEXT PRIMARY KEY, body TEXT);
+                    INSERT INTO content_studies VALUES ('1', 'Study A');
+                    INSERT INTO draft_versions VALUES ('v1', 'original immutable body');
+                """)
+            original = native.canonical_records_snapshot(Path(tmp))
+            self.assertEqual(original["tables"]["content_studies"]["rows"], 1)
+            with sqlite3.connect(dbfile) as db:
+                db.execute("UPDATE draft_versions SET body='tampered' WHERE id='v1'")
+            modified = native.canonical_records_snapshot(Path(tmp))
+            self.assertNotEqual(original["digest"], modified["digest"])
+            self.assertNotEqual(original["tables"]["draft_versions"],
+                                modified["tables"]["draft_versions"])
+            with sqlite3.connect(dbfile) as db:
+                db.execute("INSERT INTO jobs VALUES ('job-new', 'created')")
+            inserted = native.canonical_records_snapshot(Path(tmp))
+            self.assertNotEqual(modified["digest"], inserted["digest"])
+
+    def test_queue_no_write_proof_precedes_missing_alert_failure(self):
+        # Even on an inaccessible Queue error, retain the read-only canonical
+        # job-count observation in exact-head CI artifacts for Agent 00.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        block = source.split("def denied_url_recovery():", 1)[1].split(
+            "def error_recovery():", 1
+        )[0]
+        self.assertIn('report["denied_url_canonical_job_count"]', block)
+        self.assertLess(
+            block.index('new_count = count_canonical_jobs('),
+            block.index('if not error_text:'),
+        )
+        self.assertIn('session.screenshot("failed-denied-url-no-error")', block)
+        self.assertIn("no named", block)
+
+    def test_linux_json_input_is_read_back_from_the_real_native_editor(self):
+        # On installed run #44308361975 corrected angles had zero AT-SPI
+        # actions. This input-readback guard distinguishes an untyped or
+        # truncated native JSON response from a real production validator bug.
+        import inspect
+        code = inspect.getsource(native.exercise)
+        self.assertIn('malformed_angle_json =', code)
+        self.assertIn('valid_angle_json =', code)
+        self.assertIn(
+            'observed_angle_json = a.read_text("Paste three-angle JSON response")',
+            code,
+        )
+        self.assertIn('if observed_angle_json != malformed_angle_json:', code)
+        self.assertIn('if observed_angle_json != valid_angle_json:', code)
+        self.assertIn('report["angle_recovery_native_diagnostics"]', code)
+        self.assertIn('failed-valid-three-angles-scrolled', code)
+        self.assertIn('if count != 3:', code)
+
+    def test_windows_native_error_requests_have_fresh_alert_and_full_sqlite_proof(self):
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledAngleRejectionAlerts(", source)
+        self.assertIn("function Get-InstalledQueueRejectionAlerts(", source)
+        self.assertIn("Wait-InstalledAngleRejection $arabicHwnd $priorAngleAlerts", source)
+        self.assertIn("if ($priorAngleAlerts.Count -ne 0)", source)
+        self.assertIn("$beforeAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$afterAnglesCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("if ($beforeAnglesCanonical -cne $afterAnglesCanonical)", source)
+        self.assertIn("$beforeQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'", source)
+        self.assertIn("$report.denied_url_canonical_snapshot", source)
+        self.assertIn("$freshQueueAlerts = @(", source)
+        self.assertIn("$_ -cnotin $priorQueueAlerts", source)
+        self.assertIn("elif kind == \"snapshot\":", source)
+        self.assertIn("canonical_records_snapshot(Path(root))", source)
+        self.assertLess(
+            source.index("$afterQueueCanonical = Verify-InstalledCanonicalDb 'snapshot'"),
+            source.index("if (-not $deniedError)"),
+        )
+
+    def test_linux_optional_foreign_reference_denial_runs_after_core_installed_proof(self):
+        # Genuine source f34ae367/ec807a54: WebKitGTK shows an error but
+        # exposes no nameable AT-SPI denial. Keep the failure veto; gather
+        # unrelated core native observations BEFORE running this preflight.
+        # This is a source ordering assertion, NOT installed GUI PASS.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        for core_case in (
+            'if not checked(report, "keyboard_custom_controls", keyboard):',
+            'if not checked(report, "arabic_locale_control", arabic):',
+            'if not checked(report, "theme_mode_control", theme):',
+            'if not checked(report, "error_recovery", error_recovery):',
+        ):
+            self.assertLess(source.index(core_case),
+                            source.index('if ax.available("Open Study reference"):'))
+        self.assertIn('        ax = session.ax', source.splitlines())
+        self.assertIn(
+            'status(report, "wrong_project_ipc_denial", "FAIL"', source
+        )
+        self.assertIn('"status": ("PARTIAL" if found_error and before == after and protected',
+                      source)
+        self.assertIn('if after != before or not found_error or not protected:', source)
+        self.assertIn('"FOREIGN_STUDY_REFERENCE",', source)
+        self.assertIn('reference_host_proof = observed_host_denial(', source)
+        self.assertIn('"host_request_correlation": reference_host_proof', source)
+        self.assertIn('foreign_title_absent = not active.available(study)', source)
+        self.assertIn('foreign_draft_absent = active.read_text("Script draft") == ""', source)
+        self.assertIn('if after != before or not found_error or not protected:', source)
+        self.assertIn('preserve_foreign_reference_failure(report, exc)', source)
+        self.assertIn('"preexisting_exact_denial": expected_error in before_alerts', source)
+        self.assertIn('"postclick_exact_denial": bool(fresh_native_alerts)', source)
+        self.assertIn('read-only foreign Study', source)
+        self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
+
+    def test_failed_foreign_reference_preserves_original_canonical_snapshot(self):
+        # Source-only adversarial test; never asserts a real native PASS.
+        before = {"digest": "a" * 64, "tables": {"projects": {"rows": 2}}}
+        after = {"digest": "b" * 64, "tables": {"projects": {"rows": 3}}}
+        report = {"foreign_study_reference_probe": {
+            "status": "PARTIAL", "canonical_before": before,
+            "canonical_after": after, "unchanged": False,
+            "preexisting_exact_denial": False,
+            "postclick_exact_denial": False,
+            "reference_sha256": "c" * 64,
+        }}
+        native.preserve_foreign_reference_failure(
+            report, native.NativeFailure("missing fresh semantic denial")
+        )
+        proof = report["foreign_study_reference_probe"]
+        self.assertEqual(proof["status"], "FAIL")
+        self.assertEqual(proof["canonical_before"], before)
+        self.assertEqual(proof["canonical_after"], after)
+        self.assertFalse(proof["unchanged"])
+        self.assertFalse(proof["postclick_exact_denial"])
+        self.assertEqual(proof["reference_sha256"], "c" * 64)
+        self.assertIn("missing fresh", proof["reason"])
+        native.preserve_foreign_reference_failure({"foreign_study_reference_probe": None},
+                                                  ValueError("incomplete preflight"))
+
+    def test_installed_foreign_reference_is_partial_not_forged_write_ipc_pass(self):
+        # Future PR #138 offers genuine installed-host read-only get_study via
+        # a normal UI. Never confuse that with forged mutating IPC denial.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('if ax.available("Open Study reference"):', source)
+        self.assertIn('active.assert_selected_option("PROJECT", name_b)', source)
+        self.assertIn('active.type_into("Paste Study reference", reference)', source)
+        self.assertIn('active.read_text("Paste Study reference") != reference', source)
+        self.assertIn('active.click("Open reference", "button")', source)
+        self.assertIn('before = canonical_records_snapshot(root / "data")', source)
+        self.assertIn('after = canonical_records_snapshot(root / "data")', source)
+        self.assertIn('"status": ("PARTIAL" if found_error and before == after and protected', source)
+        self.assertIn('status(report, "wrong_project_ipc_denial", "NOT TESTED"', source)
+        self.assertNotIn('status(report, "wrong_project_ipc_denial", "PASS"', source)
+        self.assertIn('"This Study reference cannot be opened in the active project."', source)
+        self.assertIn('verify_canonical_reopened_candidates(', source)
+        # The exact Arabic label must match production PR #138, not a
+        # guessed sentence that would never appear as an AT-SPI name.
+        self.assertIn("لا يمكن فتح هذا المرجع ضمن المشروع النشط.",
+                      native.PRODUCTION_ERROR_LABELS)
+
+    def test_foreign_reference_ids_derive_from_real_canonical_rows_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dbfile = Path(tmp) / "scriptotar.sqlite3"
+            p = "aaaabbbb-1111-2222-3333-444444444444"
+            st = "aaaa2222-1111-2222-3333-444444444444"
+            dr = "aaaa3333-1111-2222-3333-444444444444"
+            with sqlite3.connect(dbfile) as db:
+                db.executescript("""
+                    CREATE TABLE projects (id TEXT, name TEXT, archived_at TEXT);
+                    CREATE TABLE content_studies
+                      (id TEXT, project_id TEXT, title TEXT, archived_at TEXT);
+                    CREATE TABLE creative_drafts
+                      (id TEXT, project_id TEXT, study_id TEXT, archived_at TEXT);
+                """)
+                db.execute("INSERT INTO projects VALUES (?, ?, NULL)", (p, "Project A"))
+                db.execute("INSERT INTO content_studies VALUES (?, ?, ?, NULL)",
+                           (st, p, "Study A"))
+                db.execute("INSERT INTO creative_drafts VALUES (?, ?, ?, NULL)",
+                           (dr, p, st))
+            original = dbfile.read_bytes()
+            self.assertEqual(
+                native.canonical_study_reference_ids(Path(tmp), "Project A", "Study A"),
+                (p, st, dr),
+            )
+            self.assertEqual(dbfile.read_bytes(), original)
+            with self.assertRaises(native.NativeFailure):
+                native.canonical_study_reference_ids(Path(tmp), "Project B", "Study A")
+
+    def test_windows_foreign_study_reference_stays_partial_read_only(self):
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Get-InstalledReferenceDenials(", source)
+        self.assertIn("canonical_study_reference_ids,", source)
+        self.assertIn('elif kind == "study_reference":', source)
+        self.assertIn("$report.foreign_study_reference_probe", source)
+        self.assertIn("canonical_before = ($beforeReferenceCanonical | ConvertFrom-Json -AsHashtable)", source)
+        self.assertIn("canonical_after = ($afterReferenceCanonical | ConvertFrom-Json -AsHashtable)", source)
+        self.assertIn("$priorProof['status'] = 'FAIL'", source)
+        self.assertIn("$priorProof['reason'] =", source)
+        self.assertIn("'FOREIGN_STUDY_REFERENCE' $now[0] $referenceError", source)
+        self.assertIn("Get-InstalledBoundDenialAlerts $restoredHwnd $referenceError", source)
+        self.assertIn("host_request_id = $hostReferenceId", source)
+        self.assertIn("Read-InstalledEdit $restoredHwnd 'Script draft'", source)
+        self.assertIn("foreign_draft_text_absent = $foreignDraftEmpty", source)
+        self.assertIn("native_bound_alert_name = $hostBoundAlert", source)
+        self.assertIn("Paste-InstalledJson $restoredHwnd 'Paste Study reference' $reference", source)
+        self.assertIn("Verify-InstalledCanonicalDb 'snapshot' $first", source)
+        self.assertIn("$priorDenial = @(Get-InstalledReferenceDenials", source)
+        self.assertIn("Get-InstalledReferenceDenials $restoredHwnd", source)
+        self.assertIn("Click-InstalledControl $restoredHwnd 'Open reference'", source)
+        self.assertIn("status='NOT TESTED'", source)
+        self.assertIn("forged mutating Tauri IPC", source)
+        self.assertNotIn("$cases.wrong_project_ipc_denial = @{ status='PASS'", source)
+        self.assertIn("$cases.wrong_project_ipc_denial.status -ne 'FAIL'", source)
+
+    def test_windows_real_role_alert_container_carries_host_request_id(self):
+        # Real #44362977640 screenshot renders a Request ID, but WebView2
+        # child Text exposed only the plain error. Require the fresh PARENT
+        # aria-label exposed as a native UIA name, not pixels/OCR/DOM or
+        # a regex over unrelated page text, before trusting the Rust stderr.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        helper = script.split("function Get-InstalledBoundDenialAlerts(", 1)[1].split(
+            "function Get-InstalledAngleRejectionAlerts(", 1)[0]
+        self.assertIn("[System.Windows.Automation.TreeScope]::Subtree", helper)
+        self.assertIn("[System.Windows.Automation.Condition]::TrueCondition", helper)
+        self.assertIn("ControlType.Group", helper)
+        self.assertIn("ControlType.Text", helper)
+        self.assertIn("$node.Current.Name", helper)
+        self.assertIn("$node.Current.IsOffscreen", helper)
+        self.assertIn("$rect.Width -le 3", helper)
+        self.assertIn("' · request [0-9a-f]{32}$'", helper)
+        self.assertIn("Where-Object { $_ -cnotin $prior }", helper)
+        self.assertIn("if ($fresh.Count -eq 1)", helper)
+        self.assertIn("if ($fresh.Count -gt 1) { return $null }", helper)
+        self.assertNotIn("OCR", helper.split("function Wait-InstalledBoundDenial(",1)[1])
+        self.assertNotIn("SetValue(", helper)
+        angle = "Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $angleBoundAlert"
+        queue = "Get-InstalledHostDenial $queueHostLogOffset 'INVALID_MEDIA_URL' $queueBoundAlert"
+        self.assertIn(angle, script)
+        self.assertIn(queue, script)
+        self.assertIn("$priorAngleBoundAlerts.Count -ne 0", script)
+        self.assertIn("$priorQueueBoundAlerts.Count -ne 0", script)
+        self.assertIn("real_native_alert_aria_label = $angleBoundAlert", script)
+        self.assertIn("native_accessible_error_request_id = $angleUiaId", script)
+        self.assertIn("native_bound_queue_alert = $queueBoundAlert", script)
+        self.assertIn("-not $nativeAlert) { return $null }", script)
+        self.assertNotIn(
+            "Get-InstalledHostDenial $angleHostLogOffset 'INVALID_STUDY_ANGLES' $currentAngleError", script
+        )
+
+    def test_windows_native_denial_requires_actual_host_stderr_and_ui_id(self):
+        # Static runner audit: a real installed process must emit a typed
+        # Rust stderr marker; a UIA alert matching only text is not enough.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("function Start-InstalledDesktop(", script)
+        self.assertIn("-RedirectStandardError $script:installedDenialLog", script)
+        self.assertIn("function Get-InstalledHostDenial(", script)
+        self.assertIn("Get-InstalledHostLogOffset", script)
+        self.assertIn("Get-InstalledHostDenial $angleHostLogOffset", script)
+        self.assertIn("'INVALID_STUDY_ANGLES'", script)
+        self.assertIn("Get-InstalledHostDenial $queueHostLogOffset", script)
+        self.assertIn("'INVALID_MEDIA_URL'", script)
+        self.assertIn("request_id=([0-9a-f]{32})", script)
+        self.assertIn("· request ([0-9a-f]{32})", script)
+        self.assertIn("$report.error_recovery_observations", script)
+        self.assertIn("backend_angle_denial_id = $angleHostId", script)
+        self.assertIn("backend_url_denial_id = $queueHostId", script)
+        block = script.split("$report.error_recovery_observations = @", 1)[1]
+        self.assertIn("if ($angleHostId -and $queueHostId)", block)
+        self.assertIn("status='PASS'", block)
+        self.assertIn("status='NOT TESTED'", block)
+        self.assertIn("one or both typed Rust stderr request IDs were absent", block)
+        self.assertNotIn("backend_request_identity = $null", block)
+        # The tests above are source-level; not a forged host log or native PASS.
+        self.assertIn("if ($report.verdict -ne 'PASS') { exit 1 }", script)
+
     def test_agent10_independent_five_native_anti_spoof_attacks(self):
         # Execute Agent 10's own UNMODIFIED independent source tests on the
         # exact current checkout, not a checked-in synthetic PASS receipt.
@@ -203,6 +917,169 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, output)
         self.assertIn("Ran 5 tests", output)
         self.assertIn("OK", output)
+
+    def test_windows_candidate_pointer_cannot_select_through_fixed_search_overlay(self):
+        # Reproduced on installed f34ae367 / #44389766717: a genuine native
+        # ScrollItemIntoView aligned the candidate under the sticky header
+        # and a real pointer click opened Command palette, not the popup.
+        # This contract test cannot itself prove a native GUI success.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        native_wheel = script.split("public static void NativeScrollUp(", 1)[1].split(
+            "public static void NativeClick(", 1)[0]
+        self.assertIn("SetCursorPos(x, y)", native_wheel)
+        self.assertIn("mouse_event(0x0800", native_wheel)
+        guard = script.split("function Ensure-InstalledCandidateViewport(", 1)[1].split(
+            "function Choose-InstalledOption(", 1)[0]
+        for clause in (
+            "Assert-InstalledCommandPaletteClosed $hwnd",
+            "Find-ExactInstalledControl $hwnd 'Script candidates'",
+            "[System.Windows.Automation.ScrollItemPattern]::Pattern",
+            "$candidate.Current.IsOffscreen",
+            "$candidate.Current.IsEnabled",
+            "$safeTop = $window.Y + 135",
+            "'Search workspace and commands'",
+            "$centerY -ge $safeTop -and $centerY -le $safeBottom",
+            "[NativeWebViewWindow]::NativeScrollUp($wheelX, $wheelY)",
+            "throw 'Installed Script candidates could not be moved clear",
+        ):
+            self.assertIn(clause, guard)
+        choose = script.split("function Choose-InstalledOption(", 1)[1].split(
+            "function Test-InstalledPopupOptionVisible(", 1)[0]
+        self.assertLess(
+            choose.index("Ensure-InstalledCandidateViewport $hwnd"),
+            choose.index("Click-InstalledControl $hwnd $label"),
+        )
+        self.assertLess(
+            choose.index("Assert-InstalledCommandPaletteClosed $hwnd"),
+            choose.index("Find-InstalledPopupOption $hwnd $name"),
+        )
+        self.assertIn("Native WebView2 option '$name' is not owned by an accessible popup List", choose)
+        click = script.split("function Click-InstalledControl(", 1)[1].split(
+            "function Type-InstalledEdit(", 1)[0]
+        self.assertIn("if ($pointer -and $name -eq 'Script candidates')", click)
+        self.assertIn("Assert-InstalledCommandPaletteClosed $hwnd", click)
+        self.assertIn("throw \"Installed Script candidates pointer would strike fixed toolbar", click)
+        self.assertNotIn("SetValue(", guard + choose)
+        self.assertNotIn("ExecuteScript", guard + choose)
+
+    def test_windows_native_denial_proof_requires_fresh_input_distinct_host_receipts_and_order(self):
+        # Source-contract regression only. An installed UIA/real Rust process
+        # run (not these tests) must establish genuine native certification.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        receipt = script.split("function Assert-InstalledNativeInputReceipt(", 1)[1].split(
+            "function Get-InstalledBoundDenialAlerts(", 1)[0]
+        self.assertIn("Find-ExactInstalledControl $hwnd $name", receipt)
+        self.assertIn("[System.Windows.Automation.ValuePattern]::Pattern", receipt)
+        self.assertIn("if ($actual -cne $expected)", receipt)
+        self.assertIn("[System.Security.Cryptography.SHA256]::HashData(", receipt)
+        deny = script.split("function Get-InstalledHostDenial(", 1)[1].split(
+            "function Get-InstalledReferenceDenials(", 1)[0]
+        self.assertIn("$markers.Count -ne 1", deny)
+        self.assertIn("$markers[0].Code -cne $code", deny)
+        self.assertIn("$markers[0].Id -cne $native.Groups[1].Value", deny)
+        self.assertIn("installedDenialLog", deny)
+        # Both UIA readings must be taken AFTER the real paste and BEFORE the
+        # respective native button click; stale clipboard/semantic flags fail.
+        self.assertLess(
+            script.index("$angleReadbackSha = Assert-InstalledNativeInputReceipt"),
+            script.index("Click-InstalledControl $arabicHwnd 'Validate 3 angles'"))
+        self.assertLess(
+            script.index("$queueReadbackSha = Assert-InstalledNativeInputReceipt"),
+            script.index("Click-InstalledControl $arabicHwnd 'Queue URL'"))
+        gate = script.split("$nativeInputsAndTimingProven = (", 1)[1].split(
+            "$report.error_recovery_observations.windows_strict_binding_valid", 1)[0]
+        for requirement in (
+            "$angleSubmissionSha -ceq $angleReadbackSha",
+            "$queueSubmissionSha -ceq $queueReadbackSha",
+            "$priorAngleAlerts.Count -eq 0",
+            "$priorAngleBoundAlerts.Count -eq 0",
+            "$priorQueueBoundAlerts.Count -eq 0",
+            "$angleHostId -ceq $angleUiaId",
+            "$queueHostId -ceq $queueUiaId",
+            "$angleHostId -cne $queueHostId",
+            "$angleObservedTicks -gt $angleClickTicks",
+            "$queueClickTicks -gt $angleObservedTicks",
+            "$queueObservedTicks -gt $queueClickTicks",
+            "$beforeAnglesCanonical -ceq $afterAnglesCanonical",
+            "$beforeQueueCanonical -ceq $afterQueueCanonical",
+            "$beforeJobs -eq $afterJobs",
+        ):
+            self.assertIn(requirement, gate)
+        outcome = script.split("if ($angleHostId -and $queueHostId) {", 1)[1].split(
+            "} catch {\n        $cases.error_recovery", 1)[0]
+        self.assertIn("if ($nativeInputsAndTimingProven)", outcome)
+        self.assertIn("status='PASS'", outcome)
+        self.assertIn("status='NOT TESTED'", outcome)
+        self.assertNotIn("native_semantic_flag", outcome)
+
+    def test_windows_native_saved_draft_checks_canonical_before_clicking_autosaved_button(self):
+        # Real installed run #44357622512 showed visible Save changes but its
+        # enabled state raced native Svelte auto-save. A native text edit must
+        # be proven in canonical SQLite before declaring success; button
+        # activation is allowed only when actual saved rows are still missing.
+        script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        block = script.split("if ($cases.create_study.status -eq 'PASS') {", 1)[1].split(
+            "if ($cases.edit_save_duplicate_candidate.status -eq 'PASS') {", 1)[0]
+        self.assertIn("Type-InstalledEdit $providerHwnd 'Script draft' $draftBody", block)
+        proof = "Wait-InstalledCanonicalDb 'draft' $first $studyTitle $draftBody"
+        self.assertEqual(block.count(proof), 2)
+        self.assertLess(block.find(proof), block.find(
+            "Click-InstalledControl $providerHwnd 'Save changes'"))
+        self.assertIn("catch {", block)
+        self.assertIn("$saveMode = 'autosave'", block)
+        self.assertIn("$saveMode = 'manual'", block)
+        self.assertIn("$report['native_draft_save_mode'] = $saveMode", block)
+        self.assertIn("Wait-InstalledCanonicalDb 'candidates'", script)
+        self.assertNotIn("$saveButton.Current.IsEnabled", block)
+        self.assertNotIn("SetValue(", block)
+
+    def test_windows_studio_text_uses_native_pointer_clipboard_and_exact_uia_readback(self):
+        # Real installed PR #135 QA candidate #44353033303: SetFocus and
+        # direct SendKeys did not deliver even the first Creative goal field.
+        # This regression enforces actual pointer-bound WebView2 focus,
+        # keyboard clipboard paste, and strict UIA native ValuePattern text.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        helper = source.split("function Type-InstalledEdit(", 1)[1].split(
+            "function Paste-InstalledQueueUrl(", 1)[0]
+        self.assertIn("Click-InstalledControl $hwnd $name", helper)
+        self.assertIn("([System.Windows.Automation.ControlType]::Edit) -pointer", helper)
+        self.assertIn("Set-Clipboard -Value $value", helper)
+        self.assertIn("SendWait('^a')", helper)
+        self.assertIn("SendWait('^v')", helper)
+        self.assertIn("[System.Windows.Automation.ValuePattern]::Pattern).Current.Value", helper)
+        self.assertIn("if ($actual -ceq $value) { return }", helper)
+        self.assertIn("for ($attempt = 1; $attempt -le 2; $attempt++)", helper)
+        self.assertIn("$lastFocus", helper)
+        self.assertNotIn("SetValue(", helper)
+        self.assertNotIn("SendWait($value)", helper)
+        self.assertIn("Type-InstalledEdit $arabicHwnd 'Creative goal'", source)
+        self.assertIn("Type-InstalledEdit $arabicHwnd 'Audience'", source)
+
+    def test_windows_queue_url_requires_native_pointer_and_exact_paste(self):
+        # A SetFocus/SendKeys-only URL entry left the actual installed
+        # WebView2 Media URL field at its placeholder in run #44308361975.
+        # Pointer and clipboard are genuine native controls, not UIA SetValue.
+        source = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn('function Paste-InstalledQueueUrl(', source)
+        helper = source.split('function Paste-InstalledQueueUrl(', 1)[1].split(
+            'function Paste-InstalledJson(', 1
+        )[0]
+        self.assertIn("Click-InstalledControl $hwnd 'Media URL'", helper)
+        self.assertIn(') -pointer', helper)
+        self.assertIn('Set-Clipboard -Value $url', helper)
+        self.assertIn("SendWait('^a')", helper)
+        self.assertIn("SendWait('^v')", helper)
+        self.assertIn('ValuePattern]::Pattern).Current.Value', helper)
+        self.assertIn('if ($actual -cne $url)', helper)
+        self.assertNotIn('SetValue(', helper)
+        self.assertIn(
+            "Paste-InstalledQueueUrl $arabicHwnd $rejectedUrl",
+            source,
+        )
+        self.assertNotIn(
+            "Type-InstalledEdit $arabicHwnd 'Media URL'",
+            source,
+        )
 
     def test_sha256_uses_actual_file_bytes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -413,7 +1290,7 @@ class NativeEvidenceContractTests(unittest.TestCase):
         # can certify the actual interactions and screenshot.
         script = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
         self.assertIn("if ($cases.keyboard_custom_controls.status -eq 'PASS')", script)
-        self.assertIn("foreach ($choice in @('System', 'Dark'))", script)
+        self.assertIn("foreach ($choice in $actualThemeChoices)", script)
         self.assertIn("Choose-InstalledOption $restoredHwnd 'Theme' $choice", script)
         self.assertIn("Wait-InstalledComboValue $restoredHwnd 'Theme' $choice", script)
         self.assertIn("if ($saveTheme.Current.IsEnabled)", script)
@@ -422,6 +1299,43 @@ class NativeEvidenceContractTests(unittest.TestCase):
         self.assertIn("Wait-InstalledComboValue $themeHwnd 'Theme' 'Dark'", script)
         self.assertIn("windows-theme-dark-reopened.png", script)
         self.assertIn("$cases.theme_mode_control = @{", script)
+
+    def test_arabic_installed_navigation_captures_do_not_self_certify_rtl(self):
+        import inspect
+        linux = inspect.getsource(native.exercise)
+        self.assertIn('a.click("الطابور", "button")', linux)
+        self.assertIn('a.heading("المهام")', linux)
+        self.assertIn('session.screenshot("arabic-queue")', linux)
+        self.assertIn('a.click("الإعدادات", "button")', linux)
+        self.assertIn('session.screenshot("arabic-settings")', linux)
+        self.assertIn('a.click("الاستوديو", "button")', linux)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', linux)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("'الطابور' ([System.Windows.Automation.ControlType]::Button)", windows)
+        self.assertIn("Wait-InstalledStudioPageText $themeHwnd 'المهام'", windows)
+        self.assertIn("'الإعدادات' ([System.Windows.Automation.ControlType]::Button)", windows)
+        self.assertIn("windows-arabic-queue.png", windows)
+        self.assertIn("windows-arabic-settings.png", windows)
+        self.assertIn("windows-arabic-studio-return.png", windows)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
+
+    def test_installed_light_mode_is_conditional_and_never_inferred_from_system(self):
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('light_offered = a.available("Light", "list item")', source)
+        self.assertIn('if light_offered:', source)
+        self.assertIn('a.choose("Theme", "Light")', source)
+        self.assertIn('a.assert_selected_option("Theme", "Light")', source)
+        self.assertIn('session.screenshot("light-theme")', source)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', source)
+        windows = (Path(__file__).resolve().parent / "windows_webview2.ps1").read_text()
+        self.assertIn("$lightOffered = [bool](Test-InstalledPopupOptionVisible", windows)
+        self.assertIn("'explicit_light_option'", windows)
+        self.assertIn("@('System', 'Light', 'Dark')", windows)
+        self.assertIn("@('System', 'Dark')", windows)
+        self.assertIn("foreach ($choice in $actualThemeChoices)", windows)
+        self.assertIn("windows-theme-", windows)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
 
     def test_windows_arabic_persisted_relaunch_and_english_restore_fail_closed(self):
         # Native UIA evidence, not a simulated DOM locale toggle. Studio
@@ -1034,6 +1948,50 @@ class NativeEvidenceContractTests(unittest.TestCase):
             self.assertTrue(passed)
             self.assertIn((language, role), calls)
 
+
+
+    def test_native_error_recovery_requires_real_queue_denial_and_db_readback(self):
+        # Static regression contract only; a source check never turns the
+        # installed scenario green. The OS runners must perform the actual UI.
+        from pathlib import Path
+        root = Path(__file__).resolve().parent
+        linux = (root / "linux_webkit.py").read_text(encoding="utf-8")
+        windows = (root / "windows_webview2.ps1").read_text(encoding="utf-8")
+        for source in (linux, windows):
+            self.assertIn("file:///scriptotar-native-qa-denied-media.mp4", source)
+            self.assertIn("Script draft", source)
+            self.assertIn("error_recovery", source)
+        self.assertIn('session.screenshot("rejected-url-error")', linux)
+        self.assertIn('session.screenshot("recovered-studio-after-denial")', linux)
+        self.assertIn("rejected-url-error.png", windows)
+        self.assertIn("recovered-studio-after-denial.png", windows)
+        self.assertIn('a.click("Queue", "button")', linux)
+        self.assertIn('a.heading("Jobs", timeout=15)', linux)
+        self.assertIn('a.click("Queue URL", "button")', linux)
+        self.assertIn('count_canonical_jobs(root / "data", name_a)', linux)
+        self.assertIn('a.choose("Open study", study)', linux)
+        self.assertIn('verify_canonical_reopened_candidates(', linux)
+        self.assertIn("Click-InstalledControl $arabicHwnd 'Queue URL'", windows)
+        self.assertIn("Verify-InstalledCanonicalDb 'jobs'", windows)
+        self.assertIn("Wait-InstalledEditExact $arabicHwnd 'Script draft' $draftBody", windows)
+        self.assertIn("Verify-InstalledCanonicalDb 'candidates'", windows)
+        # Do not accept an ordinary 'Supported media URL' label as an error.
+        self.assertIn("$value -ne 'Supported media URL'", windows)
+        self.assertIn("status='FAIL'", windows)
+        self.assertNotIn('"error_recovery", "PASS"', linux)
+
+    def test_visual_menu_captures_do_not_self_certify(self):
+        from pathlib import Path
+        root = Path(__file__).resolve().parent
+        linux = (root / "linux_webkit.py").read_text(encoding="utf-8")
+        windows = (root / "windows_webview2.ps1").read_text(encoding="utf-8")
+        self.assertIn('session.screenshot("arabic-locale-menu-open")', linux)
+        self.assertIn('session.screenshot("dark-theme-menu-open")', linux)
+        self.assertIn('windows-arabic-menu-open.png', windows)
+        self.assertIn('windows-theme-menu-open.png', windows)
+        self.assertIn('status(report, "arabic_rtl", "NOT TESTED"', linux)
+        self.assertIn('status(report, "light_dark_visual", "NOT TESTED"', linux)
+        self.assertIn("'arabic_rtl', 'light_dark_visual'", windows)
 
 
 if __name__ == "__main__":
