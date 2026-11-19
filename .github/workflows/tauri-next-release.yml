@@ -46,9 +46,9 @@ jobs:
         run: python .github/tests/test_tauri_next_release_race.py
 
   publish-preview:
-    # One-time repository owner approval for the 1.4.1 preview is restricted to an exact main commit message.
+    # Publishing requires owner-managed repository approvals, never source-controlled commit text.
     # Every mandatory exact-SHA CI and package-artifact gate remains enforced.
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && ((vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true') || github.event.workflow_run.head_commit.message == 'owner-approve-scriptotar-next-1.4.1-hotfix-publish-20261112')
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true' && vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
