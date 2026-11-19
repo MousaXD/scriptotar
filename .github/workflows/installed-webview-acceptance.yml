@@ -82,7 +82,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 81475eed26224fe8733b2d4b64525c73c489bcbf
+          ref: 75ec9eab2ec19f9f687aca06d9e4a1f5554c322d
           path: .agent11-trusted-guard
           persist-credentials: false
           sparse-checkout: |
@@ -91,7 +91,7 @@ jobs:
       - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         working-directory: .
         run: |
-          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='81475eed26224fe8733b2d4b64525c73c489bcbf')process.exit(1)"
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='75ec9eab2ec19f9f687aca06d9e4a1f5554c322d')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - name: Build real release frontend
@@ -223,7 +223,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 81475eed26224fe8733b2d4b64525c73c489bcbf
+          ref: 75ec9eab2ec19f9f687aca06d9e4a1f5554c322d
           path: .agent11-trusted-guard
           persist-credentials: false
           sparse-checkout: |
@@ -232,7 +232,7 @@ jobs:
       - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         working-directory: .
         run: |
-          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='81475eed26224fe8733b2d4b64525c73c489bcbf')process.exit(1)"
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='75ec9eab2ec19f9f687aca06d9e4a1f5554c322d')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - name: Build real frontend
