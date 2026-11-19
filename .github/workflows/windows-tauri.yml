@@ -60,8 +60,6 @@ jobs:
             sidecars/transcription/requirements-bundle.txt
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # Rust 1.97.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Install pinned Tauri CLI
-        run: npm install --global @tauri-apps/cli@2.11.2
       - name: Install pinned runtime bundler dependencies
         run: |
           python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
@@ -125,6 +123,8 @@ jobs:
           node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='55ce3ac389b7e1fcab99b3a5acc84b526630af72')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install pinned Tauri CLI
+        run: npm install --global @tauri-apps/cli@2.11.2
       - name: Build frontend assets
         working-directory: apps/desktop-ui
         run: |
