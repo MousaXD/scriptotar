@@ -71,7 +71,7 @@ describe('desktop workstation', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('This Study reference cannot be opened in the active project.');
     expect(alert.getAttribute('aria-label')).toMatch(
-      /^This Study reference cannot be opened in the active project\\. · request [0-9a-f]{32}$/
+      /^This Study reference cannot be opened in the active project\. · request [0-9a-f]{32}$/
     );
     expect(alert.getAttribute('aria-label')).not.toContain(foreignProject);
     expect(alert.getAttribute('aria-label')).not.toContain(foreignStudy);
