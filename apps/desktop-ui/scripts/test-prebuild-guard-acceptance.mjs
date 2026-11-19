@@ -187,6 +187,50 @@ try {
     count++;
   }
 
+
+  // P0-149-07: effective JS literal values must be decoded before confinement.
+  // Every encoding is source text, not JavaScript-escaped test fixture data.
+  const encodedTraversals = [
+    ['escaped Unicode dot static', String.raw`import '.\u002e/qa/hostile.ts';`],
+    ['escaped brace Unicode dot from', String.raw`import { hostile } from '.\u{2e}/qa/hostile.ts';`],
+    ['escaped hex dot dynamic', String.raw`void import('.\x2e/qa/hostile.ts');`],
+    ['escaped dot export-from', String.raw`export { hostile } from '.\u002e/qa/hostile.ts';`],
+    ['escaped dynamic comment', String.raw`void import(/* comment */ '.\u{2e}/qa/hostile.ts');`],
+    ['mixed unicode hex encoded slash', String.raw`import '.\u002e\x2fqa/hostile.ts';`],
+    ['escaped Vite root slash', String.raw`import '\u002fqa/hostile.ts';`],
+    ['mixed nested encoded traversal', String.raw`import './stage/\u002e\u002e/\x2e\x2e/qa/hostile.ts';`],
+    ['encoded nested dynamic backtick', 'void import('+String.fromCharCode(96)+String.raw`.\x2e/qa/hostile.ts`+String.fromCharCode(96)+');'],
+  ];
+  for (const [label, statement] of encodedTraversals) {
+    checkBlocked(label,()=>{
+      const p='apps/desktop-ui/src/main.ts',before=read(p);
+      fixtureWrite(p,before+'\n'+statement+'\n');
+      fixtureWrite('apps/desktop-ui/qa/hostile.ts',
+        "const hostile = import.meta.glob('./+(*a)'); export { hostile };\n");
+      return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
+    },/Unreviewed out-of-scope relative source reference|Unreviewed absolute\/root-relative module import/);
+    count++;
+  }
+  // Non-module text, URL-like literals and decoded in-scope paths stay legal.
+  {
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    const safeFile='apps/desktop-ui/src/agent11-safe-escape.ts';
+    fixtureWrite(safeFile,'export const agent11SafeEscape = true;\n');
+    try {
+      fixtureWrite(p,before+'\n'+String.raw`import '.\u002fagent11-safe-escape.ts';`+'\n'+
+        String.raw`const agent11EscapedUrl = "https://example.test/\u002e/status";`+'\n'+
+        String.raw`const agent11Harmless = "import \u002e from /docs";`+'\n');
+      const safe=runGuard(workspace);
+      assert.equal(safe.status,0,'Benign escaped module and non-module strings rejected: '+safe.stdout);
+    } finally {fixtureWrite(p,before);rmSync(join(temp,safeFile));}
+    count++;
+  }
+  checkBlocked('unsupported dynamic module expression',()=>{
+    const p='apps/desktop-ui/src/main.ts',before=read(p);
+    fixtureWrite(p,before+'\nvoid import("./" + somePath);\n');
+    return ()=>fixtureWrite(p,before);
+  },/Ambiguous\/unsupported dynamic module specifier/); count++;
+
   // Vite/esbuild can import TypeScript module variants .mts and .cts.
   // The previous extension whitelist omitted both and did not inspect
   // a hostile import.meta.glob inside these first-party source files.

@@ -62,6 +62,430 @@ function selfTest() {
   for (const input of clean) assert.deepEqual(inspectText(input), [], 'blocked clean control: '+input);
   console.log('SYNTHETIC pre-build guard controls '+(hostile.length+clean.length)+'/'+(hostile.length+clean.length)+' PASS; not production or parser certification.');
 }
+
+// First-party JavaScript modules must be checked using the *effective*
+// specifier, not regex captures of raw quoted source. JS string escapes,
+// including \xNN, \uNNNN, \u{N}, combinations and escaped slashes, can
+// change a harmless-looking literal into an out-of-src Vite import.
+// This conservative lexer excludes comments and non-module strings, follows
+// template interpolations, and fails closed on ambiguous module expressions.
+function lexModuleTokens(source) {
+  const tokens = [];
+  function scan(start, stopAtBrace = false) {
+    let depth = 0;
+    let i = start;
+    while (i < source.length) {
+      const ch = source[i], next = source[i + 1];
+      if (/\s/.test(ch)) { i++; continue; }
+      if (ch === '/' && next === '/') {
+        i += 2;
+        while (i < source.length && source[i] !== '\n' && source[i] !== '\r') i++;
+        continue;
+      }
+      if (ch === '/' && next === '*') {
+        const end = source.indexOf('*/', i + 2);
+        if (end < 0) { tokens.push({kind:'invalid', value:'unterminated comment'}); return source.length; }
+        i = end + 2; continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '\x60') {
+        const quote = ch, token = {kind:'literal', quote, raw:'', interpolated:false, terminated:false};
+        tokens.push(token);
+        const begin = ++i;
+        while (i < source.length) {
+          if (source[i] === '\\') { i += 2; continue; }
+          if (source[i] === quote) {
+            token.raw = source.slice(begin, i);
+            token.terminated = true;
+            i++; break;
+          }
+          if (quote === '\x60' && source[i] === '
+  if (!existsSync(dir)) { problems.push('Missing reviewed source root: '+dir); return; }
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, item.name);
+    if (item.isSymbolicLink()) problems.push('Source symlink requires review: '+relative(root,path));
+    else if (item.isDirectory()) collect(path, problems, result);
+    else if (item.isFile() && extensions.has(extname(path))) result.push(path);
+  }
+}
+function gitBlobShaCanonical(file, findings) {
+  const content = readFileSync(file, 'utf8');
+  if (/\r(?!\n)/.test(content)) findings.push('Bare carriage return in reviewed build contract: '+relative(repo,file));
+  const canonical = Buffer.from(content.replace(/\r\n/g, '\n'), 'utf8');
+  return createHash('sha1').update('blob '+canonical.byteLength+'\0').update(canonical).digest('hex');
+}
+function audit() {
+  const findings = [];
+  const configFile = join(root,'vite.config.ts');
+  const packageFile = join(root,'package.json');
+  const packageLockFile = join(root,'package-lock.json');
+  const tsconfigFile = join(root,'tsconfig.json');
+  const tauriFile = join(repo,'apps','desktop','src-tauri','tauri.conf.json');
+  for (const path of [configFile,packageFile,packageLockFile,tsconfigFile,tauriFile]) {
+    if (!existsSync(path)) findings.push('Missing build contract: '+relative(repo,path));
+  }
+  if (!findings.length) {
+    // GitHub Windows checkout may convert Git LF to CRLF. Compare canonical
+    // line endings, but preserve fail-closed review for all other bytes.
+    const configText = readFileSync(configFile, 'utf8');
+    if (/\r(?!\n)/.test(configText))
+      findings.push('Unexpected bare-CR Vite config line ending: manual review required');
+    const sha256 = createHash('sha256').update(configText.replace(/\r\n/g, '\n'), 'utf8').digest('hex');
+    if (sha256 !== trustedConfigSha256)
+      findings.push('Unreviewed Vite config SHA-256 change: inspect all plugin and PostCSS glob sinks BEFORE build');
+    for (const [rel,expected] of Object.entries(trustedGitBlobShas)) {
+      const path = join(repo,rel);
+      const actual = gitBlobShaCanonical(path,findings);
+      if (actual !== expected) findings.push('Unreviewed build manifest/lock/Tauri contract '+rel+'; expected Git blob '+expected+' observed '+actual);
+    }
+    const pkg = JSON.parse(readFileSync(packageFile,'utf8'));
+    const tauri = JSON.parse(readFileSync(tauriFile,'utf8'));
+    if (pkg.scripts?.build !== 'vite build') findings.push('Unreviewed npm build command');
+    if (tauri.build?.beforeBuildCommand !== 'cd ../desktop-ui && npm ci && npm run build')
+      findings.push('Unreviewed Tauri beforeBuildCommand');
+    if (tauri.build?.frontendDist !== '../../desktop-ui/dist')
+      findings.push('Unreviewed Tauri frontendDist');
+  }
+  // npm-shrinkwrap.json overrides package-lock.json. A PR adding .npmrc or a
+  // parent workspace manifest may also change the install graph despite a
+  // correctly pinned package-lock. Reject these BEFORE npm ci in every job.
+  // Unreviewed Vite/rollup/PostCSS configs or Vite .env files also change
+  // compiler behavior before the ordinary frontend import scanner can help.
+  const shadowInstall = /^(?:npm-shrinkwrap\.json|\.npmrc|\.yarnrc(?:\.yml)?|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lock(?:b)?|\.pnp\.(?:cjs|js)|\.env(?:\..*)?)$/i;
+  // PostCSS's cosmiconfig loader accepts .postcssrc[.cjs|.js|.json|.yaml|...]
+  // in the workspace or any searched ancestor; unreviewed dotfiles can
+  // execute plugins during Vite before any first-party glob scanner runs.
+  const postcssRc = /^\.postcssrc(?:\..+)?$/i;
+  // Reject EVERY alternate build-config suffix (including JSON/YAML), not
+  // only JS/TS configs, at all checked parent/workspace levels.
+  const extraBuildConfig = /^(?:vite|svelte|postcss|tailwind|rollup|webpack|esbuild)\.config(?:\..+)?$/i;
+  for (const dir of [repo,join(repo,'apps'),root]) {
+    if (!existsSync(dir)) { findings.push('Missing reviewed source parent: '+dir); continue; }
+    for (const entry of readdirSync(dir,{withFileTypes:true})) {
+      const file = join(dir,entry.name);
+      if (shadowInstall.test(entry.name) || postcssRc.test(entry.name) ||
+          (extraBuildConfig.test(entry.name) && file !== configFile) ||
+          (dir !== root && (entry.name === 'package.json' || entry.name === 'package-lock.json'))) {
+        findings.push('Unreviewed shadow npm/build configuration: '+relative(repo,file));
+      }
+    }
+  }
+  const files = [];
+  collect(join(root,'src'),findings,files);
+  const html = join(root,'index.html');
+  if (!existsSync(html)) findings.push('Missing reviewed HTML entrypoint');
+  else files.push(html);
+  for (const item of readdirSync(root, { withFileTypes: true })) {
+    if (item.isFile() && /^(?:postcss|tailwind|svelte|rollup|vite)\.config\./i.test(item.name) && item.name !== 'vite.config.ts')
+      findings.push('New unreviewed build configuration file: '+item.name);
+  }
+  if (files.length < 40) findings.push('Unexpectedly few reviewed frontend sources: '+files.length);
+  const reviewedSource = resolve(root, 'src');
+  // Vite can compile ../qa/evil.ts imported by a reviewed module even though
+  // qa/ is outside this scanner's source root. Fail closed on escape literals.
+  // Conservative including comments/strings; deliberate manual review required.
+  // Scan the entire literal (source files already have a 1 MB ceiling).
+  // A 400-character regex cap silently omitted valid Vite imports that resolve
+  // outside src after redundant ./ path segments are normalized.
+  const relativeLiteral = /(["'\x60])(\.{1,2}\/[^"'\x60\r\n]+)\1/g;
+  // Root-relative Vite specifiers can compile unreviewed workspace modules.
+  // Restrict known import/from forms; computed/alias/plugin imports still
+  // require independent review rather than a blanket safety claim.
+  const absoluteModuleLiteral = /\b(?:from|import)(?:\s|\/\*[\s\S]*?\*\/)*(?:\((?:\s|\/\*[\s\S]*?\*\/)*)?(["'\x60])\/[^"'\x60\r\n]+\1/g;
+  for (const path of files.sort()) {
+    const bytes = readFileSync(path);
+    if (bytes.length > 1000000) { findings.push('Large source requires review: '+relative(root,path)); continue; }
+    const sourceText = bytes.toString('utf8');
+    for (const hit of inspectText(sourceText)) findings.push(hit+': '+relative(root,path));
+    if (path !== html) {
+      inspectModuleSpecifiers(sourceText,path,reviewedSource,findings);
+      absoluteModuleLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(absoluteModuleLiteral)) {
+        findings.push('Unreviewed absolute/root-relative module import: '+relative(root,path)+' -> '+match[0].slice(0,240));
+      }
+      relativeLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(relativeLiteral)) {
+        const resolved = resolve(dirname(path), match[2]);
+        if (resolved !== reviewedSource && !resolved.startsWith(reviewedSource + sep)) {
+          findings.push('Unreviewed out-of-scope relative source reference: '+relative(root,path)+' -> '+match[2].slice(0,240));
+        }
+      }
+    }
+  }
+  console.log(JSON.stringify({
+    check:'Agent11 PRE-BUILD first-party Vite source-pattern review guard',
+    reviewedViteConfigSha256:trustedConfigSha256,
+    sourceContractBlobPins:trustedGitBlobShas,
+    scannedFirstPartyFiles:files.length, findings,
+    scope:'desktop-ui/src, index.html, Vite config, build contracts; excludes third-party/plugin-generated glob patterns',
+    result: findings.length ? 'REVIEW REQUIRED BEFORE VITE' : 'NO FIRST-PARTY GLOB MARKERS DETECTED; NOT FULL SECURITY CERTIFICATION'
+  },null,2));
+  if (findings.length) process.exitCode = 1;
+}
+if (argv.length === 1 && argv[0] === '--self-test') selfTest();
+else if (argv.length === 0 || isWorkspaceAudit) audit();
+else { console.error('Usage: node scripts/guard-vite-build-patterns.mjs [--self-test | --workspace TARGET_PATH]'); process.exitCode=2; }
+ && source[i + 1] === '{') {
+            token.interpolated = true;
+            i = scan(i + 2, true);
+            continue;
+          }
+          if (quote !== '\x60' && (source[i] === '\n' || source[i] === '\r')) break;
+          i++;
+        }
+        if (!token.terminated) token.raw = source.slice(begin, i);
+        continue;
+      }
+      if (/[A-Za-z_$]/.test(ch)) {
+        const begin = i++;
+        while (i < source.length && /[A-Za-z0-9_$]/.test(source[i])) i++;
+        tokens.push({kind:'word', value:source.slice(begin,i)});
+        continue;
+      }
+      if (ch === '{') depth++;
+      if (ch === '}') {
+        if (stopAtBrace && depth === 0) return i + 1;
+        depth--;
+      }
+      tokens.push({kind:'punct', value:ch});
+      i++;
+    }
+    if (stopAtBrace) tokens.push({kind:'invalid', value:'unterminated template expression'});
+    return i;
+  }
+  scan(0);
+  return tokens;
+}
+
+function decodeModuleLiteral(token) {
+  if (!token.terminated || token.interpolated) throw Error('unsupported/unterminated module literal');
+  const input = token.raw;
+  let decoded = '';
+  for (let i = 0; i < input.length; i++) {
+    if (input[i] !== '\\') { decoded += input[i]; continue; }
+    const ch = input[++i];
+    if (ch === undefined) throw Error('trailing JavaScript escape');
+    if (ch === 'x' || ch === 'u') {
+      if (ch === 'u' && input[i+1] === '{') {
+        const end = input.indexOf('}',i+2);
+        const hex = end < 0 ? '' : input.slice(i+2,end);
+        if (!/^[0-9a-fA-F]{1,6}$/.test(hex)) throw Error('invalid Unicode brace escape');
+        const cp = parseInt(hex,16);
+        if (cp > 0x10ffff) throw Error('out-of-range Unicode brace escape');
+        decoded += String.fromCodePoint(cp);
+        i = end;
+      } else {
+        const count = ch === 'x' ? 2 : 4, hex = input.slice(i+1,i+1+count);
+        if (!new RegExp('^[0-9a-fA-F]{'+count+'}
+  if (!existsSync(dir)) { problems.push('Missing reviewed source root: '+dir); return; }
+  for (const item of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, item.name);
+    if (item.isSymbolicLink()) problems.push('Source symlink requires review: '+relative(root,path));
+    else if (item.isDirectory()) collect(path, problems, result);
+    else if (item.isFile() && extensions.has(extname(path))) result.push(path);
+  }
+}
+function gitBlobShaCanonical(file, findings) {
+  const content = readFileSync(file, 'utf8');
+  if (/\r(?!\n)/.test(content)) findings.push('Bare carriage return in reviewed build contract: '+relative(repo,file));
+  const canonical = Buffer.from(content.replace(/\r\n/g, '\n'), 'utf8');
+  return createHash('sha1').update('blob '+canonical.byteLength+'\0').update(canonical).digest('hex');
+}
+function audit() {
+  const findings = [];
+  const configFile = join(root,'vite.config.ts');
+  const packageFile = join(root,'package.json');
+  const packageLockFile = join(root,'package-lock.json');
+  const tsconfigFile = join(root,'tsconfig.json');
+  const tauriFile = join(repo,'apps','desktop','src-tauri','tauri.conf.json');
+  for (const path of [configFile,packageFile,packageLockFile,tsconfigFile,tauriFile]) {
+    if (!existsSync(path)) findings.push('Missing build contract: '+relative(repo,path));
+  }
+  if (!findings.length) {
+    // GitHub Windows checkout may convert Git LF to CRLF. Compare canonical
+    // line endings, but preserve fail-closed review for all other bytes.
+    const configText = readFileSync(configFile, 'utf8');
+    if (/\r(?!\n)/.test(configText))
+      findings.push('Unexpected bare-CR Vite config line ending: manual review required');
+    const sha256 = createHash('sha256').update(configText.replace(/\r\n/g, '\n'), 'utf8').digest('hex');
+    if (sha256 !== trustedConfigSha256)
+      findings.push('Unreviewed Vite config SHA-256 change: inspect all plugin and PostCSS glob sinks BEFORE build');
+    for (const [rel,expected] of Object.entries(trustedGitBlobShas)) {
+      const path = join(repo,rel);
+      const actual = gitBlobShaCanonical(path,findings);
+      if (actual !== expected) findings.push('Unreviewed build manifest/lock/Tauri contract '+rel+'; expected Git blob '+expected+' observed '+actual);
+    }
+    const pkg = JSON.parse(readFileSync(packageFile,'utf8'));
+    const tauri = JSON.parse(readFileSync(tauriFile,'utf8'));
+    if (pkg.scripts?.build !== 'vite build') findings.push('Unreviewed npm build command');
+    if (tauri.build?.beforeBuildCommand !== 'cd ../desktop-ui && npm ci && npm run build')
+      findings.push('Unreviewed Tauri beforeBuildCommand');
+    if (tauri.build?.frontendDist !== '../../desktop-ui/dist')
+      findings.push('Unreviewed Tauri frontendDist');
+  }
+  // npm-shrinkwrap.json overrides package-lock.json. A PR adding .npmrc or a
+  // parent workspace manifest may also change the install graph despite a
+  // correctly pinned package-lock. Reject these BEFORE npm ci in every job.
+  // Unreviewed Vite/rollup/PostCSS configs or Vite .env files also change
+  // compiler behavior before the ordinary frontend import scanner can help.
+  const shadowInstall = /^(?:npm-shrinkwrap\.json|\.npmrc|\.yarnrc(?:\.yml)?|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lock(?:b)?|\.pnp\.(?:cjs|js)|\.env(?:\..*)?)$/i;
+  // PostCSS's cosmiconfig loader accepts .postcssrc[.cjs|.js|.json|.yaml|...]
+  // in the workspace or any searched ancestor; unreviewed dotfiles can
+  // execute plugins during Vite before any first-party glob scanner runs.
+  const postcssRc = /^\.postcssrc(?:\..+)?$/i;
+  // Reject EVERY alternate build-config suffix (including JSON/YAML), not
+  // only JS/TS configs, at all checked parent/workspace levels.
+  const extraBuildConfig = /^(?:vite|svelte|postcss|tailwind|rollup|webpack|esbuild)\.config(?:\..+)?$/i;
+  for (const dir of [repo,join(repo,'apps'),root]) {
+    if (!existsSync(dir)) { findings.push('Missing reviewed source parent: '+dir); continue; }
+    for (const entry of readdirSync(dir,{withFileTypes:true})) {
+      const file = join(dir,entry.name);
+      if (shadowInstall.test(entry.name) || postcssRc.test(entry.name) ||
+          (extraBuildConfig.test(entry.name) && file !== configFile) ||
+          (dir !== root && (entry.name === 'package.json' || entry.name === 'package-lock.json'))) {
+        findings.push('Unreviewed shadow npm/build configuration: '+relative(repo,file));
+      }
+    }
+  }
+  const files = [];
+  collect(join(root,'src'),findings,files);
+  const html = join(root,'index.html');
+  if (!existsSync(html)) findings.push('Missing reviewed HTML entrypoint');
+  else files.push(html);
+  for (const item of readdirSync(root, { withFileTypes: true })) {
+    if (item.isFile() && /^(?:postcss|tailwind|svelte|rollup|vite)\.config\./i.test(item.name) && item.name !== 'vite.config.ts')
+      findings.push('New unreviewed build configuration file: '+item.name);
+  }
+  if (files.length < 40) findings.push('Unexpectedly few reviewed frontend sources: '+files.length);
+  const reviewedSource = resolve(root, 'src');
+  // Vite can compile ../qa/evil.ts imported by a reviewed module even though
+  // qa/ is outside this scanner's source root. Fail closed on escape literals.
+  // Conservative including comments/strings; deliberate manual review required.
+  // Scan the entire literal (source files already have a 1 MB ceiling).
+  // A 400-character regex cap silently omitted valid Vite imports that resolve
+  // outside src after redundant ./ path segments are normalized.
+  const relativeLiteral = /(["'\x60])(\.{1,2}\/[^"'\x60\r\n]+)\1/g;
+  // Root-relative Vite specifiers can compile unreviewed workspace modules.
+  // Restrict known import/from forms; computed/alias/plugin imports still
+  // require independent review rather than a blanket safety claim.
+  const absoluteModuleLiteral = /\b(?:from|import)(?:\s|\/\*[\s\S]*?\*\/)*(?:\((?:\s|\/\*[\s\S]*?\*\/)*)?(["'\x60])\/[^"'\x60\r\n]+\1/g;
+  for (const path of files.sort()) {
+    const bytes = readFileSync(path);
+    if (bytes.length > 1000000) { findings.push('Large source requires review: '+relative(root,path)); continue; }
+    const sourceText = bytes.toString('utf8');
+    for (const hit of inspectText(sourceText)) findings.push(hit+': '+relative(root,path));
+    if (path !== html) {
+      absoluteModuleLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(absoluteModuleLiteral)) {
+        findings.push('Unreviewed absolute/root-relative module import: '+relative(root,path)+' -> '+match[0].slice(0,240));
+      }
+      relativeLiteral.lastIndex = 0;
+      for (const match of sourceText.matchAll(relativeLiteral)) {
+        const resolved = resolve(dirname(path), match[2]);
+        if (resolved !== reviewedSource && !resolved.startsWith(reviewedSource + sep)) {
+          findings.push('Unreviewed out-of-scope relative source reference: '+relative(root,path)+' -> '+match[2].slice(0,240));
+        }
+      }
+    }
+  }
+  console.log(JSON.stringify({
+    check:'Agent11 PRE-BUILD first-party Vite source-pattern review guard',
+    reviewedViteConfigSha256:trustedConfigSha256,
+    sourceContractBlobPins:trustedGitBlobShas,
+    scannedFirstPartyFiles:files.length, findings,
+    scope:'desktop-ui/src, index.html, Vite config, build contracts; excludes third-party/plugin-generated glob patterns',
+    result: findings.length ? 'REVIEW REQUIRED BEFORE VITE' : 'NO FIRST-PARTY GLOB MARKERS DETECTED; NOT FULL SECURITY CERTIFICATION'
+  },null,2));
+  if (findings.length) process.exitCode = 1;
+}
+if (argv.length === 1 && argv[0] === '--self-test') selfTest();
+else if (argv.length === 0 || isWorkspaceAudit) audit();
+else { console.error('Usage: node scripts/guard-vite-build-patterns.mjs [--self-test | --workspace TARGET_PATH]'); process.exitCode=2; }
+).test(hex)) throw Error('invalid JS hex/Unicode escape');
+        decoded += String.fromCharCode(parseInt(hex,16));
+        i += count;
+      }
+      continue;
+    }
+    if (ch === '\r' || ch === '\n' || ch === '\u2028' || ch === '\u2029') {
+      if (ch === '\r' && input[i+1] === '\n') i++;
+      continue; // JavaScript line continuation is not a path separator.
+    }
+    if (ch === '0') {
+      if (/[0-9]/.test(input[i+1] || '')) throw Error('legacy octal escape');
+      decoded += '\0'; continue;
+    }
+    if (/[1-9]/.test(ch)) throw Error('legacy octal/decimal escape');
+    const standard = {n:'\n',r:'\r',t:'\t',b:'\b',v:'\v',f:'\f'};
+    decoded += Object.prototype.hasOwnProperty.call(standard,ch) ? standard[ch] : ch;
+  }
+  return decoded;
+}
+function inspectModuleSpecifiers(sourceText, path, reviewedSource, findings) {
+  const tokens = lexModuleTokens(sourceText);
+  const location = relative(root,path);
+  const checked = new Set();
+  function check(index) {
+    if (checked.has(index)) return;
+    checked.add(index);
+    const token = tokens[index];
+    if (!token || token.kind !== 'literal') {
+      findings.push('Ambiguous/unsupported dynamic module specifier: '+location);
+      return;
+    }
+    let effective;
+    try { effective = decodeModuleLiteral(token); }
+    catch (error) {
+      findings.push('Ambiguous/unsupported module specifier: '+location+' -> '+String(error.message).slice(0,100));
+      return;
+    }
+    // Backslash is a path separator on Windows, and control characters
+    // or NUL can differ between hosts and module resolvers. Deny both.
+    if (/[\\\x00-\x1f\x7f]/.test(effective) || /^[A-Za-z]:[\\/]/.test(effective)) {
+      findings.push('Unreviewed out-of-scope relative source reference: '+location+' -> ambiguous path escapes');
+      return;
+    }
+    for (const hit of inspectText(effective))
+      findings.push(hit+' in decoded module specifier: '+location);
+    if (effective.startsWith('/')) {
+      findings.push('Unreviewed absolute/root-relative module import: '+location+' -> '+effective.slice(0,240));
+    } else if (effective.startsWith('./') || effective.startsWith('../')) {
+      const normalized = resolve(dirname(path),effective);
+      if (normalized !== reviewedSource && !normalized.startsWith(reviewedSource + sep))
+        findings.push('Unreviewed out-of-scope relative source reference: '+location+' -> '+effective.slice(0,240));
+    }
+  }
+  function fromClause(start) {
+    let depth = 0;
+    for (let j = start; j < tokens.length && j < start + 2048; j++) {
+      const token = tokens[j];
+      if (token.value === '{' || token.value === '(' || token.value === '[') depth++;
+      else if (token.value === '}' || token.value === ')' || token.value === ']') depth = Math.max(0,depth-1);
+      if (depth === 0 && token.value === 'from') {
+        check(j+1); return;
+      }
+      if (depth === 0 && (token.value === ';' || (j > start && (token.value === 'import' || token.value === 'export')))) break;
+    }
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i], next = tokens[i+1];
+    if (tok.kind !== 'word') continue;
+    if (tok.value === 'import' && tokens[i-1]?.value !== '.') {
+      if (next?.value === '.') continue; // import.meta, separately scanned above.
+      if (next?.value === '(') {
+        check(i+2);
+        // An expression/concatenation or interpolated template requires review.
+        if (tokens[i+3]?.value !== ')' && tokens[i+3]?.value !== ',')
+          findings.push('Ambiguous/unsupported dynamic module specifier: '+location);
+      } else if (next?.kind === 'literal') check(i+1);
+      else if (next?.value !== ':' && next?.value !== '=' && next?.value !== ')') fromClause(i+1);
+    } else if (tok.value === 'export' && (next?.value === '*' || next?.value === '{' || next?.value === 'type')) {
+      fromClause(i+1);
+    } else if (tok.value === 'require' && tokens[i-1]?.value !== '.' && next?.value === '(') {
+      check(i+2);
+    }
+  }
+}
+
 function collect(dir, problems, result) {
   if (!existsSync(dir)) { problems.push('Missing reviewed source root: '+dir); return; }
   for (const item of readdirSync(dir, { withFileTypes: true })) {
