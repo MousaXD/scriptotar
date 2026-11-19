@@ -112,16 +112,25 @@ try {
       return () => write(main, original);
     }, reason);
   }
-  // JavaScript import strings decode \u002e to '.' before module resolution,
-  // but the source scanner sees the raw escape. This must be rejected if
-  // normalized to ../qa outside the reviewed src root.
-  const escapedDot = String.raw`.\u002e/qa/hostile.ts`;
-  assert.ok(escapedDot.includes('\\u002e') && !escapedDot.startsWith('../'));
-  requireBlocked('Unicode-escaped relative traversal module specifier', () => {
-    write(main, original + "\nimport '" + escapedDot + "';\n");
-    return () => write(main, original);
-  }, /Unreviewed out-of-scope relative source reference/);
-
+  // Validate all common JS syntax-level dot escapes; the guard must reason
+  // about decoded import values, not only raw quote-delimited source bytes.
+  const escapedDotVariants = [
+    ['Unicode \u005cu002e', String.raw`.\u002e/qa/hostile.ts`],
+    ['Unicode brace', String.raw`.\u{2e}/qa/hostile.ts`],
+    ['Hex dot', String.raw`.\x2e/qa/hostile.ts`],
+  ];
+  for (const [label, literal] of escapedDotVariants) {
+    assert.ok(literal.includes('\\') && !literal.startsWith('../'));
+    write(main, original + "\nimport '" + literal + "';\n");
+    try {
+      const out = run();
+      verdict('JS encoded parent import: '+label, out, true);
+      if (out.status !== 0) {
+        assert.match(out.stdout,/Unreviewed out-of-scope relative source reference/,
+          'Blocked for another reason, not decoded import traversal');
+      }
+    } finally { write(main,original); }
+  }
   // Policy/config paths that independently influence actual source compilation.
   for (const [label, path, body] of [
     ['shadow workspace npmrc', join(ws, '.npmrc'), 'ignore-scripts=false\n'],

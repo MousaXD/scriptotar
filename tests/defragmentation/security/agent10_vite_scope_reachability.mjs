@@ -71,22 +71,26 @@ try {
   assert.equal(harmlessLongBuild.status, 0,
     'Overlength import did not resolve harmless source; malicious timeout could be confounded: '+excerpt(harmlessLongBuild));
 
-  // Positive control: Vite must resolve decoded JS unicode import specifiers
-  // before blaming malicious glob patterns for a timeout.
-  const escapedBenign=String.raw`.\u002e/agent10-scope-fixture/benign.ts`;
-  writeFileSync(main, original + "\nimport '" + escapedBenign + "';\n");
-  const escapedBenignBuild=build(45000);
-  console.log(JSON.stringify({
-    test:'JS Unicode-escaped ../ safe module import',
-    outcome:escapedBenignBuild.status===0?'PASS':'NOT VALIDATED',
-    status:escapedBenignBuild.status,
-    error_code:escapedBenignBuild.error?.code||null,
-    log_tail:excerpt(escapedBenignBuild)
-  }));
-  assert.equal(escapedBenignBuild.status,0,
-    'Unicode-escaped relative import failed safe resolution: '+excerpt(escapedBenignBuild));
-
+  // Actual Vite positive controls distinguish encoded-string decoding from
+  // generic parsing failures. Benign external target must compile cleanly.
+  const escapedBenignVariants = [
+    ['unicode', String.raw`.\u002e/agent10-scope-fixture/benign.ts`],
+    ['unicode-brace', String.raw`.\u{2e}/agent10-scope-fixture/benign.ts`],
+    ['hex', String.raw`.\x2e/agent10-scope-fixture/benign.ts`],
+  ];
+  for (const [kind, specifier] of escapedBenignVariants) {
+    writeFileSync(main, original + "\nimport '" + specifier + "';\n");
+    const ok=build(45000);
+    console.log(JSON.stringify({test:'JS '+kind+' escaped ../ safe module import',
+      outcome:ok.status===0?'PASS':'NOT VALIDATED',status:ok.status,
+      error_code:ok.error?.code||null,log_tail:excerpt(ok)}));
+    assert.equal(ok.status,0,'Encoded relative import failed safe resolution for '+kind+': '+excerpt(ok));
+  }
   const variants = [
+    { label:'Vite hexadecimal-escaped relative traversal import',
+      specifier:String.raw`.\x2e/agent10-scope-fixture/hostile.ts`,directLiteral:true },
+    { label:'Vite Unicode-brace escaped relative traversal import',
+      specifier:String.raw`.\u{2e}/agent10-scope-fixture/hostile.ts`,directLiteral:true },
     { label:'Vite Unicode-escaped relative traversal import',
       specifier:String.raw`.\u002e/agent10-scope-fixture/hostile.ts`,
       directLiteral:true },
@@ -132,7 +136,7 @@ try {
     writeFileSync(main,original);
     rmSync(mtsDir,{recursive:true,force:true});
   }
-  console.log('Five independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
+  console.log('Seven independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
 } finally {
   writeFileSync(main, original);
   if (!saveQa) rmSync(qa, { recursive: true, force: true });
