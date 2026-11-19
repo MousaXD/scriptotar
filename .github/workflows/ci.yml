@@ -57,7 +57,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 41cea806d3f50d0831ee64478d1a1f2ec3b5b53e
+          ref: 81475eed26224fe8733b2d4b64525c73c489bcbf
           path: .agent11-trusted-guard
           persist-credentials: false
           sparse-checkout: |
@@ -66,7 +66,7 @@ jobs:
       - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         working-directory: .
         run: |
-          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='41cea806d3f50d0831ee64478d1a1f2ec3b5b53e')process.exit(1)"
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='81475eed26224fe8733b2d4b64525c73c489bcbf')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - name: Svelte frontend tests
