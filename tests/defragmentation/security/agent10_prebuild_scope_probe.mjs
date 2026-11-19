@@ -5,7 +5,7 @@
  * Drives the actual separately checked-out immutable guard against disposable
  * copies of the real source/config, without installing npm or invoking Vite.
  * This test explicitly revalidates the previous RED against the newer
- * hardened 5cf011 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
+ * hardened 55ce3ac389b7e1fcab99b3a5acc84b526630af72 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
  * patched or establish installed desktop-app security.
  */
 import assert from 'node:assert/strict';
