@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from linux_real_media_attempt import NativeFailure, verify_prepared_originals
+from linux_real_media_attempt import NativeFailure, is_process_descendant, verify_prepared_originals
 from real_source_fixtures import SOURCES
 from real_study_lineage import LineageUnavailable
 
@@ -58,6 +58,18 @@ class OfflineMediaTrustUnitTests(unittest.TestCase):
             return verify_prepared_originals(
                 self.base, self.pin if pin is None else pin, "fake-probe-stub",
             )
+
+    def test_bundled_engine_requires_real_installed_pid_ancestry(self):
+        parents = {
+            100: 1, 101: 100, 102: 101, 103: 102,
+            150: 1, 151: 150, 170: 171, 171: 170,
+        }
+        self.assertTrue(is_process_descendant(parents, 101, 100))
+        self.assertTrue(is_process_descendant(parents, 103, 100))
+        self.assertFalse(is_process_descendant(parents, 100, 100))
+        self.assertFalse(is_process_descendant(parents, 151, 100))
+        self.assertFalse(is_process_descendant(parents, 170, 100))
+        self.assertFalse(is_process_descendant(parents, 999, 100))
 
     def test_correct_pinned_source_only_manifest_is_noncertifying(self):
         manifest, origins = self.verify()
