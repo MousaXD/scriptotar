@@ -1,5 +1,6 @@
 """Contract tests for the evidence collector, NOT native GUI certification."""
 import hashlib
+import re
 import subprocess
 import sys
 import sqlite3
@@ -14,6 +15,36 @@ import linux_webkit as native
 
 
 class NativeEvidenceContractTests(unittest.TestCase):
+    def test_root_app_forwards_native_study_reference_request_id(self):
+        # Source-only fail-fast security contract, NEVER installed-WebView proof.
+        # The root App adapter is a distinct forwarding boundary between
+        # StudioView and createTauriClient. TS structural typing permits a
+        # function taking fewer arguments, so "satisfies StudioGateway" alone
+        # cannot detect an accidentally dropped request ID.
+        app = (Path(__file__).resolve().parents[3] /
+               "apps/desktop-ui/src/App.svelte").read_text(encoding="utf-8")
+        adapter = re.search(
+            r"\bgetStudy:\s*\(([^)]*)\)\s*=>\s*api\.getStudy\(([^)]*)\)",
+            app, re.S,
+        )
+        self.assertIsNotNone(
+            adapter, "Root App Studio getStudy adapter must be reviewed explicitly"
+        )
+        declared = [item.strip().split(":", 1)[0].rstrip("?")
+                    for item in adapter.group(1).split(",") if item.strip()]
+        forwarded = [item.strip() for item in adapter.group(2).split(",")
+                     if item.strip()]
+        self.assertEqual(
+            declared, ["projectId", "studyId", "draftId", "requestId"],
+            "Root App must accept the native Study reference request ID",
+        )
+        self.assertEqual(
+            forwarded, declared,
+            "Root App must forward the exact per-click request ID to Tauri; "
+            "dropping it makes a generic error indistinguishable from an "
+            "authenticated FOREIGN_STUDY_REFERENCE host denial",
+        )
+
     def test_catalog_covers_release_blockers(self):
         for name in (
             "installed_webview", "create_switch_projects", "create_study",
