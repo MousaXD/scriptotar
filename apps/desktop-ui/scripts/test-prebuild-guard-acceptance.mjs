@@ -110,6 +110,31 @@ try {
     return ()=>{fixtureWrite(p,before);rmSync(join(temp,'apps','desktop-ui','qa'),{recursive:true,force:true});};
   },/Unreviewed out-of-scope relative source reference/); count++;
 
+  // Agent10 P0-149-01: cosmiconfig dotfiles escaped prior filename filters.
+  // Each disposable candidate must be rejected before any compiler invocation.
+  for (const config of [
+    "apps/desktop-ui/.postcssrc",
+    "apps/desktop-ui/.postcssrc.js",
+    "apps/desktop-ui/.postcssrc.cjs",
+    "apps/desktop-ui/.postcssrc.mjs",
+    "apps/desktop-ui/.postcssrc.json",
+    "apps/desktop-ui/.postcssrc.json5",
+    "apps/desktop-ui/.postcssrc.yaml",
+    "apps/desktop-ui/.postcssrc.yml",
+    "apps/desktop-ui/.postcssrc.ts",
+    "apps/.postcssrc.cjs",
+    ".postcssrc.json",
+    "apps/postcss.config.yaml",
+    "postcss.config.json",
+    "apps/desktop-ui/postcss.config.yml",
+  ]) {
+    checkBlocked('unreviewed PostCSS loader '+config,()=>{
+      fixtureWrite(config,"module.exports = { plugins: {} };\n");
+      return ()=>rmSync(join(temp,config));
+    },/Unreviewed shadow npm\/build configuration|New unreviewed build configuration file/);
+    count++;
+  }
+
   checkBlocked('new PostCSS build config',()=>{
     const p='apps/desktop-ui/postcss.config.js';
     fixtureWrite(p,'export default {};\n');return ()=>rmSync(join(temp,p));

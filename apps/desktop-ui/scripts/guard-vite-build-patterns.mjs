@@ -113,12 +113,18 @@ function audit() {
   // Unreviewed Vite/rollup/PostCSS configs or Vite .env files also change
   // compiler behavior before the ordinary frontend import scanner can help.
   const shadowInstall = /^(?:npm-shrinkwrap\.json|\.npmrc|\.yarnrc(?:\.yml)?|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lock(?:b)?|\.pnp\.(?:cjs|js)|\.env(?:\..*)?)$/i;
-  const extraBuildConfig = /^(?:vite|svelte|postcss|tailwind|rollup|webpack|esbuild)\.config\.[mc]?[jt]sx?$/i;
+  // PostCSS's cosmiconfig loader accepts .postcssrc[.cjs|.js|.json|.yaml|...]
+  // in the workspace or any searched ancestor; unreviewed dotfiles can
+  // execute plugins during Vite before any first-party glob scanner runs.
+  const postcssRc = /^\.postcssrc(?:\..+)?$/i;
+  // Reject EVERY alternate build-config suffix (including JSON/YAML), not
+  // only JS/TS configs, at all checked parent/workspace levels.
+  const extraBuildConfig = /^(?:vite|svelte|postcss|tailwind|rollup|webpack|esbuild)\.config(?:\..+)?$/i;
   for (const dir of [repo,join(repo,'apps'),root]) {
     if (!existsSync(dir)) { findings.push('Missing reviewed source parent: '+dir); continue; }
     for (const entry of readdirSync(dir,{withFileTypes:true})) {
       const file = join(dir,entry.name);
-      if (shadowInstall.test(entry.name) ||
+      if (shadowInstall.test(entry.name) || postcssRc.test(entry.name) ||
           (extraBuildConfig.test(entry.name) && file !== configFile) ||
           (dir !== root && (entry.name === 'package.json' || entry.name === 'package-lock.json'))) {
         findings.push('Unreviewed shadow npm/build configuration: '+relative(repo,file));
