@@ -585,6 +585,92 @@ def wait_for_canonical_saved_draft(
 
 
 
+
+def verify_canonical_duplicated_draft(
+    data_dir: Path, project_name: str, study_name: str, expected_body: str
+) -> dict:
+    """Read-only, one-query evidence that an installed Duplicate action committed.
+
+    The native Rename control is only actionable after the asynchronous
+    duplicate finishes. Existence of a UI label or a screenshot is insufficient.
+    """
+    database = data_dir / "scriptotar.sqlite3"
+    if not database.is_file():
+        raise NativeFailure("Installed Study duplicate has no canonical SQLite database")
+    try:
+        with sqlite3.connect(
+            database.resolve().as_uri() + "?mode=ro", uri=True, timeout=4
+        ) as connection:
+            rows = connection.execute(
+                """
+                SELECT d.id, d.title, d.body, d.revision, v.version, v.body
+                  FROM projects p
+                  JOIN content_studies st ON st.project_id=p.id
+                  JOIN creative_drafts d ON d.project_id=p.id AND d.study_id=st.id
+                  JOIN draft_versions v ON v.draft_id=d.id
+                    AND v.version=(SELECT MAX(latest.version) FROM draft_versions latest
+                                   WHERE latest.draft_id=d.id)
+                 WHERE p.name=? AND p.archived_at IS NULL
+                   AND st.title=? AND st.archived_at IS NULL
+                   AND d.archived_at IS NULL
+                """,
+                (project_name, study_name),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise NativeFailure(
+            f"Cannot read canonical duplicated Study candidates: {exc}"
+        ) from exc
+    if len(rows) != 2:
+        raise NativeFailure(
+            f"Installed Duplicate has not committed exactly two active candidates: {len(rows)}"
+        )
+    try:
+        ids = [uuid.UUID(row[0]) for row in rows]
+    except (TypeError, ValueError) as exc:
+        raise NativeFailure("Duplicated candidate has invalid canonical UUID") from exc
+    if len(set(ids)) != 2:
+        raise NativeFailure("Original and duplicate have the same draft identity")
+    original = [row for row in rows if row[1] == study_name]
+    if len(original) != 1:
+        raise NativeFailure("Duplicate must retain exactly one original-title candidate")
+    for _id, title, text, revision, version, immutable_text in rows:
+        minimum = 2 if title == study_name else 1
+        if (not isinstance(revision, int) or not isinstance(version, int)
+                or revision < minimum or version < minimum
+                or text != expected_body or immutable_text != expected_body):
+            raise NativeFailure(
+                "Native duplicate is missing unchanged body, revision, "
+                "or latest immutable version"
+            )
+    return {
+        "read_only": True,
+        "candidate_count": 2,
+        "distinct_ids": True,
+        "immutable_original_and_copy": True,
+    }
+
+
+def wait_for_canonical_duplicated_draft(
+    data_dir: Path, project_name: str, study_name: str, expected_body: str,
+    timeout_seconds: float = 20.0,
+) -> dict:
+    """Allow genuine asynchronous installed IPC to finish; never insert rows."""
+    deadline = time.monotonic() + timeout_seconds
+    last_error = "No canonical duplicate read yet"
+    while time.monotonic() < deadline:
+        try:
+            return verify_canonical_duplicated_draft(
+                data_dir, project_name, study_name, expected_body
+            )
+        except NativeFailure as exc:
+            last_error = str(exc)
+        time.sleep(0.35)
+    raise NativeFailure(
+        f"Installed native Duplicate did not persist two immutable candidates "
+        f"within {timeout_seconds:g}s; last read-only evidence: {last_error}"
+    )
+
+
 def verify_canonical_reopened_candidates(
     data_dir: Path, project_name: str, study_name: str,
     expected_body: str, expected_copy_title: str,
@@ -801,6 +887,59 @@ class AxWebKit:
         except Exception:
             pass
         raise NativeFailure(f"Cannot activate accessible control {name!r}")
+
+
+    def button_snapshot(self, name: str, role: str = "button") -> dict:
+        """Record live PID-owned AT-SPI state and actions, not DOM attributes."""
+        node = self.find(name, role, timeout=1)
+        states = node.getState()
+        actions = []
+        try:
+            interface = node.queryAction()
+            actions = [
+                interface.getName(i).lower()
+                for i in range(interface.nActions)
+            ]
+        except Exception:
+            pass
+        return {
+            "name": (node.name or "").strip(),
+            "role": node.getRoleName().lower(),
+            "enabled": bool(states.contains(self.atspi.STATE_ENABLED)),
+            "sensitive": bool(states.contains(self.atspi.STATE_SENSITIVE)),
+            "actions": actions,
+        }
+
+    def wait_for_actionable_button(
+        self, name: str, role: str = "button", timeout_seconds: float = 20.0
+    ) -> dict:
+        """Wait for genuinely enabled native semantics; disabled remains FAIL."""
+        started = time.monotonic()
+        samples = []
+        while time.monotonic() - started < timeout_seconds:
+            try:
+                sample = self.button_snapshot(name, role)
+            except (NativeFailure, NativeUnavailable) as exc:
+                sample = {"name": name, "unavailable": f"{type(exc).__name__}: {exc}"}
+            sample["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            if len(samples) < 48:
+                samples.append(sample)
+            actions = sample.get("actions", [])
+            if (sample.get("enabled") is True
+                    and sample.get("sensitive") is True
+                    and any(action in ("click", "press", "activate")
+                            for action in actions)):
+                return {
+                    "elapsed_ms": sample["elapsed_ms"],
+                    "initial": samples[0],
+                    "ready": sample,
+                    "samples": samples,
+                }
+            time.sleep(0.35)
+        raise NativeFailure(
+            f"Installed accessible {name!r} stayed unavailable or disabled "
+            f"for {timeout_seconds:g}s; latest actual AT-SPI states: {samples[-5:]}"
+        )
 
     def edit_field(self, label: str, timeout: float = 12):
         """Find an actual input/textarea, not a coincidental text label.
@@ -1382,7 +1521,26 @@ def exercise(args, report: dict, root: Path):
             ax.click("Save changes", "button")
             wait_for_canonical_saved_draft(root / "data", name_a, study, body)
             ax.click("Duplicate current script", "button")
-            ax.find("Rename script", "button")
+            # A button name alone does not mean the asynchronous host mutation
+            # completed. Record the initial native state, then prove the actual
+            # second immutable candidate exists before waiting for a real
+            # enabled/sensitive AT-SPI action (fail closed on timeout).
+            try:
+                initial_rename = ax.button_snapshot("Rename script", "button")
+            except (NativeFailure, NativeUnavailable) as exc:
+                initial_rename = {"unavailable": f"{type(exc).__name__}: {exc}"}
+            report["candidate_duplicate_transition"] = {
+                "native_initial": initial_rename,
+                "source": "actual-installed-AT-SPI-and-read-only-canonical-SQLite",
+            }
+            report["candidate_duplicate_transition"]["canonical"] = (
+                wait_for_canonical_duplicated_draft(
+                    root / "data", name_a, study, body
+                )
+            )
+            report["candidate_duplicate_transition"]["native_ready"] = (
+                ax.wait_for_actionable_button("Rename script", "button")
+            )
             ax.click("Rename script", "button")
             ax.type_into("Script candidate name", tag + "-copy")
             ax.click("Save name", "button")

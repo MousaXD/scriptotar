@@ -45,6 +45,69 @@ class NativeEvidenceContractTests(unittest.TestCase):
             "authenticated FOREIGN_STUDY_REFERENCE host denial",
         )
 
+
+    def test_native_duplicate_requires_real_canonical_rows_and_actionable_atspi(self):
+        # Unit-level source/control contract ONLY; not an installed PASS.
+        import inspect
+        source = inspect.getsource(native.exercise)
+        self.assertIn('wait_for_canonical_duplicated_draft(', source)
+        self.assertIn('ax.wait_for_actionable_button("Rename script", "button")', source)
+        self.assertLess(
+            source.index('wait_for_canonical_duplicated_draft('),
+            source.index('ax.wait_for_actionable_button("Rename script", "button")'),
+        )
+        self.assertLess(
+            source.index('ax.wait_for_actionable_button("Rename script", "button")'),
+            source.index('ax.click("Rename script", "button")'),
+        )
+        self.assertIn('candidate_duplicate_transition', source)
+        verifier = inspect.getsource(native.verify_canonical_duplicated_draft)
+        self.assertIn('"?mode=ro"', verifier)
+        self.assertIn('JOIN draft_versions', verifier)
+        self.assertNotIn('INSERT INTO ', verifier)
+
+    def test_native_rename_wait_requires_enabled_sensitive_real_action(self):
+        # Fake accessibility nodes test ONLY refusal/polling logic; no mock
+        # is ever substituted into the installed native runner.
+        ax = object.__new__(native.AxWebKit)
+        ax.atspi = SimpleNamespace(STATE_ENABLED=1, STATE_SENSITIVE=2)
+        attempt = [0]
+        class States:
+            def __init__(self, enabled):
+                self.enabled = enabled
+            def contains(self, state):
+                return self.enabled if state in (1, 2) else False
+        class Node:
+            name = "Rename script"
+            def getRoleName(self):
+                return "push button"
+            def getState(self):
+                attempt[0] += 1
+                return States(attempt[0] >= 3)
+            def queryAction(self):
+                return SimpleNamespace(nActions=1, getName=lambda _i: "click")
+        ax.find = lambda *_args, **_kw: Node()
+        with mock.patch.object(native.time, "sleep"):
+            proof = ax.wait_for_actionable_button("Rename script", timeout_seconds=2)
+        self.assertGreaterEqual(attempt[0], 3)
+        self.assertFalse(proof["initial"]["enabled"])
+        self.assertTrue(proof["ready"]["enabled"])
+        self.assertTrue(proof["ready"]["sensitive"])
+        self.assertIn("click", proof["ready"]["actions"])
+        ax.find = lambda *_args, **_kw: SimpleNamespace(
+            name="Rename script", getRoleName=lambda: "push button",
+            getState=lambda: States(False),
+            queryAction=lambda: SimpleNamespace(nActions=1, getName=lambda _i: "click"),
+        )
+        ticks = [0]
+        def monotonic():
+            ticks[0] += 0.2
+            return ticks[0]
+        with mock.patch.object(native.time, "monotonic", side_effect=monotonic), \
+             mock.patch.object(native.time, "sleep"):
+            with self.assertRaisesRegex(native.NativeFailure, "stayed unavailable or disabled"):
+                ax.wait_for_actionable_button("Rename script", timeout_seconds=1)
+
     def test_catalog_covers_release_blockers(self):
         for name in (
             "installed_webview", "create_switch_projects", "create_study",
