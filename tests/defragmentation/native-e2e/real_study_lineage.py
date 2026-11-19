@@ -74,6 +74,19 @@ def expected_media(manifest_path: Path, fixture_dir: Path) -> list[dict]:
                 not isinstance(original_url, str) or not original_url.startswith(
                     "https://upload.wikimedia.org/wikipedia/commons/")):
             raise LineageUnavailable("Missing verified WebM/real-origin provenance")
+        original_name = row.get("original_filename")
+        if (not isinstance(original_name, str) or
+                Path(original_name).name != original_name or
+                not original_name.endswith(".ogg")):
+            raise LineageUnavailable("Original .ogg recording path missing")
+        original = fixture_dir / original_name
+        if not original.is_file() or original.stat().st_size < 32768:
+            raise LineageUnavailable("Original .ogg recording is missing or truncated")
+        with original.open("rb") as stream:
+            if stream.read(4) != b"OggS":
+                raise LineageUnavailable("Original recording does not have Ogg header")
+        if digest_file(original) != origin_sha:
+            raise LineageUnavailable("Original recording bytes differ from origin manifest")
         media = fixture_dir / name
         if not media.is_file() or media.stat().st_size < 32768:
             raise LineageUnavailable("Real .webm fixture is missing or truncated")
