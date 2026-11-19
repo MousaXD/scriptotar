@@ -200,6 +200,16 @@ try {
     write(main,original);
     rmSync(tsVariantDir,{recursive:true,force:true});
   }
+  // P0 candidate: the import-literal scanner caps specifiers at 400 chars.
+  // Redundant "./" segments can exceed that lexical cap while resolving to
+  // the same valid out-of-src location in Vite's module graph.
+  const longTraversal = './staging/' + './'.repeat(220) + '../../qa/hostile.ts';
+  assert.ok(longTraversal.length > 400, 'Control must exceed scanner cap');
+  requireBlocked('over-400-character normalized relative module escape', () => {
+    write(main, original + '\nimport ' + JSON.stringify(longTraversal) + ';\n');
+    return () => write(main, original);
+  }, /Unreviewed out-of-scope relative source reference/);
+
   // Deliberately demonstrate the boundary of this tool: the scanner does not
   // inspect workflow files. A malicious PR can bypass an unenforced workflow.
   // This is a governance RED, not an exploit result against the new source scanner.

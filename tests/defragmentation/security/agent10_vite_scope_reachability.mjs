@@ -54,6 +54,7 @@ try {
   const variants = [
     { label: 'Vite project-root-absolute import', specifier: '/agent10-scope-fixture/hostile.ts' },
     { label: 'Vite normalized relative import escape', specifier: './agent10-staging/../../agent10-scope-fixture/hostile.ts' },
+    { label: 'Vite over-400-character normalized relative import escape', specifier: './agent10-staging/' + './'.repeat(220) + '../../agent10-scope-fixture/hostile.ts' },
   ];
   for (const variant of variants) {
     writeFileSync(main, original + '\nimport ' + JSON.stringify(variant.specifier) + ';\n');
@@ -92,7 +93,7 @@ try {
     writeFileSync(main,original);
     rmSync(mtsDir,{recursive:true,force:true});
   }
-  console.log('Three independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
+  console.log('Four independent hostile Vite build routes TIMED OUT; parser NOT fixed.');
 } finally {
   writeFileSync(main, original);
   if (!saveQa) rmSync(qa, { recursive: true, force: true });
