@@ -67,7 +67,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 8749c8a9a361fc6bd815bf079bffe6fb2cc6f675
+          ref: 5cf011caa61ae06595151893ea41561c0fcfeb6d
           path: .agent11-trusted-guard
           persist-credentials: false
           sparse-checkout: |
@@ -76,7 +76,7 @@ jobs:
       - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         working-directory: .
         run: |
-          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='8749c8a9a361fc6bd815bf079bffe6fb2cc6f675')process.exit(1)"
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='5cf011caa61ae06595151893ea41561c0fcfeb6d')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - run: npm ci --prefix apps/desktop-ui
