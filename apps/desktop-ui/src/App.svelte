@@ -27,7 +27,11 @@
     listStudies: (projectId: string) => api.listStudies(projectId),
     createStudy: (projectId: string, brief: Parameters<StudioGateway['createStudy']>[1]) =>
       api.createStudy(projectId, brief),
-    getStudy: (projectId: string, studyId: string, draftId?: string) => api.getStudy(projectId, studyId, draftId),
+    // Forward the opaque per-action receipt through the ACTUAL production App
+    // adapter. Dropping the fourth argument converts a real host rejection
+    // into an uncorrelated generic UI alert in installed WebKitGTK/WebView2.
+    getStudy: (projectId: string, studyId: string, draftId?: string, requestId?: string) =>
+      api.getStudy(projectId, studyId, draftId, requestId),
     listStudyWritingBatches: (projectId: string, studyId: string) => api.listStudyWritingBatches(projectId, studyId),
     duplicateStudyDraft: (projectId: string, studyId: string, draftId: string, revision: number) =>
       api.duplicateStudyDraft(projectId, studyId, draftId, revision),
