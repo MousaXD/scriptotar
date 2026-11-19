@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 9dd3844c57a6e000d6f2b779c909a5662f2dfbbb
+          ref: 8749c8a9a361fc6bd815bf079bffe6fb2cc6f675
           path: .agent10-trusted-guard
           persist-credentials: false
           sparse-checkout: |
@@ -53,7 +53,7 @@ jobs:
       - name: Verify immutable probe and guard, then scan BEFORE npm ci
         shell: bash
         run: |
-          test "$(git -C .agent10-trusted-guard rev-parse HEAD)" = "9dd3844c57a6e000d6f2b779c909a5662f2dfbbb"
+          test "$(git -C .agent10-trusted-guard rev-parse HEAD)" = "8749c8a9a361fc6bd815bf079bffe6fb2cc6f675"
           test "$(git -C .agent10-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
           node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
           node --check .agent10-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs

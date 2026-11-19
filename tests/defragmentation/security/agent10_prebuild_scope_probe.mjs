@@ -5,7 +5,7 @@
  * Drives the actual separately checked-out immutable guard against disposable
  * copies of the real source/config, without installing npm or invoking Vite.
  * This test explicitly revalidates the previous RED against the newer
- * hardened 9dd384 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
+ * hardened 8749c8 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
  * patched or establish installed desktop-app security.
  */
 import assert from 'node:assert/strict';
@@ -164,26 +164,42 @@ try {
       assert.match(out.stdout,/Source symlink requires review/);
     } finally {rmSync(symlinkPath,{force:true});}
   }
-  // Distinct completeness probe: Vite compiles .mts (ES module TypeScript),
-  // but the reviewed guard's extensions Set omits .mts and .cts.
-  // Keep a real hostile glob only in the .mts file and a near-miss sibling.
-  const mtsDir = join(ws, 'src', 'agent10-unreviewed-mts');
-  const mtsFile = join(mtsDir, 'hostile.mts');
-  mkdirSync(mtsDir, {recursive:true});
-  write(mtsFile, "export const modules = import.meta.glob('./+(*a)');\n");
-  write(join(mtsDir, 'a'.repeat(36) + 'b'), 'near miss only\n');
+  // Independently validate the newly reviewed Vite .mts/.cts source
+  // extension coverage against the immutable new Agent11 guard.
+  const tsVariantDir = join(ws, 'src', 'agent10-unreviewed-ts-variants');
+  mkdirSync(tsVariantDir,{recursive:true});
   try {
-    write(main, original + "\nimport './agent10-unreviewed-mts/hostile.mts';\n");
-    const outcome = run();
-    verdict('Vite-compilable .mts source missing from scanned extension set', outcome, true);
-    assert.notEqual(outcome.status, 0,
-      'UNBLOCKED: .mts file with hostile Vite macro passes pinned prebuild guard');
-    assert.match(outcome.stdout,/Vite import.meta.glob macro|Unreviewed/);
+    write(join(tsVariantDir,'a'.repeat(36)+'b'), 'near miss only\n');
+    for (const suffix of ['.mts','.cts']) {
+      const hostileVariant=join(tsVariantDir,'hostile'+suffix);
+      write(hostileVariant,"export const modules = import.meta.glob('./+(*a)');\n");
+      write(main,original+"\nimport './agent10-unreviewed-ts-variants/hostile"+suffix+"';\n");
+      try {
+        const out=run();
+        verdict('Vite module suffix '+suffix+' hostile first-party macro',out,true);
+        assert.notEqual(out.status,0,'UNBLOCKED hostile source extension '+suffix);
+        assert.match(out.stdout,/Vite import.meta.glob macro/);
+      } finally {
+        write(main,original);
+        rmSync(hostileVariant,{force:true});
+      }
+    }
+    for (const suffix of ['.mts','.cts']) {
+      const benignVariant=join(tsVariantDir,'safe'+suffix);
+      write(benignVariant,'export const safeVariant = true;\n');
+      try {
+        const out=run();
+        assert.equal(out.status,0,'Clean source variant unexpectedly denied: '+suffix+
+          ': '+out.stdout);
+        console.log(JSON.stringify({test:'clean source variant '+suffix,outcome:'PASS'}));
+      } finally {
+        rmSync(benignVariant,{force:true});
+      }
+    }
   } finally {
     write(main,original);
-    rmSync(mtsDir,{recursive:true,force:true});
+    rmSync(tsVariantDir,{recursive:true,force:true});
   }
-
   // Deliberately demonstrate the boundary of this tool: the scanner does not
   // inspect workflow files. A malicious PR can bypass an unenforced workflow.
   // This is a governance RED, not an exploit result against the new source scanner.

@@ -140,6 +140,26 @@ try {
     count++;
   }
 
+  // Vite/esbuild can import TypeScript module variants .mts and .cts.
+  // The previous extension whitelist omitted both and did not inspect
+  // a hostile import.meta.glob inside these first-party source files.
+  for (const suffix of ['.mts', '.cts']) {
+    checkBlocked('Vite-compilable source suffix '+suffix+' hostile glob',()=>{
+      const p='apps/desktop-ui/src/agent11-hostile-module'+suffix;
+      fixtureWrite(p,"export const modules = import.meta.glob('./+(*a)');\n");
+      return ()=>rmSync(join(temp,p));
+    },/Vite import\.meta\.glob macro/);
+    count++;
+  }
+  for (const suffix of ['.mts', '.cts']) {
+    const p='apps/desktop-ui/src/agent11-safe-module'+suffix;
+    fixtureWrite(p,"export const sourceIsReviewed = true;\n");
+    const safe=runGuard(workspace);
+    assert.equal(safe.status,0,'Safe Vite TypeScript variant '+suffix+' incorrectly rejected');
+    rmSync(join(temp,p));
+    count++;
+  }
+
   // Agent10 P0-149-01: cosmiconfig dotfiles escaped prior filename filters.
   // Each disposable candidate must be rejected before any compiler invocation.
   for (const config of [

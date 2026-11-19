@@ -26,7 +26,9 @@ const trustedGitBlobShas = Object.freeze({
   'apps/desktop/src-tauri/tauri.conf.json': 'b28cc6a5057032479f94d5b94ed01f2ea23fa03e'
 });
 const trustedConfigSha256 = '252cb3b99585c239741cc3590c9636da49f087cc6e6ed07a5c6fcef7b89e4300';
-const extensions = new Set(['.js','.jsx','.mjs','.cjs','.ts','.tsx','.svelte']);
+// Vite/esbuild also compiles .mts and .cts TypeScript modules. Omitting these
+// lets hostile first-party glob macros evade the reviewed src scanner.
+const extensions = new Set(['.js','.jsx','.mjs','.cjs','.ts','.tsx','.mts','.cts','.svelte']);
 const macro = /\bimport(?:\s|\/\*[\s\S]*?\*\/)*\.(?:\s|\/\*[\s\S]*?\*\/)*meta(?:\s|\/\*[\s\S]*?\*\/)*(?:\.(?:\s|\/\*[\s\S]*?\*\/)*glob(?:Eager)?\b|\[(?:\s|\/\*[\s\S]*?\*\/)*(['"\x60])glob(?:Eager)?\1(?:\s|\/\*[\s\S]*?\*\/)*\])/i;
 const modules = /\b(?:picomatch|micromatch|tinyglobby|fdir|fast-glob|globby)\b/i;
 const calls = /\b(?:glob|globSync|globStream|globIterate|fastGlob)\s*\(/i;
