@@ -36,6 +36,14 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
+      # Pure-stdlib QA source regressions fail before expensive native installs.
+      # This check never substitutes for a real installed WebKitGTK acceptance.
+      - name: Verify native runner without faking application tests
+        run: |
+          /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/linux_webkit.py
+          # Use the pinned Python 3.12 for the TOML lockfile regression tests;
+          # /usr/bin/python3 remains the actual native pyatspi interpreter.
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*.py' -v
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Install package builder and real graphical testing tools
@@ -49,12 +57,6 @@ jobs:
           cargo install tauri-cli --version 2.11.2 --locked
           python -m pip install --disable-pip-version-check -r sidecars/transcription/requirements-bundle.txt
           python -m pip check
-      - name: Verify native runner without faking application tests
-        run: |
-          /usr/bin/python3 -m py_compile tests/defragmentation/native-e2e/linux_webkit.py
-          # Use the pinned Python 3.12 for the TOML lockfile regression tests;
-          # /usr/bin/python3 remains the actual native pyatspi interpreter.
-          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*.py' -v
       - name: Prepare included runtime and network tool resources
         run: |
           python sidecars/transcription/build_runtime.py --output apps/desktop/src-tauri/resources/transcription-runtime
@@ -174,6 +176,21 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
+      # Parse real native UIA source before downloading expensive runtime tools.
+      # Syntax success is not installed WebView2 acceptance.
+      - name: Verify Windows native UIA probe syntax early
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          $tokens = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tests/defragmentation/native-e2e/windows_webview2.ps1').Path,
+            [ref] $tokens, [ref] $parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Native Windows UIA probe did not parse'
+          }
       - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Build Windows runtime dependencies
