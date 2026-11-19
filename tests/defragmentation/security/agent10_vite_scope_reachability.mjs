@@ -114,6 +114,37 @@ try {
       'Did not reproduce a bounded hostile-pattern Vite timeout via '+variant.specifier+
       '; this is NOT PASS, independently review import resolution and compiler logs');
   }
+
+  // Compiler-side control: a valid 1150-name static import whose from-clause
+  // appears beyond the scanner's bounded initial 2048 tokens. Every symbol
+  // really exists in both original external modules.
+  const allNames=Array.from({length:1150},(_,i)=>'s'+String(i).padStart(4,'0'));
+  const exports=allNames.map((key,i)=>'export const '+key+' = '+i+';').join('\n')+'\n';
+  writeFileSync(join(qa,'benign.ts'),'export const expectedSafe = 1;\n'+exports);
+  writeFileSync(join(qa,'hostile.ts'),
+    "export const modules = import.meta.glob('./+(*a)');\n"+exports);
+  const benignWide="import { "+allNames.join(', ')+" } from '"+
+    ('.'+'\\u002e/agent10-scope-fixture/benign.ts')+"';";
+  writeFileSync(main,original+'\n'+benignWide+'\n');
+  const wideSafe=build(45000);
+  console.log(JSON.stringify({test:'real Vite benign 1150-binding escaped import',
+    outcome:wideSafe.status===0?'PASS':'NOT VALIDATED',status:wideSafe.status,
+    error_code:wideSafe.error?.code||null,log_tail:excerpt(wideSafe)}));
+  assert.equal(wideSafe.status,0,
+    'Legal wide escaped import did not compile safely: '+excerpt(wideSafe));
+  const hostileWide="import { "+allNames.join(', ')+" } from '"+
+    ('.'+'\\u002e/agent10-scope-fixture/hostile.ts')+"';";
+  writeFileSync(main,original+'\n'+hostileWide+'\n');
+  const wideHostile=build(12000);
+  const wideTimeout=wideHostile.error?.code==='ETIMEDOUT';
+  console.log(JSON.stringify({test:'real Vite hostile 1150-binding escaped import',
+    outcome:wideTimeout?'HOSTILE_VITE_BUILD_TIMEOUT (vulnerability evidence)':
+      wideHostile.status===0?'BUILD_FINISHED (not reproduced)':'BUILD_ERROR (not reproduced)',
+    status:wideHostile.status,error_code:wideHostile.error?.code||null,
+    log_tail:excerpt(wideHostile)}));
+  assert.ok(wideTimeout,
+    'Vite hostile wide import did not time out; inspect actual compiler outcome');
+
   // Independent compiler-side confirmation for the .mts scanner blind spot.
   // The .mts file is inside src (not an out-of-root import); the old scanner's missing suffix
   // previously prevented the guard from reading its import.meta.glob macro.

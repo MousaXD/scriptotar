@@ -131,6 +131,59 @@ try {
       }
     } finally { write(main,original); }
   }
+
+  // Independent Agent10 forms deliberately absent from Agent11's own fixtures:
+  // the source guard must inspect effective JS module specifiers in all
+  // static/from/export/dynamic/backtick paths, not just textual import regexes.
+  const encodedParent = '.' + '\\u002e/qa/hostile.ts';
+  for (const [label, statement] of [
+    ['export-from named', "export { modules } from '" + encodedParent + "';"],
+    ['export-from star', "export * from '" + encodedParent + "';"],
+    ['dynamic import literal', "void import('" + encodedParent + "');"],
+    ['mixed escaped slash', "import './staging/..\\u002f..\\u002fqa/hostile.ts';"],
+    ['plain backtick import', 'import ' + String.fromCharCode(96) + encodedParent +
+      String.fromCharCode(96) + ';'],
+    ['dynamic backtick import', 'void import(' + String.fromCharCode(96) +
+      encodedParent + String.fromCharCode(96) + ');'],
+  ]) {
+    write(main, original + '\n' + statement + '\n');
+    try {
+      const result = run();
+      verdict('decoded JS import form: ' + label, result, true);
+      if (result.status !== 0)
+        assert.match(result.stdout,/Unreviewed out-of-scope relative source reference/,
+          'Wrong reason for blocking '+label);
+    } finally {write(main,original);}
+  }
+  // Benign effective in-src escape and ordinary non-module source string.
+  for (const benign of [
+    "import '.\\u002fviews/DashboardView.svelte';",
+    "const plainUserText = '.\\u002e/qa/hostile.ts';",
+  ]) {
+    write(main,original+'\n'+benign+'\n');
+    try {
+      const cleanResult=run();
+      assert.equal(cleanResult.status,0,
+        'Benign encoded source unexpectedly blocked: '+benign+cleanResult.stdout+cleanResult.stderr);
+      console.log(JSON.stringify({test:'benign JS import/text control',result:'PASS',statement:benign}));
+    } finally {write(main,original);}
+  }
+  // An enormous but valid named import can exceed the 2048-token traversal
+  // limit; fail-closed manual review is acceptable, silently accepting an
+  // encoded out-of-src specifier is not.
+  const namedBindings=Array.from({length:1150},(_,i)=>'s'+String(i).padStart(4,'0'));
+  const longFrom="import { "+namedBindings.join(', ')+" } from '"+encodedParent+"';";
+  assert.ok(longFrom.length < 100000);
+  write(main,original+'\n'+longFrom+'\n');
+  try {
+    const longResult=run();
+    verdict('1150-binding escaped parent path after lexer scan cap',longResult,true);
+    if (longResult.status !== 0)
+      assert.match(longResult.stdout,
+        /Unreviewed out-of-scope relative source reference|Ambiguous\/overlong module declaration requires review/,
+        'Not denied for path or fail-closed module declaration');
+  } finally {write(main,original);}
+
   // Policy/config paths that independently influence actual source compilation.
   for (const [label, path, body] of [
     ['shadow workspace npmrc', join(ws, '.npmrc'), 'ignore-scripts=false\n'],
