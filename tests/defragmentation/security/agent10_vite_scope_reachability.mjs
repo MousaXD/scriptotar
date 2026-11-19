@@ -92,8 +92,8 @@ try {
       '; this is NOT PASS, independently review import resolution and compiler logs');
   }
   // Independent compiler-side confirmation for the .mts scanner blind spot.
-  // The .mts file is inside src (not an out-of-root import); only its suffix
-  // prevents the current guard from reading its import.meta.glob macro.
+  // The .mts file is inside src (not an out-of-root import); the old scanner's missing suffix
+  // previously prevented the guard from reading its import.meta.glob macro.
   const mtsDir=join(ui,'src','agent10-unreviewed-mts');
   assert.equal(existsSync(mtsDir),false,'Refusing to overwrite a real source directory');
   mkdirSync(mtsDir,{recursive:false});
