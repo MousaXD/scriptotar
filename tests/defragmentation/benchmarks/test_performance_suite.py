@@ -238,6 +238,49 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
                                  report["measurement_finished_monotonic_ns"])
             self.assertEqual(report["certification"], "PENDING_INDEPENDENT_NATIVE_QA")
 
+    def test_attached_memory_rechecks_kernel_identity_at_collection_end(self):
+        # Synthetic time: exactly one valid in-loop sample, followed by a
+        # completed duration and a kernel birth/PID or image change. Do not
+        # count this as a complete installed-process sampling session.
+        from unittest.mock import patch
+        import sys
+        executable = Path(sys.executable).resolve(strict=True)
+        timer = [0.0, 0.01, 0.02, 1.1, 1.11]
+        fake_memory = {
+            "provider": "synthetic-not-native",
+            "tree_memory_complete": True,
+            "sampled_process_count": 1,
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "dummy-not-installed.zip"
+            package.write_bytes(b"synthetic package only")
+            with patch.object(native_attach_module.time, "perf_counter",
+                              side_effect=timer), patch.object(
+                              native_attach_module, "memory_snapshot",
+                              return_value=fake_memory), patch.object(
+                              native_attach_module, "process_image",
+                              return_value=executable), patch.object(
+                              native_attach_module, "process_instance_id",
+                              side_effect=["birth-1", "birth-1", "birth-1", "birth-2"]):
+                reused = attach(1234, executable, package, SHA, 1.0, 0.2, 100, None)
+            self.assertEqual(reused["sample_count"], 1)
+            self.assertEqual(reused["end_reason"],
+                             "process_gone_or_identity_changed_at_collection_end")
+
+            with patch.object(native_attach_module.time, "perf_counter",
+                              side_effect=[0.0, 0.01, 0.02, 1.1, 1.11]), patch.object(
+                              native_attach_module, "memory_snapshot",
+                              return_value=fake_memory), patch.object(
+                              native_attach_module, "process_image",
+                              side_effect=[executable, executable, executable, None]), patch.object(
+                              native_attach_module, "process_instance_id",
+                              return_value="birth-1"):
+                vanished = attach(1234, executable, package, SHA,
+                                  1.0, 0.2, 100, None)
+            self.assertEqual(vanished["sample_count"], 1)
+            self.assertEqual(vanished["end_reason"],
+                             "process_gone_or_identity_changed_at_collection_end")
+
     def test_attached_memory_rejects_package_or_executable_changed_during_collection(self):
         # Test the real package bytes without modifying the running Python
         # executable; a fake executable digest change models external replace.
