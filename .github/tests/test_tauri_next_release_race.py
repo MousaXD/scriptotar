@@ -90,7 +90,7 @@ class WorkflowRaceContractTests(unittest.TestCase):
         self.assertNotIn("group: tauri-next-release-${{", self.workflow)
 
     def test_1_4_1_release_needs_explicit_version_approval(self) -> None:
-        publish_condition = next(line for line in self.workflow.splitlines()
+        publish_condition = next(line.strip() for line in self.workflow.splitlines()
                                  if "if: github.event_name == 'workflow_run'" in line)
         self.assertIn("vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true'", publish_condition)
         self.assertIn("vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'", publish_condition)
@@ -118,11 +118,24 @@ class WorkflowRaceContractTests(unittest.TestCase):
         self.assertNotIn(special_commit, publish_condition)
         # The only two owner-approval clauses are conjunctive, independent of
         # the commit text. Approval variables must be set by repository admins.
+        required = (
+            "SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED",
+            "SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED",
+        )
+        import re
+        clauses = re.findall(r"vars\\.([A-Z_0-9]+) == 'true'", publish_condition)
+        self.assertEqual(clauses, list(required))
         for general in (False, True):
             for version in (False, True):
-                authorized = general and version
-                self.assertEqual(authorized, general and version)
-                self.assertEqual(authorized, bool(general and version))
+                repo_vars = dict(zip(required, (general, version)))
+                for commit_message in (special_commit, "ordinary source change"):
+                    # Commit text is deliberately irrelevant to the derived
+                    # GitHub Actions owner-variable approval gate.
+                    authorized = all(repo_vars[variable] for variable in clauses)
+                    self.assertEqual(authorized, general and version,
+                                     (general, version, commit_message))
+                    if not (general and version):
+                        self.assertFalse(authorized)
 
     def test_staging_identity_is_unique_for_duplicates_and_retries(self) -> None:
         self.assertIn("github.run_id", self.workflow)
