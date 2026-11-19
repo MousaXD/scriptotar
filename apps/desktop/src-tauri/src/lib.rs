@@ -899,21 +899,40 @@ async fn review_study_script(
     .await
 }
 
+/// A real installed WebView can invoke the existing, project-scoped save
+/// command with a foreign Study ID. Only the actual active-project gate's
+/// rejection is identity-bound for native security auditing. This is never
+/// an authorization token and never logs project IDs, draft content or input.
+fn denied_foreign_study_mutation(error: RepositoryError, request_id: Option<&str>) -> String {
+    let inactive_project = matches!(
+        &error,
+        RepositoryError::NotFound(reason) if reason == "project is not active"
+    );
+    let fallback = command_error(error);
+    if inactive_project {
+        native_denial("FOREIGN_STUDY_WRITE", request_id, fallback)
+    } else {
+        fallback
+    }
+}
+
 #[tauri::command]
 async fn save_study(
     project_id: String,
     study_id: String,
     expected_revision: i64,
     patch: UiStudioStudyPatch,
+    request_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<UiStudioStudy, String> {
+    validate_native_request_id(request_id.as_deref())?;
     let project_id = artifact_uuid(&project_id, "project id")?;
     let study_id = artifact_uuid(&study_id, "study id")?;
     let services = state.inner().clone();
     on_blocking_worker(move || {
         services
             .save_studio_study(project_id, study_id, expected_revision, patch)
-            .map_err(command_error)
+            .map_err(|error| denied_foreign_study_mutation(error, request_id.as_deref()))
     })
     .await
 }
@@ -1971,6 +1990,37 @@ mod native_denial_identity_tests {
             Some(id),
         );
         assert!(!internal.contains("SCRIPTOTAR_DENIAL:"));
+    }
+
+    #[test]
+    fn forged_mutating_project_denial_receipt_is_exact_and_redacted() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            denied_foreign_study_mutation(
+                RepositoryError::NotFound("project is not active".into()),
+                Some(id),
+            ),
+            format!("SCRIPTOTAR_DENIAL:FOREIGN_STUDY_WRITE:{id}")
+        );
+        // A nonexistent Study or stale CAS must not masquerade as a foreign
+        // active-project denial even with a plausible request identity.
+        let no_study = denied_foreign_study_mutation(
+            RepositoryError::NotFound("Study not found".into()),
+            Some(id),
+        );
+        assert!(!no_study.contains("SCRIPTOTAR_DENIAL:"));
+        let stale = denied_foreign_study_mutation(
+            RepositoryError::Conflict("stale revision".into()),
+            Some(id),
+        );
+        assert!(!stale.contains("SCRIPTOTAR_DENIAL:"));
+        assert_eq!(
+            denied_foreign_study_mutation(
+                RepositoryError::NotFound("project is not active".into()),
+                None,
+            ),
+            "not found: project is not active"
+        );
     }
 
     #[test]
