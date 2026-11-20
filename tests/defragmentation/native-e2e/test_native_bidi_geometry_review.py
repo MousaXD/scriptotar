@@ -61,7 +61,7 @@ class NativeBidiGeometryReviewTests(unittest.TestCase):
                     report = report.replace('"source_sha":', '"source_sha": "forged", "source_sha":', 1)
                 elif mutation == "escaped":
                     # The JSON escape decodes to exactly the existing key.
-                    report = report.replace('"source_sha":', '"source\\\\u005fsha": "forged", "source_sha":', 1)
+                    report = report.replace('"source_sha":', '"source\\u005fsha": "forged", "source_sha":', 1)
                 else:
                     report = report.replace('"status": "PASS"',
                                             '"status": "NOT TESTED", "status": "PASS"', 1)
