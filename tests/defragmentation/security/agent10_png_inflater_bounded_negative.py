@@ -14,8 +14,8 @@ import struct
 import zlib
 from pathlib import Path
 
-TARGET_SOURCE_SHA = "e1f91fcf23119c0988312803208c2a5148174a82"
-VISUAL_BLOB = "f0caea96527352ce4e427ad0ef27c3ac670eaac7"
+TARGET_SOURCE_SHA = "fe43b07b94c5f396e44d0b4d0e0a7fccef481a1c"
+VISUAL_BLOB = "27b07264e67b8d761247372f7c3f39cbfcc2ae68"
 REVIEW_BLOB = "d025ee5d12485dca7bbc4c9586a6e31c94532a7b"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 WIDTH, HEIGHT = 640, 480
@@ -130,11 +130,13 @@ def test_decoder(path: Path, review_source: Path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--candidate", type=Path, default=Path(".agent10-pr161-data"))
+    ap.add_argument("--reviewer", type=Path,
+                    default=Path(".agent10-pr161-original-review/tests/defragmentation/native-e2e/native_bidi_geometry_review.py"))
     args = ap.parse_args()
     root = args.candidate.resolve(strict=True)
     test_decoder(
         root / "tests/defragmentation/native-e2e/visual_observations.py",
-        root / "tests/defragmentation/native-e2e/native_bidi_geometry_review.py",
+        args.reviewer.resolve(strict=True),
     )
 
 
