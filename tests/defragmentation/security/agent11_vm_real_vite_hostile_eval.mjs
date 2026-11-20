@@ -78,8 +78,9 @@ try {
     'VM preload did NOT interrupt actual Vite compiler security route (still full timeout)');
   assert.ok(output.includes('ERR_AGENT11_PICOMATCH_DEADLINE'),
     'Vite failed without explicit VM deadline exception; cannot claim protection');
-  assert.ok(output.includes('AGENT11_TEST_ONLY_VM_REGEX_PRELOAD_STATS'),
-    'No evidence VM preloader was active in the hostile Vite process');
+  assert.ok(output.includes('AGENT11_TEST_ONLY_VM_REGEX_PRELOAD_STATS') ||
+    output.includes('AGENT11_TEST_ONLY_VM_COMPILER_MATCH_PRELOAD'),
+    'No evidence of either source-pinned research VM preload in the hostile Vite process');
   console.log('VM-PRELOADED ACTUAL VITE HOSTILE ROUTE: fail-closed prompt error, not drop-in parser repair');
 } finally {
   writeFileSync(main,rawMain);
