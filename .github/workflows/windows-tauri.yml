@@ -83,6 +83,16 @@ jobs:
           reviewed=514ec3ee571c4309e5b7473b8a65ab4fb73f497a
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
+          # This PR is reviewed for TWO workflow edits only. Fail closed for
+          # any changed Rust build script, Cargo/npm hook, Python, resource,
+          # GitHub action, or other committed input outside that exact scope.
+          # The explicit Python check below is retained as defense-in-depth.
+          if ! git diff --quiet "$reviewed" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml'; then
+            echo "::error::PR158 changed a file outside its two independently reviewed workflow paths."
+            exit 1
+          fi
           if ! git diff --quiet "$reviewed" HEAD -- \
             sidecars/transcription/ scripts/ tests/defragmentation/native-e2e/ \
             ':(glob)**/*.py' ':(glob)**/requirements*.txt' \
