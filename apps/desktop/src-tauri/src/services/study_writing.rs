@@ -521,8 +521,9 @@ pub(super) fn enforce_candidate_originality(
     candidates: &[GeneratedCandidate],
 ) -> WriteResult<()> {
     const SOURCE_WINDOW: usize = 12;
-    const SCRIPT_WINDOW: usize = 5;
-    const MIN_SCRIPT_WORDS: usize = 15;
+    const LONG_SCRIPT_WINDOW: usize = 5;
+    const SHORT_SCRIPT_WINDOW: usize = 3;
+    const VERY_SHORT_SCRIPT_WINDOW: usize = 2;
 
     let mut source_windows = HashSet::new();
     for evidence in &context.evidence {
@@ -588,11 +589,24 @@ pub(super) fn enforce_candidate_originality(
                 "script reproduces an extended source passage".into(),
             ));
         }
-        let shingles: HashSet<Vec<String>> = words
-            .windows(SCRIPT_WINDOW)
-            .map(<[String]>::to_vec)
-            .collect();
-        scripts.push((words, shingles));
+        // Compare the creative narration, not repeated closing CTAs.
+        // Especially on short-form videos, a shared three-word invitation
+        // must not make otherwise distinct scripts look like duplicates.
+        let creative_narration = candidate
+            .draft
+            .beats
+            .iter()
+            .filter(|beat| beat.role != scriptotar_ai::writing::BeatRole::Cta)
+            .map(|beat| beat.narration.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let creative_words = originality_words(&creative_narration);
+        if creative_words.is_empty() {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate has no original creative narration".into(),
+            ));
+        }
+        scripts.push(creative_words);
     }
 
     if candidates.len() == 3 && cited_sources.len() < 3 {
@@ -603,19 +617,36 @@ pub(super) fn enforce_candidate_originality(
 
     for left in 0..scripts.len() {
         for right in (left + 1)..scripts.len() {
-            let (left_words, left_shingles) = &scripts[left];
-            let (right_words, right_shingles) = &scripts[right];
+            let left_words = &scripts[left];
+            let right_words = &scripts[right];
             if left_words == right_words {
                 return Err(WritingWorkflowError::DuplicateOrSimilar);
             }
-            if left_words.len() >= MIN_SCRIPT_WORDS
-                && right_words.len() >= MIN_SCRIPT_WORDS
-            {
-                let common = left_shingles.intersection(right_shingles).count();
-                let smaller = left_shingles.len().min(right_shingles.len());
-                if common >= 3 && common * 100 >= smaller * 60 {
-                    return Err(WritingWorkflowError::DuplicateOrSimilar);
-                }
+            // A fixed 15-word floor allowed one-word edits of 10-14 word
+            // scripts to bypass diversity checks. Choose a shorter n-gram
+            // for shorter narrations instead. The smaller-script overlap
+            // ratio handles different-length candidates without using CTA.
+            let shorter = left_words.len().min(right_words.len());
+            let (window, minimum_shared, minimum_percent) = if shorter >= 15 {
+                (LONG_SCRIPT_WINDOW, 3, 60)
+            } else if shorter >= 10 {
+                (SHORT_SCRIPT_WINDOW, 3, 60)
+            } else if shorter >= 6 {
+                (VERY_SHORT_SCRIPT_WINDOW, 2, 60)
+            } else {
+                (VERY_SHORT_SCRIPT_WINDOW, 2, 80)
+            };
+            let left_shingles: HashSet<Vec<String>> =
+                left_words.windows(window).map(<[String]>::to_vec).collect();
+            let right_shingles: HashSet<Vec<String>> =
+                right_words.windows(window).map(<[String]>::to_vec).collect();
+            let smaller = left_shingles.len().min(right_shingles.len());
+            if smaller == 0 {
+                continue;
+            }
+            let shared = left_shingles.intersection(&right_shingles).count();
+            if shared >= minimum_shared && shared * 100 >= smaller * minimum_percent {
+                return Err(WritingWorkflowError::DuplicateOrSimilar);
             }
         }
     }
