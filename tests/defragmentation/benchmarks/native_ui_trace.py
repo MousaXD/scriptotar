@@ -34,7 +34,7 @@ PROVIDERS = frozenset({"linux-webkitgtk-atspi", "windows-webview2-uia"})
 CACHE = frozenset({"cold-rebooted", "cold-cache-dropped", "warm-cache", "unknown"})
 # Native-driver JSONL is an untrusted input. Keep decode, parsing, and bucket
 # accumulation bounded even for malformed or unexpectedly huge evidence files.
-MAX_TRACE_BYTES = 8 * 1024 * 1024
+MAX_TRACE_BYTES = 16 * 1024 * 1024
 MAX_TRACE_LINE_CHARS = 4096
 MAX_TRACE_EVENTS = 10_000
 
@@ -188,7 +188,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         "required_trials_per_bucket": min_trials, "event_count": count,
         "groups": buckets,
         "ipc_latency_ms": None,
-        "limitations": "Untrusted JSONL is bounded by 8 MiB, 4096 characters per line and 10000 events. Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
+        "limitations": "Untrusted JSONL is bounded by 16 MiB, 4096 characters per line and 10000 events. Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
     }
 
 
