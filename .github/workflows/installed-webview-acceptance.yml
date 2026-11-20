@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed=514ec3ee571c4309e5b7473b8a65ab4fb73f497a
+          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # This PR is reviewed for TWO workflow edits only. Fail closed for
@@ -292,7 +292,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed=514ec3ee571c4309e5b7473b8a65ab4fb73f497a
+          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # This PR is reviewed for TWO workflow edits only. Fail closed for
