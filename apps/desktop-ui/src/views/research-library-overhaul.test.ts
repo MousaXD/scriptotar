@@ -300,6 +300,7 @@ describe('Arabic mixed-direction isolation in data-heavy views', () => {
     const item = screen.getByTestId('research-r-0');
     expect(item.querySelector('.media-copy strong')).toHaveAttribute('dir', 'auto');
     expect(item.querySelector('.creator-name')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.source-platform bdi')).toHaveAttribute('dir', 'auto');
     expect(item.querySelector('.metric-date bdi')).toHaveAttribute('dir', 'ltr');
     expect(item.querySelector('.metric-duration bdi')).toHaveAttribute('dir', 'ltr');
     expect(item.querySelector('.metric-duration bdi')).toHaveTextContent('2:05');
