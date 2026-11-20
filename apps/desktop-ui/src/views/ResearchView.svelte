@@ -61,6 +61,7 @@
   $: selectablePageItems = pageItems.filter((item) => !item.queued);
   $: selectedCount = items.filter((item) => selected.has(item.id) && !item.queued).length;
   $: pageSelected = selectablePageItems.length > 0 && selectablePageItems.every((item) => selected.has(item.id));
+  $: pagePartiallySelected = !pageSelected && selectablePageItems.some((item) => selected.has(item.id));
   $: attentionCount = watchlistStatuses.filter((item) => item.state === 'failed' || item.state === 'retry_scheduled').length;
 
   function metric(value?: number) {
@@ -218,7 +219,7 @@
 
   <div class="selection-bar">
     <label class="select-page">
-      <input type="checkbox" checked={pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
+      <input type="checkbox" checked={pageSelected} class:partial={pagePartiallySelected} aria-checked={pagePartiallySelected ? 'mixed' : pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
       <span>{isArabic ? 'تحديد الصفحة' : 'Select page'}</span>
     </label>
     <span class="selection-count" aria-live="polite">{isArabic ? 'محدد: ' : 'Selected: '}{selectedCount}</span>
@@ -336,6 +337,9 @@
   .select-page input, .check-only input { appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface-raised); cursor: pointer; }
   .select-page input:checked, .check-only input:checked { background: var(--color-signal); border-color: var(--color-signal-strong); }
   .select-page input:checked::after, .check-only input:checked::after { content: ''; position: absolute; width: 5px; height: 9px; inset-inline-start: 5px; top: 2px; border: solid var(--color-signal-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  /* A partially selected page must not look or announce itself as completely empty. */
+  .select-page input.partial { background: var(--color-signal); border-color: var(--color-signal-strong); }
+  .select-page input.partial::after { content: ''; position: absolute; width: 8px; height: 2px; inset-inline-start: 4px; top: 7px; background: var(--color-signal-ink); }
   .select-page input:focus-visible, .check-only input:focus-visible { outline: 2px solid var(--color-signal-strong); outline-offset: 3px; }
   .select-page input:disabled, .check-only input:disabled { opacity: .5; cursor: not-allowed; }
   .selection-count { color: var(--color-text-muted); white-space: nowrap; }
