@@ -56,3 +56,5 @@ jobs:
         run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --self-test
       - name: Strict original PR158 pre-guard audit (RED is release veto)
         run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --target .agent10-pr158-target
+      - name: Real Git-tree exact two-workflow scope negative controls
+        run: python3 tests/defragmentation/security/agent10_two_workflow_git_tree_scope.py --target .agent10-pr158-target
