@@ -30,6 +30,8 @@ FINAL_REQUIRED_NATIVE = {
         "Installed Windows WebView2 / UI Automation (fail closed)",
     )
 }
+FINAL_REQUIRED_SECURITY = ("independent-security-regressions.yml",)
+
 OWNER_VARS = (
     "vars.SCRIPTOTAR_NEXT_DISTRIBUTION_APPROVED == 'true'",
     "vars.SCRIPTOTAR_NEXT_1_4_1_DISTRIBUTION_APPROVED == 'true'",
@@ -136,12 +138,12 @@ def main() -> int:
     print("VERIFIED SOURCE: pinned PR155 removes special-message OR and",
           "requires both owner variables; it is not merged to main")
 
-    missing = set(FINAL_REQUIRED_NATIVE).difference(workflows)
+    missing = (set(FINAL_REQUIRED_NATIVE) | set(FINAL_REQUIRED_SECURITY)).difference(workflows)
     if args.strict_final_release:
         if missing or OWNER_SHORTCUT in original:
             print("FINAL RELEASE VETO: legacy main preview gate is NOT a",
                   "substitute for required installed 16/16 both-platform native",
-                  "certification and owner-only publisher authorization.",
+                  "certification, independent security gate, and owner-only publisher authorization.",
                   "Missing native workflow gate:", ", ".join(sorted(missing)),
                   file=sys.stderr)
             return 1
