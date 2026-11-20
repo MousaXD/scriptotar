@@ -1,0 +1,49 @@
+# Independent Agent10 demonstration of fail-closed current P0 guard vs unpinned PR174 P2 source.
+# Stage is checkout DATA ONLY. Does not run stage product/native code.
+name: Agent10 PR174 four-protected-job prebuild fail-closed veto
+
+on:
+  push:
+    branches: [agent-10/p0-pr174-prebuild-failclosed-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guarded-source:
+    name: Original 4-job Git source gate reject unpinned P2 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independently authored Agent10 verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check exact independent test checkout
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Checkout actual unmerged Agent00 source stage as DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: e48bfc6848000a4c2b49cf26b8d68da504172df0
+          path: .agent10-pr174-data
+          persist-credentials: false
+      - name: Authenticate exact unmerged stage Git HEAD
+        shell: bash
+        run: test "$(git -C .agent10-pr174-data rev-parse HEAD)" = e48bfc6848000a4c2b49cf26b8d68da504172df0
+      - name: Set reproducible Python for verifier
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Actual Git source allowlist positive + unreviewed Python negative
+        shell: bash
+        run: python tests/defragmentation/security/agent10_pr174_prebuild_failclosed.py --target .agent10-pr174-data
