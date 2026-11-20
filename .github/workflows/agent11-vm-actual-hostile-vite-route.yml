@@ -23,8 +23,12 @@ concurrency:
 
 jobs:
   actual-vite-compiler-exposure:
-    name: Real Vite escaped source import + hostile glob with/without VM hook
-    runs-on: ubuntu-22.04
+    name: Real hostile Vite protected-VM acceptance (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     steps:
       - name: Checkout source exact SHA with no credentials
@@ -65,6 +69,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout 80s node tests/defragmentation/security/agent11_vm_real_vite_hostile_eval.mjs
+          node tests/defragmentation/security/agent11_vm_real_vite_hostile_eval.mjs
           git diff --exit-code -- apps/desktop-ui/package-lock.json apps/desktop-ui/package.json apps/desktop-ui/src/main.ts
           echo 'Research-only! Actual trusted source guard must remain; no production parser/remediation change.'
