@@ -251,7 +251,7 @@ fn typed_revision_matches(
     let Ok(candidate) = serde_json::from_str::<GeneratedCandidate>(structured_json) else {
         return false;
     };
-    if candidate.draft.title != version.title || export_candidate(&candidate) != version.body {
+    if candidate.draft.title.trim() != version.title || export_candidate(&candidate) != version.body {
         return false;
     }
     let mut canonical = candidate.draft;
@@ -721,7 +721,7 @@ mod tests {
         let model_script = ScriptDraft {
             id: "untrusted-model-draft".into(),
             angle_id: "angle-a".into(),
-            title: "Saved generated script".into(),
+            title: "  Saved generated script  ".into(),
             language: "en".into(),
             beats: vec![ScriptBeat {
                 id: "hook".into(),
