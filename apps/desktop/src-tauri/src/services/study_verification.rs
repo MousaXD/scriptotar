@@ -260,11 +260,53 @@ fn typed_revision_matches(
     canonical == *supplied
 }
 
+/// Source attribution is not independent fact checking. Use these values
+/// for navigation and uncertainty labels, never as publication permission.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceAttribution {
+    /// The literal excerpt is present in the currently attached source,
+    /// but no independent reviewer has attested to the statement's truth.
+    LiteralExcerptUnreviewed,
+    DisputedObservation,
+    UntrustedOrUnmatched,
+    SourceUnavailable,
+}
+
+/// Scoped source navigation for an explicitly cited proposed claim.
+/// A missing/forged citation remains in the report's findings, not here.
+#[derive(Debug, Clone, Serialize)]
+pub struct ClaimSourceNavigation {
+    pub claim_id: String,
+    pub evidence_id: String,
+    pub study_source_id: String,
+    pub source_content_sha256: Option<String>,
+    pub locator: ExactLocator,
+    pub proposed_excerpt: String,
+    pub attribution: SourceAttribution,
+}
+
+fn source_attribution(state: EvidenceState) -> SourceAttribution {
+    match state {
+        EvidenceState::Unreviewed => SourceAttribution::LiteralExcerptUnreviewed,
+        EvidenceState::Disputed => SourceAttribution::DisputedObservation,
+        EvidenceState::Unavailable | EvidenceState::Revoked => {
+            SourceAttribution::SourceUnavailable
+        }
+        // A generic human observation review cannot produce Reviewed here;
+        // no authenticated independent fact-review table is currently loaded.
+        EvidenceState::Reviewed | EvidenceState::Untrusted => {
+            SourceAttribution::UntrustedOrUnmatched
+        }
+    }
+}
+
 /// No part of this read-only result constitutes permission to publish.
 #[derive(Debug, Clone, Serialize)]
 pub struct SavedDraftVerification {
     pub draft_version_id: String,
     pub draft_version_sha256: String,
+    pub claim_sources: Vec<ClaimSourceNavigation>,
     pub report: VerificationReport,
 }
 
@@ -481,9 +523,30 @@ impl AppServices {
                 })
                 .collect();
         }
+        // Host-resolved navigation retains exact source IDs/locators even if
+        // the engine refuses factual verification. No model-provided URL or
+        // source title is trusted as an independent source identity.
+        let claim_sources = claims
+            .iter()
+            .flat_map(|claim| {
+                claim.citations.iter().filter_map(|citation| {
+                    let evidence = known.get(citation.evidence_id.as_str())?;
+                    Some(ClaimSourceNavigation {
+                        claim_id: claim.id.clone(),
+                        evidence_id: evidence.evidence_id.clone(),
+                        study_source_id: evidence.source_id.clone(),
+                        source_content_sha256: evidence.source_version.clone(),
+                        locator: evidence.locator.clone(),
+                        proposed_excerpt: evidence.excerpt.clone(),
+                        attribution: source_attribution(evidence.state),
+                    })
+                })
+            })
+            .collect();
         Ok(SavedDraftVerification {
             draft_version_id: saved_version.id.to_string(),
             draft_version_sha256: saved_version_digest(project_id, study_id, &saved_version),
+            claim_sources,
             report: verification::verify_claims(&ctx, &claims),
         })
     }
