@@ -39,6 +39,21 @@ MAX_TRACE_LINE_CHARS = 4096
 MAX_TRACE_EVENTS = 10_000
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Reject repeated member names before JSON overwrites contradictory evidence.
+
+    json.loads normally silently keeps the last duplicate. External native
+    trace headers are audit labels, not cryptographic proof; even conflicting
+    operator assertions must be refused rather than normalized away.
+    """
+    result: dict = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate JSON member name in native observation")
+        result[name] = value
+    return result
+
+
 def _percentiles(values: list[float]) -> dict:
     ordered = sorted(values)
     return {
@@ -89,7 +104,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         if count >= MAX_TRACE_EVENTS:
             raise ValueError("external native trace exceeds bounded event count")
         try:
-            event = json.loads(line)
+            event = json.loads(line, object_pairs_hook=_unique_json_object)
         except json.JSONDecodeError as exc:
             raise ValueError(f"line {number}: malformed JSON") from exc
         if not isinstance(event, dict) or set(event) != ALLOWED_KEYS:
@@ -188,7 +203,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         "required_trials_per_bucket": min_trials, "event_count": count,
         "groups": buckets,
         "ipc_latency_ms": None,
-        "limitations": "Untrusted JSONL is bounded by 16 MiB, 4096 characters per line and 10000 events. Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
+        "limitations": "Untrusted JSONL is bounded by 16 MiB, 4096 characters per line and 10000 events; repeated JSON member names are rejected, including contradictory source labels. Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
     }
 
 
