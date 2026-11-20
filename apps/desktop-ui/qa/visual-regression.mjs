@@ -11,7 +11,9 @@ const output = resolve(root, 'qa', 'evidence');
 const origin = 'http://127.0.0.1:4173';
 const widths = [1440, 1100, 760];
 const locales = ['en', 'ar'];
-const themes = ['dark', 'system'];
+// Exercise explicit Light even when the OS prefers Dark; System is separately
+// exercised with an OS Light preference. Both must remain distinct from Dark.
+const themes = ['dark', 'light', 'system'];
 const views = [
   { name: 'dashboard', key: 'd', index: 0 },
   { name: 'research', key: 'r', index: 1 },
@@ -401,14 +403,19 @@ try {
   if (browser) await browser.close();
   try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill(); }
 }
+// Each workspace renders all seven views and four purposeful variants
+// (Research empty, Transcript no matches, Library empty and MCP Settings).
+// Each locale/appearance pair also renders loading and error boot states.
+const expectedScreenshotCount = widths.length * locales.length * themes.length *
+  (views.length + 4) + locales.length * themes.length * 2;
 const report = {
   generatedAt: new Date().toISOString(),
   sha: process.env.QA_TESTED_SHA || process.env.GITHUB_SHA || 'local-unpinned',
   baselineSha: 'f741244634b5143602a21a554094a498a0005b11',
   scope: 'Chromium browser / production Vite bundle / built-in mock client; driver wall-clock metrics, NOT native Tauri',
-  screenshotCount, failures, results
+  screenshotCount, expectedScreenshotCount, failures, results
 };
 await writeFile(resolve(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 console.log('Rendered screenshots: ' + screenshotCount +
   '; checked combinations: ' + results.length + '; failures: ' + failures.length);
-if (failures.length || screenshotCount !== 140) process.exitCode = 1;
+if (failures.length || screenshotCount !== expectedScreenshotCount) process.exitCode = 1;
