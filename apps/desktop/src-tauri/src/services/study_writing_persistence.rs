@@ -265,6 +265,11 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 // All model-inventoried factual claims start unverified.
                 claim.status = ClaimStatus::Unverified;
             }
+            // The sink may be called independently of parse_draft. Validate
+            // all beat IDs, claim-to-beat bindings, field limits and citations
+            // again after unverified-claim normalization.
+            writing::validate_draft(&candidate.draft, &batch.context.evidence)
+                .map_err(|_| denied("malformed canonical script draft"))?;
             candidate.audit = writing::audit_draft(
                 &candidate.draft,
                 &batch.context.brief,
