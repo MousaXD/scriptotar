@@ -253,7 +253,8 @@ fn typed_revision_matches(
     let Ok(candidate) = serde_json::from_str::<GeneratedCandidate>(structured_json) else {
         return false;
     };
-    if candidate.draft.title.trim() != version.title || export_candidate(&candidate) != version.body
+    if candidate.draft.title.trim() != version.title
+        || export_candidate(&candidate) != version.body
     {
         return false;
     }
@@ -519,7 +520,8 @@ impl AppServices {
         let stored_candidate: GeneratedCandidate = serde_json::from_str(&structured)
             .map_err(|_| RepositoryError::Storage("corrupt structured claim revision".into()))?;
         for line in &stored_candidate.lineage {
-            if !source_map.contains_key(&line.source_id) || !linked_sources.contains(&line.source_id)
+            if !source_map.contains_key(&line.source_id)
+                || !linked_sources.contains(&line.source_id)
             {
                 return Err(RepositoryError::Conflict(
                     "draft lineage source is no longer attached to this Study".into(),
