@@ -738,6 +738,10 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
         });
       } else throw new Error('Unsupported research action');
       run.revision += 1;
+      // SQLite orders by updated_at, not original creation. Reinsert the
+      // updated snapshot so the mock's newest-first listing has the same
+      // durable reopen behavior after approve/deny/cancel/reconcile.
+      studyResearchRuns.delete(runId);
       studyResearchRuns.set(runId, run);
       return structuredClone(run);
     },
