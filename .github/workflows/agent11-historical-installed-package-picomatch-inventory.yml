@@ -33,6 +33,11 @@ jobs:
           set -euo pipefail
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860" --jq .head_sha)" = "50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6"
           test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860" --jq .conclusion)" = "success"
+          # Pin the IMMUTABLE artifact ID and GitHub post-upload digest, rather
+          # than trusting that a name-only lookup belongs to this original run.
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14629728341" --jq .workflow_run.id)" = "44736655860"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14629728341" --jq .digest)" = "sha256:7ea435e3fe916809129a28ad597878ba5bd58791c5df6fdb766c8bb03b5f9c2f"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860/artifacts" --jq '.artifacts[] | select(.name == "scriptotar-linux-tauri") | .id')" = "14629728341"
       - name: Download original Linux release package artifact by exact run and name
         shell: bash
         run: |
@@ -87,6 +92,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Original Windows run metadata could not be fetched' }
           if ($run.head_sha -ne '50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6' -or $run.conclusion -ne 'success') {
             throw 'Original Windows run is not the approved immutable source/build'
+          }
+          $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/14630097202" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifact.id -ne 14630097202 -or
+              $artifact.workflow_run.id -ne 44736655842 -or
+              $artifact.digest -ne 'sha256:cba3d855e84e11693299ac1025cd37ab92ad3f974699312d153cf7d1bfb10a67') {
+            throw 'Original Windows artifact immutable identity/digest mismatch'
+          }
+          $artifactList = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/44736655842/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate original Windows artifacts' }
+          $named = @($artifactList.artifacts | Where-Object { $_.name -eq 'scriptotar-windows-tauri' })
+          if ($named.Count -ne 1 -or $named[0].id -ne 14630097202) {
+            throw 'Original Windows artifact name does not uniquely map to pinned immutable artifact ID'
           }
       - name: Download original Windows NSIS artifact by exact run and name
         shell: pwsh
