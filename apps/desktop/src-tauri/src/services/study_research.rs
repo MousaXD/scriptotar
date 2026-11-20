@@ -11,14 +11,13 @@ use std::{
 };
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
-use scriptotar_ai::writing::{
-    EvidenceKind, EvidenceLocator, EvidenceRef, EvidenceStatus, FindingKind, ResearchFinding,
-};
-use sha2::{Digest, Sha256};
 use scriptotar_agent::{
     Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate, ProbeResult,
     RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor, ToolFailure,
     ToolKind, ToolReceipt, ToolRegistry,
+};
+use scriptotar_ai::writing::{
+    EvidenceKind, EvidenceLocator, EvidenceRef, EvidenceStatus, FindingKind, ResearchFinding,
 };
 use scriptotar_core::{
     ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind,
@@ -33,6 +32,7 @@ use scriptotar_research::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::AppServices;
@@ -710,24 +710,17 @@ pub(super) fn read_study_research_artifact(
         .iter()
         .map(|source| source.study_source_id)
         .collect();
-    let approved_ids = run
-        .plan
-        .steps
-        .first()
-        .and_then(|step| selected_ids(&step.input).ok());
+    let approved_ids = run.plan.steps.first().and_then(|step| selected_ids(&step.input).ok());
     if !valid_research_run(&run, project, study)
         || run.state != scriptotar_agent::RunState::Completed
         || approved_ids.as_deref() != Some(report_ids.as_slice())
-        || run
-            .steps
-            .first()
-            .is_none_or(|step| {
-                step.idempotency_key != saved.idempotency_key
-                    || step
-                        .output
-                        .as_ref()
-                        .is_none_or(|output| output.artifact_id != artifact.to_string())
-            })
+        || run.steps.first().is_none_or(|step| {
+            step.idempotency_key != saved.idempotency_key
+                || step
+                    .output
+                    .as_ref()
+                    .is_none_or(|output| output.artifact_id != artifact.to_string())
+        })
         || run.plan.steps[0].id != saved.step_id
     {
         return Err(not_found());
@@ -1181,10 +1174,12 @@ fn research_writing_from_report(
         }
     }
     if truncated {
-        limitations.push("Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into());
+        limitations
+            .push("Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into());
     }
     limitations.push(
-        "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research.".into(),
+        "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research."
+            .into(),
     );
     Ok(ResearchWritingContext {
         project_id: report.project_id,
@@ -2005,6 +2000,7 @@ mod tests {
                 .unwrap()
                 .available
         );
+        assert!(reopened.start_study_research(project, study, vec![source]).is_err());
         assert!(checked_report(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
         assert!(checked_report(&reopened, project, study, artifact).is_err());
