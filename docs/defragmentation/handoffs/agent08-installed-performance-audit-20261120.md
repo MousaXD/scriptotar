@@ -33,6 +33,32 @@ Archived historical PID: Linux `27136` in a bounded native layout observation; W
 
 Do not convert UIA polling seconds or CI job duration into latency. Do not convert source-only serial memory samples into independent UI trials. `n=0` means zero **verified benchmark** trials, not zero functional app activity or zero memory consumption. No performance regression is either proved or disproved.
 
+## 2026-11-20 Agent08 read-only CPU source instrumentation (NOT installed evidence)
+
+Following the exact-integration audit, Agent08 added **source-only P2 measurement
+correctness changes** in the same draft PR. `native_attach.py` now optionally
+collects **cumulative root process CPU time** from Linux `/proc/<pid>/stat`
+user+system ticks or Windows read-only `GetProcessTimes` counters. Each value is
+collected within the existing root process-image and kernel-birth brackets, and
+missing permissions remain `null`, not zero.
+
+`attached_memory_gate.py` treats this signal as optional for older raw reports,
+but **rejects partially present, malformed, negative, or decreasing counters**
+for a purported single root PID birth. When every sample is valid, it emits
+only `ROOT_ONLY_UNCERTIFIED` aggregate core-equivalents over the observed
+monotonic interval. These values exclude WebKitGTK/WebView2 helper CPU, ignore
+reparented helpers, and do not prove native GUI performance. The new synthetic
+source tests check good/missing/tampered samples and a genuine local *test runner*
+PID; **testing a Python runner PID is never an installed Scriptotar benchmark**.
+
+The historical installed workflow artifacts still contain **zero live root CPU
+or complete WebView tree CPU measurements**; no measured CPU percentage, p50/p95,
+peak memory, native 100/1k/10k cohort or regression verdict can be published.
+Do not treat the synthetic CPU test, helper-code change, or any source CI PASS as
+recovery of the external Agent07 concurrent live-runner requirement. Agent07
+must still coordinate optional inside-driver capture on both OSes and Agent08
+must review original exact-source artifacts.
+
 ## Original synthetic SQL artifacts (separate evidence class)
 
 Original P2 [workflow #44559483015](https://github.com/MousaXD/scriptotar/actions/runs/44559483015) at *older* exact source `f0daf2606dba09240c8a269b3110e135d570cf02` completed Linux/Windows migration and SQL-only runs with 11 query iterations for each of 100, 1k, 10k Study rows. Both original ZIPs were downloaded and their bytes independently hashed: [Linux 14546612494](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14546612494), `40c1ee3682032b01c377380af27df581efb5b4875ec02b98e03aaa14760650bf`; [Windows 14549115338](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14549115338), `af238e5959f54dadab7c6276e699587214032d3d2a66e0d961bbc1c747509e41`. Read original `sql-100.json`, `sql-1000.json`, `sql-10000.json` and validated source and sample provenance. These are **Python SQLite/fetchall** latencies under a production-migrated schema, not current integration Rust IPC or native GUI timing.
