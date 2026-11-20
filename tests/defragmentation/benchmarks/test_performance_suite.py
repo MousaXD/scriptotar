@@ -372,7 +372,8 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
 
 
-from .native_ui_trace import summarize_ui_trace, UI_KIND
+from .native_ui_trace import (summarize_ui_trace, UI_KIND, MAX_TRACE_BYTES,
+                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS)
 
 
 class NativeUiTraceContractTests(unittest.TestCase):
@@ -428,6 +429,42 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertEqual(report["groups"][0]["status"], "INSUFFICIENT_TRIALS")
             self.assertIsNone(report["groups"][0]["p50_ms"])
             self.assertIsNone(report["groups"][0]["p95_ms_nearest_rank"])
+
+    def test_untrusted_native_jsonl_is_bounded_before_decoding_or_parsing(self):
+        # All input below is synthetic source-only material, never real UI.
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "malicious-external.jsonl"
+            trace.write_bytes(b" " * (MAX_TRACE_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "bounded byte limit"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            valid_json = json.dumps(self.event(0))
+            trace.write_text(valid_json + " " * MAX_TRACE_LINE_CHARS)
+            with self.assertRaisesRegex(ValueError, "oversized native observation"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            trace.write_bytes(b"\xff")
+            with self.assertRaisesRegex(ValueError, "must be UTF-8"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # More valid records than the explicit input cap must fail;
+            # their IDs/timestamps remain distinct to exercise the cap
+            # rather than the existing replay or malformed JSON controls.
+            trace.write_text("\n".join(
+                json.dumps(self.event(i)) for i in range(MAX_TRACE_EVENTS + 1)
+            ))
+            with self.assertRaisesRegex(ValueError, "bounded event count"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # The new size limits do not affect normal ten-trial batches,
+            # which remain unverified until independent native QA.
+            trace.write_text("\n".join(
+                json.dumps(self.event(i)) for i in range(10)
+            ))
+            record = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(record["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            self.assertEqual(record["event_count"], 10)
+            self.assertEqual(record["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
 
     def test_untrusted_trace_rejects_duplicate_clock_and_payload_leaks(self):
         with tempfile.TemporaryDirectory() as folder:
