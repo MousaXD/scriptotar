@@ -275,6 +275,35 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Symlinked"):
                     analyze(symlink, SHA)
 
+    def test_visual_zip_rejects_aggregate_inflated_size_and_unsupported_compression(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "aggregate.zip"
+            fixture_zip(path)
+            # 5 x 13MiB compressible members: a small archive with >64MiB
+            # of claimed inflated content, refused by central-directory
+            # metadata BEFORE any hostile member is extracted.
+            chunk = b"X" * (13 * 1024 * 1024)
+            with zipfile.ZipFile(path, "a", compression=zipfile.ZIP_DEFLATED) as z:
+                for i in range(5):
+                    z.writestr(f"aggregate-{i}.bin", chunk)
+            self.assertLess(path.stat().st_size, 1024 * 1024)
+            with self.assertRaisesRegex(ValueError, "Excessive total evidence ZIP"):
+                analyze(path, SHA)
+
+            fixture_zip(path)
+            with zipfile.ZipFile(path, "a") as z:
+                z.writestr("unsupported.bz2", b"x" * 200,
+                           compress_type=zipfile.ZIP_BZIP2)
+            with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                analyze(path, SHA)
+
+            fixture_zip(path)
+            with zipfile.ZipFile(path, "a") as z:
+                z.writestr("directory/", b"")
+            with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                analyze(path, SHA)
+
+
     def test_visual_zip_digest_is_bound_to_parsed_snapshot_not_swapped_path(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "mutable.zip"
