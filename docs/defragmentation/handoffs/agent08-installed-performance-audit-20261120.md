@@ -135,6 +135,42 @@ source-only checks succeeded. The stage remains DRAFT, with original
 installed native benchmark evidence `n=0`. Do not claim that source
 security checks, package builds or synthetic SQL make a native UI PASS.
 
+## 20 November Agent10 contradictory-JSON veto and Agent08 correction
+
+Independent Agent10 test-only [PR172](https://github.com/MousaXD/scriptotar/pull/172)
+reproduced a **real trace format defect** against old immutable Agent08
+PR170 source `79805457302e3360b76562cdd73aeb94cee1cf8f`:
+[original Ubuntu and Windows #44784415216](https://github.com/MousaXD/scriptotar/actions/runs/44784415216)
+both **FAILED** the intended negative duplicate-JSON provenance tests.
+Python default `json.loads()` silently kept the last of two conflicting
+`source_sha`, `fixture_sha256`, `native_provider`, `cache_state` or
+`action` members, defeating the assumption that an input line provides
+one unambiguous audit label. This is **format ambiguity**, not a claim of
+cryptographic native-driver authentication.
+
+Agent08 subsequently changed `native_ui_trace.py` to use
+`json.loads(..., object_pairs_hook=_unique_json_object)`: the hook
+fail-closes on **any** duplicate JSON member, regardless of which
+conflicting value appears first, before normalizing a Python dictionary.
+Permanent source-only regressions now cover all five contradictory labels
+in BOTH orders, identical member repetition and ordinary ten-observation
+format (still `UNVERIFIED_EXTERNAL_TRACE`). The existing 16 MiB /
+4096-character / 10,000-event and minimum-ten-trials guardrails remain.
+**Do not transfer** old test verdicts to the new source SHA: require
+original exact-head Linux/Windows P2 suite and fresh independent Agent10
+SOURCE-APPROVE/REJECT; use the old PR172 red result only as historical
+positive evidence that the defect existed.
+
+Separately, original pre-fix [PR170 GitHub CI #44782943613](https://github.com/MousaXD/scriptotar/actions/runs/44782943613)
+was **FAIL**, specifically at `Install required Linux Tauri native libraries`;
+original job `136450139011` shows an Azure Ubuntu apt mirror
+`libwebkit2gtk-4.1-0` download stuck after the `Get:16` header
+until the command timed out with exit **124**. It reached neither
+native UI nor application-test steps. This is an external package
+download timeout, **not a source-test PASS**. The same old exact SHA's
+P2 Linux/Windows migrated SQL/test jobs, security hygiene, GUI QA and
+MCP E2E were all SUCCESS. New CI must be evaluated independently.
+
 ## Original synthetic SQL artifacts (separate evidence class)
 
 Original P2 [workflow #44559483015](https://github.com/MousaXD/scriptotar/actions/runs/44559483015) at *older* exact source `f0daf2606dba09240c8a269b3110e135d570cf02` completed Linux/Windows migration and SQL-only runs with 11 query iterations for each of 100, 1k, 10k Study rows. Both original ZIPs were downloaded and their bytes independently hashed: [Linux 14546612494](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14546612494), `40c1ee3682032b01c377380af27df581efb5b4875ec02b98e03aaa14760650bf`; [Windows 14549115338](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14549115338), `af238e5959f54dadab7c6276e699587214032d3d2a66e0d961bbc1c747509e41`. Read original `sql-100.json`, `sql-1000.json`, `sql-10000.json` and validated source and sample provenance. These are **Python SQLite/fetchall** latencies under a production-migrated schema, not current integration Rust IPC or native GUI timing.
