@@ -1,0 +1,48 @@
+# Independent exact reviewed source-stage scope test. Candidate checked out as data only.
+name: Agent10 PR174 three immutable source Git-scope veto
+
+on:
+  push:
+    branches: [agent-10/p0-pr174-three-source-git-scope-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source:
+    name: Real Git-tree mutation denylist (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independent Agent10 test code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify independent test source HEAD
+        shell: bash
+        env:
+          AUDIT_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AUDIT_SHA"
+      - name: Checkout exact Agent00 staged PR174 as DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: e48bfc6848000a4c2b49cf26b8d68da504172df0
+          path: .agent10-pr174-data
+          persist-credentials: false
+      - name: Verify original stage git commit before test
+        shell: bash
+        run: test "$(git -C .agent10-pr174-data rev-parse HEAD)" = e48bfc6848000a4c2b49cf26b8d68da504172df0
+      - name: Setup pinned Python for independent tests
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Independent exact blob/source-scope and 19 real Git mutation controls
+        shell: bash
+        run: python tests/defragmentation/security/agent10_pr174_stage_scope.py --target .agent10-pr174-data
