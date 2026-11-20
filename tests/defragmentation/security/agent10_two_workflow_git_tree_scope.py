@@ -86,6 +86,7 @@ def isolated_negative_controls() -> None:
         # even though the two reviewed workflow changes are still present.
         for label, name, payload in INJECTED:
             git(repo, "reset", "--hard", acceptable)
+            git(repo, "clean", "-fd")
             file = repo / name
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_text(payload, encoding="utf-8")
@@ -98,6 +99,7 @@ def isolated_negative_controls() -> None:
 
         # Verify an unreviewed deletion is also denied.
         git(repo, "reset", "--hard", acceptable)
+        git(repo, "clean", "-fd")
         path = repo / "apps/desktop-ui/package.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('{"name":"baseline"}\n', encoding="utf-8")
