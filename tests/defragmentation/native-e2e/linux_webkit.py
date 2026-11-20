@@ -1261,6 +1261,61 @@ def capture_installed_layout(report: dict, ax: AxWebKit, key: str, labels: tuple
         )
 
 
+
+def capture_native_tab_order(report: dict, ax: AxWebKit, key: str, count: int = 12) -> None:
+    """Read only *real* X11 Tab -> installed-PID AT-SPI focus transitions.
+
+    This is review material, not RTL or visual acceptance. A screenshot or
+    source-level inferred tab order is not accepted as keyboard evidence.
+    """
+    observation = {
+        "kind": "installed-WebKitGTK-X11-Tab-AT-SPI",
+        "app_pid": ax.pid,
+        "events": [],
+        "certifies_rtl_or_visual": False,
+    }
+    try:
+        if not ax.web_document():
+            raise NativeUnavailable("Installed process has no AT-SPI web document")
+        for tab_index in range(count):
+            command("xdotool", "key", "--clearmodifiers", "Tab")
+            time.sleep(0.18)
+            focused = []
+            for node in ax.nodes():
+                try:
+                    state = node.getState()
+                    if not state.contains(ax.atspi.STATE_FOCUSED):
+                        continue
+                    rect = node.queryComponent().getExtents(
+                        getattr(ax.atspi, "DESKTOP_COORDS", 0)
+                    )
+                    focused.append({
+                        "name": (node.name or "")[:120],
+                        "role": node.getRoleName()[:80],
+                        "focusable": bool(state.contains(ax.atspi.STATE_FOCUSABLE)),
+                        "bounds": {
+                            "x": int(rect.x), "y": int(rect.y),
+                            "width": int(rect.width), "height": int(rect.height),
+                        },
+                    })
+                except Exception:
+                    continue
+            observation["events"].append({
+                "tab_index": tab_index + 1,
+                "focused_count": len(focused),
+                "focused": focused[:4],
+            })
+        if not any(event["focused_count"] for event in observation["events"]):
+            raise NativeUnavailable(
+                "Installed AT-SPI did not expose focused controls after real Tab keys"
+            )
+    except Exception as exc:
+        report.setdefault("native_layout_observation_errors", {})[key] = (
+            f"{type(exc).__name__}: {exc}"
+        )
+    report.setdefault("native_layout_observations", {})[key] = observation
+
+
 class Session:
     def __init__(self, args, root: Path):
         self.args = args
@@ -1780,6 +1835,9 @@ def exercise(args, report: dict, root: Path):
                         "Arabic persisted-relaunch shell still exposes English Studio navigation"
                     )
                 session.screenshot("arabic-reopened")
+                # Preserve actual Arabic focus traversal for later independent
+                # a11y review. This cannot turn arabic_rtl into PASS.
+                capture_native_tab_order(report, a, "arabic_reopened_native_tab_order")
                 reached("arabic_heading_after_relaunch")
             except Exception as exc:
                 original_error = exc
