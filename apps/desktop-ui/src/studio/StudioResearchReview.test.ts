@@ -134,4 +134,16 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
   });
 
+  it('removes stale approval controls if a source refresh fails', async () => {
+    const { api, projectId, studyId } = await fixture();
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    expect(await screen.findByRole('button', { name: 'Approve local analysis' })).toBeEnabled();
+    api.listStudyResearchSources = async () => { throw new Error('Source listing unavailable'); };
+    await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Source listing unavailable');
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+  });
+
 });
