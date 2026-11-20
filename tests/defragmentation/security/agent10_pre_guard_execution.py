@@ -71,10 +71,25 @@ def inspect(text: str, job: str) -> list[str]:
         if "--self-test" not in verified or "--workspace apps/desktop-ui" not in verified:
             problems.append("Missing guard self-test or actual workspace audit")
         for i, s in enumerate(steps[:audit]):
+            # Fail closed on ALL shell execution, including aliases, PowerShell,
+            # bash, custom shell scripts and tool commands not in a regex list.
+            # Only exact source-SHA confirmation is allowed before the guard.
+            if not re.search(r"(?m)^\s+run:\s*", s):
+                continue
+            is_source_assertion = (
+                "name: Confirm exact unmerged source checkout" in s or
+                "name: Check exact immutable source" in s
+            )
+            if is_source_assertion:
+                if ("git rev-parse HEAD" not in s or
+                    not ("EXPECTED_SOURCE_SHA" in s or "EXACT_SHA" in s)):
+                    problems.append(f"Pre-guard source checkout assertion weakened at step {i + 1}")
+                continue
             commands = [line.strip() for line in s.splitlines() if EXEC.search(line)]
-            if commands:
-                problems.append(f"PR-controlled/other pre-guard executable step {i + 1}: "
-                                + " | ".join(commands[:3]))
+            problems.append(
+                f"pre-guard executable step {i + 1} (not an immutable SHA assertion): " +
+                (" | ".join(commands[:3]) if commands else "unrecognized shell command")
+            )
         if cli is not None and cli <= audit:
             problems.append("Global npm Tauri installation occurs before trusted guard")
 
