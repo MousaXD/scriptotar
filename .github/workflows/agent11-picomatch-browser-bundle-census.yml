@@ -7,7 +7,16 @@ on:
   push:
     branches:
       - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-picomatch-browser-bundle-census.yml'
+      - 'tests/defragmentation/security/agent11_bundle_module_census.mjs'
+      - 'tests/defragmentation/security/agent11_desktop_npm_scope_attestation.mjs'
+      - 'apps/desktop-ui/**'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
