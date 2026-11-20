@@ -22,7 +22,10 @@ const ui=join(repo,'apps','desktop-ui');
 const main=join(ui,'src','main.ts');
 const rawMain=readFileSync(main,'utf8');
 const viteBin=join(ui,'node_modules','vite','bin','vite.js');
-const preload=join(repo,'tests','defragmentation','security','agent11_vm_regex_wrapper_preload.cjs');
+const mode=process.env.AGENT11_VM_PRELOAD_VARIANT||'exec';
+assert.ok(['exec','compiler-exec'].includes(mode),'Only source-reviewed research preload variants allowed');
+const preload=join(repo,'tests','defragmentation','security',
+  mode==='compiler-exec'?'agent11_vm_compile_guard_preload.cjs':'agent11_vm_regex_wrapper_preload.cjs');
 const fixture=join(ui,'agent11-vm-hostile-probe');
 assert.ok(existsSync(viteBin)&&existsSync(preload),'Original locked npm ci and tracked VM test wrapper required');
 assert.ok(!existsSync(fixture),'Refuse existing/untrusted test fixture directory');
@@ -43,7 +46,7 @@ function report(kind,r) {
   console.log('SOURCE-EXACT AGENT11 ACTUAL VITE:',JSON.stringify({
     kind,status:r.status,error_code:r.code,elapsedMs:r.ms,
     deadlineException:output.includes('ERR_AGENT11_PICOMATCH_DEADLINE'),
-    loaderEvidence:output.includes('AGENT11_TEST_ONLY_VM_REGEX_PRELOAD_STATS'),
+    loaderEvidence:output.includes('AGENT11_TEST_ONLY_VM_REGEX_PRELOAD_STATS')||output.includes('AGENT11_TEST_ONLY_VM_COMPILER_MATCH_PRELOAD'),
     logTail:output.slice(-1500),releaseApproval:false
   }));
 }
