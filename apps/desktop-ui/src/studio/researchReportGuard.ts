@@ -24,9 +24,24 @@ export function matchesResearchReportScope(
       new Set(requested).size !== requested.length ||
       report.project_id !== projectId || report.study_id !== studyId ||
       report.source_text_is_untrusted_data !== true ||
-      !Array.isArray(report.sources) || report.sources.length !== requested.length) {
+      !Array.isArray(report.sources) || report.sources.length !== requested.length ||
+      !Array.isArray(report.feature_support) || report.feature_support.length > 8 ||
+      !Array.isArray(report.limitations)) {
     return false;
   }
+
+  // These values can be rendered as observed facts only if their shape,
+  // finite numbers and selected-source bounds survive an untrusted IPC reply.
+  if (report.feature_support.some((feature) =>
+    !feature || typeof feature.feature !== 'string' ||
+    !feature.feature || typeof feature.meaning !== 'string' ||
+    feature.meaning.length > 2000 ||
+    !Number.isInteger(feature.distinct_selected_sources) ||
+    feature.distinct_selected_sources < 1 ||
+    feature.distinct_selected_sources > requested.length)) return false;
+
+  const plausibleCount = (value: number | null): boolean =>
+    value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
 
   const allowed = new Set(requested);
   const seen = new Set<string>();
@@ -45,6 +60,24 @@ export function matchesResearchReportScope(
         !['available', 'partial'].includes(finding.access) ||
         !Array.isArray(finding.observations) || finding.observations.length > 2000 ||
         !Array.isArray(finding.limitations)) return false;
+
+    const metrics = finding.metrics;
+    if (metrics) {
+      if (!plausibleCount(metrics.views) || !plausibleCount(metrics.likes) ||
+          !plausibleCount(metrics.comments) ||
+          !plausibleCount(metrics.observed_interactions_per_view)) return false;
+      const comparison = metrics.creator_comparison;
+      if (!comparison || !['observed', 'unavailable'].includes(comparison.status)) return false;
+      if (comparison.status === 'observed' &&
+          (!Number.isInteger(comparison.peer_count) || comparison.peer_count < 3 ||
+            !Number.isFinite(comparison.median_peer_views) || comparison.median_peer_views < 0 ||
+            !Number.isFinite(comparison.views_relative_to_peer_median) ||
+            comparison.views_relative_to_peer_median < 0 ||
+            typeof comparison.interpretation !== 'string')) return false;
+      if (comparison.status === 'unavailable' &&
+          (!Number.isInteger(comparison.eligible_peers) || comparison.eligible_peers < 0 ||
+            typeof comparison.reason !== 'string')) return false;
+    }
 
     for (const observation of finding.observations) {
       const evidence = observation.evidence;
