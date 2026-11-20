@@ -27,7 +27,7 @@ This is a code-level parity ledger, **not** certification of installed desktop b
 ## Focused changes in this PR
 
 - Add `researchReportGuard.ts`: the Studio render boundary rejects reports that do not match the completed, source-scoped run; detached, revoked, replaced or wrong-collected source; duplicate or foreign source; or observation evidence linked to another origin. Rust remains authoritative.
-- Refuse mismatched source-ID selections returned by the prepare/approve flow before displaying consent or a report.
+- Refuse mismatched source-ID selections returned by the prepare/approve flow before displaying consent or a report; disable approval for no-longer-current sources and clear stale approval controls before a potentially failing refresh.
 - Show actual English/Arabic labels for native research run states and source kinds; declare RTL direction and accessible `aria-busy`/loading skeleton.
 - Reject mixed Study revisions when opening a receipt-linked candidate comparison.
 - Add isolated provenance tests and integrated local research/three-candidate negative tests; preserve existing Copy Prompt/history/editor workflows.
