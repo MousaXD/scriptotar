@@ -1,0 +1,70 @@
+# Agent10 independent original-source hostile JSONL memory-attestation gate.
+# Candidate source loaded only AFTER immutable SHA and working-blob verification.
+name: Agent10 PR179 attached memory JSON evidence adversarial veto
+
+on:
+  push:
+    branches: [agent-10/p2-pr179-attached-memory-json-adversarial-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attached-memory-json:
+    name: Source-exact untrusted attached JSON 17 negatives (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independently authored Agent10 test without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authenticate exact independent test SHA
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Checkout exact Agent08 PR179 source as DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: c5a5e74819718a87e7d40ac2d59480c9165502e0
+          path: .agent10-pr179-data
+          persist-credentials: false
+          sparse-checkout: |
+            tests/defragmentation/benchmarks/attached_memory_gate.py
+            tests/defragmentation/benchmarks/test_attached_memory_gate.py
+            tests/defragmentation/benchmarks/native_session.py
+            tests/defragmentation/benchmarks/native_memory.py
+          sparse-checkout-cone-mode: false
+      - name: Authenticate every candidate executable and test source blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=.agent10-pr179-data
+          prefix=tests/defragmentation/benchmarks
+          test "$(git -C "$root" rev-parse HEAD)" = c5a5e74819718a87e7d40ac2d59480c9165502e0
+          for entry in \
+            "attached_memory_gate.py:94aaa7a7ca7e6360a8a568966de6d7cc23ce72ec" \
+            "test_attached_memory_gate.py:0c0f94ccd137768beda4768c50c9daf33d4e73b6" \
+            "native_session.py:1a0307b24244d01306ed1e4b693769bd510c8c6e" \
+            "native_memory.py:f93650b14cd06f0a183f6c888a6214730f83a9a9"; do
+            name="$(printf '%s' "$entry" | cut -d: -f1)"
+            sha="$(printf '%s' "$entry" | cut -d: -f2)"
+            test "$(git -C "$root" rev-parse "HEAD:$prefix/$name")" = "$sha"
+            test "$(git -C "$root" hash-object "$prefix/$name")" = "$sha"
+          done
+          git -C "$root" diff --quiet -- "$prefix"
+      - name: Install pinned Python 3.12 stdlib
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Independent malicious duplicate/nonfinite/oversize/row-count/depth JSON test
+        shell: bash
+        run: python tests/defragmentation/security/agent10_pr179_attached_memory_json_veto.py --target .agent10-pr179-data
