@@ -62,6 +62,25 @@ describe('Study research report display scope', () => {
     expect(valid(clock)).toBe(false);
   });
 
+  it('retains partial transcript findings but quarantines revoked/denied source access', () => {
+    expect(valid({ ...report, sources: [{ ...report.sources[0], access: 'partial' }] })).toBe(true);
+    for (const access of ['revoked', 'access_denied', 'deleted', 'unsupported'] as const) {
+      expect(valid({ ...report, sources: [{ ...report.sources[0], access }] })).toBe(false);
+    }
+  });
+
+  it('requires a transcript observation to retain exact origin and revision', () => {
+    const mismatchedOrigin = structuredClone(report);
+    mismatchedOrigin.sources[0].observations[0].evidence.transcript_id = 'foreign';
+    expect(valid(mismatchedOrigin)).toBe(false);
+    const mismatchedRevision = structuredClone(report);
+    mismatchedRevision.sources[0].observations[0].evidence.transcript_revision = 'stale';
+    expect(valid(mismatchedRevision)).toBe(false);
+    const missingRevision = structuredClone(report);
+    missingRevision.sources[0].observations[0].evidence.transcript_revision = '';
+    expect(valid(missingRevision)).toBe(false);
+  });
+
   it('requires a completed authorized run with its exact saved selection', () => {
     expect(valid(report, { ...run, state: 'cancelled' })).toBe(false);
     expect(valid(report, { ...run, plan: { ...run.plan,
