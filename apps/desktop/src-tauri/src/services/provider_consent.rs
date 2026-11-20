@@ -1117,6 +1117,71 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn dispatch_guard_blocks_real_studio_brief_edit_until_provider_scope_releases() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let brief = UiStudioBrief {
+            title: "Original consent brief".into(),
+            goal: "Prepare grounded scripts".into(),
+            audience: "Creators".into(),
+            platform: "Reels".into(),
+            language: "English".into(),
+            style: "Clear".into(),
+            duration: "30".into(),
+        };
+        let study = services.create_studio_study(project, brief.clone()).unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let approved = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        let dispatch_guard = services.lock_dispatch_scope(&approved).unwrap();
+
+        let writer = services.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut changed_brief = brief;
+            changed_brief.goal = "Different source-grounded objective".into();
+            started_tx.send(()).unwrap();
+            let result = writer.save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                crate::dto::UiStudioStudyPatch {
+                    brief: Some(changed_brief),
+                    sources: None,
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            );
+            completed_tx.send(result.map(|value| value.revision)).unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The real Studio adapter must use the SAME gate as paid dispatch.
+        assert!(
+            completed_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            "Study change completed while a provider dispatch guard was held"
+        );
+        assert_eq!(dispatch_guard.scope(), &approved);
+        drop(dispatch_guard);
+        let new_revision = completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert!(new_revision > 0);
+        assert!(matches!(
+            services.lock_dispatch_scope(&approved),
+            Err(ConsentError::ChangedContext)
+        ));
+    }
+
     /// Executes actual AppServices -> ConsentBoundary -> v10 reservation/CAS
     /// -> controlled presealed transport -> bounded receipt. This is a real
     /// host path test, not a policy-only or structural smoke test.
