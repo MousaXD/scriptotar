@@ -39,7 +39,7 @@ const childSource = String.raw`
 const pm = require(process.argv[1]);
 const tc = JSON.parse(process.argv[2]);
 const actual = pm.isMatch(tc.input, tc.pattern, tc.opts || {});
-process.stdout.write(JSON.stringify({actual}) + '\\n');
+process.stdout.write(JSON.stringify({actual}));
 if (actual !== tc.expected) process.exitCode = 3;
 `;
 let bad = 0;
