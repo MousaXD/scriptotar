@@ -1182,6 +1182,111 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn dispatch_guard_blocks_real_transcript_revocation_and_invalidates_scope() {
+        use crate::dto::{UiStudioSourceRef, UiStudioStudyPatch};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "Revocable consent source".into(),
+                    goal: "Compare source-backed scripts".into(),
+                    audience: "Creators".into(),
+                    platform: "Reels".into(),
+                    language: "English".into(),
+                    style: "Clear".into(),
+                    duration: "30".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+
+        // Populate an actual canonical, project-owned transcript origin.
+        // No external AI network access or synthetic approval is involved.
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.execute(
+            "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+             VALUES(?1,?2,NULL,'url','https://example.org/revocable','2026-11-21T00:00:00Z')",
+            rusqlite::params![source_id.to_string(), project.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO media(id,source_id,local_path,created_at)
+             VALUES(?1,?2,'/tmp/scriptotar-revocable.mp4','2026-11-21T00:00:00Z')",
+            rusqlite::params![media_id.to_string(), source_id.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+             VALUES(?1,?2,'Canonical revocable source content',
+                    '2026-11-21T00:00:00Z','2026-11-21T00:00:00Z')",
+            rusqlite::params![transcript_id.to_string(), media_id.to_string()],
+        )
+        .unwrap();
+        drop(db);
+
+        let selected = services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(vec![UiStudioSourceRef {
+                        kind: "transcript".into(),
+                        id: transcript_id.to_string(),
+                    }]),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        let approved = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        assert_eq!(approved.selected_source_ids.len(), 1);
+        let dispatch_guard = services.lock_dispatch_scope(&approved).unwrap();
+
+        let writer = services.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = writer.revoke_studio_source_access(
+                project,
+                study_id,
+                selected.revision,
+                "transcript",
+                transcript_id,
+            );
+            completed_tx.send(result.map(|value| value.revision)).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            completed_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            "source revocation linearized before the provider guard released"
+        );
+        drop(dispatch_guard);
+        completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert!(
+            services.lock_dispatch_scope(&approved).is_err(),
+            "revoked source must invalidate the consent snapshot"
+        );
+    }
+
     /// Executes actual AppServices -> ConsentBoundary -> v10 reservation/CAS
     /// -> controlled presealed transport -> bounded receipt. This is a real
     /// host path test, not a policy-only or structural smoke test.
