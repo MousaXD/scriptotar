@@ -414,6 +414,21 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertEqual(report["scope"], "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY")
             self.assertIsNone(report["ipc_latency_ms"])
 
+    def test_native_latency_threshold_is_always_at_least_ten(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external-three-synthetic.jsonl"
+            trace.write_text("\\n".join(json.dumps(self.event(i)) for i in range(3)))
+            for invalid in (3, 9, 10.5, True, 101, None):
+                with self.subTest(min_trials=invalid):
+                    with self.assertRaisesRegex(ValueError, "integer in 10..100"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=invalid)
+            # Three observations remain insufficient even with an explicit
+            # valid threshold; no p50/p95 may leak through this parser.
+            report = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
+            self.assertEqual(report["groups"][0]["status"], "INSUFFICIENT_TRIALS")
+            self.assertIsNone(report["groups"][0]["p50_ms"])
+            self.assertIsNone(report["groups"][0]["p95_ms_nearest_rank"])
+
     def test_untrusted_trace_rejects_duplicate_clock_and_payload_leaks(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
@@ -438,7 +453,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 with self.subTest(expected=message):
                     trace.write_text("\n".join(json.dumps(x) for x in events))
                     with self.assertRaisesRegex(ValueError, message):
-                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
     def test_replayed_accessibility_evidence_cannot_inflate_native_trial_count(self):
         # The parser does not prove host authenticity, but a single recorded
@@ -456,14 +471,14 @@ class NativeUiTraceContractTests(unittest.TestCase):
             }
             trace.write_text("\n".join(json.dumps(x) for x in [baseline, copied]))
             with self.assertRaisesRegex(ValueError, "duplicate native evidence ID"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # A supposedly completed action cannot use the same observation
             # for both its start and completion, even for one reported trial.
             same_id = {**baseline, "completion_evidence_id": baseline["start_evidence_id"]}
             trace.write_text(json.dumps(same_id))
             with self.assertRaisesRegex(ValueError, "start/completion reuse"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # IDs from separate independently recorded sessions have a local
             # namespace. Those are still operator-supplied, not QA-certified.
@@ -471,7 +486,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                         "start_evidence_id": baseline["start_evidence_id"],
                         "completion_evidence_id": baseline["completion_evidence_id"]}
             trace.write_text("\n".join(json.dumps(x) for x in [baseline, separate]))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
 
@@ -494,13 +509,13 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertNotEqual(first["completion_evidence_id"], relabeled["completion_evidence_id"])
             trace.write_text("\n".join(json.dumps(e) for e in (first, relabeled)))
             with self.assertRaisesRegex(ValueError, "duplicate native monotonic time pair"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # Ordinary subsequent actions from the same session are valid
             # when their true observed time intervals differ.
             distinct = {**self.event(1), "session_id": first["session_id"]}
             trace.write_text("\n".join(json.dumps(e) for e in (first, distinct)))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
 
@@ -512,7 +527,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 "completion_monotonic_ns": first["completion_monotonic_ns"],
             }
             trace.write_text("\n".join(json.dumps(e) for e in (first, another_session)))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
 
