@@ -18,7 +18,7 @@ TARGETS = (
 STEP = re.compile(r"(?m)^ {6}- (?:name|uses): .*?$")
 EXEC = re.compile(
     r"(?m)^\s*(?:run:\s*)?(?:&\s+)?(?:python(?:3)?(?:\.exe)?|"
-    r"pip(?:3)?(?:\.exe)?|npm|npx|pnpm|yarn|node|cargo|tauri)\b"
+    r"pip(?:3)?(?:\.exe)?|npm|npx|pnpm|yarn|node|cargo|tauri)(?:[ \t]|$)"
 )
 
 
