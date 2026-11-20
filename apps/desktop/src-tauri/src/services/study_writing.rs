@@ -537,7 +537,20 @@ pub(super) fn enforce_candidate_originality(
     }
 
     let mut scripts = Vec::with_capacity(candidates.len());
+    let mut cited_sources = HashSet::new();
     for candidate in candidates {
+        if candidate.lineage.is_empty()
+            || !candidate.draft.beats.iter().any(|beat| {
+                !beat.evidence_ids.is_empty()
+                    || beat.shots.iter().any(|shot| !shot.evidence_ids.is_empty())
+            })
+                && !candidate.draft.claims.iter().any(|claim| !claim.evidence_ids.is_empty())
+        {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate has no source-grounded script evidence".into(),
+            ));
+        }
+        cited_sources.extend(candidate.lineage.iter().map(|source| source.source_id));
         let narration = candidate
             .draft
             .beats
@@ -559,6 +572,12 @@ pub(super) fn enforce_candidate_originality(
             .map(<[String]>::to_vec)
             .collect();
         scripts.push((words, shingles));
+    }
+
+    if candidates.len() == 3 && cited_sources.len() < 3 {
+        return Err(WritingWorkflowError::InvalidResponse(
+            "three-script batch does not cite three distinct Study sources".into(),
+        ));
     }
 
     for left in 0..scripts.len() {
