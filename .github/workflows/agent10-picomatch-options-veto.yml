@@ -1,0 +1,92 @@
+# Agent10 independent bounded test of Agent11's experimental parser options.
+# This is not a production patched picomatch artifact or release approval.
+name: Agent10 independent picomatch option-boundary veto
+
+on:
+  push:
+    branches: [agent-10/p0-pre-guard-execution-regression-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  option-bypass:
+    name: Upstream PR264 plus Agent11 normalizer, bounded option negatives (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert independent Agent10 test HEAD
+        shell: bash
+        env:
+          EXPECTED: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED"
+      - name: Checkout immutable reviewed source guard (not candidate code)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent10-reviewed-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Checkout exact Agent11 experimental normalizer as untrusted data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 795e384747e94de7bf2cf3bd5f14b38f864b24a9
+          path: .agent10-agent11-experiment
+          persist-credentials: false
+          sparse-checkout: |
+            tests/defragmentation/security/agent11_apply_class_patch.mjs
+            tests/defragmentation/security/agent11_picomatch_class_normalizer.cjs
+          sparse-checkout-cone-mode: false
+      - name: Checkout immutable upstream PR264 source as untrusted data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: micromatch/picomatch
+          ref: 8144a1a22a8fa1766951411f220cc8c6228cb041
+          path: .agent10-upstream-pr264
+          persist-credentials: false
+          sparse-checkout: |
+            lib/parse.js
+          sparse-checkout-cone-mode: false
+      - name: Verify guard bytes and candidate source identity BEFORE npm or executing experiment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .agent10-reviewed-guard rev-parse HEAD)" = 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          test "$(git -C .agent10-reviewed-guard hash-object apps/desktop-ui/scripts/guard-vite-build-patterns.mjs)" = 5c746abd3caf414ba2c80be825d66983312236c6
+          test "$(git -C .agent10-agent11-experiment rev-parse HEAD)" = 795e384747e94de7bf2cf3bd5f14b38f864b24a9
+          test "$(git -C .agent10-agent11-experiment hash-object tests/defragmentation/security/agent11_apply_class_patch.mjs)" = 268a57314ab262c9fdb6058fe0e573f45e977cb5
+          test "$(git -C .agent10-agent11-experiment hash-object tests/defragmentation/security/agent11_picomatch_class_normalizer.cjs)" = b1eb2f14cb06ad1745c7f3ad8d7b0b7b81a3207e
+          test "$(git -C .agent10-upstream-pr264 rev-parse HEAD)" = 8144a1a22a8fa1766951411f220cc8c6228cb041
+          test "$(git -C .agent10-upstream-pr264 hash-object lib/parse.js)" = b9eaa6dbc4a52c931e8ec5d7bb216d0eeb8c61a8
+          node .agent10-reviewed-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent10-reviewed-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install original locked picomatch package only after trusted source gate
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Assemble exact experimental parser only in disposable node_modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .agent10-upstream-pr264/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          cp .agent10-agent11-experiment/tests/defragmentation/security/agent11_picomatch_class_normalizer.cjs tests/defragmentation/security/agent11_picomatch_class_normalizer.cjs
+          node .agent10-agent11-experiment/tests/defragmentation/security/agent11_apply_class_patch.mjs
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+      - name: Independent bounded option-path ReDoS negatives (RED means release veto)
+        shell: bash
+        run: python3 tests/defragmentation/security/agent10_picomatch_option_coverage.py --frontend apps/desktop-ui
