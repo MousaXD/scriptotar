@@ -137,6 +137,12 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         // Model output may assert 'supported', but that is NEVER a verification
         // decision. Save these claims as unverified until Agent 04 reviews them.
         let mut normalized = batch.clone();
+        // A direct sink caller must obey the same originality and script
+        // diversity barrier as the four-step model orchestrator.
+        super::study_writing::enforce_candidate_originality(
+            &batch.context,
+            &normalized.candidates,
+        )?;
         let evidence_ids: HashSet<_> = batch
             .context
             .evidence
