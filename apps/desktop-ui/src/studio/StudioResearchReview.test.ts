@@ -165,6 +165,20 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeEnabled();
   });
 
+  it('reopens an older research run updated after a newer pending run, matching SQLite', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const sources = await api.listStudyResearchSources(projectId, studyId);
+    const oldPending = await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    const newPending = await api.startStudyResearch(projectId, studyId, [sources[1].id]);
+    await api.decideStudyResearch(projectId, studyId, oldPending.plan.id, 'approve');
+
+    const runs = await api.listStudyResearchRuns(projectId, studyId);
+    expect(runs.map((run) => run.plan.id)).toEqual([oldPending.plan.id, newPending.plan.id]);
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    expect(await screen.findByText(/Completed/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+  });
+
   it('refuses approval controls for a nonzero-cost backend research plan', async () => {
     const { api, projectId, studyId } = await fixture();
     const sources = await api.listStudyResearchSources(projectId, studyId);
