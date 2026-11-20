@@ -563,7 +563,7 @@ function Get-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
   }
 }
 
-function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [string]$purpose, [int]$count = 12) {
+function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [IntPtr]$topLevelHwnd, [string]$purpose, [int]$count = 12) {
   # Real installed WebView2 keyboard actions and UIA focus, not DOM simulation.
   # This is read-only review evidence and NEVER an automatic RTL/visual PASS.
   $observation = [ordered]@{
@@ -577,8 +577,8 @@ function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [string]$purpose, [int]$cou
     if (-not $owner) { throw 'Installed WebView2 UIA owner not available for focus audit' }
     $rootId = ($owner.GetRuntimeId() -join ',')
     if (-not $rootId) { throw 'Installed WebView2 UIA owner has no RuntimeId' }
-    if (-not [NativeWebViewWindow]::SetForegroundWindow($hwnd)) {
-      throw 'Installed WebView2 window could not be foregrounded for native Tab'
+    if (-not [NativeWebViewWindow]::SetForegroundWindow($topLevelHwnd)) {
+      throw 'Installed top-level desktop window could not be foregrounded for native Tab'
     }
     for ($i = 0; $i -lt $count; $i++) {
       [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
@@ -1916,7 +1916,7 @@ try {
         Click-InstalledControl $arabicHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-reopened.png')
-        Save-InstalledNativeTabOrder $arabicHwnd 'arabic_reopened_native_tab_order'
+        Save-InstalledNativeTabOrder $arabicHwnd $proc.MainWindowHandle 'arabic_reopened_native_tab_order'
 
         Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'
         Wait-InstalledComboValue $arabicHwnd 'Interface language' 'EN'
