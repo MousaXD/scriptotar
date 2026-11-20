@@ -19,9 +19,11 @@
 
 All isolation is presentational. Underlying dates, source IDs, project/Study ownership, sorting, research metrics and selection/queue operations remain unchanged.
 
+- **Research bulk selection:** when only some selectable rows on the current page are checked, the page checkbox now presents a visible dash and the accessible `aria-checked="mixed"` state. Clicking it still selects all remaining page rows; queued rows remain disabled. This aligns keyboard/screen-reader feedback with the existing selection semantics.
+
 ## Verification
 
-- Added two source-level Svelte Testing Library regression cases to `research-library-overhaul.test.ts`, using Arabic mixed-direction source data. They assert the exact DOM `dir` isolation for titles, creator labels, source ISO dates, durations, watchlist errors and times, and Library pagination.
+- Added three source-level Svelte Testing Library regression cases (two bidi cases and one mixed checkbox case) to `research-library-overhaul.test.ts`, using Arabic mixed-direction source data. The bidi cases assert the exact DOM `dir` isolation for titles, creator labels, source ISO dates, durations, watchlist errors and times, and Library pagination; the checkbox case asserts false → mixed → true state with an unchanged bulk-selection outcome.
 - **Not run locally:** repository cannot be cloned from this execution environment (DNS/outbound GitHub unavailable); no local `npm ci`, Svelte typecheck, `vitest`, or screenshot run is claimed.
 - Required exact-head CI (from `apps/desktop-ui`): `npm ci && npm run check && npm test -- --run && npm run build`. Run `qa/visual-regression.mjs` via repository's existing GUI QA workflow; review 1440/1100/760 EN/AR light/dark/system screenshots and real overflow.
 - **Not independently certified:** installed WebKitGTK / WebView2 focus, screen reader, physical keyboard behavior, visual RTL screenshot inspection, and packaged native restart. Those are Agent 07's installed-app gates; mocked Chromium and source assertions are not substitutes.
