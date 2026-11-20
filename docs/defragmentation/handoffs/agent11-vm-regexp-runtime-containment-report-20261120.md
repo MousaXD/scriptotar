@@ -23,6 +23,21 @@ The experimental source `agent11_vm_regex_wrapper_candidate.cjs` uses a subclass
 
 No result above transforms `picomatch@4.0.7` into a safe, patched upstream package. The original corpus remains intact and red by design because throwing on unknown match results is fail-closed, **not equivalent** to returning the true boolean result.
 
+## Exact Linux+Windows negative bypass certification (21 Nov follow-on)
+
+**New independent cross-platform negative test of the experimental VM guard:** [original GitHub Actions #44812568487](https://github.com/MousaXD/scriptotar/actions/runs/44812568487), immutable CI test source `69dfd22decb4c99f221a94a2fb3f9689ba922f59`, original Linux job `136552585872` **SUCCESS**, Windows job `136552585486` **SUCCESS**. This test's success **proves a remaining bypass, not a secure parser**. It runs only source-exact original locked picomatch 4.0.7, original reviewed source guard and experimental `agent11_vm_compile_guard_candidate.cjs` / `agent11_vm_regex_wrapper_candidate.cjs` from the DRAFT branch. All malicious native regexes execute **exclusively inside child Node processes with an explicit 1,250 ms OS deadline**; no attacker regex is run unbounded in the parent.
+
+| Original 4.0.7 Regex execution mode (same hostile `+([ab]|b)` + near-miss input) | Linux | Windows |
+|---|---|---|
+| `GuardedRegExp.exec(input)` from original `picomatch.makeRe()` | Explicit `ERR_AGENT11_PICOMATCH_DEADLINE` | Explicit deadline |
+| `picomatch.test(input, guardedRegex)` | Explicit deadline | Explicit deadline |
+| **`RegExp.prototype.exec.call(guardedRegex, input)`** | **Native regex runs beyond VM guard; OS child ETIMEDOUT** | **ETIMEDOUT** |
+| **`picomatch.test(input, new RegExp(guardedRegex.source, guardedRegex.flags))`** | **Public API accepts unguarded native regex; OS child ETIMEDOUT** | **ETIMEDOUT** |
+
+This source-exact test distinguishes normal subclass interception from **native prototype dispatch** and **callers providing precompiled native `RegExp` objects**. Both bypass the VM subclass's overridden `.exec` function. The latter is a documented public API accepting native regexes; the first route deliberately bypasses custom `exec` hooks by explicit prototype dispatch. These are real API containment holes, not demonstrated routes from an ordinary `import.meta.glob` pattern alone; they do **not** undo the earlier evidence of one Vite route failing closed. They definitively block any generalized claim that the VM preloader makes all picomatch execution safe.
+
+**Correct disposition:** despite 2/2 Actions jobs green, Agent11's experiment is not equivalent to a bounded parser, fail-closed semantics remain different from complete matching behavior, original strict 19/12 boolean corpus still RED, and issue #129 must stay OPEN / release NO-GO. A real fix must either remove these native RegExp reachability surfaces with independently audited call-site coverage OR use a globally bounded engine with complete public API parity. Do not change test expected outcomes to hide this bypass.
+
 ## Known security and compatibility limitations
 
 1. **Compilation is not bounded.** Original picomatch `parse`, `scan`, `makeRe`, `compileRe`, `toRegex` can do significant synchronous work before any `RegExp.exec` hook; a pathological large/complex glob may exhaust resources there.
