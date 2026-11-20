@@ -317,12 +317,15 @@ describe('Research page checkbox accessibility', () => {
     mountResearch(researchItems(3));
     const selectPage = screen.getByRole('checkbox', { name: 'Select page' });
     expect(selectPage).toHaveAttribute('aria-checked', 'false');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(false);
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Video 1' }));
     expect(selectPage).toHaveAttribute('aria-checked', 'mixed');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(true);
     expect(selectPage).toHaveClass('partial');
     await fireEvent.click(selectPage);
     expect(selectPage).toBeChecked();
     expect(selectPage).toHaveAttribute('aria-checked', 'true');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(false);
     expect(selectPage).not.toHaveClass('partial');
     expect(screen.getByText('Selected: 3')).toBeInTheDocument();
   });
