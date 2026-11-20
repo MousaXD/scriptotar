@@ -28,6 +28,9 @@ This is a code-level parity ledger, **not** certification of installed desktop b
 
 - Add `researchReportGuard.ts`: the Studio render boundary rejects reports that do not match the completed, source-scoped run; detached, revoked, replaced or wrong-collected source; duplicate or foreign source; or observation evidence linked to another origin. Rust remains authoritative.
 - Refuse mismatched source-ID selections returned by the prepare/approve flow before displaying consent or a report; disable approval for no-longer-current sources and clear stale approval controls before a potentially failing refresh.
+- Present the exact saved source IDs/locators before local AnalyzeEvidence approval; reject a nonzero-cost research plan and disable preparation after a failed source-list refresh. The mock now lists durable runs newest-first, matching production SQLite.
+- Freeze Study brief, source picker, script editor, import and export while an incoming Study read is unresolved, with an English/Arabic accessible skeleton. Temporarily unmount the old local research and candidate-comparison controls; restore editing after the new Study loads or the read fails.
+- Add deferred Study-switch test proving the outgoing draft and source links are preserved; add latest-run reopening, local cancellation, zero-cost authorization, Arabic scope and failure recovery tests.
 - Show actual English/Arabic labels for native research run states and source kinds; declare RTL direction and accessible `aria-busy`/loading skeleton.
 - Reject mixed Study revisions when opening a receipt-linked candidate comparison.
 - Add isolated provenance tests and integrated local research/three-candidate negative tests; preserve existing Copy Prompt/history/editor workflows.
