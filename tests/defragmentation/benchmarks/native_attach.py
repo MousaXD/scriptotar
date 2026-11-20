@@ -204,6 +204,10 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
                       "sampling_error": type(exc).__name__}
         # This is root-PID CPU time, not a whole-WebView tree CPU measurement.
         main_cpu_time_ns = process_cpu_time_ns(pid)
+        # A read happens AFTER the potentially slow memory-tree snapshot.
+        # Timestamp the CPU observation separately instead of pretending the
+        # CPU ticks were sampled at sample_started_monotonic_ns.
+        main_cpu_time_observed_monotonic_ns = time.perf_counter_ns()
         sample_finished_monotonic_ns = time.perf_counter_ns()
         # The app can exit and the kernel can reuse its PID *during* the
         # memory snapshot. Never report a sample unless both probes bracket
@@ -217,6 +221,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
             "sample_started_monotonic_ns": sample_started_monotonic_ns,
             "sample_finished_monotonic_ns": sample_finished_monotonic_ns,
             "main_cpu_time_ns": main_cpu_time_ns,
+            "main_cpu_time_observed_monotonic_ns": main_cpu_time_observed_monotonic_ns,
             **memory,
         })
         remaining = seconds - (time.perf_counter() - begin)
@@ -257,7 +262,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "end_reason": end_reason, "sample_count": len(records),
         "complete_tree_sample_count": sum(x.get("tree_memory_complete") is True for x in records),
         "metrics": samples, "raw_samples": records,
-        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching and start/end hash stability are not package signature verification; a transient change-and-restore between hashes is not detectable. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Root process CPU time excludes WebKitGTK/WebView2 helper CPU and missing counters are unknown, never zero. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
+        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching and start/end hash stability are not package signature verification; a transient change-and-restore between hashes is not detectable. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Root process CPU time excludes WebKitGTK/WebView2 helper CPU and missing counters are unknown, never zero. CPU read completion is separately timestamped after the memory-tree observation and is not an instantaneous kernel timestamp. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
     }
 
 
