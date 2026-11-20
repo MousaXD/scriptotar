@@ -1873,7 +1873,10 @@ fn short_near_duplicate_prose_rejected_before_provider_batch_commit_and_retry() 
         draft_json(3),
     ]
     .into();
-    let mut sink = SqlFixtureSink::open(&temp.path().join("short-angles.sqlite"), current.0.clone());
+    let mut sink = SqlFixtureSink::open(
+        &temp.path().join("short-angles.sqlite"),
+        current.0.clone(),
+    );
     assert!(matches!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
         Err(WritingWorkflowError::DuplicateOrSimilar)
