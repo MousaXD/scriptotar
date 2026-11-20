@@ -539,18 +539,34 @@ pub(super) fn enforce_candidate_originality(
     let mut scripts = Vec::with_capacity(candidates.len());
     let mut cited_sources = HashSet::new();
     for candidate in candidates {
-        if candidate.lineage.is_empty()
-            || !candidate.draft.beats.iter().any(|beat| {
-                !beat.evidence_ids.is_empty()
-                    || beat.shots.iter().any(|shot| !shot.evidence_ids.is_empty())
-            })
-                && !candidate.draft.claims.iter().any(|claim| !claim.evidence_ids.is_empty())
-        {
+        // Count only evidence cited by the actual script beats/claims. An
+        // angle may cite a source that never supports any script content.
+        let mut script_evidence = HashSet::new();
+        for beat in &candidate.draft.beats {
+            script_evidence.extend(beat.evidence_ids.iter().map(String::as_str));
+            for shot in &beat.shots {
+                script_evidence.extend(shot.evidence_ids.iter().map(String::as_str));
+            }
+        }
+        for claim in &candidate.draft.claims {
+            script_evidence.extend(claim.evidence_ids.iter().map(String::as_str));
+        }
+        let mut candidate_covered = false;
+        for line in &candidate.lineage {
+            if line
+                .evidence
+                .iter()
+                .any(|item| script_evidence.contains(item.id.as_str()))
+            {
+                candidate_covered = true;
+                cited_sources.insert(line.source_id);
+            }
+        }
+        if !candidate_covered {
             return Err(WritingWorkflowError::InvalidResponse(
                 "candidate has no source-grounded script evidence".into(),
             ));
         }
-        cited_sources.extend(candidate.lineage.iter().map(|source| source.source_id));
         let narration = candidate
             .draft
             .beats
