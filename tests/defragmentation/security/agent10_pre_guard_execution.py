@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent10 independent read-only command-order and credential audit for PR158.
+"""Agent10 independent read-only command-order and credential audit for combined PR168.
 
 Reads source workflow YAML as text from an exact-SHA checkout; never executes
 untrusted checkout code or claims the Vite guard covers Python/third parties.
@@ -12,7 +12,7 @@ from pathlib import Path
 
 PIN = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
 GUARD_BLOB = "5c746abd3caf414ba2c80be825d66983312236c6"
-PYTHON_BASELINE = "525cf96d61626508aed7c1bc73ad6299fad5a123"
+PYTHON_BASELINE = "0f8e33f0e2abef003440ef27ef76b7cb448d2b32"
 TARGETS = (
     (".github/workflows/windows-tauri.yml", "build-windows-installer"),
     (".github/workflows/installed-webview-acceptance.yml", "linux-webkit"),
@@ -154,14 +154,19 @@ def inspect(text: str, job: str) -> list[str]:
             'git diff --quiet "$reviewed" HEAD -- .',
             ":(exclude).github/workflows/windows-tauri.yml",
             ":(exclude).github/workflows/installed-webview-acceptance.yml",
+            ":(exclude).github/workflows/linux-tauri.yml",
         ]
         for required in exact_scope:
             if required not in reviewed:
-                problems.append(f"Missing exact-two-workflow change restriction: {required}")
+                problems.append(f"Missing exact-three-workflow change restriction: {required}")
+        # An extra excluded path widens security scope even if the 3 expected paths remain.
+        scope_command = reviewed.split('git diff --quiet "$reviewed" HEAD -- .', 1)[-1].split('; then', 1)[0]
+        if scope_command.count(':(exclude)') != 3:
+            problems.append("exact-three-workflow excludes broadened or missing")
         scope_start = reviewed.find('git diff --quiet "$reviewed" HEAD -- .')
         py_start = reviewed.find('git diff --quiet "$reviewed" HEAD --')
         if scope_start >= 0 and py_start >= 0 and scope_start != py_start:
-            problems.append("Exact two-workflow restriction not first source comparison")
+            problems.append("Exact three-workflow restriction not first source comparison")
         if not re.search(r"(?m)^\s+set -euo pipefail\s*$", reviewed):
             problems.append("Python provenance comparison is not fail-closed (bash -euo pipefail)")
         if audit is not None:
@@ -227,12 +232,13 @@ jobs:
       - name: Verify reviewed Python/runtime/QA inputs before script execution
         run: |
           set -euo pipefail
-          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
+          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           if ! git diff --quiet "$reviewed" HEAD -- . \
             ':(exclude).github/workflows/windows-tauri.yml' \
-            ':(exclude).github/workflows/installed-webview-acceptance.yml'; then
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'; then
             exit 1
           fi
           if ! git diff --quiet "$reviewed" HEAD -- \
@@ -281,11 +287,11 @@ jobs:
     expect_bad(fixture.replace(
         ":(exclude).github/workflows/windows-tauri.yml",
         ":(exclude).github/workflows/can-edit-anything.yml"),
-        "exact-two-workflow change restriction")
+        "exact-three-workflow change restriction")
     expect_bad(fixture.replace(
         'git diff --quiet "$reviewed" HEAD -- .',
         'git diff --quiet "$reviewed" HEAD -- apps/desktop-ui/'),
-        "exact-two-workflow change restriction")
+        "exact-three-workflow change restriction")
     expect_bad(fixture.replace("      - name: Verify reviewed Python/runtime/QA inputs before script execution",
                                "      - name: Poisoned after guard before Python baseline\n"
                                "        run: python scripts/prepare_mcp_tools.py\n"
@@ -298,7 +304,11 @@ jobs:
         'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"',
         'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"; echo bad'),
         "assertion modified/extended")
-    print("PASS: positive fixture and 14 fail-closed adversarial mutations")
+    expect_bad(fixture.replace(
+        "':(exclude).github/workflows/linux-tauri.yml'; then",
+        "':(exclude).github/workflows/linux-tauri.yml' " + chr(92) + "\n            ':(exclude).github/workflows/release.yml'; then"),
+        "excludes broadened")
+    print("PASS: positive fixture and 15 fail-closed adversarial mutations")
 
 
 def main() -> int:
