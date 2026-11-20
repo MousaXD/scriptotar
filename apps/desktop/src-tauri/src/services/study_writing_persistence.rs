@@ -36,9 +36,7 @@ fn denied(reason: &'static str) -> WritingWorkflowError {
 /// receipt path. A receipt must never point to three unrelated Study drafts.
 pub(super) fn canonical_draft_ids(project: Uuid, study: Uuid, run_id: &str) -> [Uuid; 3] {
     std::array::from_fn(|index| {
-        let material = format!(
-            "scriptotar/writing-batch/v1/{project}/{study}/{run_id}/{index}"
-        );
+        let material = format!("scriptotar/writing-batch/v1/{project}/{study}/{run_id}/{index}");
         Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
     })
 }
@@ -51,11 +49,12 @@ pub(super) fn verify_committed_versions(
     ids: &[Uuid; 3],
 ) -> WriteResult<()> {
     if batch.candidates.len() != 3
-        || *ids != canonical_draft_ids(
-            batch.context.project_id,
-            batch.context.study_id,
-            &batch.run_id,
-        )
+        || *ids
+            != canonical_draft_ids(
+                batch.context.project_id,
+                batch.context.study_id,
+                &batch.run_id,
+            )
     {
         return Err(WritingWorkflowError::PersistFailed(
             "writing receipt draft IDs do not match run identity".into(),
