@@ -500,6 +500,9 @@ where
         return Err(WritingWorkflowError::Cancelled);
     }
     check_current(current, plan)?;
+    // Reject near-identical scripts and extended copied source passages before
+    // asking SQLite to accept any result. The sink repeats this check.
+    enforce_candidate_originality(&plan.context, &candidates)?;
     // The sink is responsible for a second scoped context check INSIDE its
     // transaction, exact-once receipt and immutable initial versions.
     sink.commit_three(&GeneratedBatch {
@@ -507,6 +510,83 @@ where
         context: plan.context.clone(),
         candidates,
     })
+}
+
+/// A provider's originality instruction is not an acceptance guarantee. Check
+/// both the orchestration path and the canonical SQLite sink: direct callers
+/// must not bypass the same source-copy and candidate-diversity requirements.
+/// This is a deterministic safety screen, not a plagiarism determination.
+pub(super) fn enforce_candidate_originality(
+    context: &StudyWritingContext,
+    candidates: &[GeneratedCandidate],
+) -> WriteResult<()> {
+    const SOURCE_WINDOW: usize = 12;
+    const SCRIPT_WINDOW: usize = 5;
+    const MIN_SCRIPT_WORDS: usize = 15;
+
+    let mut source_windows = HashSet::new();
+    for evidence in &context.evidence {
+        if !matches!(
+            evidence.kind,
+            EvidenceKind::SocialTranscript | EvidenceKind::IndependentDocument
+        ) {
+            continue;
+        }
+        let words = originality_words(&evidence.excerpt);
+        source_windows.extend(words.windows(SOURCE_WINDOW).map(<[String]>::to_vec));
+    }
+
+    let mut scripts = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let narration = candidate
+            .draft
+            .beats
+            .iter()
+            .map(|beat| beat.narration.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let words = originality_words(&narration);
+        if words
+            .windows(SOURCE_WINDOW)
+            .any(|window| source_windows.contains(window))
+        {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "script reproduces an extended source passage".into(),
+            ));
+        }
+        let shingles: HashSet<Vec<String>> = words
+            .windows(SCRIPT_WINDOW)
+            .map(<[String]>::to_vec)
+            .collect();
+        scripts.push((words, shingles));
+    }
+
+    for left in 0..scripts.len() {
+        for right in (left + 1)..scripts.len() {
+            let (left_words, left_shingles) = &scripts[left];
+            let (right_words, right_shingles) = &scripts[right];
+            if left_words == right_words {
+                return Err(WritingWorkflowError::DuplicateOrSimilar);
+            }
+            if left_words.len() >= MIN_SCRIPT_WORDS
+                && right_words.len() >= MIN_SCRIPT_WORDS
+            {
+                let common = left_shingles.intersection(right_shingles).count();
+                let smaller = left_shingles.len().min(right_shingles.len());
+                if common >= 3 && common * 100 >= smaller * 60 {
+                    return Err(WritingWorkflowError::DuplicateOrSimilar);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn originality_words(text: &str) -> Vec<String> {
+    text.split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 pub(super) fn lineage_for(
