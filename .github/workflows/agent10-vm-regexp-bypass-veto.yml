@@ -1,0 +1,102 @@
+# Independent Agent10 read-only adversarial review of Agent11's experimental
+# Node VM picomatch mitigation. This does NOT package/patch/publish picomatch.
+# Deliberate RED on demonstrated bypass, never reclassify as parser safety PASS.
+name: Agent10 independent VM-regexp bypass veto (research NO-GO)
+
+on:
+  push:
+    branches:
+      - agent-10/p0-vm-regexp-bypass-proof-20261121
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  vm-escape:
+    name: Source-exact bounded prototype/precompiled escape (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independent test-only Agent10 source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact Agent10 source and pinned official dependency lock
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = 'eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch immutable reviewed first-party source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent10-reviewed-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Verify executing guard bytes before npm or research code
+        shell: bash
+        run: |
+          set -euo pipefail
+          trust=.agent10-reviewed-guard
+          guard=apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          test "$(git -C "$trust" rev-parse HEAD)" = 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          test "$(git -C "$trust" rev-parse "HEAD:$guard")" = 5c746abd3caf414ba2c80be825d66983312236c6
+          test "$(git -C "$trust" hash-object --path="$guard" "$guard")" = 5c746abd3caf414ba2c80be825d66983312236c6
+          git -C "$trust" diff --quiet -- "$guard"
+          node "$trust/$guard" --self-test
+          node "$trust/$guard" --workspace apps/desktop-ui
+      - name: Checkout immutable Agent11 experiment as DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 69dfd22decb4c99f221a94a2fb3f9689ba922f59
+          path: .agent10-agent11-source
+          persist-credentials: false
+          sparse-checkout: |
+            tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          sparse-checkout-cone-mode: false
+      - name: Authenticate the actual experimental source file bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          path=tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          test "$(git -C .agent10-agent11-source rev-parse HEAD)" = 69dfd22decb4c99f221a94a2fb3f9689ba922f59
+          test "$(git -C .agent10-agent11-source rev-parse "HEAD:$path")" = 86f67a82b0834b24adb5d28480627c5f7ae946bb
+          test "$(git -C .agent10-agent11-source hash-object --path="$path" "$path")" = 86f67a82b0834b24adb5d28480627c5f7ae946bb
+          git -C .agent10-agent11-source diff --quiet -- "$path"
+      - name: Install original exact dependency lock without package lifecycle scripts
+        shell: bash
+        run: npm ci --ignore-scripts --prefix apps/desktop-ui
+      - name: Stage hash-verified experiment outside production application and check syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          source=.agent10-agent11-source/tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          target=tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          test ! -e "$target"
+          cp "$source" "$target"
+          test "$(git hash-object "$target")" = 86f67a82b0834b24adb5d28480627c5f7ae946bb
+          node --check "$target"
+          node --check tests/defragmentation/security/agent10_vm_regexp_bypass_probe.mjs
+      - name: Strict independent bounded escape probe (deliberate RED on bypass)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent10_vm_regexp_bypass_probe.mjs
+          echo "::error::Original protected matcher still has demonstrable direct-native and precompiled deadline escapes. picomatch #129 NOT REMEDIATED."
+          exit 1
