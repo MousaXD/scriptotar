@@ -31,7 +31,7 @@ function run(dir) {
 async function populate(dir, successful = true) {
   const root = join(dir, 'qa', 'evidence');
   const images = {};
-  for (let i = 0; i < 140; i += 1) {
+  for (let i = 0; i < 232; i += 1) {
     const name = String(i).padStart(3, '0') + '.png';
     // This deliberately tests only hashing/count/manifest logic, not image encoding.
     const bytes = Buffer.from('isolated verifier fixture ' + name);
@@ -40,8 +40,8 @@ async function populate(dir, successful = true) {
   }
   const report = {
     sha,
-    screenshotCount: 140,
-    results: Array.from({ length: 12 }, () => ({})),
+    screenshotCount: 232,
+    results: Array.from({ length: 20 }, () => ({})),
     failures: successful ? [] : [{ scenario: 'fixture', error: 'simulated browser failure' }]
   };
   await writeFile(join(root, 'report.json'), JSON.stringify(report));
