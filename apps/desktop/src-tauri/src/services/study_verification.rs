@@ -137,6 +137,41 @@ fn verified_transcript_segment(
         .and_then(|segment| segment.id.clone())
 }
 
+/// A v11 writing transcript ID contains an array index, NOT the canonical
+/// segment UUID. Promote only a literal source-attribution label when the
+/// current stored segment, bounded quote, time and section all agree. This
+/// must never be interpreted as independent verification of spoken facts.
+fn exact_written_transcript_segment(
+    item: &writing::EvidenceRef,
+    binding: &HostSourceBinding,
+) -> Option<(String, u64)> {
+    let index = item.id.rsplit_once(':')?.1.parse::<usize>().ok()?;
+    if !item.id.ends_with(&format!(":{index}")) {
+        return None;
+    }
+    let segment = binding.segments.get(index)?;
+    let id = segment.id.as_deref()?.trim();
+    if id.is_empty() || item.excerpt.trim().is_empty() {
+        return None;
+    }
+    let expected_quote: String = segment.text.chars().take(960).collect();
+    let expected_section: String = format!(
+        "Transcript segment {} ({:.3}-{:.3}s)",
+        id, segment.start, segment.end
+    )
+    .chars()
+    .take(250)
+    .collect();
+    if item.excerpt != expected_quote
+        || item.locator.document_section.as_deref() != Some(expected_section.as_str())
+        || segment.start > f64::from(u32::MAX)
+        || item.locator.timestamp_seconds != Some(segment.start as u32)
+    {
+        return None;
+    }
+    Some((id.to_owned(), (segment.start * 1000.0) as u64))
+}
+
 fn collected_epoch(value: &str) -> Option<u64> {
     DateTime::parse_from_rfc3339(value)
         .ok()
@@ -624,6 +659,14 @@ impl AppServices {
                 {
                     continue;
                 }
+                let exact_segment = exact_written_transcript_segment(item, binding);
+                let state = if !source.available {
+                    EvidenceState::Unavailable
+                } else if exact_segment.is_some() && binding.content_sha256.is_some() {
+                    EvidenceState::Unreviewed
+                } else {
+                    EvidenceState::Untrusted
+                };
                 resolved.push(ResolvedEvidence {
                     evidence_id: item.id.clone(),
                     source_id: source.id.to_string(),
@@ -632,20 +675,13 @@ impl AppServices {
                     source_version: binding.content_sha256.clone(),
                     locator: ExactLocator {
                         locator: item.locator.document_section.clone().unwrap_or_default(),
-                        segment_id: None,
-                        timestamp_millis: item
-                            .locator
-                            .timestamp_seconds
-                            .map(|seconds| u64::from(seconds) * 1000),
+                        segment_id: exact_segment.as_ref().map(|(id, _)| id.clone()),
+                        timestamp_millis: exact_segment.map(|(_, timestamp)| timestamp),
                         modality: Modality::SpokenTranscript,
                     },
                     excerpt: item.excerpt.clone(),
                     kind: SourceKind::SocialTranscript,
-                    state: if source.available {
-                        EvidenceState::Untrusted
-                    } else {
-                        EvidenceState::Unavailable
-                    },
+                    state,
                     relation: EvidenceRelation::Unassessed,
                     independent_origin: None,
                     collected_at_epoch: collected_epoch(&source.collected_at),
