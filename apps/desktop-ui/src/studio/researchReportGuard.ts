@@ -40,6 +40,9 @@ export function matchesResearchReportScope(
     if (!source || source.originId !== finding.reference_id ||
         source.kind !== finding.kind || source.locator !== finding.locator ||
         source.collectedAt !== finding.collected_at ||
+        // A partial transcript remains useful with its limitations; revoked,
+        // deleted, unsupported or denied material never becomes usable evidence.
+        !['available', 'partial'].includes(finding.access) ||
         !Array.isArray(finding.observations) || finding.observations.length > 2000 ||
         !Array.isArray(finding.limitations)) return false;
 
@@ -47,6 +50,14 @@ export function matchesResearchReportScope(
       const evidence = observation.evidence;
       if (!evidence || evidence.study_source_id !== id ||
           evidence.reference_id !== finding.reference_id ||
+          // Real Rust anchors carry the same canonical transcript origin and
+          // revision as the selected source, not a different video's excerpt.
+          (finding.kind === 'transcript' &&
+            (evidence.transcript_id !== finding.reference_id ||
+              typeof evidence.transcript_revision !== 'string' ||
+              !evidence.transcript_revision.trim() ||
+              (finding.origin_revision !== null &&
+                evidence.transcript_revision !== finding.origin_revision))) ||
           typeof evidence.locator !== 'string' || !evidence.locator ||
           typeof evidence.excerpt !== 'string' || !evidence.excerpt.trim() ||
           evidence.excerpt.length > 100_000 ||
