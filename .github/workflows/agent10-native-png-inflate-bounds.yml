@@ -1,10 +1,10 @@
 # Agent10 independent CI-only malicious PNG evidence test, no application execution.
 # Runs only after exact source Git blob and working-byte attestation.
-name: Agent10 native evidence bounded PNG inflate release-veto probe
+name: Agent10 independent original PNG bomb retest on Agent07 owned final SHA
 
 on:
   push:
-    branches: [agent-10/p2-native-evidence-png-inflate-bounds-20261120]
+    branches: [agent-10/p2-pr161-png-final-independent-retest-20261120]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: e1f91fcf23119c0988312803208c2a5148174a82
+          ref: 94f598d87543c9333dff6f489219cf314d77259f
           path: .agent10-pr161-data
           persist-credentials: false
           sparse-checkout: |
@@ -46,9 +46,9 @@ jobs:
         run: |
           set -euo pipefail
           root=.agent10-pr161-data
-          test "$(git -C "$root" rev-parse HEAD)" = e1f91fcf23119c0988312803208c2a5148174a82
-          test "$(git -C "$root" rev-parse HEAD:tests/defragmentation/native-e2e/visual_observations.py)" = f0caea96527352ce4e427ad0ef27c3ac670eaac7
-          test "$(git -C "$root" hash-object tests/defragmentation/native-e2e/visual_observations.py)" = f0caea96527352ce4e427ad0ef27c3ac670eaac7
+          test "$(git -C "$root" rev-parse HEAD)" = 94f598d87543c9333dff6f489219cf314d77259f
+          test "$(git -C "$root" rev-parse HEAD:tests/defragmentation/native-e2e/visual_observations.py)" = 7b3dc4e12b04acc0f052403c705e24e117f8d968
+          test "$(git -C "$root" hash-object tests/defragmentation/native-e2e/visual_observations.py)" = 7b3dc4e12b04acc0f052403c705e24e117f8d968
           test "$(git -C "$root" rev-parse HEAD:tests/defragmentation/native-e2e/native_bidi_geometry_review.py)" = d025ee5d12485dca7bbc4c9586a6e31c94532a7b
           test "$(git -C "$root" hash-object tests/defragmentation/native-e2e/native_bidi_geometry_review.py)" = d025ee5d12485dca7bbc4c9586a6e31c94532a7b
           git -C "$root" diff --quiet -- tests/defragmentation/native-e2e/visual_observations.py tests/defragmentation/native-e2e/native_bidi_geometry_review.py
