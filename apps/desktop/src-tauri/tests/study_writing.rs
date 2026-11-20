@@ -1761,3 +1761,49 @@ fn canonical_sink_revalidates_duplicate_beat_ids_without_partial_writes() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn recovery_requires_original_source_links_but_accepts_later_human_attachments() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    let primary = batch.candidates[0].lineage[0].source_id;
+    let additional = plan.context.sources[1].study_source_id;
+    assert_ne!(primary, additional);
+
+    // The editor may attach a new, available source after acceptance.
+    db.attach_source_to_draft(plan.context.project_id, ids[0], additional)
+        .unwrap();
+    assert_eq!(store.recover_committed(&plan).unwrap(), Some(ids));
+
+    // But removing an original generated citation must invalidate recovery;
+    // a later human attachment cannot stand in for lost original provenance.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute(
+            "DELETE FROM draft_source_links
+             WHERE project_id=?1 AND draft_id=?2 AND study_source_id=?3",
+            params![
+                plan.context.project_id.to_string(),
+                ids[0].to_string(),
+                primary.to_string()
+            ],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3,
+        "failed reconciliation must never regenerate a batch"
+    );
+}
