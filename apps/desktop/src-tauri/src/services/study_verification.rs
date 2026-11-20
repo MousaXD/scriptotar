@@ -1249,6 +1249,69 @@ mod authenticity_tests {
     }
 
     #[test]
+    fn current_version_lookup_is_scoped_bounded_and_rechecks_revision_after_edit() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let services = AppServices::new(tmp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Version security", "Review integrity")
+            .unwrap();
+        let initial = services
+            .store
+            .create_draft(project, study.id, "Version one", "First saved body")
+            .unwrap();
+        let db = Connection::open(services.store.path()).unwrap();
+        let version_one =
+            scoped_current_saved_version(&db, project, study.id, initial.id, 1)
+                .unwrap()
+                .unwrap();
+        assert_eq!(version_one.title, initial.title);
+        assert_eq!(version_one.body, initial.body);
+        assert!(scoped_current_saved_version(
+            &db,
+            Uuid::new_v4(),
+            study.id,
+            initial.id,
+            1,
+        )
+        .unwrap()
+        .is_none());
+        assert!(scoped_current_saved_version(
+            &db,
+            project,
+            Uuid::new_v4(),
+            initial.id,
+            1,
+        )
+        .unwrap()
+        .is_none());
+        assert!(scoped_current_saved_version(&db, project, study.id, initial.id, 2)
+            .unwrap()
+            .is_none());
+
+        let revised = services
+            .store
+            .update_draft(
+                project, initial.id, 1, "Version two", "Author changed the text",
+            )
+            .unwrap();
+        assert_eq!(revised.revision, 2);
+        assert!(scoped_current_saved_version(&db, project, study.id, initial.id, 1)
+            .unwrap()
+            .is_none());
+        let version_two = scoped_current_saved_version(
+            &db, project, study.id, initial.id, revised.revision,
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(version_one.id, version_two.id);
+        assert_eq!(version_two.body, revised.body);
+    }
+
+    #[test]
     fn sqlite_manual_content_binding_is_host_derived_not_caller_revision() {
         use scriptotar_core::StudySourceInput;
         use tempfile::TempDir;
@@ -1283,6 +1346,22 @@ mod authenticity_tests {
         );
         assert_ne!(binding.content_sha256, source.source_revision);
         assert!(binding.segments.is_empty());
+        // Even a direct SQLite writer cannot replace the immutable source
+        // bytes behind a valid citation without tripping schema provenance.
+        let db = Connection::open(services.store.path()).unwrap();
+        assert!(db
+            .execute(
+                "UPDATE study_sources SET manual_text=?1 WHERE id=?2",
+                params!["Forged replacement bytes", source.id.to_string()],
+            )
+            .is_err());
+        let reread = services
+            .store
+            .get_study_source(project, study.id, source.id)
+            .unwrap();
+        let still_bound = load_host_source_binding(&services, project, study.id, &reread)
+            .unwrap();
+        assert_eq!(still_bound.content_sha256, binding.content_sha256);
     }
 
     #[test]
