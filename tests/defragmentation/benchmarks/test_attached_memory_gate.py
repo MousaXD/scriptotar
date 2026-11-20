@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 import tempfile
 import unittest
 
-from .attached_memory_gate import preflight
+from .attached_memory_gate import (preflight, load_attached_report,
+                                   MAX_ATTACHED_REPORT_BYTES, MAX_ATTACHED_SAMPLES)
 from .native_session import sha256
 
 SHA = "3" * 40
@@ -56,6 +58,84 @@ class AttachedMemoryGateTests(unittest.TestCase):
     def check(self, report=None):
         return preflight(report if report is not None else self.report,
                          self.pkg, self.exe, SHA, URL, self.pkg_hash, self.exe_hash)
+
+    def test_external_attached_json_is_bounded_and_duplicate_keys_fail_closed(self):
+        # These are hostile synthetic FILES. No installed PID, package or
+        # native accessibility measurement is attested by this parser.
+        trace = self.pkg.parent / "hostile-memory-report.json"
+        baseline = json.dumps(self.report)
+        trace.write_text(baseline, encoding="utf-8")
+        parsed = load_attached_report(trace)
+        self.assertEqual(parsed["sample_count"], 3)
+        self.assertIn("NOT_CERTIFIED", self.check(parsed)["status"])
+
+        # Without object_pairs_hook, both contradictory orderings silently
+        # normalize into just the last claimed source SHA.
+        original = json.dumps(SHA)
+        poison = json.dumps("f" * 40)
+        for prefix, suffix in ((poison, original), (original, poison)):
+            with self.subTest(order=(prefix, suffix)):
+                conflicting = (
+                    baseline[:-1] + ', "source_sha_operator_supplied": ' + prefix
+                    + ', "source_sha_operator_supplied": ' + suffix + "}"
+                )
+                self.assertEqual(json.loads(conflicting)["source_sha_operator_supplied"],
+                                 json.loads(suffix))
+                trace.write_text(conflicting, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                    load_attached_report(trace)
+
+        # Nested sample metadata is audited too, not only top-level fields.
+        nested = copy.deepcopy(self.report)
+        nested_line = json.dumps(nested["raw_samples"][0])
+        duplicated_sample = nested_line[:-1] + ', "provider": "chromium-mock"}'
+        nested_raw = ('"raw_samples": [' + duplicated_sample + ', '
+                      + ', '.join(json.dumps(x) for x in nested["raw_samples"][1:])
+                      + ']')
+        raw_other_fields = {k: v for k, v in nested.items() if k != "raw_samples"}
+        trace.write_text(json.dumps(raw_other_fields)[:-1] + ", " + nested_raw + "}",
+                         encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+            load_attached_report(trace)
+
+        # Unicode escape sequences resolve to the same decoded key; deny
+        # them too, even when the repeated value is byte-for-byte identical.
+        decoded_equivalent = (
+            baseline[:-1] + ', "source_\\u0073ha_operator_supplied": ' + original + "}"
+        )
+        trace.write_text(decoded_equivalent, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+            load_attached_report(trace)
+
+        trace.write_bytes(b" " * (MAX_ATTACHED_REPORT_BYTES + 1))
+        with self.assertRaisesRegex(ValueError, "bounded byte limit"):
+            load_attached_report(trace)
+        trace.write_bytes(b"\xff")
+        with self.assertRaisesRegex(ValueError, "must be UTF-8"):
+            load_attached_report(trace)
+        for forbidden in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(nonfinite=forbidden):
+                poisoned = baseline[:-1] + ', "untrusted_extra": ' + forbidden + "}"
+                trace.write_text(poisoned, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "nonfinite JSON constant"):
+                    load_attached_report(trace)
+
+        # This remains syntactically valid JSON: Python float parsing can
+        # overflow an exponent to infinity without invoking parse_constant.
+        trace.write_text(baseline[:-1] + ', "untrusted_extra": 1e9999}',
+                         encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "nonfinite JSON number"):
+            load_attached_report(trace)
+
+        too_many = copy.deepcopy(self.report)
+        too_many["raw_samples"] = too_many["raw_samples"][:1] * (MAX_ATTACHED_SAMPLES + 1)
+        too_many["sample_count"] = MAX_ATTACHED_SAMPLES + 1
+        too_many["complete_tree_sample_count"] = MAX_ATTACHED_SAMPLES + 1
+        trace.write_text(json.dumps(too_many), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "bounded sample count"):
+            load_attached_report(trace)
+        with self.assertRaisesRegex(ValueError, "inconsistent counts"):
+            self.check(too_many)
 
     def test_full_consistent_memory_preflight_still_never_certifies_native(self):
         result = self.check()
