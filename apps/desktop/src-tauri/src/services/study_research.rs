@@ -1709,8 +1709,8 @@ mod tests {
             attached_transcript.id,
             attached_research[0].id,
         ];
-        // Genuine approved v8 run with three real selected attachments,
-        // then close/reopen host services and consume the typed writing seam.
+        // Genuine approved v8 run with three real selected attachments.
+        // Restart from disk is verified below after dropping the live service.
         let awaiting = services
             .start_study_research(project, study, selected.clone())
             .unwrap();
@@ -1721,8 +1721,7 @@ mod tests {
         assert_eq!(completed.state, RunState::Completed);
         let approved_artifact =
             Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
-        let reopened = AppServices::new(dir.path()).unwrap();
-        let approved_bridge = reopened
+        let approved_bridge = services
             .research_writing_context(project, study, approved_artifact)
             .unwrap();
         assert_eq!(approved_bridge.sources.len(), 3);
@@ -1730,7 +1729,7 @@ mod tests {
         assert!(approved_bridge.evidence.iter().all(|observation| {
             observation.locator.source_id == transcript.to_string()
         }));
-        assert!(reopened
+        assert!(services
             .research_writing_context(Uuid::new_v4(), study, approved_artifact)
             .is_err());
 
@@ -1884,6 +1883,29 @@ mod tests {
         )
         .unwrap();
         assert!(checked_report(&services, project, study, artifact).is_err());
+
+        // The previous source revision was changed only by this test; restore
+        // it, close both SQLite handles and reopen from durable storage.
+        db.execute(
+            "UPDATE transcripts SET updated_at=?2 WHERE id=?1",
+            params![transcript.to_string(), timestamp],
+        )
+        .unwrap();
+        drop(db);
+        drop(services);
+        let restarted = AppServices::new(dir.path()).unwrap();
+        let saved = restarted
+            .read_study_research_report(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(saved.sources.len(), 3);
+        let bridge = restarted
+            .research_writing_context(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert!(!bridge.evidence.is_empty());
+        assert!(restarted
+            .read_study_research_report(Uuid::new_v4(), study, approved_artifact)
+            .is_err());
     }
 
     #[test]
