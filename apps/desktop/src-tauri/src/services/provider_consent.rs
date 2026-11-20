@@ -316,6 +316,15 @@ impl PaidEffectFence for SqlitePaidEffectFence {
             .get_external_effect(self.key())
             .map_err(|_| ConsentError::UncertainEffect)?
             .ok_or(ConsentError::UncertainEffect)?;
+        // Settlement must be bound to the same sealed outbound bytes, provider
+        // and approved ceilings, not just the caller-supplied effect key.
+        if existing.fingerprint != self.wire_sha256
+            || existing.provider != self.provider
+            || existing.token_limit != self.limits.tokens
+            || existing.cost_limit_microusd != self.limits.cost_microusd
+        {
+            return Err(ConsentError::ChangedContext);
+        }
         // A request may have been charged before a timeout or lost ACK moved
         // the durable claim to UNCERTAIN. A subsequently authenticated receipt
         // can still settle that SAME attempt; it is never a replay permit.
