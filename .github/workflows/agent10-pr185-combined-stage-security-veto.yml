@@ -10,8 +10,8 @@ permissions:
 
 jobs:
   combined-source:
-    name: Exact seven-blob and hostile test (${ matrix.os }})
-    runs-on: ${ matrix.os }}
+    name: Exact seven-blob and hostile test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 18
     strategy:
       fail-fast: false
@@ -21,7 +21,7 @@ jobs:
       - name: Checkout independent test-only sources without saved credentials
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${ github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Checkout exact three-parent candidate as inert data only
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -44,7 +44,7 @@ jobs:
       - name: Authenticate original security tests, candidate Git parents, seven source Git blobs, guard and publisher paths
         shell: bash
         env:
-          TEST_SHA: ${ github.sha }}
+          TEST_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           stage=b6ec7b914b55007417e8191695e2213d4117a61c
