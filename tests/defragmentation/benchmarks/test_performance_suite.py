@@ -195,6 +195,12 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             raw = report["raw_samples"]
             self.assertEqual(len(raw), report["sample_count"])
             self.assertTrue(all("main_cpu_time_ns" in row for row in raw))
+            self.assertTrue(all(
+                row["sample_started_monotonic_ns"]
+                <= row["main_cpu_time_observed_monotonic_ns"]
+                <= row["sample_finished_monotonic_ns"]
+                for row in raw
+            ))
             if platform.system() in ("Linux", "Windows"):
                 self.assertTrue(all(type(row["main_cpu_time_ns"]) is int for row in raw))
                 self.assertEqual(
