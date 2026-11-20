@@ -1,6 +1,7 @@
 # Agent11 exploratory only: NOT a patched npm package, dependency remediation, or release authorization.
 # EXPERIMENT ONLY: PR264 plus independently authored bounded class/repetition normalizer.
 # Both immutable 19-case security and original 4.0.7 matcher-positive controls remain hard gates.
+# Additional 12-case uppercase/ranged/capture/casefold corpus now independently fails closed.
 # No production dependency, lockfile, tested contract or trusted source guard is changed.
 name: Agent11 upstream picomatch candidate evaluation (test-only, release veto)
 
@@ -133,6 +134,9 @@ jobs:
             echo "NO-GO: candidate must pass BOTH unchanged contracts"
             exit 1
           fi
+      - name: Additional uppercase range capture and option adversarial contract (mandatory)
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs
       - name: Check Svelte and TS compatibility if and only if original 19-case is green
         shell: bash
         working-directory: apps/desktop-ui
