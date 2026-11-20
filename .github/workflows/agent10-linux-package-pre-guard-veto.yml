@@ -1,0 +1,40 @@
+# Independent read-only source test: original merged integration Linux release workflow.
+# Expected RED until a separately reviewed Agent00 follow-up actually fixes Linux.
+name: Agent10 Linux package pre-guard source veto
+
+on:
+  push:
+    branches: [agent-10/p0-pre-guard-execution-regression-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-source-order:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify independent source SHA
+        shell: bash
+        env:
+          AUDIT_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AUDIT_SHA"
+      - name: Checkout exact merged integration Linux workflow as DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+          path: .agent10-merged-integration
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/linux-tauri.yml
+          sparse-checkout-cone-mode: false
+      - name: Verify exact integration source identity
+        run: test "$(git -C .agent10-merged-integration rev-parse HEAD)" = 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+      - name: Strict Linux source trust audit and adversarial self-test
+        run: python3 tests/defragmentation/security/agent10_linux_package_pre_guard.py --target .agent10-merged-integration
