@@ -738,7 +738,7 @@ mod recovery_driver_tests {
     }
 
     #[test]
-    fn archived_study_can_record_prior_charge_but_not_reopen_a_dispatch() {
+    fn archived_study_and_project_can_record_prior_charge_without_redispatch() {
         use super::super::provider_consent::SqlitePaidEffectFence;
         use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
 
@@ -766,8 +766,9 @@ mod recovery_driver_tests {
         fence.mark_dispatched_once(&effect_id).unwrap();
 
         // Archive is a legitimate user action AFTER irreversible provider I/O.
-        // It may forbid future writes, but must not erase billing evidence.
+        // Neither a withdrawn Study nor an archived project may erase a charge.
         store.archive_study(project, study).unwrap();
+        store.archive_project(project).unwrap();
         fence.mark_uncertain(&effect_id);
         let uncertain = store
             .get_external_effect(effect_key(&context).unwrap())
