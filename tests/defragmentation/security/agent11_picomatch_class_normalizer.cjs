@@ -35,7 +35,7 @@ module.exports = function normalizeRepeatedClasses(source, opts = {}) {
   for (const found of source.matchAll(classArm)) {
     if (found[1] !== found[2]) continue;
     const atom = found[0];
-    const nested = '(?:((' + '(?:' + atom + ')+' + ')))+'; 
+    const nested = '(?:(' + '(?:' + atom + ')+' + '))+'; 
     const flat = '((?:' + atom + ')+)';
     if (source.includes(nested)) source = source.split(nested).join(flat);
   }
