@@ -1632,3 +1632,47 @@ fn corrupted_initial_snapshot_blocks_recovery_without_harming_human_edits() {
         "reconciliation must never overwrite human edits"
     );
 }
+#[test]
+fn generated_factual_claim_labels_never_enter_immutable_v1_as_reviewed() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].draft.claims[0].status =
+        scriptotar_ai::writing::ClaimStatus::Disputed;
+    batch.candidates[1].draft.claims[0].status =
+        scriptotar_ai::writing::ClaimStatus::Opinion;
+    batch.candidates[2].draft.claims[0].status =
+        scriptotar_ai::writing::ClaimStatus::Unverified;
+
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let connection = Connection::open(db.path()).unwrap();
+    let raw: String = connection
+        .query_row(
+            "SELECT payload_json FROM study_writing_batches WHERE run_id=?1",
+            params![batch.run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let persisted: GeneratedBatch = serde_json::from_str(&raw).unwrap();
+    for (candidate, id) in persisted.candidates.iter().zip(ids) {
+        assert!(candidate.draft.claims.iter().all(|claim| {
+            claim.status == scriptotar_ai::writing::ClaimStatus::Unverified
+        }));
+        let v1: String = connection
+            .query_row(
+                "SELECT structured_json FROM study_writing_revisions
+                 WHERE draft_id=?1 AND version=1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let initial: study_writing::GeneratedCandidate = serde_json::from_str(&v1).unwrap();
+        assert_eq!(&initial, candidate);
+    }
+    // Exact-run reconcile must still be safe after normalizing forged labels.
+    assert_eq!(sink.recover_committed(&plan).unwrap(), Some(ids));
+}
