@@ -36,6 +36,20 @@ The **original immutable 19-case exploit probe** is sourced from Scriptotar `292
 - CLOSED UNMERGED upstream #275 broad ambiguity analyzer passed 19/19 cases both OS [#44730425071](https://github.com/MousaXD/scriptotar/actions/runs/44730425071), but broke **8/10** original positive-matching assertions on each OS [strict source-exact validation](https://github.com/MousaXD/scriptotar/actions/runs/44731226195). Reject as a drop-in.
 - Agent11's deliberately limited and **test-only** PR264+class-algebra normalizer passed original 19/19, legacy matcher 10/10 and frontend check/test/build on Linux/Windows [#44735530250](https://github.com/MousaXD/scriptotar/actions/runs/44735530250), but independent expanded 12-case tests [#44736249700](https://github.com/MousaXD/scriptotar/actions/runs/44736249700) found **eight new 1.5-second timeouts** on BOTH Linux/Windows, involving uppercase/ranged classes, case-folding, captures, and explicit recursion setting. Agent10 separately reproduced capture/recursion bypasses [#44737440248](https://github.com/MousaXD/scriptotar/actions/runs/44737440248). Reject the prototype. DO NOT add one more ad-hoc source whitelist to claim general repair.
 
+### Final independent candidate-source check of remaining v4 parser proposals (#237, #238, #254)
+
+On 20 Nov 2026 Agent11 exercised the remaining three untested **master/v4** upstream patch proposals, each pinned to exact original upstream HEAD and applied exclusively to clean, disposable runner `node_modules` after trusted source checks and original `npm ci`. Distinct test-only workflow [original run #44788415580](https://github.com/MousaXD/scriptotar/actions/runs/44788415580), source `6f7a916db1d88b3243ecb134ba3592b79a7792e6`, completed **3/3 intentional hard-gate job FAIL** (not setup errors), on Linux ubuntu-22.04. No untested source was published or packaged.
+
+| Upstream candidate | Immutable upstream HEAD | Original 19-case parser security | 10 original 4.0.7 matcher controls | Independent expanded 12-case |
+|---|---|---|---|---|
+| [PR237](https://github.com/micromatch/picomatch/pull/237) | `1bf0d04563cb9ce568cf36efc5f6b7187d9911d5` | **6 PASS / 13 TIMEOUT**, job `136469341128` | 10/10 PASS | **4 PASS / 8 TIMEOUT** |
+| [PR238](https://github.com/micromatch/picomatch/pull/238) | `44f192261f312ddf236cb7bdc05d8f22663f98f9` | **6 PASS / 13 TIMEOUT**, job `136469340771` | 10/10 PASS | **4 PASS / 8 TIMEOUT** |
+| [PR254](https://github.com/micromatch/picomatch/pull/254) | `c63a5bf4e61dbdb81bc41e97dc2616c30acce337` | **6 PASS / 13 TIMEOUT**, job `136469341297` | 10/10 PASS | **4 PASS / 8 TIMEOUT** |
+
+Residual original source-exact timeouts include nested wrapper glob quantifiers, repeated character classes and nested classes, mixed wildcard alternation, negation, post-group quantifiers and long near misses. The 8 expanded failures include capture/recursion-option, nocase, uppercase and range overlaps. The 10/10 original positive/negative matches are **insufficient** evidence of generalized behavior, and no candidate passed the primary security gate.
+
+Because all three failed Linux, they are **rejected as parser remediations**, not advanced to Windows or packaging. This is a principled fail-closed reduction of work, not evidence of cross-platform PASS. One additional bounded finite matcher-differential test file was authored for future compatible candidates; it has NOT YET been exercised/validated on official hosted runners and is not a production parser patch.
+
 The trusted source guard is valuable exposure mitigation but cannot make the actual parser safe when a hostile glob reaches Vite. Independent Agent10 source-compiler proof exists in `tests/defragmentation/security/agent10_vite_scope_reachability.mjs`.
 
 ## Precise new distinction: shipped browser bundle versus build-tool execution
