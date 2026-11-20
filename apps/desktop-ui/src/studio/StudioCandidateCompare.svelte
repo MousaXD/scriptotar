@@ -65,6 +65,7 @@
       const result = await Promise.all(selected.map(async candidate => {
         const item = await gateway.getStudy(projectId, current.id, candidate.id);
         if (item.id !== current.id || item.projectId !== projectId ||
+            item.revision !== current.revision ||
             item.draftId !== candidate.id || item.draftRevision !== candidate.revision ||
             !item.drafts?.some(d => d.id === candidate.id)) {
           throw new Error(t.comparisonError);
