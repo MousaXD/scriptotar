@@ -39,7 +39,7 @@ NEGATIVE_FILES = (
     ("Cargo dependency lock", "Cargo.lock"),
     ("Python runtime builder", "sidecars/transcription/build_runtime.py"),
     ("Python requirements", "sidecars/transcription/requirements-bundle.txt"),
-    ("unreviewed Windows workflow", ".github/workflows/windows-tauri.yml"),
+    ("unreviewed preview publisher", ".github/workflows/tauri-next-release.yml"),
     ("extra arbitrary workflow", ".github/workflows/new-privileged.yml"),
     ("native QA harness", "tests/defragmentation/native-e2e/windows_webview2.ps1"),
     ("bundled resource", "apps/desktop/src-tauri/resources/injected.json"),
