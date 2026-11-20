@@ -9,7 +9,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
+import math
+from pathlib import Path, PurePosixPath
 import re
 import zipfile
 
@@ -18,6 +19,12 @@ from visual_observations import sample_png_rgb
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 RUN = re.compile(r"https://github\.com/MousaXD/scriptotar/actions/runs/[1-9][0-9]*\Z")
 ARABIC_NAV = ("الاستوديو", "الطابور", "الإعدادات")
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+MAX_JSON_BYTES = 1024 * 1024
+MAX_MEMBERS = 128
 
 
 def _nav(layout: dict, name: str, *, linux: bool) -> dict:
@@ -31,10 +38,12 @@ def _nav(layout: dict, name: str, *, linux: bool) -> dict:
     if len(matches) != 1:
         raise ValueError(f"Missing or ambiguous native accessible navigation button: {name}")
     bounds = matches[0].get("bounds", {})
-    if any(type(bounds.get(field)) not in (int, float) for field in
+    if any(type(bounds.get(field)) not in (int, float) or
+           not math.isfinite(bounds[field]) for field in
            ("x", "y", "width", "height")):
         raise ValueError("Missing numeric native bounds")
-    if bounds["width"] <= 0 or bounds["height"] <= 0 or bounds["x"] < 0:
+    if (bounds["width"] <= 0 or bounds["height"] <= 0 or
+            bounds["x"] < 0 or bounds["y"] < 0):
         raise ValueError("Invalid native navigation bounds")
     return bounds
 
@@ -42,10 +51,25 @@ def _nav(layout: dict, name: str, *, linux: bool) -> dict:
 def review(archive: Path, exact_sha: str) -> dict:
     if not SHA.fullmatch(exact_sha):
         raise ValueError("Expected exact source SHA")
+    if not archive.is_file() or archive.is_symlink() or archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ValueError("Evidence ZIP must be a bounded regular file")
     with zipfile.ZipFile(archive) as z:
-        names = z.namelist()
-        if len(names) != len(set(names)) or "result.json" not in names:
-            raise ValueError("Duplicate or missing original evidence entry")
+        infos = z.infolist()
+        names = [info.filename for info in infos]
+        if len(names) > MAX_MEMBERS or len(names) != len(set(names)) or "result.json" not in names:
+            raise ValueError("Duplicate, excessive or missing original evidence entry")
+        if any(info.is_dir() or info.flag_bits & 1 or
+               info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) or
+               info.file_size > MAX_MEMBER_BYTES or info.file_size < 0 or
+               info.compress_size > MAX_ARCHIVE_BYTES or
+               PurePosixPath(info.filename).is_absolute() or
+               any(part in (".", "..") for part in info.filename.split("/"))
+               for info in infos):
+            raise ValueError("Unsafe or oversized evidence ZIP member")
+        if sum(info.file_size for info in infos) > MAX_TOTAL_MEMBER_BYTES:
+            raise ValueError("Excessive total decompressed evidence size")
+        if z.getinfo("result.json").file_size > MAX_JSON_BYTES:
+            raise ValueError("Oversized native result.json")
         r = json.loads(z.read("result.json"))
         if (r.get("scope") != "native-installed" or
                 r.get("native_ui_probe") != "installed-webview-automation" or
@@ -83,6 +107,8 @@ def review(archive: Path, exact_sha: str) -> dict:
         required = list(arabic_names.values()) + [english_name]
         if any(name not in names for name in required):
             raise ValueError("Original Arabic or English screenshot missing")
+        if any(z.getinfo(name).file_size > MAX_SCREENSHOT_BYTES for name in required):
+            raise ValueError("Oversized installed screenshot evidence")
         images = {name: z.read(name) for name in required}
         dimensions = {name: sample_png_rgb(data)[1] for name, data in images.items()}
         if len(set(dimensions.values())) != 1:

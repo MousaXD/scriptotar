@@ -91,6 +91,37 @@ class NativeBidiGeometryReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Duplicate Arabic screen capture"):
                 review(path, SHA)
 
+    def test_reject_oversized_member_and_path_traversal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            set_layout(path, source_layout(False, 400, 10))
+            with zipfile.ZipFile(path, "a") as z:
+                z.writestr("../injected.txt", b"never extracted")
+            with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                review(path, SHA)
+            fixture_zip(path)
+            set_layout(path, source_layout(False, 400, 10))
+            with zipfile.ZipFile(path, "a", compression=zipfile.ZIP_DEFLATED) as z:
+                z.writestr("oversized.txt", b"x" * (16 * 1024 * 1024 + 1))
+            with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                review(path, SHA)
+
+    def test_reject_nonfinite_or_negative_native_coordinates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            layout = source_layout(False, 400, 10)
+            layout["arabic_settings"]["matches"][2]["bounds"]["x"] = float("nan")
+            set_layout(path, layout)
+            with self.assertRaisesRegex(ValueError, "Missing numeric native bounds"):
+                review(path, SHA)
+            layout = source_layout(False, 400, 10)
+            layout["arabic_settings"]["matches"][2]["bounds"]["y"] = -1
+            set_layout(path, layout)
+            with self.assertRaisesRegex(ValueError, "Invalid native navigation bounds"):
+                review(path, SHA)
+
     def test_reject_unproven_native_locale_before_reading_geometry(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "windows.zip"
