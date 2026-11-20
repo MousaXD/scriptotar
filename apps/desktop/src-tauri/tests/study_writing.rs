@@ -1548,3 +1548,87 @@ fn allows_distinct_scripts_that_share_short_common_phrases() {
     batch.candidates[2].draft.beats[1].narration = "Share your opinion".into();
     study_writing::enforce_candidate_originality(&batch.context, &batch.candidates).unwrap();
 }
+
+#[test]
+fn tampered_receipt_cannot_reconcile_unrelated_initial_drafts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    // Simulate post-write disk corruption. Real v11 schema deliberately
+    // prevents this UPDATE; dropping the trigger is only test fault injection.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute_batch("DROP TRIGGER study_writing_batches_immutable_update")
+        .unwrap();
+    let swapped = [ids[1], ids[0], ids[2]];
+    connection
+        .execute(
+            "UPDATE study_writing_batches SET draft_ids_json=?1 WHERE run_id=?2",
+            params![serde_json::to_string(&swapped).unwrap(), batch.run_id],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert!(matches!(
+        store.commit_three(&batch),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3,
+        "a bad receipt must not create a second batch"
+    );
+}
+
+#[test]
+fn corrupted_initial_snapshot_blocks_recovery_without_harming_human_edits() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    db.update_draft(
+        plan.context.project_id,
+        ids[0],
+        1,
+        "Editor title",
+        "Editor-owned body after generation",
+    )
+    .unwrap();
+    // Change the *immutable initial structured provenance* only as a
+    // fault-injection test; it must never be accepted as the original batch.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute_batch("DROP TRIGGER study_writing_revisions_immutable_update")
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE study_writing_revisions SET structured_json=?1
+             WHERE draft_id=?2 AND version=1",
+            params![serde_json::to_string(&batch.candidates[1]).unwrap(), ids[0].to_string()],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.get_draft(plan.context.project_id, ids[0])
+            .unwrap()
+            .body,
+        "Editor-owned body after generation",
+        "reconciliation must never overwrite human edits"
+    );
+}
