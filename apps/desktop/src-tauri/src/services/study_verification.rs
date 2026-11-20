@@ -248,12 +248,36 @@ fn typed_revision_matches(
     structured_json: &str,
     version: &scriptotar_core::DraftVersion,
     supplied: &writing::ScriptDraft,
+    linked_sources: &HashSet<Uuid>,
 ) -> bool {
     let Ok(candidate) = serde_json::from_str::<GeneratedCandidate>(structured_json) else {
         return false;
     };
     if candidate.draft.title.trim() != version.title || export_candidate(&candidate) != version.body
     {
+        return false;
+    }
+    // Only attached per-draft sources that were included in the persisted
+    // writing lineage may support a claim. An unrelated Study source cannot
+    // be laundered into a saved script by injecting its evidence UUID.
+    let candidate_sources: HashSet<Uuid> = candidate
+        .lineage
+        .iter()
+        .map(|line| line.source_id)
+        .collect();
+    if candidate_sources.len() != candidate.lineage.len()
+        || candidate_sources != *linked_sources
+    {
+        return false;
+    }
+    let candidate_evidence: HashSet<&str> = candidate
+        .lineage
+        .iter()
+        .flat_map(|line| line.evidence.iter().map(|item| item.id.as_str()))
+        .collect();
+    if candidate.draft.claims.iter().any(|claim| {
+        claim.evidence_ids.iter().any(|id| !candidate_evidence.contains(id.as_str()))
+    }) {
         return false;
     }
     let mut canonical = candidate.draft;
@@ -461,7 +485,12 @@ impl AppServices {
         let structured = structured.ok_or_else(|| RepositoryError::Conflict(
             "saved version has no trusted structured claims; manual review required".into(),
         ))?;
-        if !typed_revision_matches(&structured, &saved_version, draft) {
+        let linked_sources: HashSet<Uuid> = self
+            .store
+            .list_draft_source_ids(project_id, draft_id)?
+            .into_iter()
+            .collect();
+        if !typed_revision_matches(&structured, &saved_version, draft, &linked_sources) {
             return Err(RepositoryError::Conflict(
                 "submitted claims differ from the exact saved DraftVersion".into(),
             ));
@@ -499,6 +528,11 @@ impl AppServices {
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
         let fresh_references = self.store.list_evidence_references(project_id, study_id)?;
         let final_draft = self.store.get_draft(project_id, draft_id)?;
+        let final_linked_sources: HashSet<Uuid> = self
+            .store
+            .list_draft_source_ids(project_id, draft_id)?
+            .into_iter()
+            .collect();
         let final_version = scoped_current_saved_version(
             &db,
             project_id,
@@ -524,6 +558,7 @@ impl AppServices {
         if fresh_study.revision != expected_study_revision
             || final_draft != saved_draft
             || final_version.as_ref() != Some(&saved_version)
+            || final_linked_sources != linked_sources
             || final_structured.as_deref() != Some(structured.as_str())
             || fresh_sources != sources
             || fresh_references != references
