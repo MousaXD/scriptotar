@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
+          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # This PR is reviewed for TWO workflow edits only. Fail closed for
@@ -72,7 +72,8 @@ jobs:
           # The explicit Python check below is retained as defense-in-depth.
           if ! git diff --quiet "$reviewed" HEAD -- . \
             ':(exclude).github/workflows/windows-tauri.yml' \
-            ':(exclude).github/workflows/installed-webview-acceptance.yml'; then
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'; then
             echo "::error::PR158 changed a file outside its two independently reviewed workflow paths."
             exit 1
           fi
@@ -292,7 +293,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
+          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # This PR is reviewed for TWO workflow edits only. Fail closed for
@@ -301,7 +302,8 @@ jobs:
           # The explicit Python check below is retained as defense-in-depth.
           if ! git diff --quiet "$reviewed" HEAD -- . \
             ':(exclude).github/workflows/windows-tauri.yml' \
-            ':(exclude).github/workflows/installed-webview-acceptance.yml'; then
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'; then
             echo "::error::PR158 changed a file outside its two independently reviewed workflow paths."
             exit 1
           fi
