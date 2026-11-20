@@ -1071,7 +1071,7 @@ mod tests {
                 beat_id: "hook".into(),
                 assertion: "An unsupported numerical assertion".into(),
                 status: ClaimStatus::Unverified,
-                evidence_ids: vec![cited.id.to_string()],
+                evidence_ids: vec![format!("observation:{}", cited.id)],
             }],
         };
         let candidate = GeneratedCandidate {
@@ -1087,7 +1087,7 @@ mod tests {
             lineage: vec![CandidateLineage {
                 source_id: attached.id,
                 evidence: vec![EvidenceRef {
-                    id: cited.id.to_string(),
+                    id: format!("observation:{}", cited.id),
                     locator: EvidenceLocator {
                         source_id: attached.id.to_string(),
                         canonical_url: None,
@@ -1146,7 +1146,7 @@ mod tests {
         assert!(bound.draft_version_sha256.starts_with("sha256:"));
         assert!(bound.report.draft_content_bound);
         assert_eq!(bound.claim_sources.len(), 1);
-        assert_eq!(bound.claim_sources[0].evidence_id, cited.id.to_string());
+        assert_eq!(bound.claim_sources[0].evidence_id, format!("observation:{}", cited.id));
         assert_eq!(bound.claim_sources[0].study_source_id, attached.id.to_string());
         assert_eq!(bound.claim_sources[0].locator.locator, "source-section-a");
         assert_eq!(
@@ -1286,8 +1286,10 @@ mod tests {
             )
             .unwrap();
         let mut switched = candidate.clone();
-        switched.draft.claims[0].evidence_ids = vec![second_evidence.id.to_string()];
-        switched.lineage[0].evidence[0].id = second_evidence.id.to_string();
+        switched.draft.claims[0].evidence_ids =
+            vec![format!("observation:{}", second_evidence.id)];
+        switched.lineage[0].evidence[0].id =
+            format!("observation:{}", second_evidence.id);
         let switched_body = export_candidate(&switched);
         let other_draft = services
             .store
