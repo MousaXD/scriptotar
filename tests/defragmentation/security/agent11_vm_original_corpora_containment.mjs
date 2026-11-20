@@ -34,7 +34,8 @@ const trials=[
 ];
 for(const test of trials) {
   const outcome=spawnSync(process.execPath,test.argv,{
-    cwd:root,env,encoding:'utf8',timeout:65000,maxBuffer:3*1024*1024,
+    cwd:test.name.startsWith('immutable')?join(root,'apps','desktop-ui'):root,
+    env,encoding:'utf8',timeout:65000,maxBuffer:3*1024*1024,
     windowsHide:true
   });
   assert.notEqual(outcome.error?.code,'ETIMEDOUT','Whole original corpus hung in a VM-protected child');
