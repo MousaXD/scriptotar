@@ -51,4 +51,16 @@ describe('Verified v11 candidate comparison', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
     expect(read).not.toHaveBeenCalled();
   });
+  it('refuses saved bodies from a different Study revision, even for exact draft IDs', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    read.mockImplementation(async (_project, _study, draftId) =>
+      ({ ...study, revision: study.revision + 1, draftId,
+        draftRevision: 1, draft: 'Stale ' + draftId }));
+    render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
+    expect(screen.queryByText('Stale generated-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+  });
+
 });
