@@ -146,4 +146,48 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
   });
 
+  it('reopens the latest pending research run instead of an older completed run', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const sources = await api.listStudyResearchSources(projectId, studyId);
+    const first = await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    await api.decideStudyResearch(projectId, studyId, first.plan.id, 'approve');
+    const latest = await api.startStudyResearch(projectId, studyId, [sources[1].id]);
+    const stored = await api.listStudyResearchRuns(projectId, studyId);
+    expect(stored.map((run) => run.plan.id)).toEqual([latest.plan.id, first.plan.id]);
+
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    expect(await screen.findByText(/Awaiting approval/)).toBeInTheDocument();
+    const scope = await screen.findByText(/Approve these exact sources/);
+    await fireEvent.click(scope);
+    expect(screen.getByText(sources[1].id)).toBeInTheDocument();
+    expect(screen.queryByText(sources[0].id)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeEnabled();
+  });
+
+  it('refuses approval controls for a nonzero-cost backend research plan', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const sources = await api.listStudyResearchSources(projectId, studyId);
+    await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    const previous = api.listStudyResearchRuns.bind(api);
+    api.listStudyResearchRuns = async (project, study) => {
+      const runs = await previous(project, study);
+      runs[0].plan.steps[0].estimate.cost_microusd = 1;
+      return runs;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+  });
+
+  it('uses RTL and Arabic labels for the immutable saved approval scope', async () => {
+    setLocale('ar');
+    const { api, projectId, studyId } = await fixture();
+    const view = render(StudioResearchReview, { props: { api, projectId, studyId } });
+    const prepare = await screen.findByRole('button', { name: 'تحضير البحث' });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    await fireEvent.click(prepare);
+    expect(await screen.findByText(/الموافقة على هذه المصادر/)).toBeInTheDocument();
+    expect(view.container.querySelector('.study-research-review')).toHaveAttribute('dir', 'rtl');
+  });
+
 });
