@@ -539,6 +539,11 @@ pub(super) fn enforce_candidate_originality(
     let mut scripts = Vec::with_capacity(candidates.len());
     let mut cited_sources = HashSet::new();
     for candidate in candidates {
+        if candidate.angle.evidence_ids.is_empty() {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate angle has no supporting evidence".into(),
+            ));
+        }
         // Count only evidence cited by the actual script beats/claims. An
         // angle may cite a source that never supports any script content.
         let mut script_evidence = HashSet::new();
