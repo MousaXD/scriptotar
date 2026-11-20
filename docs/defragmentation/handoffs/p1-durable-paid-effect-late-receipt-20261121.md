@@ -36,7 +36,9 @@ The pre-send CAS intentionally sacrifices availability in ambiguous windows in o
 5. Reopen the database and deliver the identical receipt; verify no revision or receipt mutation.
 6. Submit a contradictory receipt and attempt to dispatch again; verify both are rejected.
 
-This is a deterministic, no-network host/SQLite regression. Existing v10–v12 tests separately cover simultaneous claims, cross-run/cross-project identity, historical upgrade rollback, forged/duplicate provider IDs, retry attempt tombstones and corrupted checkpoints. Their existing passing evidence does **not** certify this new head.
+Two additional no-network host/SQLite regressions verify cancellation ordering: (a) cancelling a mere reservation yields a terminal `Cancelled` and v8 `NotApplied` claim, and prevents both a dispatch CAS and a forged late receipt, including after reopen; (b) cancelling after the committed dispatch CAS records cancellation intent and retains a blocked uncertain claim, but a matching authenticated late receipt can correctly record a charge and advance v8 `Unknown -> Applied` without sending again.
+
+This is a deterministic, no-network host/SQLite regression suite. Existing v10–v12 tests separately cover simultaneous claims, cross-run/cross-project identity, historical upgrade rollback, forged/duplicate provider IDs, retry attempt tombstones and corrupted checkpoints. Their existing passing evidence does **not** certify this new head.
 
 ## Remaining blockers / Agent 00 and 10 handoff
 
