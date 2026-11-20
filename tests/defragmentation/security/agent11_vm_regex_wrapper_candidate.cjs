@@ -44,7 +44,9 @@ function install(options = {}) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 5 || timeoutMs > 1000) {
     throw new TypeError('Experiment timeout must be integer 5-1000 ms');
   }
-  const r = createRequire(resolve('apps/desktop-ui/package.json'));
+  // Resolve relative to this source file, not process.cwd(). Child Node/npm
+  // invocations in apps/desktop-ui have a different working directory.
+  const r = createRequire(resolve(__dirname, '../../../apps/desktop-ui/package.json'));
   const pm = r('picomatch');
   const inner = r('picomatch/lib/picomatch');
   const manifest = r('picomatch/package.json');
