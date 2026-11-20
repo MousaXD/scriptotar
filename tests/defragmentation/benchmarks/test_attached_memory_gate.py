@@ -101,7 +101,7 @@ class AttachedMemoryGateTests(unittest.TestCase):
         # Unicode escape sequences resolve to the same decoded key; deny
         # them too, even when the repeated value is byte-for-byte identical.
         decoded_equivalent = (
-            baseline[:-1] + ', "source_\\\\u0073ha_operator_supplied": ' + original + "}"
+            baseline[:-1] + ', "source_\\u0073ha_operator_supplied": ' + original + "}"
         )
         trace.write_text(decoded_equivalent, encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
@@ -110,7 +110,7 @@ class AttachedMemoryGateTests(unittest.TestCase):
         trace.write_bytes(b" " * (MAX_ATTACHED_REPORT_BYTES + 1))
         with self.assertRaisesRegex(ValueError, "bounded byte limit"):
             load_attached_report(trace)
-        trace.write_bytes(b"\\xff")
+        trace.write_bytes(b"\xff")
         with self.assertRaisesRegex(ValueError, "must be UTF-8"):
             load_attached_report(trace)
         for forbidden in ("NaN", "Infinity", "-Infinity"):
