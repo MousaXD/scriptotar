@@ -803,6 +803,8 @@
   }
 
   function toggleSource(ref: StudySourceRef) {
+    // Do not mutate an outgoing Study while an incoming Study is being read.
+    if (loading || busy || saving) return;
     revokeConfirmation = null;
     if (refs.some((item) => item.kind === ref.kind && item.id === ref.id) &&
         evidence.some((item) => item.source?.kind === ref.kind && item.source.id === ref.id)) {
@@ -1269,12 +1271,12 @@
 </nav>
 {#if error}<p role="alert" class="studio-error">{error}</p>{/if}
 {#if !gateway}<p class="studio-warning" role="status">{t.notConnected}</p>{/if}
-<div class="studio-workspace">
+<div class="studio-workspace" aria-busy={loading}>
   <aside class="studio-side">
     <section class="panel studio-study">
       <h2>{t.studies}</h2>
       {#if gateway}
-        <Select label={t.openStudy} value={studyId} options={studies.map((item) => ({
+        <Select label={t.openStudy} value={studyId} disabled={loading || busy} options={studies.map((item) => ({
           value: item.id, label: item.brief.title || item.id
         }))} placeholder={loading ? t.loadingStudies : t.noStudies} onChange={(id) => void openStudy(id)} />
         <button type="button" class="button secondary" disabled={busy || loading || !brief.title.trim()} on:click={createStudy}>{t.newStudy}</button>
@@ -1321,17 +1323,19 @@
       <details class="source-picker">
         <summary>{t.selectSources}</summary>
         <label for="studio-source-filter" class="sr-only">{t.selectSources}</label>
-        <input id="studio-source-filter" type="search" bind:value={sourceQuery} placeholder={t.selectSources} />
+        <input id="studio-source-filter" type="search" bind:value={sourceQuery} placeholder={t.selectSources} disabled={loading || busy} />
         <h3>{t.researchItems}</h3>
         {#each filteredResearch as item (item.id)}
           <div class="source-option" dir="auto"><Checkbox label={item.title}
             checked={refs.some((ref) => ref.kind === 'research' && ref.id === item.id)}
+            disabled={loading || busy || saving}
             onChange={() => toggleSource({ kind: 'research', id: item.id })} /></div>
         {/each}
         <h3>{t.transcripts}</h3>
         {#each filteredTranscripts as item (item.id)}
           <div class="source-option" dir="auto"><Checkbox label={item.title}
             checked={refs.some((ref) => ref.kind === 'transcript' && ref.id === item.id)}
+            disabled={loading || busy || saving}
             onChange={() => toggleSource({ kind: 'transcript', id: item.id })} /></div>
         {/each}
       </details>
@@ -1366,7 +1370,7 @@
         {#if inspectionError}<p role="alert" class="studio-error">{inspectionError}</p>{/if}
       </section>
     {/if}
-    {#if record}
+    {#if record && !loading}
       {#key projectId + ':' + record.id}
         <StudioResearchReview {api} {projectId} studyId={record.id} />
       {/key}
@@ -1393,6 +1397,13 @@
   </aside>
 
   <div class="studio-main">
+    {#if loading}
+      <div class="studio-opening-skeleton" role="status" aria-label={flowT.openingStudy}>
+        <span class="studio-opening-line"></span>
+        <span class="studio-opening-line short"></span>
+        <span class="sr-only">{flowT.openingStudy}</span>
+      </div>
+    {/if}
     <section class="panel studio-brief">
       <div class="section-heading">
         <h2>{t.brief}</h2>
@@ -1401,16 +1412,16 @@
         {/if}
       </div>
       <div class="brief-grid">
-        <label class="wide">{t.studyName}<input aria-label={t.studyName} bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" /></label>
-        <label class="wide">{t.goal}<textarea bind:value={brief.goal} on:input={queueSave} placeholder={t.goalPlaceholder} rows="2" dir="auto"></textarea></label>
-        <label>{t.audience}<input bind:value={brief.audience} on:input={queueSave} placeholder={t.audiencePlaceholder} dir="auto" /></label>
-        <Select label={t.platform} value={brief.platform} options={['TikTok', 'Instagram Reels', 'YouTube Shorts', 'Other'].map((value) => ({ value, label: value }))} onChange={(value) => { brief.platform = value; queueSave(); }} />
-        <Select label={t.language} value={brief.language} options={[
+        <label class="wide">{t.studyName}<input aria-label={t.studyName} bind:value={brief.title} on:input={queueSave} placeholder={t.titlePlaceholder} maxlength="120" disabled={loading || busy} /></label>
+        <label class="wide">{t.goal}<textarea bind:value={brief.goal} on:input={queueSave} placeholder={t.goalPlaceholder} rows="2" dir="auto" disabled={loading || busy}></textarea></label>
+        <label>{t.audience}<input bind:value={brief.audience} on:input={queueSave} placeholder={t.audiencePlaceholder} dir="auto" disabled={loading || busy} /></label>
+        <Select label={t.platform} value={brief.platform} disabled={loading || busy} options={['TikTok', 'Instagram Reels', 'YouTube Shorts', 'Other'].map((value) => ({ value, label: value }))} onChange={(value) => { brief.platform = value; queueSave(); }} />
+        <Select label={t.language} value={brief.language} disabled={loading || busy} options={[
           { value: 'Arabic', label: t.languageArabic }, { value: 'English', label: t.languageEnglish },
           { value: 'Arabic + English', label: t.languageMixed }
         ]} onChange={(value) => { brief.language = value; queueSave(); }} />
-        <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]+" maxlength="3" bind:value={brief.duration} on:input={queueSave} /></label>
-        <label class="wide">{t.style}<input bind:value={brief.style} on:input={queueSave} dir="auto" placeholder={t.stylePlaceholder} /></label>
+        <label>{t.duration}<input type="text" inputmode="numeric" pattern="[0-9]+" maxlength="3" bind:value={brief.duration} on:input={queueSave} disabled={loading || busy} /></label>
+        <label class="wide">{t.style}<input bind:value={brief.style} on:input={queueSave} dir="auto" placeholder={t.stylePlaceholder} disabled={loading || busy} /></label>
       </div>
     </section>
 
@@ -1445,10 +1456,10 @@
       <div class="section-heading">
         <h2>{t.script}</h2>
         <div class="draft-actions">
-          <button id="studio-export" type="button" class="button secondary" on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
-          <button type="button" class="button secondary" on:click={() => exportDraft('md')}>{t.exportMd}</button>
+          <button id="studio-export" type="button" class="button secondary" disabled={loading || busy} on:click={() => exportDraft('txt')}>{t.exportTxt}</button>
+          <button type="button" class="button secondary" disabled={loading || busy} on:click={() => exportDraft('md')}>{t.exportMd}</button>
           {#if gateway && record}
-            <button type="button" class="button primary" disabled={!dirty || saving || !!previewVersion}
+            <button type="button" class="button primary" disabled={!dirty || saving || loading || busy || !!previewVersion}
               on:click={() => void save()}>{saving ? t.saving : t.save}</button>
           {/if}
         </div>
@@ -1461,7 +1472,7 @@
                 placeholder={t.searchDrafts} autocomplete="off" />
             </label>
           {/if}
-          <Select label={t.draftCandidates} value={record.draftId}
+          <Select label={t.draftCandidates} value={record.draftId} disabled={loading || busy || saving}
             options={record.drafts
               .filter((item) => item.id === record?.draftId ||
                 item.title.toLocaleLowerCase().includes(draftSearch.trim().toLocaleLowerCase()))
@@ -1553,8 +1564,10 @@
           {/if}
         </section>
       {/if}
-      <StudioCandidateCompare study={record} {gateway} {projectId}
-        pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
+      {#if !loading}
+        <StudioCandidateCompare study={record} {gateway} {projectId}
+          pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
+      {/if}
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
           <button type="button" class:chosen={!previewVersion} on:click={() => previewVersion = null}>{t.currentDraft}</button>
@@ -1565,7 +1578,7 @@
         </div>
       {/if}
       <textarea id="studio-script" aria-label={t.script} dir="auto" class="script-text"
-        readonly={!!previewVersion || importingSavedResult} value={previewVersion ? previewVersion.content : draft}
+        readonly={!!previewVersion || importingSavedResult || loading || busy} value={previewVersion ? previewVersion.content : draft}
         placeholder={t.scriptPlaceholder}
         on:input={(event) => { draft = event.currentTarget.value; queueSave(); }}></textarea>
       {#if previewVersion}
@@ -1845,6 +1858,9 @@
   .studio-activity li { display: grid; gap: 3px; font-size: var(--text-xs); padding-block: 7px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
   .studio-activity li strong { color: var(--color-text-muted); font-weight: 600; }
   .studio-activity li small { color: var(--color-text-muted); }
+  .studio-opening-skeleton { display: grid; gap: 10px; padding: 14px; border-radius: var(--radius-md); border: 1px solid var(--color-border); }
+  .studio-opening-line { display: block; width: 100%; height: 13px; border-radius: 5px; background: var(--color-surface-raised); }
+  .studio-opening-line.short { width: 60%; }
   .studio-editor .script-text { display: block; width: 100%; min-height: 320px; resize: vertical; padding: 18px; font-size: var(--text-md); line-height: 1.8; }
   .versions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
   .versions button { font-size: var(--text-xs); padding: 5px 9px; background: var(--color-surface-raised); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
