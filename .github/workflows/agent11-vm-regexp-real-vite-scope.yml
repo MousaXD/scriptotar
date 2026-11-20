@@ -1,0 +1,88 @@
+# Agent11 test-only original locked Vite/Vitest toolchain performance prequalification.
+# DO NOT merge as production remediation; VM prototype only guards certain
+# RegExp.exec paths and 19/12 hard original boolean probes remain unpassed.
+name: Agent11 actual Vite-Vitest with experimental VM regex deadlines (NO-GO)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-vm-regexp-real-vite-scope.yml'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-frontend-vs-vm-preload:
+    name: Source-exact original Vite/Vitest baseline then VM-preloaded check/test/build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 16
+    steps:
+      - name: Checkout research-only commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Use Node22 frontend runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout immutable original trusted source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify Git pins and reviewed source before npm package hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install original official pin (no package/lock edits)
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Control — baseline original frontend check, unit tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          started=$SECONDS
+          timeout 180s npm --prefix apps/desktop-ui run check
+          timeout 180s npm --prefix apps/desktop-ui test
+          timeout 180s npm --prefix apps/desktop-ui run build
+          echo "AGENT11 ORIGINAL TOOLCHAIN BASELINE ELAPSED: $((SECONDS-started)) seconds"
+      - name: Experiment — real Vite/Vitest with only research-only NODE_OPTIONS preload
+        shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs
+        run: |
+          set -euo pipefail
+          started=$SECONDS
+          timeout 240s npm --prefix apps/desktop-ui run check
+          timeout 240s npm --prefix apps/desktop-ui test
+          timeout 240s npm --prefix apps/desktop-ui run build
+          echo "AGENT11 VM-PRELOADED TOOLCHAIN ELAPSED: $((SECONDS-started)) seconds"
+          echo "Every child emits AGENT11_TEST_ONLY_VM_REGEX_PRELOAD_STATS. A zero count means no meaningful parser runtime path covered."
+      - name: Assert original pinned app manifest/lock have not changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo "NO package/lock override. Tested VM module is research only and NOT a complete picomatch parser fix."
