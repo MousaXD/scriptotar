@@ -509,6 +509,33 @@ impl AppServices {
         let sources = self.store.list_study_sources(project_id, study_id)?;
         let references = self.store.list_evidence_references(project_id, study_id)?;
         let source_map: HashMap<Uuid, _> = sources.iter().map(|src| (src.id, src)).collect();
+        let evidence_source_map: HashMap<Uuid, Uuid> = references
+            .iter()
+            .map(|reference| (reference.id, reference.input.study_source_id))
+            .collect();
+        // The canonical v11 writer derives each lineage edge from the
+        // original Study evidence map. Reconfirm it here: a structured claim
+        // cannot cite Study source B under an unrelated draft-linked source A.
+        let stored_candidate: GeneratedCandidate = serde_json::from_str(&structured)
+            .map_err(|_| RepositoryError::Storage("corrupt structured claim revision".into()))?;
+        for line in &stored_candidate.lineage {
+            if !source_map.contains_key(&line.source_id) || !linked_sources.contains(&line.source_id)
+            {
+                return Err(RepositoryError::Conflict(
+                    "draft lineage source is no longer attached to this Study".into(),
+                ));
+            }
+            for item in &line.evidence {
+                let evidence_id = Uuid::parse_str(&item.id).map_err(|_| {
+                    RepositoryError::Conflict("invalid saved claim evidence UUID".into())
+                })?;
+                if evidence_source_map.get(&evidence_id) != Some(&line.source_id) {
+                    return Err(RepositoryError::Conflict(
+                        "saved claim evidence is attributed to the wrong source".into(),
+                    ));
+                }
+            }
+        }
         let mut source_bindings = HashMap::new();
         for source in &sources {
             source_bindings.insert(
