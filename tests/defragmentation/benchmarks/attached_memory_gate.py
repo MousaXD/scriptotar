@@ -30,6 +30,57 @@ REQUIRED = {
 }
 PROVIDERS = {"Linux": "linux-proc-smaps_rollup",
              "Windows": "windows-psapi-process_memory_counters_ex2"}
+# native_attach can collect at most 180 s at a requested >=0.1 s cadence.
+# Leave room for scheduling variance while denying untrusted row flooding.
+MAX_ATTACHED_REPORT_BYTES = 16 * 1024 * 1024
+MAX_ATTACHED_SAMPLES = 2000
+
+
+def _unique_json_members(pairs: list[tuple[str, object]]) -> dict:
+    """Reject contradictory member names, including nested sample objects."""
+    data: dict = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("duplicate JSON member in attached memory evidence")
+        data[key] = value
+    return data
+
+
+def _reject_nonfinite_json_constant(value: str) -> object:
+    raise ValueError("nonfinite JSON constant in attached memory evidence")
+
+
+def _finite_json_float(value: str) -> float:
+    # The strict JSON constants hook does not see exponential overflow:
+    # json.loads("1e9999") otherwise returns Python float('inf').
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("nonfinite JSON number in attached memory evidence")
+    return result
+
+
+def load_attached_report(path: Path) -> dict:
+    """Parse one bounded original byte snapshot; do not authenticate host origin."""
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_ATTACHED_REPORT_BYTES + 1)
+    if len(raw) > MAX_ATTACHED_REPORT_BYTES:
+        raise ValueError("attached memory evidence exceeds bounded byte limit")
+    try:
+        source = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("attached memory evidence must be UTF-8") from exc
+    try:
+        record = json.loads(source, object_pairs_hook=_unique_json_members,
+                            parse_constant=_reject_nonfinite_json_constant,
+                            parse_float=_finite_json_float)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise ValueError("invalid or deeply nested attached memory JSON") from exc
+    if not isinstance(record, dict):
+        raise ValueError("attached memory evidence must be a JSON object")
+    rows = record.get("raw_samples")
+    if not isinstance(rows, list) or len(rows) > MAX_ATTACHED_SAMPLES:
+        raise ValueError("attached memory evidence exceeds bounded sample count or is missing samples")
+    return record
 
 
 def _int(value: object) -> bool:
@@ -96,7 +147,7 @@ def preflight(report: dict, package: Path, executable: Path,
     # early observations is not complete memory coverage.
     max_idle_ns = max(3_000_000_000, math.ceil(4 * interval * 1_000_000_000))
     rows = report.get("raw_samples")
-    if (not isinstance(rows, list) or len(rows) < 3
+    if (not isinstance(rows, list) or not 3 <= len(rows) <= MAX_ATTACHED_SAMPLES
             or not _int(report.get("sample_count")) or report["sample_count"] != len(rows)
             or not _int(report.get("complete_tree_sample_count"))
             or report["complete_tree_sample_count"] != len(rows)):
@@ -211,7 +262,7 @@ def main() -> None:
     if args.output.exists() or not args.output.parent.is_dir():
         parser.error("output must not exist and its parent must be present")
     try:
-        record = json.loads(args.attached_json.read_text(encoding="utf-8"))
+        record = load_attached_report(args.attached_json)
         result = preflight(record, args.package, args.executable, args.source_sha,
                            args.run_url, args.package_sha256, args.executable_sha256)
         with args.output.open("x", encoding="utf-8") as fp:
