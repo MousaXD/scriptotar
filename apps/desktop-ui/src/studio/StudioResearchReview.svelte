@@ -23,6 +23,9 @@
       loading: 'Loading saved research…', transcript: 'Transcript', research: 'Research',
       approvalScope: 'Approve these exact sources', sourceCount: 'sources',
       missingScope: 'A selected source is no longer available. Deny this run and prepare a new one.',
+      provenance: 'Source provenance', partial: 'Partial transcript · review limitations',
+      sourceId: 'Study source ID', originId: 'Origin ID', revision: 'Snapshot revision',
+      collected: 'Collected at', noRevision: 'Not recorded',
       states: { planned: 'Planned', awaiting_approval: 'Awaiting approval', running: 'Running',
         cancelling: 'Cancelling', paused: 'Paused', needs_input: 'Needs input',
         blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
@@ -40,6 +43,9 @@
       loading: 'جارٍ تحميل البحث المحفوظ…', transcript: 'نص مفرغ', research: 'بحث',
       approvalScope: 'الموافقة على هذه المصادر تحديدًا', sourceCount: 'مصادر',
       missingScope: 'أحد المصادر المختارة لم يعد متاحًا. ارفض التشغيل وأعد تحضير طلب جديد.',
+      provenance: 'مصدر الأدلة', partial: 'نص مفرغ جزئي · راجع القيود',
+      sourceId: 'معرّف مصدر الدراسة', originId: 'معرّف المصدر الأصلي', revision: 'إصدار اللقطة',
+      collected: 'تاريخ الجمع', noRevision: 'غير مسجل',
       states: { planned: 'مخطط', awaiting_approval: 'بانتظار الموافقة', running: 'جارٍ التنفيذ',
         cancelling: 'جارٍ الإلغاء', paused: 'متوقف مؤقتًا', needs_input: 'يتطلب إدخالًا',
         blocked: 'محظور', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغى' }
@@ -264,8 +270,18 @@
     <div class="research-result" aria-label={t.title + ' report'}>
       {#each report.sources as item (item.study_source_id)}
         <div class="result-source">
-          <strong dir="auto">{item.kind} · {item.locator}</strong>
+          <strong dir="auto">{item.kind === 'transcript' ? t.transcript : t.research} · {item.locator}</strong>
+          {#if item.access === 'partial'}<p class="muted" role="status">{t.partial}</p>{/if}
           <p>{item.observations.length} {t.observations}</p>
+          <details class="research-provenance">
+            <summary>{t.provenance}</summary>
+            <dl>
+              <dt>{t.sourceId}</dt><dd><code dir="ltr">{item.study_source_id}</code></dd>
+              <dt>{t.originId}</dt><dd><code dir="ltr">{item.reference_id}</code></dd>
+              <dt>{t.revision}</dt><dd dir="auto">{item.origin_revision ?? t.noRevision}</dd>
+              <dt>{t.collected}</dt><dd dir="auto">{item.collected_at}</dd>
+            </dl>
+          </details>
           {#if item.observations.length}
             <ul class="observations">
               {#each item.observations as observation, i (i)}
@@ -328,6 +344,11 @@
   .research-source small, .result-source p { font-size: var(--text-xs); color: var(--color-text-muted); }
   .result-source { border-top: 1px solid var(--color-border); padding-block: 9px; overflow-wrap: anywhere; }
   .research-result { margin-block: 12px; }
+  .research-provenance { margin-block: 8px; }
+  .research-provenance dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 5px 12px; padding-inline-start: 8px; }
+  .research-provenance dt { color: var(--color-text-muted); }
+  .research-provenance dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+  .research-provenance code { font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
   .research-approval-scope { width: 100%; font-size: var(--text-xs); }
   .research-approval-scope ul { margin: 8px 0; padding-inline-start: 20px; display: grid; gap: 6px; }
   .research-approval-scope li { overflow-wrap: anywhere; display: grid; gap: 3px; }
