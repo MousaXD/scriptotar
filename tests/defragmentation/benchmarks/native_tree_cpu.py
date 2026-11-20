@@ -53,13 +53,21 @@ def snapshot(root_pid: int, expected_executable: Path) -> dict:
         raise ValueError("root process absent from process enumeration")
     records = {}
     for pid in sorted(members):
+        # A PID/birth identity alone cannot tell which child executable was
+        # measured. Bracket kernel image identity around the CPU read too.
+        image_before = process_image(pid)
         birth_before = process_instance_id(pid)
         cpu_ns = process_cpu_time_ns(pid)
         birth_after = process_instance_id(pid)
+        image_after = process_image(pid)
         if (birth_before is None or birth_after != birth_before
+                or image_before is None or image_after != image_before
                 or type(cpu_ns) is not int or cpu_ns < 0):
-            raise ValueError("incomplete or PID-reused process-tree CPU sample")
-        records[str(pid)] = {"birth_id": birth_before, "cpu_ns": cpu_ns}
+            raise ValueError("incomplete or PID-reused process-tree CPU/image sample")
+        records[str(pid)] = {
+            "birth_id": birth_before, "image_path_kernel_observed": str(image_before),
+            "cpu_ns": cpu_ns,
+        }
     # Child creation/removal during enumeration destroys a whole-tree claim.
     if (descendants(root_pid, _processes()) != members
             or process_instance_id(root_pid) != root_birth
@@ -93,6 +101,9 @@ def compare(first: dict, second: dict) -> dict:
         if (not isinstance(old, dict) or not isinstance(new, dict)
                 or not isinstance(old.get("birth_id"), str)
                 or new.get("birth_id") != old["birth_id"]
+                or not isinstance(old.get("image_path_kernel_observed"), str)
+                or not old["image_path_kernel_observed"]
+                or new.get("image_path_kernel_observed") != old["image_path_kernel_observed"]
                 or type(old.get("cpu_ns")) is not int
                 or type(new.get("cpu_ns")) is not int
                 or not 0 <= old["cpu_ns"] <= new["cpu_ns"]):
@@ -145,7 +156,7 @@ def sample(pid: int, executable: Path, package: Path, source_sha: str,
         "duration_seconds_requested": duration_seconds,
         "before": before, "after": after, "delta": result,
         "limitations": (
-            "PID ancestry alone cannot attest WebKitGTK/WebView2 helpers; reparented, "
+            "Kernel image paths and PID ancestry still cannot attest complete WebKitGTK/WebView2 helper coverage; reparented, "
             "unreadable, or transient descendants may be omitted. Tree churn is "
             "rejected at observed boundaries but can occur between snapshots. "
             "CPU timestamp brackets are non-atomic, and user-provided source "
