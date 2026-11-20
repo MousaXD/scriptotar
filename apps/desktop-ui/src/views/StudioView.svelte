@@ -824,7 +824,9 @@
   }
 
   async function showSource(ref: StudySourceRef) {
-    if (loading || busy) return;
+    // Initial source deep-links are valid while the Study list first loads.
+    // Only block stale outgoing Study previews during a Study-to-Study read.
+    if ((loading && record) || busy) return;
     revokeConfirmation = null;
     const epoch = ++sourceRequest;
     selectedSource = ref;
