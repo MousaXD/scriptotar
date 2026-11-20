@@ -61,6 +61,13 @@
       run.plan.steps.length === 1 && run.plan.steps[0].input.tool === 'analyze_evidence';
   }
 
+  function hasCurrentRunSources(run: StudyResearchRun): boolean {
+    const ids = run.plan.steps[0]?.input.source_ids;
+    return Array.isArray(ids) && ids.length >= 1 && ids.length <= 8 &&
+      new Set(ids).size === ids.length &&
+      ids.every((id) => sources.some((source) => source.id === id && source.available));
+  }
+
   function showError(cause: unknown): string {
     return cause instanceof Error ? cause.message : t.error;
   }
@@ -87,6 +94,9 @@
     loading = true;
     errorText = '';
     report = null;
+    // A failed refresh must never leave an old approval panel actionable.
+    activeRun = null;
+    sources = [];
     try {
       const [attached, runs] = await Promise.all([
         api.listStudyResearchSources(projectId, studyId),
@@ -150,7 +160,8 @@
   }
 
   async function decide(action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<void> {
-    if (!activeRun || busy || !scoped(activeRun)) return;
+    if (!activeRun || busy || loading || !scoped(activeRun) ||
+        (action === 'approve' && !hasCurrentRunSources(activeRun))) return;
     const requestEpoch = ++epoch;
     busy = true;
     errorText = '';
@@ -208,15 +219,15 @@
     <p class="muted" role="status">{t.state}: {t.states[activeRun.state]}</p>
     <div class="review-actions">
       {#if activeRun.state === 'awaiting_approval'}
-        <button type="button" class="button primary" disabled={busy}
+        <button type="button" class="button primary" disabled={busy || loading || !hasCurrentRunSources(activeRun)}
           on:click={() => void decide('approve')}>{t.approve}</button>
-        <button type="button" class="button secondary" disabled={busy}
+        <button type="button" class="button secondary" disabled={busy || loading}
           on:click={() => void decide('deny')}>{t.deny}</button>
       {:else if activeRun.state === 'blocked'}
-        <button type="button" class="button secondary" disabled={busy}
+        <button type="button" class="button secondary" disabled={busy || loading}
           on:click={() => void decide('recover')}>{t.recover}</button>
       {:else if ['planned', 'running', 'paused', 'needs_input'].includes(activeRun.state)}
-        <button type="button" class="button secondary" disabled={busy}
+        <button type="button" class="button secondary" disabled={busy || loading}
           on:click={() => void decide('cancel')}>{t.cancel}</button>
       {/if}
     </div>
