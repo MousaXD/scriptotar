@@ -1746,8 +1746,8 @@ fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
 fn canonical_sink_revalidates_duplicate_beat_ids_without_partial_writes() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
-    batch.candidates[0].draft.beats[1].id =
-        batch.candidates[0].draft.beats[0].id.clone();
+    let existing_beat_id = batch.candidates[0].draft.beats[0].id.clone();
+    batch.candidates[0].draft.beats[1].id = existing_beat_id;
     let mut sink = CanonicalSqliteCandidateStore {
         store: &db,
         current: &current,
