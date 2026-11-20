@@ -1,0 +1,68 @@
+# VM-bounded RegExp wrapper prototype; original source EXACT, NODE ONLY.
+# DO NOT merge as parser repair: timeouts throw, 19/12 strict boolean corpus
+# has not been passed, full compiler and API not yet bounded.
+name: Agent11 prototype VM-bounded picomatch RegExp wrapper (NOT remediation)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-vm-regexp-wrapper-prequalification.yml'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_eval.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vm-prototype:
+    name: Source-locked 4.0.7 normal behavior and explicit timeout exceptions
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact source without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set original Node22 runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout pinned trusted source-pattern guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify original dependency/source identities and guard BEFORE npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_eval.mjs
+      - name: Install original 4.0.7 locked npm toolchain WITHOUT replacement
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Check public API parity and fail-closed VM timebox with entire runner deadline
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 30s node tests/defragmentation/security/agent11_vm_regex_wrapper_eval.mjs
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo 'Research prototype validated only in finite examples. NO package override, no general fix, no independent release approval.'
