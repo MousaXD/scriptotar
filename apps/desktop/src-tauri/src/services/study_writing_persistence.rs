@@ -32,6 +32,73 @@ fn denied(reason: &'static str) -> WritingWorkflowError {
     WritingWorkflowError::InvalidContext(reason)
 }
 
+/// Canonical draft IDs are bound to the same scoped writing run in every
+/// receipt path. A receipt must never point to three unrelated Study drafts.
+pub(super) fn canonical_draft_ids(project: Uuid, study: Uuid, run_id: &str) -> [Uuid; 3] {
+    std::array::from_fn(|index| {
+        let material = format!(
+            "scriptotar/writing-batch/v1/{project}/{study}/{run_id}/{index}"
+        );
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
+    })
+}
+
+/// Check immutable v1 snapshots, not the mutable editor's latest body. This
+/// protects lost-response reconciliation after a human makes further edits.
+pub(super) fn verify_committed_versions(
+    db: &Connection,
+    batch: &GeneratedBatch,
+    ids: &[Uuid; 3],
+) -> WriteResult<()> {
+    if batch.candidates.len() != 3
+        || *ids != canonical_draft_ids(
+            batch.context.project_id,
+            batch.context.study_id,
+            &batch.run_id,
+        )
+    {
+        return Err(WritingWorkflowError::PersistFailed(
+            "writing receipt draft IDs do not match run identity".into(),
+        ));
+    }
+    for (id, candidate) in ids.iter().zip(&batch.candidates) {
+        let saved: Option<(String, String, String)> = db
+            .query_row(
+                "SELECT v.title,v.body,sr.structured_json
+                 FROM creative_drafts d
+                 JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
+                 JOIN study_writing_revisions sr
+                   ON sr.draft_id=d.id AND sr.version=1
+                 WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                params![
+                    id.to_string(),
+                    batch.context.project_id.to_string(),
+                    batch.context.study_id.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(error)?;
+        let Some((title, body, structured)) = saved else {
+            return Err(WritingWorkflowError::PersistFailed(
+                "writing receipt is missing a canonical initial version".into(),
+            ));
+        };
+        let restored: GeneratedCandidate = serde_json::from_str(&structured).map_err(|_| {
+            WritingWorkflowError::PersistFailed("corrupt structured initial draft".into())
+        })?;
+        if &restored != candidate
+            || title != candidate.draft.title.trim()
+            || body != export_candidate(candidate)
+        {
+            return Err(WritingWorkflowError::PersistFailed(
+                "writing receipt does not match immutable initial draft".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Requires a canonical, active-project-scoped CurrentStudy implementation.
 /// A test FixedStudy is NOT sufficient for live Tauri wiring. This adapter
 /// acquires SQLite's write reservation BEFORE refreshing that context, making
@@ -85,24 +152,7 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
         }
         let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
             .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
-        for id in ids {
-            let initial: i64 = db
-                .query_row(
-                    "SELECT COUNT(*) FROM creative_drafts d
-                     JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
-                     JOIN study_writing_revisions sr
-                       ON sr.draft_id=d.id AND sr.version=1
-                     WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                    params![id.to_string(), project, study],
-                    |row| row.get(0),
-                )
-                .map_err(error)?;
-            if initial != 1 {
-                return Err(WritingWorkflowError::PersistFailed(
-                    "saved writing receipt missing canonical initial draft".into(),
-                ));
-            }
-        }
+        verify_committed_versions(&db, &original, &ids)?;
         Ok(Some(ids))
     }
 }
@@ -291,22 +341,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             }
             let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
                 .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
-            for id in ids {
-                let exists: i64 = tx
-                    .query_row(
-                        "SELECT COUNT(*) FROM creative_drafts d
-                     JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
-                     WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                        params![id.to_string(), project, study],
-                        |row| row.get(0),
-                    )
-                    .map_err(error)?;
-                if exists != 1 {
-                    return Err(WritingWorkflowError::PersistFailed(
-                        "receipt has missing initial draft".into(),
-                    ));
-                }
-            }
+            verify_committed_versions(&tx, &normalized, &ids)?;
             tx.commit().map_err(error)?;
             return Ok(ids);
         }
@@ -379,13 +414,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 "Study has reached its 200-draft limit".into(),
             ));
         }
-        let ids: [Uuid; 3] = std::array::from_fn(|index| {
-            let material = format!(
-                "scriptotar/writing-batch/v1/{project}/{study}/{}/{}",
-                batch.run_id, index
-            );
-            Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
-        });
+        let ids = canonical_draft_ids(project, study, &batch.run_id);
         let now = now_rfc3339();
         let consumed = tx
             .execute(
