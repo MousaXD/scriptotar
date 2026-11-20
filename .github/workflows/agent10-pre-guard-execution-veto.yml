@@ -40,6 +40,18 @@ jobs:
       - name: Assert reviewed PR158 SHA
         shell: bash
         run: test "$(git -C .agent10-pr158-target rev-parse HEAD)" = '32c41adc6a600b276a1c1886d5b72b7bdef2b8a8'
+      - name: Checkout immutable reviewed guard for benign worktree tamper control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent10-immutable-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Benign control — Git HEAD alone does not attest guard worktree bytes
+        run: python3 tests/defragmentation/security/agent10_guard_worktree_integrity.py --checkout .agent10-immutable-guard
       - name: Independent negative-mutation self-test
         run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --self-test
       - name: Strict original PR158 pre-guard audit (RED is release veto)
