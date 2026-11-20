@@ -417,7 +417,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
     def test_native_latency_threshold_is_always_at_least_ten(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external-three-synthetic.jsonl"
-            trace.write_text("\\n".join(json.dumps(self.event(i)) for i in range(3)))
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(3)))
             for invalid in (3, 9, 10.5, True, 101, None):
                 with self.subTest(min_trials=invalid):
                     with self.assertRaisesRegex(ValueError, "integer in 10..100"):
