@@ -306,12 +306,26 @@ mod recovery_driver_tests {
             tokens: 500,
             cost_microusd: 2500,
         };
+        // Model suffixes must never make separate v12 provider receipt
+        // namespaces for the same underlying OpenAI account.
+        assert_eq!(
+            SqlitePaidEffectFence::from_approved_context(
+                services.operational_store(),
+                &context,
+                &approval,
+                &wire_sha256,
+                "openai:model-alias",
+                limits,
+            )
+            .err(),
+            Some(ConsentError::InvalidRequest)
+        );
         let fence = SqlitePaidEffectFence::from_approved_context(
             services.operational_store(),
             &context,
             &approval,
             &wire_sha256,
-            "openai:test-model",
+            "openai",
             limits,
         )
         .unwrap();
@@ -375,7 +389,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &"d".repeat(64),
-            "openai:test-model",
+            "openai",
             ExternalEffectLimits {
                 tokens: 500,
                 cost_microusd: 2500,
@@ -422,7 +436,7 @@ mod recovery_driver_tests {
         };
         let effect_id = format!("provider:{}:{}", context.run_id, approval);
         let fence = SqlitePaidEffectFence::from_approved_context(
-            store.clone(), &context, &approval, &wire_sha256, "openai:test-model", limits,
+            store.clone(), &context, &approval, &wire_sha256, "openai", limits,
         ).unwrap();
         fence.reserve_once(&effect_id).unwrap();
         fence.mark_dispatched_once(&effect_id).unwrap();
@@ -449,7 +463,7 @@ mod recovery_driver_tests {
         // bytes must never be able to settle another approval's reservation.
         let stale_wire_fence = SqlitePaidEffectFence::from_approved_context(
             store.clone(), &context, &approval, &"a".repeat(64),
-            "openai:test-model", limits,
+            "openai", limits,
         ).unwrap();
         assert_eq!(
             stale_wire_fence.settle(&effect_id, "verified-late-1", &usage),
@@ -473,7 +487,7 @@ mod recovery_driver_tests {
 
         let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
         let after_restart = SqlitePaidEffectFence::from_approved_context(
-            reopened, &context, &approval, &wire_sha256, "openai:test-model", limits,
+            reopened, &context, &approval, &wire_sha256, "openai", limits,
         ).unwrap();
         assert_eq!(
             after_restart.settle(&effect_id, "verified-late-1", &usage),
@@ -512,7 +526,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &wire_sha256,
-            "openai:test-model",
+            "openai",
             limits,
         )
         .unwrap();
@@ -573,7 +587,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &wire_sha256,
-            "openai:test-model",
+            "openai",
             limits,
         )
         .unwrap();
