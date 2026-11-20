@@ -738,6 +738,114 @@ mod recovery_driver_tests {
     }
 
     #[test]
+    fn archived_study_can_record_prior_charge_but_not_reopen_a_dispatch() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let approval = "7".repeat(64);
+        let wire_sha256 = "8".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+
+        // Archive is a legitimate user action AFTER irreversible provider I/O.
+        // It may forbid future writes, but must not erase billing evidence.
+        store.archive_study(project, study).unwrap();
+        fence.mark_uncertain(&effect_id);
+        let uncertain = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(uncertain.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let usage = ActualUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            tool_calls: 1,
+            elapsed_ms: 10,
+            cost_microusd: 300,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "archived-charge-1", &usage),
+            Ok(())
+        );
+        let record = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, ExternalEffectStatus::Completed);
+        assert_eq!(record.receipt_id.as_deref(), Some("archived-charge-1"));
+        assert_eq!(record.actual_cost_microusd, 300);
+    }
+
+    #[test]
+    fn archived_reserved_effect_cannot_gain_first_send_permit() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let approval = "9".repeat(64);
+        let wire_sha256 = "a".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        store.archive_study(project, study).unwrap();
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let cancelled = store
+            .request_external_cancel(effect_key(&context).unwrap())
+            .unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Cancelled);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key);
+        // The historical v8 read API intentionally refuses archived scopes.
+        assert!(v8.is_err());
+        let stored = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, ExternalEffectStatus::Cancelled);
+        assert_eq!(stored.actual_cost_microusd, 0);
+    }
+
+    #[test]
     fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
         let (_directory, services, context) = approved_host();
         let double = LocalProviderDouble::default();
