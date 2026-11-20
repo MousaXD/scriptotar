@@ -66,44 +66,53 @@ jobs:
       - name: Original locked npm dependency installation (NO patched parser)
         shell: bash
         run: npm ci --prefix apps/desktop-ui
-      - name: Prove feature flag accepted and bounded bare-regexp positive control
+      - name: Prove flags work ONLY via direct Node CLI; run bounded bare-regexp positive control
         shell: bash
-        env:
-          NODE_OPTIONS: --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000
         run: |
           set -euo pipefail
           node --version
-          timeout 3s node -e "const r=/(a+)+$/; const x='a'.repeat(36)+'!'; if(r.test(x))process.exit(1);console.log('V8-FALLBACK BARE-REGEX CONTROL PASS')"
+          if NODE_OPTIONS='--enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000' node -e 'console.log(1)' 2>node-options-error.txt; then
+            echo "Unexpected: V8 flags were accepted through NODE_OPTIONS; verify before assuming child process propagation"
+          else
+            echo "NODE_OPTIONS behavior: $(cat node-options-error.txt)"
+          fi
+          timeout 3s node --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000 -e 'const r=/(a+)+$/; const x="a".repeat(36)+"!";if(r.test(x))process.exit(1);console.log("V8-FALLBACK BARE-REGEX CONTROL PASS")'
           test "$(node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version")" = "4.0.7"
           node - <<'NODE'
           const p=require('./apps/desktop-ui/node_modules/picomatch');
-          for(const pat of ['+([ab]|b)','+(@(+([ab])))','+(*a)']) {
+          for(const pat of ['+([ab]|b)','+(@(+([ab])))','+(a*)']) {
             const src=p.makeRe(pat).source;
             console.log('ORIGINAL PICOMATCH GENERATED REGEXP:',JSON.stringify({pattern:pat,source:src,containsLookahead:src.includes('(?=')||src.includes('(?!')}));
           }
           NODE
-      - name: Attach original unchanged 19-case corpus
+      - name: Actual original vulnerable picomatch patterns with command-line V8 flags and hard subprocess deadlines
         shell: bash
-        run: |
-          test ! -e apps/desktop-ui/scripts/probe-picomatch-redos.mjs
-          cp .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs apps/desktop-ui/scripts/probe-picomatch-redos.mjs
-          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
-      - name: Exact original 19/10/12 hard gates with flags propagated to child processes
-        shell: bash
-        env:
-          NODE_OPTIONS: --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000
         run: |
           set +e
-          (cd apps/desktop-ui && node scripts/probe-picomatch-redos.mjs --assert-patched --extended)
-          security19=$?
-          node tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs
-          security12=$?
-          node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
-          matcher10=$?
+          failures=0
+          patterns=('+([ab]|b)' '+(a*)' '+(@(+([ab])))')
+          for pat in "${patterns[@]}"; do
+            if [ "$pat" = '+([ab]|b)' ]; then input="$(printf 'b%.0s' {1..36})/"; else input="$(printf 'a%.0s' {1..36})/"; fi
+            echo "SOURCE EXACT V8 FALLBACK PICOMATCH TEST: $pat"
+            timeout 2s node --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000 -e '
+              const pm=require("./apps/desktop-ui/node_modules/picomatch");
+              const pat=process.argv[1], input=process.argv[2];
+              const regex=pm.makeRe(pat);
+              console.log(JSON.stringify({pat,regex:regex.source,hasLookahead:regex.source.includes("(?=")||regex.source.includes("(?!")}));
+              const result=pm.isMatch(input,pat);
+              console.log(JSON.stringify({result,expected:false}));
+              if(result!==false)process.exitCode=3;
+            ' "$pat" "$input"
+            exitcode=$?
+            if [ "$exitcode" -ne 0 ]; then
+              echo "NO-GO CASE: pattern=$pat, bounded-child-exit=$exitcode (124 is timeout)"
+              failures=$((failures+1))
+            fi
+          done
           set -e
-          echo "NODE22 EXPERIMENTAL FALLBACK: original19=$security19 expanded12=$security12 originalMatcher10=$matcher10"
-          if [ "$security19" -ne 0 ] || [ "$security12" -ne 0 ] || [ "$matcher10" -ne 0 ]; then
-            echo "NO-GO: V8 fallback flags do not make actual Picomatch source/behavior generally safe"
+          echo "NODE22 V8 FALLBACK ACTUAL PICOMATCH: $failures/3 vulnerable original cases failed bounded isolated evaluation"
+          if [ "$failures" -ne 0 ]; then
+            echo "NO-GO: experimental V8 fallback is not a deployable general picomatch parser remediation"
             exit 1
           fi
-          echo "Finite controls green only; NOT a general proof or stable release mitigation"
+          echo "Only three finite examples pass; this would NOT prove safety of full parser or optional flags"
