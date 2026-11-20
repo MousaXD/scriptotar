@@ -1776,7 +1776,7 @@ mod tests {
             .read_study_research_report(project, study, approved_artifact)
             .is_err());
         db.execute(
-            "UPDATE research_items SET view_count=0 WHERE id=?1
+            "UPDATE research_items SET view_count=0 WHERE id=?1",
             params![research_items[0].id.to_string()],
         )
         .unwrap();
