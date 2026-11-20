@@ -12,7 +12,7 @@ from pathlib import Path
 
 PIN = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
 GUARD_BLOB = "5c746abd3caf414ba2c80be825d66983312236c6"
-PYTHON_BASELINE = "514ec3ee571c4309e5b7473b8a65ab4fb73f497a"
+PYTHON_BASELINE = "525cf96d61626508aed7c1bc73ad6299fad5a123"
 TARGETS = (
     (".github/workflows/windows-tauri.yml", "build-windows-installer"),
     (".github/workflows/installed-webview-acceptance.yml", "linux-webkit"),
@@ -227,7 +227,7 @@ jobs:
       - name: Verify reviewed Python/runtime/QA inputs before script execution
         run: |
           set -euo pipefail
-          reviewed=514ec3ee571c4309e5b7473b8a65ab4fb73f497a
+          reviewed=525cf96d61626508aed7c1bc73ad6299fad5a123
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           if ! git diff --quiet "$reviewed" HEAD -- . \
