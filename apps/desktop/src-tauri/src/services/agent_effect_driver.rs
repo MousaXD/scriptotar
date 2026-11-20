@@ -797,6 +797,23 @@ mod recovery_driver_tests {
         assert_eq!(record.status, ExternalEffectStatus::Completed);
         assert_eq!(record.receipt_id.as_deref(), Some("archived-charge-1"));
         assert_eq!(record.actual_cost_microusd, 300);
+        // Allow archived owner's reconciliation, never cross-tenant disclosure.
+        let foreign_project = ExternalEffectKey {
+            project: Uuid::new_v4(),
+            study,
+            run_id: &context.run_id,
+            step_id: &context.step_id,
+            idempotency_key: &context.idempotency_key,
+        };
+        assert!(store.get_external_effect(foreign_project).is_err());
+        let foreign_study = ExternalEffectKey {
+            project,
+            study: Uuid::new_v4(),
+            run_id: &context.run_id,
+            step_id: &context.step_id,
+            idempotency_key: &context.idempotency_key,
+        };
+        assert!(store.get_external_effect(foreign_study).is_err());
     }
 
     #[test]
