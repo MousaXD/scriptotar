@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Independent Agent10 Git-tree allowlist adversarial probe for PR158.
+"""Independent Agent10 Git-tree allowlist adversarial probe for combined PR168.
 
-Check exact real PR158-vs-integration tree diff, then independently exercise
+Check exact real combined PR168-vs-integration tree diff, then independently exercise
 the *actual git diff/pathspec command semantics* against disposable commits.
-Never run code from PR158, alter tracked product files, or write into main.
+Never run code from combined PR168, alter tracked product files, or write into main.
 """
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-BASE = "525cf96d61626508aed7c1bc73ad6299fad5a123"
-TARGET = "c11eef988c9c2ee86fdd50c547ba4a1b3554cbd2"
+BASE = "0f8e33f0e2abef003440ef27ef76b7cb448d2b32"
+TARGET = "a521b706feb278f101fe77fd9fae4445fddd9e0b"
 ALLOWED = (
     ".github/workflows/installed-webview-acceptance.yml",
     ".github/workflows/windows-tauri.yml",
+    ".github/workflows/linux-tauri.yml",
 )
-PATHSPEC = (".", ":(exclude)" + ALLOWED[1], ":(exclude)" + ALLOWED[0])
+PATHSPEC = (".", *[":(exclude)" + path for path in ALLOWED])
 INJECTED = (
     ("Rust build.rs code", "apps/desktop/src-tauri/build.rs", "fn main() { println!(\"cargo:warning=changed\"); }\n"),
     ("frontend install hook", "apps/desktop-ui/package.json", '{"scripts":{"preinstall":"echo changed"}}\n'),
@@ -28,6 +29,11 @@ INJECTED = (
     ("extra unreviewed workflow", ".github/workflows/new-privileged-workflow.yml", "name: attack-control\n"),
     ("new bundled resource", "apps/desktop/src-tauri/resources/injected.txt", "changed\n"),
     ("native runner test", "tests/defragmentation/native-e2e/windows_webview2.ps1", "# changed\n"),
+    ("Python requirements", "sidecars/transcription/requirements-bundle.txt", "untrusted\n"),
+    ("other release workflow", ".github/workflows/tauri-next-release.yml", "permissions: write-all\n"),
+    ("CODEOWNERS", ".github/CODEOWNERS", "* @attacker\n"),
+    ("unreviewed MCP script", "scripts/prepare_mcp_tools.py", "print('attacker')\n"),
+    ("new npm config", "apps/desktop-ui/.npmrc", "ignore-scripts=false\n"),
 )
 
 
@@ -45,23 +51,23 @@ def scoped_diff(repo: Path, old: str, new: str) -> int:
 def verify_real_source(repo: Path) -> None:
     actual = git(repo, "rev-parse", "HEAD").stdout.strip()
     if actual != TARGET:
-        raise AssertionError(f"Exact PR158 target drift: {actual}")
+        raise AssertionError(f"Exact combined PR168 target drift: {actual}")
     # The immutable integration SHA may need an explicit shallow fetch.
     if git(repo, "cat-file", "-e", BASE + "^{commit}", check=False).returncode:
         git(repo, "fetch", "--no-tags", "--depth=1", "origin", BASE)
     assert git(repo, "cat-file", "-t", BASE).stdout.strip() == "commit"
     names = git(repo, "diff", "--name-only", BASE, TARGET).stdout.splitlines()
     assert sorted(names) == sorted(ALLOWED), (
-        f"Unexpected real PR158 changed source paths: {names}"
+        f"Unexpected real combined PR168 changed source paths: {names}"
     )
     assert scoped_diff(repo, BASE, TARGET) == 0, (
-        "Real PR158 tree changed a forbidden path"
+        "Real combined PR168 tree changed a forbidden path"
     )
-    print(f"PASS: exact source {TARGET} changes ONLY the two expected workflow paths")
+    print(f"PASS: exact source {TARGET} changes ONLY the three expected workflow paths")
 
 
 def isolated_negative_controls() -> None:
-    with tempfile.TemporaryDirectory(prefix="agent10-two-file-tree-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="agent10-three-file-tree-") as tmp:
         repo = Path(tmp)
         git(repo, "init", "-q")
         git(repo, "config", "user.name", "Agent10 CI-only negative control")
@@ -78,12 +84,12 @@ def isolated_negative_controls() -> None:
         for name in ALLOWED:
             (repo / name).write_text("name: reviewed-workflow-only\n", encoding="utf-8")
         git(repo, "add", "--all")
-        git(repo, "commit", "-qm", "two reviewed workflows only")
+        git(repo, "commit", "-qm", "three reviewed workflows only")
         acceptable = git(repo, "rev-parse", "HEAD").stdout.strip()
-        assert scoped_diff(repo, base, acceptable) == 0, "Valid two-YAML diff was rejected"
+        assert scoped_diff(repo, base, acceptable) == 0, "Valid three-YAML diff was rejected"
 
         # Every injected unreviewed path must make the ORIGINAL Git pathspec RED,
-        # even though the two reviewed workflow changes are still present.
+        # even though the three reviewed workflow changes are still present.
         for label, name, payload in INJECTED:
             git(repo, "reset", "--hard", acceptable)
             git(repo, "clean", "-fd")
@@ -115,7 +121,7 @@ def isolated_negative_controls() -> None:
         )
         print("PASS: deny committed unreviewed deletion of package.json")
 
-    print(f"PASS: actual Git-tree behavior: two permitted YAML changes + {len(INJECTED)+1} denied mutations")
+    print(f"PASS: actual Git-tree behavior: three permitted YAML changes + {len(INJECTED)+1} denied mutations")
 
 
 def main() -> int:
