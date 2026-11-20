@@ -727,8 +727,29 @@ pub(super) fn read_study_research_artifact(
         .map(|source| source.study_source_id)
         .collect();
     let approved_ids = run.plan.steps.first().and_then(|step| selected_ids(&step.input).ok());
+    // The observation time is factual provenance: it must be consistent
+    // with the persisted, user-approved actual dispatch, not merely an
+    // arbitrary timestamp in a locally editable report JSON file.
+    let dispatched_ms = run
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == scriptotar_agent::AuditKind::Dispatched
+                && event.step_id.as_deref() == Some(saved.step_id.as_str())
+        })
+        .map(|event| event.at_ms);
+    let analyzed_ms = u64::try_from(saved.report.analyzed_at.unix_seconds)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1_000))
+        .and_then(|ms| {
+            ms.checked_add(u64::from(saved.report.analyzed_at.nanosecond / 1_000_000))
+        });
     if !valid_research_run(&run, project, study)
         || run.state != scriptotar_agent::RunState::Completed
+        || !run.steps[0].approved
+        || saved.report.analyzed_at.nanosecond >= 1_000_000_000
+        || !matches!((dispatched_ms, analyzed_ms), (Some(dispatched), Some(analyzed))
+            if dispatched.abs_diff(analyzed) <= 10_000)
         || approved_ids.as_deref() != Some(report_ids.as_slice())
         || run.steps.first().is_none_or(|step| {
             step.idempotency_key != saved.idempotency_key
@@ -1765,6 +1786,27 @@ mod tests {
         .unwrap();
         swapped.report = unapproved_report;
         fs::write(&approved_path, serde_json::to_vec(&swapped).unwrap()).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
+        fs::write(&approved_path, original_approved_bytes).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_ok());
+
+        // The report time controls metric freshness. Recreating a perfect
+        // canonical report for an invented day must still fail the immutable
+        // dispatch-time provenance check, even when source IDs all match.
+        let mut shifted: ReportEnvelope =
+            serde_json::from_slice(&fs::read(&approved_path).unwrap()).unwrap();
+        let earlier = ObservationTimestamp {
+            unix_seconds: shifted.report.analyzed_at.unix_seconds - 86_400,
+            nanosecond: shifted.report.analyzed_at.nanosecond,
+        };
+        shifted.report = inspect_selected(&services, project, study, &selected, earlier)
+            .unwrap()
+            .1;
+        fs::write(&approved_path, serde_json::to_vec(&shifted).unwrap()).unwrap();
         assert!(services
             .read_study_research_report(project, study, approved_artifact)
             .is_err());
