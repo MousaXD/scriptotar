@@ -563,6 +563,68 @@ function Get-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
   }
 }
 
+function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [string]$purpose, [int]$count = 12) {
+  # Real installed WebView2 keyboard actions and UIA focus, not DOM simulation.
+  # This is read-only review evidence and NEVER an automatic RTL/visual PASS.
+  $observation = [ordered]@{
+    kind = 'installed-WebView2-real-Tab-UIA'
+    owner_hwnd = [string]$hwnd
+    events = @()
+    certifies_rtl_or_visual = $false
+  }
+  try {
+    $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+    if (-not $owner) { throw 'Installed WebView2 UIA owner not available for focus audit' }
+    $rootId = ($owner.GetRuntimeId() -join ',')
+    if (-not $rootId) { throw 'Installed WebView2 UIA owner has no RuntimeId' }
+    if (-not [NativeWebViewWindow]::SetForegroundWindow($hwnd)) {
+      throw 'Installed WebView2 window could not be foregrounded for native Tab'
+    }
+    for ($i = 0; $i -lt $count; $i++) {
+      [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
+      Start-Sleep -Milliseconds 180
+      $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+      if (-not $focused) {
+        $observation.events += @{ tab_index = $i + 1; focused = $false }
+        continue
+      }
+      # UIA focus can belong to Windows itself. Authenticate ancestry under
+      # the exact installed WebView2 HWND before accepting an event as app focus.
+      $withinRoot = $false
+      $walk = $focused
+      for ($depth = 0; $depth -lt 48 -and $null -ne $walk; $depth++) {
+        if (($walk.GetRuntimeId() -join ',') -ceq $rootId) {
+          $withinRoot = $true
+          break
+        }
+        $walk = [System.Windows.Automation.TreeWalker]::RawViewWalker.GetParent($walk)
+      }
+      $rect = $focused.Current.BoundingRectangle
+      $label = [string]$focused.Current.Name
+      if ($label.Length -gt 120) { $label = $label.Substring(0, 120) }
+      $observation.events += @{
+        tab_index = $i + 1
+        within_installed_webview = $withinRoot
+        name = $label
+        role = [string]$focused.Current.ControlType.ProgrammaticName
+        focusable = [bool]$focused.Current.IsKeyboardFocusable
+        has_focus = [bool]$focused.Current.HasKeyboardFocus
+        offscreen = [bool]$focused.Current.IsOffscreen
+        bounds = @{
+          x = [double]$rect.X; y = [double]$rect.Y
+          width = [double]$rect.Width; height = [double]$rect.Height
+        }
+      }
+    }
+    if (@($observation.events | Where-Object { $_.within_installed_webview }).Count -eq 0) {
+      throw 'Real Tab keys yielded no UIA focus owned by the installed WebView2 root'
+    }
+  } catch {
+    $report.native_layout_observation_errors[$purpose] = $_.Exception.Message
+  }
+  $report.native_layout_observations[$purpose] = $observation
+}
+
 function Save-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
                                       [string]$purpose) {
   try {
@@ -1854,6 +1916,7 @@ try {
         Click-InstalledControl $arabicHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-reopened.png')
+        Save-InstalledNativeTabOrder $arabicHwnd 'arabic_reopened_native_tab_order'
 
         Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'
         Wait-InstalledComboValue $arabicHwnd 'Interface language' 'EN'
