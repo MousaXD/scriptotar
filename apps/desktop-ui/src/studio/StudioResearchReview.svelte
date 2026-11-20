@@ -26,6 +26,12 @@
       provenance: 'Source provenance', partial: 'Partial transcript · review limitations',
       sourceId: 'Study source ID', originId: 'Origin ID', revision: 'Snapshot revision',
       collected: 'Collected at', noRevision: 'Not recorded',
+      metrics: 'Observed platform counters', views: 'Views', likes: 'Likes',
+      comments: 'Comments', interactions: 'Observed interactions per view',
+      relativeViews: 'Views vs same-creator peer median', peers: 'eligible peers',
+      noPeerComparison: 'No supported same-creator peer comparison',
+      features: 'Transcript features across selected sources',
+      selectedSources: 'selected sources', transcriptCaveat: 'Transcript hypotheses, not proof of audience retention.',
       states: { planned: 'Planned', awaiting_approval: 'Awaiting approval', running: 'Running',
         cancelling: 'Cancelling', paused: 'Paused', needs_input: 'Needs input',
         blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
@@ -46,11 +52,34 @@
       provenance: 'مصدر الأدلة', partial: 'نص مفرغ جزئي · راجع القيود',
       sourceId: 'معرّف مصدر الدراسة', originId: 'معرّف المصدر الأصلي', revision: 'إصدار اللقطة',
       collected: 'تاريخ الجمع', noRevision: 'غير مسجل',
+      metrics: 'إحصاءات المنصة المرصودة', views: 'المشاهدات', likes: 'الإعجابات',
+      comments: 'التعليقات', interactions: 'التفاعلات المرصودة لكل مشاهدة',
+      relativeViews: 'المشاهدات مقارنة بوسيط مقاطع المنشئ المماثلة', peers: 'مقاطع مقارنة مؤهلة',
+      noPeerComparison: 'لا تتوفر مقارنة مدعومة لمقاطع المنشئ',
+      features: 'سمات النصوص عبر المصادر المختارة',
+      selectedSources: 'مصادر مختارة', transcriptCaveat: 'فرضيات مستمدة من النصوص، وليست دليلاً على الاحتفاظ بالمشاهدين.',
       states: { planned: 'مخطط', awaiting_approval: 'بانتظار الموافقة', running: 'جارٍ التنفيذ',
         cancelling: 'جارٍ الإلغاء', paused: 'متوقف مؤقتًا', needs_input: 'يتطلب إدخالًا',
         blocked: 'محظور', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغى' }
     }
   } as const;
+
+  const featureNames: Record<string, { en: string; ar: string }> = {
+    hook: { en: 'Opening hook', ar: 'الافتتاح الجاذب' },
+    opening_promise: { en: 'Opening promise', ar: 'وعد المقدمة' },
+    narrative_setup: { en: 'Narrative setup', ar: 'تمهيد السرد' },
+    narrative_turn: { en: 'Narrative turn', ar: 'تحول السرد' },
+    spoken_pacing: { en: 'Spoken pacing', ar: 'إيقاع الكلام' },
+    payoff: { en: 'Payoff', ar: 'الخاتمة أو النتيجة' },
+    call_to_action: { en: 'Call to action', ar: 'دعوة لاتخاذ إجراء' },
+    rhetorical_device: { en: 'Rhetorical device', ar: 'أسلوب بلاغي' }
+  };
+  function featureName(id: string): string {
+    return featureNames[id]?.[$locale === 'ar' ? 'ar' : 'en'] ?? id.replace(/_/g, ' ');
+  }
+  function observedCount(count: number): string {
+    return new Intl.NumberFormat($locale === 'ar' ? 'ar-AE' : 'en-US').format(count);
+  }
 
   $: t = labels[$locale === 'ar' ? 'ar' : 'en'];
   let sources: StudyResearchSource[] = [];
@@ -268,6 +297,18 @@
   {#if errorText}<p role="alert" class="studio-error">{errorText}</p>{/if}
   {#if report}
     <div class="research-result" aria-label={t.title + ' report'}>
+      {#if report.feature_support.length}
+        <details class="research-feature-support">
+          <summary>{t.features}</summary>
+          <p class="muted">{t.transcriptCaveat}</p>
+          <ul>
+            {#each report.feature_support as feature, index (index)}
+              <li><strong>{featureName(feature.feature)}</strong> ·
+                {observedCount(feature.distinct_selected_sources)} {t.selectedSources}</li>
+            {/each}
+          </ul>
+        </details>
+      {/if}
       {#each report.sources as item (item.study_source_id)}
         <div class="result-source">
           <strong dir="auto">{item.kind === 'transcript' ? t.transcript : t.research} · {item.locator}</strong>
@@ -282,6 +323,33 @@
               <dt>{t.collected}</dt><dd dir="auto">{item.collected_at}</dd>
             </dl>
           </details>
+          {#if item.metrics}
+            <details class="research-metrics">
+              <summary>{t.metrics}</summary>
+              <dl>
+                {#if item.metrics.views !== null}
+                  <dt>{t.views}</dt><dd>{observedCount(item.metrics.views)}</dd>
+                {/if}
+                {#if item.metrics.likes !== null}
+                  <dt>{t.likes}</dt><dd>{observedCount(item.metrics.likes)}</dd>
+                {/if}
+                {#if item.metrics.comments !== null}
+                  <dt>{t.comments}</dt><dd>{observedCount(item.metrics.comments)}</dd>
+                {/if}
+                {#if item.metrics.observed_interactions_per_view !== null}
+                  <dt>{t.interactions}</dt>
+                  <dd>{(item.metrics.observed_interactions_per_view * 100).toFixed(2)}%</dd>
+                {/if}
+                {#if item.metrics.creator_comparison.status === 'observed'}
+                  <dt>{t.relativeViews}</dt>
+                  <dd>{item.metrics.creator_comparison.views_relative_to_peer_median.toFixed(2)}× ·
+                    {observedCount(item.metrics.creator_comparison.peer_count)} {t.peers}</dd>
+                {:else}
+                  <dt>{t.relativeViews}</dt><dd>{t.noPeerComparison}</dd>
+                {/if}
+              </dl>
+            </details>
+          {/if}
           {#if item.observations.length}
             <ul class="observations">
               {#each item.observations as observation, i (i)}
@@ -344,11 +412,12 @@
   .research-source small, .result-source p { font-size: var(--text-xs); color: var(--color-text-muted); }
   .result-source { border-top: 1px solid var(--color-border); padding-block: 9px; overflow-wrap: anywhere; }
   .research-result { margin-block: 12px; }
-  .research-provenance { margin-block: 8px; }
-  .research-provenance dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 5px 12px; padding-inline-start: 8px; }
-  .research-provenance dt { color: var(--color-text-muted); }
-  .research-provenance dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+  .research-provenance, .research-metrics, .research-feature-support { margin-block: 8px; }
+  .research-provenance dl, .research-metrics dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 5px 12px; padding-inline-start: 8px; }
+  .research-provenance dt, .research-metrics dt { color: var(--color-text-muted); }
+  .research-provenance dd, .research-metrics dd { margin: 0; overflow-wrap: anywhere; min-width: 0; }
   .research-provenance code { font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
+  .research-feature-support ul { display: grid; gap: 6px; padding-inline-start: 20px; }
   .research-approval-scope { width: 100%; font-size: var(--text-xs); }
   .research-approval-scope ul { margin: 8px 0; padding-inline-start: 20px; display: grid; gap: 6px; }
   .research-approval-scope li { overflow-wrap: anywhere; display: grid; gap: 3px; }
