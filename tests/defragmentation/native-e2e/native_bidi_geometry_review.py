@@ -52,6 +52,12 @@ def review(archive: Path, exact_sha: str) -> dict:
                 r.get("source_sha") != exact_sha or
                 not RUN.fullmatch(str(r.get("run_url")))):
             raise ValueError("Installed evidence identity mismatch")
+        cases = r.get("cases", {})
+        if any(not isinstance(cases.get(key), dict) or
+               cases[key].get("status") != "PASS"
+               for key in ("installed_webview", "arabic_locale_control",
+                           "theme_mode_control")):
+            raise ValueError("Installed native locale/appearance prerequisites are not PASS")
         for key in ("package_sha256", "executable_sha256"):
             if not re.fullmatch(r"[0-9a-f]{64}", str(r.get(key))):
                 raise ValueError("Missing hashed installed package/executable identity")
