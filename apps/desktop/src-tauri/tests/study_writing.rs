@@ -1676,3 +1676,67 @@ fn generated_factual_claim_labels_never_enter_immutable_v1_as_reviewed() {
     // Exact-run reconcile must still be safe after normalizing forged labels.
     assert_eq!(sink.recover_committed(&plan).unwrap(), Some(ids));
 }
+#[test]
+fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].angle.evidence_ids.clear();
+    for beat in &mut batch.candidates[0].draft.beats {
+        beat.evidence_ids.clear();
+    }
+    for claim in &mut batch.candidates[0].draft.claims {
+        claim.evidence_ids.clear();
+    }
+    batch.candidates[0].lineage.clear();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+
+    let (_temp2, db2, plan2, current2, mut only_one) = canonical_batch_fixture();
+    for candidate in &mut only_one.candidates {
+        candidate.angle.evidence_ids = vec!["e1".into()];
+        for beat in &mut candidate.draft.beats {
+            beat.evidence_ids = vec!["e1".into()];
+        }
+        for claim in &mut candidate.draft.claims {
+            claim.evidence_ids = vec!["e1".into()];
+        }
+        candidate.lineage = study_writing::lineage_for(
+            &only_one.context,
+            &candidate.angle,
+            &candidate.draft,
+        )
+        .unwrap();
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(
+            &only_one.context,
+            &only_one.candidates
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut second_sink = CanonicalSqliteCandidateStore {
+        store: &db2,
+        current: &current2,
+    };
+    assert!(matches!(
+        second_sink.commit_three(&only_one),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap().revision,
+        1
+    );
+    assert_eq!(
+        db2.get_study(plan2.context.project_id, plan2.context.study_id)
+            .unwrap().revision,
+        1
+    );
+}
