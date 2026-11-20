@@ -894,11 +894,11 @@ mod tests {
     #[test]
     fn immutable_structured_revision_is_required_and_manual_edit_invalidates_it() {
         use crate::dto::UiStudioBrief;
+        use crate::services::study_writing::CandidateLineage;
         use scriptotar_ai::writing::{
             AngleOption, BeatRole, ClaimStatus, DraftAudit, DurationEstimate, EvidenceKind,
             EvidenceLocator, EvidenceRef, EvidenceStatus, FactualClaim, ScriptBeat, ScriptDraft,
         };
-        use crate::services::study_writing::CandidateLineage;
         use scriptotar_core::{EvidenceInput, StudySourceInput};
         use tempfile::TempDir;
 
