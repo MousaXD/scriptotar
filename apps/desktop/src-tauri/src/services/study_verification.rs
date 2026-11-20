@@ -864,9 +864,10 @@ mod tests {
     fn immutable_structured_revision_is_required_and_manual_edit_invalidates_it() {
         use crate::dto::UiStudioBrief;
         use scriptotar_ai::writing::{
-            AngleOption, BeatRole, ClaimStatus, DraftAudit, DurationEstimate, FactualClaim,
-            ScriptBeat, ScriptDraft,
+            AngleOption, BeatRole, ClaimStatus, DraftAudit, DurationEstimate, EvidenceKind,
+            EvidenceLocator, EvidenceRef, EvidenceStatus, FactualClaim, ScriptBeat, ScriptDraft,
         };
+        use crate::services::study_writing::CandidateLineage;
         use scriptotar_core::{EvidenceInput, StudySourceInput};
         use tempfile::TempDir;
 
@@ -954,7 +955,22 @@ mod tests {
                 evidence_ids: vec![],
             },
             draft: model_script.clone(),
-            lineage: vec![],
+            lineage: vec![CandidateLineage {
+                source_id: attached.id,
+                evidence: vec![EvidenceRef {
+                    id: cited.id.to_string(),
+                    locator: EvidenceLocator {
+                        source_id: attached.id.to_string(),
+                        canonical_url: None,
+                        timestamp_seconds: None,
+                        document_section: Some("source-section-a".into()),
+                        collected_at: Some(attached.collected_at.clone()),
+                    },
+                    excerpt: cited.input.claim.clone(),
+                    kind: EvidenceKind::ManualNote,
+                    status: EvidenceStatus::Unverified,
+                }],
+            }],
             audit: DraftAudit {
                 duration: DurationEstimate {
                     words: 9,
@@ -969,6 +985,12 @@ mod tests {
         let saved = services
             .store
             .create_draft(project, study_id, &model_script.title, &body)
+            .unwrap();
+        // Canonical v11 writing inserts this link with the initial version;
+        // a wrong/late Study source alone is not sufficient claim provenance.
+        services
+            .store
+            .attach_source_to_draft(project, saved.id, attached.id)
             .unwrap();
         // This row is normally written by the canonical v11 atomic writer.
         let db = Connection::open(services.store.path()).unwrap();
