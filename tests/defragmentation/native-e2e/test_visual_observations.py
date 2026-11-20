@@ -104,14 +104,14 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
         declared = (width * 3 + 1) * height
         # Malicious but CRC-valid IDAT contains many more decoded scanlines
         # than IHDR promises. The compressed stream remains tiny.
-        malicious = zlib.compress(b"\\x00" * (13 * 1024 * 1024), 9)
+        malicious = zlib.compress(b"\x00" * (13 * 1024 * 1024), 9)
 
         def chunk(kind, payload):
             return (struct.pack(">I", len(payload)) + kind + payload +
                     struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
 
         ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-        hostile_png = (b"\\x89PNG\\r\\n\\x1a\\n" +
+        hostile_png = (b"\x89PNG\r\n\x1a\n" +
                        chunk(b"IHDR", ihdr) + chunk(b"IDAT", malicious) +
                        chunk(b"IEND", b""))
         valid_png = make_png((13, 17, 22), mode=2)
@@ -132,9 +132,9 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
 
         # Stream integrity is checked, too: appended bytes and missing zlib
         # trailer must be rejected even if pixel count happens to match.
-        raw = (b"\\x00" + bytes((13, 17, 22)) * width) * height
+        raw = (b"\x00" + bytes((13, 17, 22)) * width) * height
         for encoded in (zlib.compress(raw) + b"TRAIL", zlib.compress(raw)[:-5]):
-            forged = (b"\\x89PNG\\r\\n\\x1a\\n" + chunk(b"IHDR", ihdr) +
+            forged = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
                       chunk(b"IDAT", encoded) + chunk(b"IEND", b""))
             with self.assertRaisesRegex(ValueError, "PNG"):
                 sample_png_rgb(forged)
