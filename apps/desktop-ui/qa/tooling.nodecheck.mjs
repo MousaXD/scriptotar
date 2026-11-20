@@ -63,6 +63,19 @@ test('complete successful run without approved baseline is explicitly NOT_CERTIF
     assert.equal(comparison.comparison, 'NOT_CERTIFIED');
   });
 });
+test('legacy 140-image reports cannot masquerade as complete Light/System evidence', async () => {
+  await withEvidence(async (dir) => {
+    await populate(dir);
+    const reportPath = join(dir, 'qa', 'evidence', 'report.json');
+    const report = JSON.parse(await readFile(reportPath, 'utf8'));
+    report.screenshotCount = 140;
+    report.results = Array.from({ length: 12 }, () => ({}));
+    await writeFile(reportPath, JSON.stringify(report));
+    const result = run(dir);
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  });
+});
+
 test('recorded browser failures reject the evidence before baseline comparison', async () => {
   await withEvidence(async (dir) => {
     await populate(dir, false);
