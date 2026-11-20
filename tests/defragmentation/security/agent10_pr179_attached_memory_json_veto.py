@@ -88,8 +88,10 @@ def main() -> None:
             '{"raw_samples":[' + ",".join("{}" for _ in range(2001)) + ']}'
         ), "bounded sample count"
         attacks["not-an-object"] = ('[{},{}]', "must be a JSON object")
+        # A depth of 1,400 is legal on current 3.12/3.13 accelerated decoders;
+        # use 12,000 to exceed the actual built-in JSON decoder recursion guard.
         attacks["deep-recursion"] = (
-            '{"raw_samples":' + "[" * 1400 + "0" + "]" * 1400 + "}"
+            '{"raw_samples":' + "[" * 12000 + "0" + "]" * 12000 + "}"
         ), "invalid or deeply nested"
         attacks["malformed-json"] = ('{"raw_samples":[}', "invalid or deeply nested")
 
