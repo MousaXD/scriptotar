@@ -398,6 +398,68 @@ class NativeUiTraceContractTests(unittest.TestCase):
             "completion_evidence_id": f"evidence-after-{index:02}",
         }
 
+    def test_required_studio_actions_have_distinct_unverified_cohorts(self):
+        # A generic navigation bucket is not an honest substitute for
+        # separately measured Study/source/research/version journeys.
+        required = (
+            "study_create", "source_select", "research_navigation",
+            "draft_open", "draft_version_restore",
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "offline-actions-not-installed.jsonl"
+            for action in required:
+                with self.subTest(action=action):
+                    trace.write_text("\n".join(
+                        json.dumps({**self.event(i), "action": action})
+                        for i in range(10)
+                    ), encoding="utf-8")
+                    result = summarize_ui_trace(trace, SHA, HASH, HASH)
+                    self.assertEqual(result["event_count"], 10)
+                    self.assertEqual(result["certification"],
+                                     "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+                    self.assertEqual(result["scope"], "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY")
+                    self.assertEqual(result["groups"][0]["action"], action)
+                    self.assertEqual(result["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            trace.write_text(json.dumps({
+                **self.event(0), "action": "unreviewed-paid-provider-call",
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "action or Study count invalid"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+    def test_same_native_session_cannot_relabel_host_fixture_or_study_scale(self):
+        # Each individual claim passes syntax. Contradictory same-session
+        # origin/workload labels are nevertheless refused before aggregation.
+        base = self.event(0)
+        alternate = self.event(1)
+        changed_values = {
+            "native_provider": "windows-webview2-uia",
+            "study_count": 1000,
+            "fixture_sha256": "d" * 64,
+            "host_evidence_sha256": "d" * 64,
+            "native_qa_run_url": "https://github.com/MousaXD/scriptotar/actions/runs/44333456022",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "contradictory-session.jsonl"
+            for field, changed in changed_values.items():
+                with self.subTest(field=field):
+                    second = {**alternate, "session_id": base["session_id"],
+                              field: changed}
+                    trace.write_text("\n".join(
+                        json.dumps(event) for event in (base, second)
+                    ), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "inconsistent native session"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+            # A genuinely distinct session may specify another fixture.
+            # It remains below ten trials and entirely uncertified.
+            second = {**alternate, "fixture_sha256": "d" * 64}
+            trace.write_text("\n".join(json.dumps(event)
+                                       for event in (base, second)), encoding="utf-8")
+            result = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(len(result["groups"]), 2)
+            self.assertTrue(all(bucket["status"] == "INSUFFICIENT_TRIALS"
+                                for bucket in result["groups"]))
+            self.assertEqual(result["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
     def test_underpowered_trace_cannot_claim_p50_or_p95(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
