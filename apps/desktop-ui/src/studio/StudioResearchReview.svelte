@@ -175,7 +175,7 @@
   }
 </script>
 
-<section class="panel study-research-review" aria-label={t.title} aria-busy={loading || busy}>
+<section class="panel study-research-review" aria-label={t.title} aria-busy={loading || busy} dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
   <div class="review-heading">
     <h2>{t.title}</h2>
     <button type="button" class="text-button" disabled={busy || loading}
