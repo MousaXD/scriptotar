@@ -147,8 +147,17 @@ def preflight(report: dict, package: Path, executable: Path,
             raise ValueError("partial or invalid root process CPU counters")
         if any(after < before for before, after in zip(cpu_times, cpu_times[1:])):
             raise ValueError("root process CPU time decreased for same PID birth")
-        observation_ns = (rows[-1]["sample_started_monotonic_ns"]
-                          - rows[0]["sample_started_monotonic_ns"])
+        # Use the CPU read-completion clock, not memory-sample start; the
+        # latter may precede an expensive process-tree memory snapshot.
+        cpu_observed = [row.get("main_cpu_time_observed_monotonic_ns") for row in rows]
+        for i, (row, clock) in enumerate(zip(rows, cpu_observed), 1):
+            if (not _int(clock)
+                    or not row["sample_started_monotonic_ns"] <= clock
+                           <= row["sample_finished_monotonic_ns"]):
+                raise ValueError(f"sample {i}: missing or unbounded root CPU observation clock")
+        if any(after <= before for before, after in zip(cpu_observed, cpu_observed[1:])):
+            raise ValueError("root CPU observation clock is not strictly monotonic")
+        observation_ns = cpu_observed[-1] - cpu_observed[0]
         if observation_ns <= 0:
             raise ValueError("invalid root process CPU observation duration")
         cpu_evidence = {
@@ -158,8 +167,9 @@ def preflight(report: dict, package: Path, executable: Path,
             "root_cpu_core_equivalents_uncertified": round(
                 (cpu_times[-1] - cpu_times[0]) / observation_ns, 4
             ),
-            "limitations": "Excludes WebKitGTK/WebView2 helper CPU, includes sampler timing "
-                           "uncertainty, and is not a source-exact installed GUI certification.",
+            "limitations": "Excludes WebKitGTK/WebView2 helper CPU. Uses independent CPU "
+                           "read-completion monotonic stamps rather than memory sampling start; "
+                           "read timing still has nonzero uncertainty. Not installed GUI certification.",
         }
     return {
         "scope": "ATTACHED_MEMORY_PRECHECK_ONLY_NOT_INSTALLED_CERTIFICATION",
