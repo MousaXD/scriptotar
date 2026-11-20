@@ -84,6 +84,11 @@ jobs:
           test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
           test "$(git -C .agent11-upstream-v4 rev-parse HEAD)" = "$EXPECT_UPSTREAM"
           test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          test "$(git hash-object .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs)" = "e1d4f227c9ee0d4069c823dbd8b5fec711d67228"
+          test "$(git hash-object .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs)" = "5c746abd3caf414ba2c80be825d66983312236c6"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs)" = "c126c5de32a3bb5f1ff5c322185b8c3a16dde404"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs)" = "f4fa56c4075d02df2eb1fc34a463cdc7958c173c"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs)" = "76b23ead7bd208cda1f3e38d39991f2962d15c07"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
       - name: Install actual original exact-lock picomatch v4.0.7
