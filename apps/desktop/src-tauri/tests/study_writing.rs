@@ -1742,3 +1742,22 @@ fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
         1
     );
 }
+#[test]
+fn canonical_sink_revalidates_duplicate_beat_ids_without_partial_writes() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].draft.beats[1].id =
+        batch.candidates[0].draft.beats[0].id.clone();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
