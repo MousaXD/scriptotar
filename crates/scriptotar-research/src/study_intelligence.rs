@@ -131,6 +131,15 @@ pub struct StudySourceFinding {
     /// Exact scanned_at (research) or updated_at (transcript) at extraction.
     /// A later update must invalidate a persisted report, not silently reuse it.
     pub origin_revision: Option<String>,
+    /// SHA-256 of the actual canonical origin record at analysis time.
+    /// Legacy reports without this binding fail closed at the host boundary.
+    #[serde(default)]
+    pub origin_sha256: Option<String>,
+    /// The exact selected StudySource fingerprint and caller-visible revision.
+    #[serde(default)]
+    pub attachment_fingerprint: Option<String>,
+    #[serde(default)]
+    pub attachment_revision: Option<String>,
     pub metrics: Option<ObservedMetrics>,
     pub observations: Vec<StudyPatternObservation>,
     pub limitations: Vec<String>,
@@ -526,6 +535,9 @@ pub fn analyze_study_sources(
             collected_at: source.collected_at,
             access: source.access,
             origin_revision,
+            origin_sha256: None,
+            attachment_fingerprint: None,
+            attachment_revision: None,
             metrics,
             observations,
             limitations,

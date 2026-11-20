@@ -3,7 +3,7 @@
 //! All source IDs below are canonical study_sources.id, NOT platform URLs.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::Write,
     path::PathBuf,
@@ -11,6 +11,7 @@ use std::{
 };
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use sha2::{Digest, Sha256};
 use scriptotar_agent::{
     Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate, ProbeResult,
     RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor, ToolFailure,
@@ -98,7 +99,8 @@ fn scoped_study(
     if record.archived_at.is_some() {
         return Err(not_found());
     }
-    let active: bool = read_db(services)?
+    let db = read_db(services)?;
+    let active: bool = db
         .query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM content_studies st
@@ -117,15 +119,20 @@ fn scoped_study(
         // Validate *both* exact source membership and admissible source kind
         // before requesting user approval, not only after effect reservation.
         let attached = services.store.get_study_source(project, study, *id)?;
-        if attached.reference_id.is_none()
-            || !matches!(
-                attached.kind,
-                StudySourceKind::ResearchItem | StudySourceKind::Transcript
-            )
+        let kind = match attached.kind {
+            StudySourceKind::ResearchItem => StudyResearchKind::ResearchItem,
+            StudySourceKind::Transcript => StudyResearchKind::Transcript,
+            _ => {
+                return Err(invalid(
+                    "research inspection requires a research item or transcript",
+                ));
+            }
+        };
+        let origin = attached.reference_id.ok_or_else(not_found)?;
+        if !attached.available
+            || origin_content_sha256(&db, project, study, *id, origin, kind)?.is_none()
         {
-            return Err(invalid(
-                "research inspection requires a research item or transcript",
-            ));
+            return Err(not_found());
         }
     }
     services.require_active_project(project)?;
@@ -242,6 +249,27 @@ fn transcript_row(
     .map_err(|_| storage())
 }
 
+/// A content-bound digest from the same bounded, project/Study-scoped rows
+/// used by research analysis. Revision timestamps alone are insufficient.
+fn origin_content_sha256(
+    db: &Connection,
+    project: Uuid,
+    study: Uuid,
+    source: Uuid,
+    origin: Uuid,
+    kind: StudyResearchKind,
+) -> RepositoryResult<Option<String>> {
+    let bytes = match kind {
+        StudyResearchKind::ResearchItem => research_row(db, project, study, source, origin)?
+            .map(|item| serde_json::to_vec(&item).map_err(|_| storage()))
+            .transpose()?,
+        StudyResearchKind::Transcript => transcript_row(db, project, study, source, origin)?
+            .map(|row| serde_json::to_vec(&row).map_err(|_| storage()))
+            .transpose()?,
+    };
+    Ok(bytes.map(|value| format!("{:x}", Sha256::digest(&value))))
+}
+
 fn parse_transcript(
     origin: Uuid,
     text: &str,
@@ -332,6 +360,7 @@ fn inspect_selected(
     db.execute_batch("BEGIN DEFERRED TRANSACTION")
         .map_err(|_| storage())?;
     let mut sources = Vec::new();
+    let mut bindings = HashMap::new();
     for id in ids {
         let attachment = services.store.get_study_source(project, study, *id)?;
         let Some(reference_id) = attachment.reference_id else {
@@ -383,6 +412,16 @@ fn inspect_selected(
                 }
             }
         };
+        let sha256 = origin_content_sha256(&db, project, study, *id, reference_id, kind)?
+            .ok_or_else(not_found)?;
+        bindings.insert(
+            *id,
+            (
+                attachment.fingerprint.clone(),
+                attachment.source_revision.clone(),
+                sha256,
+            ),
+        );
         sources.push(StudySourceMaterial {
             project_id: project,
             study_id: study,
@@ -397,8 +436,16 @@ fn inspect_selected(
         });
     }
     db.execute_batch("COMMIT").map_err(|_| storage())?;
-    let report = analyze_study_sources(project, study, analyzed_at, sources)
+    let mut report = analyze_study_sources(project, study, analyzed_at, sources)
         .map_err(|_| invalid("invalid selected research data"))?;
+    for finding in &mut report.sources {
+        let (fingerprint, revision, sha256) = bindings
+            .remove(&finding.study_source_id)
+            .ok_or_else(storage)?;
+        finding.attachment_fingerprint = Some(fingerprint);
+        finding.attachment_revision = revision;
+        finding.origin_sha256 = Some(sha256);
+    }
     services.require_active_project(project)?;
     let current = services.store.get_study(project, study)?;
     if current.revision != record.revision || current.archived_at.is_some() {
@@ -568,15 +615,39 @@ fn checked_report(
         let source = services
             .store
             .get_study_source(project, study, finding.study_source_id)?;
-        if source.reference_id != Some(finding.reference_id)
+        let correct_kind = matches!(
+            (source.kind, finding.kind),
+            (StudySourceKind::ResearchItem, StudyResearchKind::ResearchItem)
+                | (StudySourceKind::Transcript, StudyResearchKind::Transcript)
+        );
+        if !correct_kind
+            || !source.available
+            || source.reference_id != Some(finding.reference_id)
             || source.locator != finding.locator
-            || (!source.available
-                && matches!(
-                    finding.access,
-                    StudyResearchAccess::Available | StudyResearchAccess::Partial
-                ))
+            || source.collected_at != finding.collected_at
+            || Some(source.fingerprint.as_str()) != finding.attachment_fingerprint.as_deref()
+            || source.source_revision != finding.attachment_revision
+            || !matches!(
+                finding.access,
+                StudyResearchAccess::Available | StudyResearchAccess::Partial
+            )
         {
             return Err(not_found());
+        }
+        let actual_sha256 = origin_content_sha256(
+            &db,
+            project,
+            study,
+            finding.study_source_id,
+            finding.reference_id,
+            finding.kind,
+        )?;
+        if actual_sha256.as_deref() != finding.origin_sha256.as_deref()
+            || finding.origin_sha256.is_none()
+        {
+            return Err(RepositoryError::Conflict(
+                "source content changed since research analysis".into(),
+            ));
         }
         if let Some(expected) = finding.origin_revision.as_deref() {
             if !source.available
@@ -596,6 +667,21 @@ fn checked_report(
             // origin version. Missing version is not evidence of success.
             return Err(not_found());
         }
+    }
+    // An artifact file is mutable local data, not an authority for evidence.
+    // Regenerate its deterministic contents from currently authorized sources
+    // so edited JSON cannot inject fabricated claims or citations.
+    let (_, rebuilt) = inspect_selected(
+        services,
+        project,
+        study,
+        &ids,
+        saved.report.analyzed_at.clone(),
+    )?;
+    if rebuilt != saved.report {
+        return Err(RepositoryError::Conflict(
+            "research artifact does not match canonical source material".into(),
+        ));
     }
     services.require_active_project(project)?;
     Ok(saved)
@@ -1494,6 +1580,43 @@ mod tests {
         write_envelope(&services, artifact, &serde_json::to_vec(&envelope).unwrap()).unwrap();
         assert!(checked_report(&services, project, study, artifact).is_ok());
         assert!(read_study_research_artifact(&services, project, study, artifact).is_err());
+        // A counter or transcript can change without a timestamp bump.
+        db.execute(
+            "UPDATE research_items SET view_count=99 WHERE id=?1",
+            params![research_items[0].id.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        db.execute(
+            "UPDATE research_items SET view_count=0 WHERE id=?1",
+            params![research_items[0].id.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
+        db.execute(
+            "UPDATE transcripts SET text='Changed without timestamp bump' WHERE id=?1",
+            params![transcript.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        db.execute(
+            "UPDATE transcripts SET text='How does this work? But there is another way. Subscribe to follow.' WHERE id=?1",
+            params![transcript.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
+
+        // Reopening must never trust fabricated statements inserted in the
+        // persisted artifact by another local process.
+        let artifact_path = artifact_path(&services, artifact).unwrap();
+        let saved_bytes = fs::read(&artifact_path).unwrap();
+        let mut tampered: serde_json::Value = serde_json::from_slice(&saved_bytes).unwrap();
+        tampered["report"]["limitations"][0] =
+            serde_json::Value::String("Invented source citation".into());
+        fs::write(&artifact_path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        fs::write(&artifact_path, saved_bytes).unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
         let other_study = services
             .store
             .create_study(project, "Other study", "")
