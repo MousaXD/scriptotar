@@ -1,6 +1,7 @@
 # Agent11 exploratory only: NOT a patched npm package, dependency remediation, or release authorization.
-# Probe generated regex sources only for PR264's remaining failing repeated-class and nested-wrapper cases.
-# Previous multi-PR and #275 results are preserved at immutable prior GitHub Actions source SHAs.
+# EXPERIMENT ONLY: PR264 plus independently authored bounded class/repetition normalizer.
+# Both immutable 19-case security and original 4.0.7 matcher-positive controls remain hard gates.
+# No production dependency, lockfile, tested contract or trusted source guard is changed.
 name: Agent11 upstream picomatch candidate evaluation (test-only, release veto)
 
 on:
@@ -21,8 +22,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: "upstream-pr264-regex-diagnostic", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "ubuntu-22.04" }
-          - { label: "upstream-pr264-regex-diagnostic", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "windows-2022" }
+          - { label: "upstream-pr264-plus-experimental-class-algebra", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "ubuntu-22.04" }
+          - { label: "upstream-pr264-plus-experimental-class-algebra", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "windows-2022" }
     steps:
       - name: Checkout exact candidate test branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -99,7 +100,9 @@ jobs:
             cp .agent11-proposed-upstream/lib/picomatch.js apps/desktop-ui/node_modules/picomatch/lib/picomatch.js
             node --check apps/desktop-ui/node_modules/picomatch/lib/picomatch.js
           fi
+          node tests/defragmentation/security/agent11_apply_class_patch.mjs
           node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/agent11_class_normalizer.cjs
           git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
           echo "EXPERIMENTAL NODE_MODULES MUTATION ONLY; NOT A PUBLISHED PATCHED PACKAGE"
       - name: Record generated regex source for challenging bounded examples
