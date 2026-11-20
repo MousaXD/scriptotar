@@ -144,6 +144,7 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Source listing unavailable');
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare research' })).toBeDisabled();
   });
 
   it('reopens the latest pending research run instead of an older completed run', async () => {
@@ -188,6 +189,24 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     await fireEvent.click(prepare);
     expect(await screen.findByText(/الموافقة على هذه المصادر/)).toBeInTheDocument();
     expect(view.container.querySelector('.study-research-review')).toHaveAttribute('dir', 'rtl');
+  });
+
+  it('cancels an interrupted native research run without showing a fabricated report', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const available = await api.listStudyResearchSources(projectId, studyId);
+    const pending = await api.startStudyResearch(projectId, studyId, [available[0].id]);
+    const running = { ...pending, state: 'running' as const };
+    api.listStudyResearchRuns = async () => [running];
+    const decide = vi.fn(async () => ({ ...running, state: 'cancelled' as const }));
+    api.decideStudyResearch = decide;
+
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    await fireEvent.click(cancel);
+    await waitFor(() => expect(decide).toHaveBeenCalledWith(
+      projectId, studyId, pending.plan.id, 'cancel'));
+    expect(await screen.findByText(/Cancelled/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
   });
 
 });
