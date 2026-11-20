@@ -102,6 +102,20 @@ describe('Settings UX', () => {
     expect(save).not.toHaveBeenCalled();
   });
 
+  it('keeps failed Save details beside the header and moves keyboard focus to the alert', async () => {
+    const { api } = setup();
+    vi.spyOn(api, 'saveSettings').mockRejectedValue(new Error('SQLite disk is read-only: /data/scriptotar.db'));
+    await chooseSetting('Theme', mockBootstrap.settings.appearance === 'dark' ? 'System' : 'Dark');
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('SQLite disk is read-only: /data/scriptotar.db');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    expect(alert).toHaveAttribute('tabindex', '-1');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(document.querySelector('.settings-head')?.nextElementSibling).toBe(alert);
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
+  });
+
   it('keeps filesystem paths left-to-right in Arabic Settings', () => {
     const settings = structuredClone(mockBootstrap.settings);
     settings.outputDirectory = '/home/مستخدم/الملفات';
