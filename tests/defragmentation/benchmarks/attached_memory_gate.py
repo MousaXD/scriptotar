@@ -50,6 +50,15 @@ def _reject_nonfinite_json_constant(value: str) -> object:
     raise ValueError("nonfinite JSON constant in attached memory evidence")
 
 
+def _finite_json_float(value: str) -> float:
+    # The strict JSON constants hook does not see exponential overflow:
+    # json.loads("1e9999") otherwise returns Python float('inf').
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("nonfinite JSON number in attached memory evidence")
+    return result
+
+
 def load_attached_report(path: Path) -> dict:
     """Parse one bounded original byte snapshot; do not authenticate host origin."""
     with path.open("rb") as stream:
@@ -62,7 +71,8 @@ def load_attached_report(path: Path) -> dict:
         raise ValueError("attached memory evidence must be UTF-8") from exc
     try:
         record = json.loads(source, object_pairs_hook=_unique_json_members,
-                            parse_constant=_reject_nonfinite_json_constant)
+                            parse_constant=_reject_nonfinite_json_constant,
+                            parse_float=_finite_json_float)
     except (json.JSONDecodeError, RecursionError) as exc:
         raise ValueError("invalid or deeply nested attached memory JSON") from exc
     if not isinstance(record, dict):
