@@ -21,7 +21,7 @@ const repo = process.cwd();
 const ui = resolve(repo, 'apps/desktop-ui');
 const lock = resolve(ui, 'package-lock.json');
 const config = resolve(ui, 'vite.config.ts');
-const originalLockBlob = 'eebc9228dd404f0b9f9bd55f2665ab4fb73e00fe9dfa';
+const originalLockBlob = 'eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa';
 assert.ok(existsSync(lock) && existsSync(config), 'Real desktop Vite config and lockfile are required');
 const blob = execFileSync('git', ['hash-object', lock], { cwd: repo, encoding: 'utf8' }).trim();
 assert.equal(blob, originalLockBlob, 'Use independently reviewed exact locked desktop npm tree');
