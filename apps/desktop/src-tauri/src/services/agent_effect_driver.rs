@@ -625,6 +625,119 @@ mod recovery_driver_tests {
     }
 
     #[test]
+    fn late_receipt_sqlite_fault_rolls_back_identity_charge_and_legacy_effect() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+        use rusqlite::Connection;
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "5".repeat(64);
+        let wire_sha256 = "6".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+        fence.mark_uncertain(&effect_id);
+        let before = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.status, ExternalEffectStatus::Uncertain);
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+
+        // Crash/fault after v12's external receipt update but before v8's
+        // same-transaction Applied transition. The provider identity registry
+        // and all accounting must roll back together.
+        let conn = Connection::open(store.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER inject_v8_receipt_failure
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NEW.status='applied'
+             BEGIN SELECT RAISE(ABORT,'injected v8 receipt failure'); END;",
+        )
+        .unwrap();
+        let usage = ActualUsage {
+            input_tokens: 15,
+            output_tokens: 25,
+            tool_calls: 1,
+            elapsed_ms: 100,
+            cost_microusd: 200,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "late-faulted-receipt", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        let after = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.provider_request_id, None);
+        assert_eq!(after.receipt_id, None);
+        assert_eq!(after.actual_tokens, 0);
+        assert_eq!(after.actual_cost_microusd, 0);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Unknown);
+        let consumed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_external_provider_identities
+                 WHERE provider='openai' AND identity='late-faulted-receipt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(consumed, 0);
+
+        conn.execute_batch("DROP TRIGGER inject_v8_receipt_failure;")
+            .unwrap();
+        drop(conn);
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        let recovery_fence = SqlitePaidEffectFence::from_approved_context(
+            reopened,
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        assert_eq!(
+            recovery_fence.settle(&effect_id, "late-faulted-receipt", &usage),
+            Ok(())
+        );
+        let completed = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert_eq!(completed.actual_tokens, 40);
+        assert_eq!(completed.actual_cost_microusd, 200);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Applied);
+    }
+
+    #[test]
     fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
         let (_directory, services, context) = approved_host();
         let double = LocalProviderDouble::default();
