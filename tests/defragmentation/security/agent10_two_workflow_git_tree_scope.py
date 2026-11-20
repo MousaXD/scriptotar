@@ -12,8 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-BASE = "514ec3ee571c4309e5b7473b8a65ab4fb73f497a"
-TARGET = "7bdc9213848355b00cbfe1ddf43bc5874f6bcdd3"
+BASE = "525cf96d61626508aed7c1bc73ad6299fad5a123"
+TARGET = "c11eef988c9c2ee86fdd50c547ba4a1b3554cbd2"
 ALLOWED = (
     ".github/workflows/installed-webview-acceptance.yml",
     ".github/workflows/windows-tauri.yml",
