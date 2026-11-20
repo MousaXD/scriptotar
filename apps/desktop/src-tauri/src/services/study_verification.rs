@@ -563,7 +563,9 @@ mod tests {
             claims: vec![],
         };
 
-        let report = services
+        // An existing Studio draft ID with a fabricated typed annotation
+        // must not be accepted as a legitimate saved claim inventory.
+        assert!(services
             .verify_studio_claims_read_only(
                 project_id,
                 first_id,
@@ -571,14 +573,7 @@ mod tests {
                 draft_revision,
                 &candidate,
             )
-            .unwrap();
-        assert!(report.publication_review_required);
-        assert!(!report.inventory_complete);
-        assert!(!report.draft_content_bound);
-        assert!(report
-            .claims
-            .iter()
-            .all(|claim| { claim.status != verification::VerificationStatus::Verified }));
+            .is_err());
 
         // Matching a real project and draft ID is not enough: the Study itself
         // must be the same and the revisions must still be current.
@@ -621,6 +616,163 @@ mod tests {
             )
             .is_err());
     }
+
+    #[test]
+    fn immutable_structured_revision_is_required_and_manual_edit_invalidates_it() {
+        use crate::dto::UiStudioBrief;
+        use scriptotar_ai::writing::{
+            AngleOption, BeatRole, ClaimStatus, DraftAudit, DurationEstimate, FactualClaim,
+            ScriptBeat, ScriptDraft,
+        };
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let services = AppServices::new(tmp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "Saved claim review".into(),
+                    goal: "Review claims".into(),
+                    audience: "Writers".into(),
+                    platform: "Web".into(),
+                    language: "en".into(),
+                    duration: "30".into(),
+                    style: "Clear".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let model_script = ScriptDraft {
+            id: "untrusted-model-draft".into(),
+            angle_id: "angle-a".into(),
+            title: "Saved generated script".into(),
+            language: "en".into(),
+            beats: vec![ScriptBeat {
+                id: "hook".into(),
+                role: BeatRole::Hook,
+                narration: "A manual author claims these facts are true.".into(),
+                on_screen_text: None,
+                shots: vec![],
+                evidence_ids: vec![],
+                manually_edited: false,
+            }],
+            cta: None,
+            caption: None,
+            claims: vec![FactualClaim {
+                id: "factual-1".into(),
+                beat_id: "hook".into(),
+                assertion: "An unsupported numerical assertion".into(),
+                status: ClaimStatus::Unverified,
+                evidence_ids: vec![],
+            }],
+        };
+        let candidate = GeneratedCandidate {
+            angle: AngleOption {
+                id: "angle-a".into(),
+                approach: "Explain".into(),
+                hook: "Open".into(),
+                promise: "Explain".into(),
+                outline: vec![],
+                evidence_ids: vec![],
+            },
+            draft: model_script.clone(),
+            lineage: vec![],
+            audit: DraftAudit {
+                duration: DurationEstimate {
+                    words: 9,
+                    approximate_seconds: 4,
+                    assumed_words_per_minute: 150,
+                },
+                advisories: vec![],
+            },
+            review_findings: vec![],
+        };
+        let body = export_candidate(&candidate);
+        let saved = services
+            .store
+            .create_draft(project, study_id, &model_script.title, &body)
+            .unwrap();
+        // This row is normally written by the canonical v11 atomic writer.
+        let db = Connection::open(services.store.path()).unwrap();
+        db.execute(
+            "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+             VALUES(?1,1,?2)",
+            params![saved.id.to_string(), serde_json::to_string(&candidate).unwrap()],
+        )
+        .unwrap();
+
+        let mut actual = model_script.clone();
+        actual.id = saved.id.to_string();
+        let bound = services
+            .verify_studio_claims_with_version_read_only(
+                project, study_id, study.revision, 1, &actual,
+            )
+            .unwrap();
+        let versions = services.store.list_draft_versions(project, saved.id).unwrap();
+        assert_eq!(bound.draft_version_id, versions[0].id.to_string());
+        assert_eq!(
+            bound.draft_version_sha256,
+            saved_version_digest(project, study_id, &versions[0])
+        );
+        assert!(bound.draft_version_sha256.starts_with("sha256:"));
+        assert!(bound.report.draft_content_bound);
+        assert!(bound.report.publication_review_required);
+        assert!(!bound.report.inventory_complete);
+        assert!(bound.report.claims.iter().all(|claim| {
+            claim.status != verification::VerificationStatus::Verified
+        }));
+
+        let mut forged = actual.clone();
+        forged.claims[0].assertion = "AI-supplied replacement assertion".into();
+        assert!(services
+            .verify_studio_claims_with_version_read_only(
+                project, study_id, study.revision, 1, &forged,
+            )
+            .is_err());
+        forged = actual.clone();
+        forged.claims[0].evidence_ids.push(Uuid::new_v4().to_string());
+        assert!(services
+            .verify_studio_claims_read_only(project, study_id, study.revision, 1, &forged)
+            .is_err());
+        forged = actual.clone();
+        forged.id = Uuid::new_v4().to_string();
+        assert!(services
+            .verify_studio_claims_read_only(project, study_id, study.revision, 1, &forged)
+            .is_err());
+        assert!(services
+            .verify_studio_claims_read_only(
+                Uuid::new_v4(), study_id, study.revision, 1, &actual,
+            )
+            .is_err());
+
+        // A regular Studio text edit creates a real immutable revision, but
+        // it intentionally has no typed manifest. The old review is stale;
+        // matching the new revision number cannot rescue its old claims.
+        let manual = services
+            .store
+            .update_draft(
+                project, saved.id, 1, &saved.title,
+                "Human-edited body with no certified source claims",
+            )
+            .unwrap();
+        assert_eq!(manual.revision, 2);
+        assert!(services
+            .verify_studio_claims_read_only(project, study_id, study.revision, 1, &actual)
+            .is_err());
+        assert!(services
+            .verify_studio_claims_read_only(project, study_id, study.revision, 2, &actual)
+            .is_err());
+        drop(db);
+        drop(services);
+        let reopened = AppServices::new(tmp.path()).unwrap();
+        assert!(reopened
+            .verify_studio_claims_read_only(project, study_id, study.revision, 2, &actual)
+            .is_err());
+    }
+
+
 }
 
 #[cfg(test)]
