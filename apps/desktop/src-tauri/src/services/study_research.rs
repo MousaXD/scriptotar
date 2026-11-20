@@ -590,8 +590,20 @@ fn checked_report(
     study: Uuid,
     artifact: Uuid,
 ) -> RepositoryResult<ReportEnvelope> {
-    services.require_active_project(project)?;
     let saved = load_envelope(services, artifact)?;
+    checked_report_envelope(services, project, study, saved)
+}
+
+/// Inspect the exact already-read artifact bytes, including for the user-visible
+/// path that must authorize the checkpoint and receipt *before* local analysis.
+/// Do not reopen the path after authorization: a local file may be replaced.
+fn checked_report_envelope(
+    services: &AppServices,
+    project: Uuid,
+    study: Uuid,
+    saved: ReportEnvelope,
+) -> RepositoryResult<ReportEnvelope> {
+    services.require_active_project(project)?;
     if saved.project_id != project
         || saved.study_id != study
         || saved.report.project_id != project
@@ -698,7 +710,11 @@ pub(super) fn read_study_research_artifact(
     study: Uuid,
     artifact: Uuid,
 ) -> RepositoryResult<StudyResearchReport> {
-    let saved = checked_report(services, project, study, artifact)?;
+    services.require_active_project(project)?;
+    let saved = load_envelope(services, artifact)?;
+    if saved.project_id != project || saved.study_id != study {
+        return Err(not_found());
+    }
     // An Applied effect by itself does not prove the *selected sources*
     // authorized by the human: verify the persisted run plan, its exact
     // approved step and its output, not just a mutable report artifact.
@@ -742,7 +758,11 @@ pub(super) fn read_study_research_artifact(
     {
         return Err(not_found());
     }
-    Ok(saved.report)
+    // No report/source analysis happened before the completed checkpoint,
+    // selected source IDs, step output and receipt were checked. Use the same
+    // captured bytes so the authorization cannot be raced by swapping files.
+    let validated = checked_report_envelope(services, project, study, saved)?;
+    Ok(validated.report)
 }
 
 #[derive(Clone)]
