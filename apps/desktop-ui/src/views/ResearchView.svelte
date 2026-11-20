@@ -92,6 +92,17 @@
     else selected.add(id);
   }
 
+  // HTMLInputElement.indeterminate is the native mixed-state signal used by
+  // accessibility APIs. aria-checked alone is not enough for a real checkbox.
+  // Keep it in sync when pagination, filtering or source queue state changes.
+  function syncMixedPageSelection(node: HTMLInputElement, mixed: boolean) {
+    node.indeterminate = mixed;
+    return {
+      update(next: boolean) { node.indeterminate = next; },
+      destroy() { node.indeterminate = false; }
+    };
+  }
+
   function togglePageSelection() {
     const next = new Set(selected);
     for (const item of selectablePageItems) {
@@ -219,7 +230,7 @@
 
   <div class="selection-bar">
     <label class="select-page">
-      <input type="checkbox" checked={pageSelected} class:partial={pagePartiallySelected} aria-checked={pagePartiallySelected ? 'mixed' : pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
+      <input type="checkbox" checked={pageSelected} class:partial={pagePartiallySelected} use:syncMixedPageSelection={pagePartiallySelected} aria-checked={pagePartiallySelected ? 'mixed' : pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
       <span>{isArabic ? 'تحديد الصفحة' : 'Select page'}</span>
     </label>
     <span class="selection-count" aria-live="polite">{isArabic ? 'محدد: ' : 'Selected: '}{selectedCount}</span>
