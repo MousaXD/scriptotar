@@ -578,6 +578,11 @@ impl AppServices {
                 load_host_source_binding(self, project_id, study_id, source)?,
             );
         }
+        let referenced_ids: HashSet<&str> = draft
+            .claims
+            .iter()
+            .flat_map(|claim| claim.evidence_ids.iter().map(String::as_str))
+            .collect();
         let mut resolved = Vec::new();
         for evidence in &references {
             let source = source_map
@@ -586,7 +591,67 @@ impl AppServices {
             let binding = source_bindings
                 .get(&source.id)
                 .ok_or_else(|| RepositoryError::Storage("missing source content binding".into()))?;
-            resolved.push(from_study_evidence(evidence, source, binding));
+            let canonical = from_study_evidence(evidence, source, binding);
+            // Agent 05's canonical writing input uses observation:<uuid>.
+            // Give it the same authoritative Study record and dispute state,
+            // never the model's arbitrary self-reported certainty.
+            let alias = format!("observation:{}", evidence.id);
+            if referenced_ids.contains(alias.as_str()) {
+                let mut aliased = canonical.clone();
+                aliased.evidence_id = alias;
+                resolved.push(aliased);
+            }
+            resolved.push(canonical);
+        }
+        // Canonical writing also cites transcript:<origin>:<segment-index>
+        // or :text. The attached identity and current source hash are checked,
+        // but a generated excerpt/index is NOT itself an authenticated exact
+        // transcript segment. Preserve navigation and flag it untrusted until
+        // an independently matched canonical segment is available.
+        for line in &stored_candidate.lineage {
+            let Some(source) = source_map.get(&line.source_id) else {
+                continue;
+            };
+            if source.kind != StudySourceKind::Transcript {
+                continue;
+            }
+            let Some(binding) = source_bindings.get(&line.source_id) else {
+                continue;
+            };
+            for item in &line.evidence {
+                if !item.id.starts_with("transcript:")
+                    || !referenced_ids.contains(item.id.as_str())
+                {
+                    continue;
+                }
+                resolved.push(ResolvedEvidence {
+                    evidence_id: item.id.clone(),
+                    source_id: source.id.to_string(),
+                    project_id: project_id.to_string(),
+                    study_id: study_id.to_string(),
+                    source_version: binding.content_sha256.clone(),
+                    locator: ExactLocator {
+                        locator: item.locator.document_section.clone().unwrap_or_default(),
+                        segment_id: None,
+                        timestamp_millis: item
+                            .locator
+                            .timestamp_seconds
+                            .map(|seconds| u64::from(seconds) * 1000),
+                        modality: Modality::SpokenTranscript,
+                    },
+                    excerpt: item.excerpt.clone(),
+                    kind: SourceKind::SocialTranscript,
+                    state: if source.available {
+                        EvidenceState::Untrusted
+                    } else {
+                        EvidenceState::Unavailable
+                    },
+                    relation: EvidenceRelation::Unassessed,
+                    independent_origin: None,
+                    collected_at_epoch: collected_epoch(&source.collected_at),
+                    expires_at_epoch: None,
+                });
+            }
         }
         let fresh_study = self.store.get_study(project_id, study_id)?;
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
