@@ -8,7 +8,7 @@ import zipfile
 from pathlib import Path
 
 from native_bidi_geometry_review import review
-from test_visual_observations import SHA, fixture_zip
+from test_visual_observations import SHA, fixture_zip, make_png
 
 
 def source_layout(linux: bool, arabic_x: int, english_x: int) -> dict:
@@ -23,8 +23,9 @@ def source_layout(linux: bool, arabic_x: int, english_x: int) -> dict:
               "labels_requested": ["الاستوديو", "الطابور", "الإعدادات", "لغة الواجهة"],
               "matches": [nav("الاستوديو", arabic_x), nav("الطابور", arabic_x),
                           nav("الإعدادات", arabic_x)]}
-    return {"arabic_studio": arabic, "arabic_queue": arabic,
-            "arabic_settings": arabic,
+    return {"arabic_studio": json.loads(json.dumps(arabic)),
+            "arabic_queue": json.loads(json.dumps(arabic)),
+            "arabic_settings": json.loads(json.dumps(arabic)),
             "theme_system": {"matches": [nav("Settings", english_x)]}}
 
 
@@ -34,6 +35,11 @@ def set_layout(path, layouts):
     report = json.loads(entries["result.json"])
     report["native_layout_observations"] = layouts
     entries["result.json"] = json.dumps(report).encode()
+    linux = str(report["platform"]).lower().startswith("linux")
+    for index, label in enumerate(("arabic-locale.png", "arabic-queue.png", "arabic-settings.png")
+                                  if linux else ("windows-arabic-locale.png", "windows-arabic-queue.png", "windows-arabic-settings.png")):
+        entries[label] = make_png((245 - index, 247 - index, 248 - index),
+                                  mode=2 if linux else 6)
     with zipfile.ZipFile(path, "w") as z:
         for name, payload in entries.items():
             z.writestr(name, payload)
@@ -64,6 +70,25 @@ class NativeBidiGeometryReviewTests(unittest.TestCase):
             layout["arabic_settings"]["missing_labels"] = ["الإعدادات"]
             set_layout(path, layout)
             with self.assertRaisesRegex(ValueError, "Incomplete native Arabic"):
+                review(path, SHA)
+
+    def test_reject_offscreen_queue_nav_and_replayed_arabic_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            layout = source_layout(False, 400, 10)
+            layout["arabic_queue"]["matches"][0]["bounds"]["x"] = 500
+            set_layout(path, layout)
+            with self.assertRaisesRegex(ValueError, "outside screenshot"):
+                review(path, SHA)
+            set_layout(path, source_layout(False, 400, 10))
+            with zipfile.ZipFile(path) as z:
+                entries = {name: z.read(name) for name in z.namelist()}
+            entries["windows-arabic-queue.png"] = entries["windows-arabic-locale.png"]
+            with zipfile.ZipFile(path, "w") as z:
+                for name, payload in entries.items():
+                    z.writestr(name, payload)
+            with self.assertRaisesRegex(ValueError, "Duplicate Arabic screen capture"):
                 review(path, SHA)
 
     def test_reject_unproven_native_locale_before_reading_geometry(self):

@@ -64,38 +64,60 @@ def review(archive: Path, exact_sha: str) -> dict:
         platform = str(r.get("platform", "")).lower()
         if platform.startswith("linux"):
             linux = True
-            arabic_name, english_name = "arabic-settings.png", "system-theme.png"
+            arabic_names = {
+                "arabic_studio": "arabic-locale.png",
+                "arabic_queue": "arabic-queue.png",
+                "arabic_settings": "arabic-settings.png",
+            }
+            english_name = "system-theme.png"
         elif platform.startswith("windows"):
             linux = False
-            arabic_name, english_name = "windows-arabic-settings.png", "windows-theme-system.png"
+            arabic_names = {
+                "arabic_studio": "windows-arabic-locale.png",
+                "arabic_queue": "windows-arabic-queue.png",
+                "arabic_settings": "windows-arabic-settings.png",
+            }
+            english_name = "windows-theme-system.png"
         else:
             raise ValueError("Unknown native platform")
-        if arabic_name not in names or english_name not in names:
+        required = list(arabic_names.values()) + [english_name]
+        if any(name not in names for name in required):
             raise ValueError("Original Arabic or English screenshot missing")
-        ar_image, en_image = z.read(arabic_name), z.read(english_name)
-        _, ar_dimensions = sample_png_rgb(ar_image)
-        _, en_dimensions = sample_png_rgb(en_image)
-        if ar_dimensions != en_dimensions:
+        images = {name: z.read(name) for name in required}
+        dimensions = {name: sample_png_rgb(data)[1] for name, data in images.items()}
+        if len(set(dimensions.values())) != 1:
             raise ValueError("Inconsistent installed display dimensions")
-        width, height = ar_dimensions
+        width, height = dimensions[english_name]
+        # Different real pages must have distinct native screenshots. Replayed
+        # or relabeled same-page captures cannot establish three-page coverage.
+        arabic_hashes = {name: hashlib.sha256(images[name]).hexdigest()
+                         for name in arabic_names.values()}
+        if len(set(arabic_hashes.values())) != len(arabic_hashes):
+            raise ValueError("Duplicate Arabic screen capture across distinct pages")
         layouts = r.get("native_layout_observations", {})
-        for page in ("arabic_studio", "arabic_queue", "arabic_settings"):
+        page_centers = {}
+        for page in arabic_names:
             layout = layouts.get(page)
             if (not isinstance(layout, dict) or layout.get("missing_labels") or
                     layout.get("certifies_rtl_or_visual") is not False or
                     not all(name in layout.get("labels_requested", []) for name in ARABIC_NAV)):
                 raise ValueError("Incomplete native Arabic navigation geometry: " + page)
+            centers = {}
             for name in ARABIC_NAV:
-                _nav(layout, name, linux=linux)
-        arabic = _nav(layouts["arabic_settings"], "الإعدادات", linux=linux)
+                bounds = _nav(layout, name, linux=linux)
+                if bounds["x"] + bounds["width"] > width or bounds["y"] + bounds["height"] > height:
+                    raise ValueError("Native control lies outside screenshot display bounds: " + page)
+                centers[name] = round((bounds["x"] + bounds["width"] / 2) / width, 4)
+            page_centers[page] = centers
         english = _nav(layouts.get("theme_system", {}), "Settings", linux=linux)
-        for bounds in (arabic, english):
-            if (bounds["x"] + bounds["width"] > width or
-                    bounds["y"] + bounds["height"] > height):
-                raise ValueError("Native control lies outside screenshot display bounds")
-        right = (arabic["x"] + arabic["width"] / 2) / width
+        if (english["x"] + english["width"] > width or
+                english["y"] + english["height"] > height):
+            raise ValueError("English native control lies outside screenshot display bounds")
+        right = page_centers["arabic_settings"]["الإعدادات"]
         left = (english["x"] + english["width"] / 2) / width
-        mirrored = bool(right > .75 and left < .25 and right - left > .5)
+        mirrored = bool(left < .25 and all(
+            centers["الإعدادات"] > .75 and centers["الإعدادات"] - left > .5
+            for centers in page_centers.values()))
         return {
             "schema": "native_arabic_rail_geometry_noncertifying_v1",
             "source_sha": exact_sha,
@@ -104,8 +126,9 @@ def review(archive: Path, exact_sha: str) -> dict:
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
             "package_sha256": r["package_sha256"],
             "executable_sha256": r["executable_sha256"],
-            "screenshot_sha256": {arabic_name: hashlib.sha256(ar_image).hexdigest(),
-                                  english_name: hashlib.sha256(en_image).hexdigest()},
+            "screenshot_sha256": {name: hashlib.sha256(data).hexdigest()
+                                  for name, data in images.items()},
+            "arabic_navigation_centers_by_page": page_centers,
             "display_dimensions": [width, height],
             "arabic_nav_pages_with_named_focusable_buttons": 3,
             "arabic_settings_nav_center_fraction": round(right, 4),
