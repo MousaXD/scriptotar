@@ -1,0 +1,61 @@
+# Agent10 independent CI-only malicious PNG evidence test, no application execution.
+# Runs only after exact source Git blob and working-byte attestation.
+name: Agent10 native evidence bounded PNG inflate release-veto probe
+
+on:
+  push:
+    branches: [agent-10/p2-native-evidence-png-inflate-bounds-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-png:
+    name: PNG evidence decompression cap (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independent Agent10 synthetic probe source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify independent test HEAD
+        shell: bash
+        env:
+          AUDITOR_HEAD: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AUDITOR_HEAD"
+      - name: Checkout exact Agent07 native QA source as data only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: e1f91fcf23119c0988312803208c2a5148174a82
+          path: .agent10-pr161-data
+          persist-credentials: false
+          sparse-checkout: |
+            tests/defragmentation/native-e2e/native_bidi_geometry_review.py
+            tests/defragmentation/native-e2e/visual_observations.py
+          sparse-checkout-cone-mode: false
+      - name: Verify exact committed and working source before decoder import
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=.agent10-pr161-data
+          test "$(git -C "$root" rev-parse HEAD)" = e1f91fcf23119c0988312803208c2a5148174a82
+          test "$(git -C "$root" rev-parse HEAD:tests/defragmentation/native-e2e/visual_observations.py)" = f0caea96527352ce4e427ad0ef27c3ac670eaac7
+          test "$(git -C "$root" hash-object tests/defragmentation/native-e2e/visual_observations.py)" = f0caea96527352ce4e427ad0ef27c3ac670eaac7
+          test "$(git -C "$root" rev-parse HEAD:tests/defragmentation/native-e2e/native_bidi_geometry_review.py)" = d025ee5d12485dca7bbc4c9586a6e31c94532a7b
+          test "$(git -C "$root" hash-object tests/defragmentation/native-e2e/native_bidi_geometry_review.py)" = d025ee5d12485dca7bbc4c9586a6e31c94532a7b
+          git -C "$root" diff --quiet -- tests/defragmentation/native-e2e/visual_observations.py tests/defragmentation/native-e2e/native_bidi_geometry_review.py
+      - name: Select pinned Python for synthetic-only source test
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Require bounded actual PNG inflate output, not rejection after allocation
+        shell: bash
+        run: python tests/defragmentation/security/agent10_png_inflater_bounded_negative.py --candidate .agent10-pr161-data
