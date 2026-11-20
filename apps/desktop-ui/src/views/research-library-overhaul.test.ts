@@ -310,3 +310,19 @@ describe('Arabic mixed-direction isolation in data-heavy views', () => {
     expect(screen.getByRole('textbox', { name: 'تصفية البحث' })).toHaveAttribute('dir', 'auto');
   });
 });
+
+describe('Research page checkbox accessibility', () => {
+  it('announces mixed state for a partially selected page and selects remaining rows', async () => {
+    mountResearch(researchItems(3));
+    const selectPage = screen.getByRole('checkbox', { name: 'Select page' });
+    expect(selectPage).toHaveAttribute('aria-checked', 'false');
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Video 1' }));
+    expect(selectPage).toHaveAttribute('aria-checked', 'mixed');
+    expect(selectPage).toHaveClass('partial');
+    await fireEvent.click(selectPage);
+    expect(selectPage).toBeChecked();
+    expect(selectPage).toHaveAttribute('aria-checked', 'true');
+    expect(selectPage).not.toHaveClass('partial');
+    expect(screen.getByText('Selected: 3')).toBeInTheDocument();
+  });
+});
