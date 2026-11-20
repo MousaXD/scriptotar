@@ -84,7 +84,7 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
+          reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # Reject every tracked diff beyond this ONE workflow-only candidate:
