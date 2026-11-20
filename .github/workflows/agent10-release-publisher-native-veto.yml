@@ -1,0 +1,66 @@
+# Independent source-pinned release-contract audit. READ ONLY.
+# The final-release policy assertion is deliberately RED for legacy preview.
+name: Agent10 independent native and publisher authorization contract
+
+on:
+  push:
+    branches: [agent-10/p0-release-authority-native-gates-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-preview-and-final-security-contract:
+    name: Exact-source legacy preview vs final release authorization (strict)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Check out independent Agent10 tests
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate exact independent audit source identity
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Check out immutable existing main publisher as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 69e60f91c0b00560332dac06b732fc2259c1d632
+          path: .agent10-pinned-main
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/release_ci_gate.py
+            .github/workflows/tauri-next-release.yml
+          sparse-checkout-cone-mode: false
+      - name: Check out immutable PR155 proposed authorization fix as data
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 1f9e661f3c72c28a5695d1c7dfa124280f5b1494
+          path: .agent10-pinned-publisher-fix
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/tauri-next-release.yml
+          sparse-checkout-cone-mode: false
+      - name: Authenticate source commits and *actual* checked-out file blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          main=.agent10-pinned-main
+          fix=.agent10-pinned-publisher-fix
+          test "$(git -C "$main" rev-parse HEAD)" = 69e60f91c0b00560332dac06b732fc2259c1d632
+          test "$(git -C "$fix" rev-parse HEAD)" = 1f9e661f3c72c28a5695d1c7dfa124280f5b1494
+          test "$(git -C "$main" hash-object scripts/release_ci_gate.py)" = e9af99c06c8dc2e564735060ebe006ea1196d974
+          test "$(git -C "$main" hash-object .github/workflows/tauri-next-release.yml)" = 3127500db3c4694a551df4fb660514e9871f2392
+          test "$(git -C "$fix" hash-object .github/workflows/tauri-next-release.yml)" = d3a3b9d0e4e9620d03dcb573f871f56492e36748
+          git -C "$main" diff --quiet -- scripts/release_ci_gate.py .github/workflows/tauri-next-release.yml
+          git -C "$fix" diff --quiet -- .github/workflows/tauri-next-release.yml
+      - name: Positive forensic control — reproduce both policy gaps with no real release
+        run: python3 tests/defragmentation/security/agent10_release_publisher_native_contract.py
+      - name: Strict stronger final-release contract (EXPECTED FAIL until independently resolved)
+        run: python3 tests/defragmentation/security/agent10_release_publisher_native_contract.py --strict-final-release
