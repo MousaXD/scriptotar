@@ -1807,3 +1807,51 @@ fn recovery_requires_original_source_links_but_accepts_later_human_attachments()
         "failed reconciliation must never regenerate a batch"
     );
 }
+
+#[test]
+fn direct_sqlite_acceptance_rejects_invalid_angle_outline() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].angle.outline.clear();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn direct_sqlite_acceptance_refuses_forged_generated_review_locators() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0]
+        .review_findings
+        .push(scriptotar_ai::writing::ReviewFinding {
+            beat_id: Some("nonexistent-beat".into()),
+            concern: "Invented evaluation".into(),
+            recommendation: "Refer to a source outside the Study".into(),
+            evidence_ids: vec!["foreign-evidence".into()],
+            needs_human_review: false,
+        });
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
