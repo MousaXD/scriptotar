@@ -316,7 +316,26 @@ impl PaidEffectFence for SqlitePaidEffectFence {
             .get_external_effect(self.key())
             .map_err(|_| ConsentError::UncertainEffect)?
             .ok_or(ConsentError::UncertainEffect)?;
-        if existing.status != ExternalEffectStatus::Dispatched || existing.attempt != 1 {
+        // A request may have been charged before a timeout or lost ACK moved
+        // the durable claim to UNCERTAIN. A subsequently authenticated receipt
+        // can still settle that SAME attempt; it is never a replay permit.
+        let tokens = usage.input_tokens + usage.output_tokens;
+        if existing.status == ExternalEffectStatus::Completed
+            && existing.attempt == 1
+            && existing.provider_request_id.as_deref() == Some(provider_request_id)
+            && existing.receipt_id.as_deref() == Some(provider_request_id)
+            && existing.actual_tokens == tokens
+            && existing.actual_cost_microusd == usage.cost_microusd
+        {
+            // Exact duplicate delivery is idempotent after restart as well.
+            // Contradictory receipts remain rejected below.
+            return Ok(());
+        }
+        if !matches!(
+            existing.status,
+            ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+        ) || existing.attempt != 1
+        {
             return Err(ConsentError::UncertainEffect);
         }
         self.store
