@@ -1731,12 +1731,14 @@ fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
     ));
     assert_eq!(
         db.get_study(plan.context.project_id, plan.context.study_id)
-            .unwrap().revision,
+            .unwrap()
+            .revision,
         1
     );
     assert_eq!(
         db2.get_study(plan2.context.project_id, plan2.context.study_id)
-            .unwrap().revision,
+            .unwrap()
+            .revision,
         1
     );
 }
