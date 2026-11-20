@@ -687,9 +687,11 @@ export function createMockClient(overrides?: Partial<ScriptotarApi>): Scriptotar
     },
     async listStudyResearchRuns(projectId: string, studyId: string) {
       studyInProject(projectId, studyId);
+      // Match SQLite's updated_at DESC listing: Studio reopens the latest
+      // durable local research run rather than an old pending/completed one.
       return [...studyResearchRuns.values()]
         .filter((run) => run.plan.project_id === projectId && run.plan.study_id === studyId)
-        .slice(-25).map((run) => structuredClone(run));
+        .slice(-25).reverse().map((run) => structuredClone(run));
     },
     async decideStudyResearch(projectId: string, studyId: string, runId: string, action) {
       const study = studyInProject(projectId, studyId);
