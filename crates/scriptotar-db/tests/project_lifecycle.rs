@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 use scriptotar_core::{
     now_rfc3339, Job, JobInput, JobRepository, Project, ProjectRepository, SettingsRepository,
 };
-use scriptotar_db::SqliteStore;
+use scriptotar_db::{SqliteStore, LATEST_SCHEMA_VERSION};
 use tempfile::TempDir;
 use uuid::Uuid;
 
@@ -400,7 +400,7 @@ fn parent_reassignments_cannot_break_existing_project_lineage() {
 }
 
 #[test]
-fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
+fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     let temp = TempDir::new().unwrap();
     let path = temp.path().join("historical-v4.sqlite3");
     let store = SqliteStore::open(&path).unwrap();
@@ -416,9 +416,62 @@ fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
     settings.active_project_id = Some(project.id);
     store.save_settings(&settings).unwrap();
 
-    // Reconstruct the exact v4 schema shape from v5 by undoing only v5's
-    // additive triggers and ledger rows. Existing project/job data remains untouched.
+    // Reconstruct a real v4 shape by removing post-v4 objects,
+    // then v5 triggers/ledger. Existing project/job data remains untouched.
     let connection = Connection::open(&path).unwrap();
+
+    // An open v6 store already contains v6 tables and triggers. Removing
+    // only its version number would fabricate an inconsistent legacy fixture.
+    let mut triggers = connection
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='trigger'
+         AND (name LIKE 'study_%' OR name LIKE 'creative_%'
+           OR name LIKE 'draft_%' OR name LIKE 'evidence_review_%')",
+        )
+        .unwrap();
+    let names = triggers
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(triggers);
+    for name in names {
+        connection
+            .execute_batch(&format!("DROP TRIGGER \"{name}\";"))
+            .unwrap();
+    }
+    connection
+        .execute_batch(
+            "DROP TRIGGER external_provider_identity_on_insert;
+         DROP TRIGGER external_provider_identity_on_update;
+         DROP INDEX idx_external_provider_request_unique;
+         DROP INDEX idx_external_provider_receipt_unique;
+         DROP TABLE agent_external_provider_identities;
+         DELETE FROM schema_migrations WHERE version=12;
+         DROP TABLE study_writing_revisions;
+         DROP TABLE study_writing_batches;
+         DELETE FROM schema_migrations WHERE version=11;
+         DROP TABLE agent_external_attempt_history;
+         DROP TABLE agent_external_effects;
+         DELETE FROM schema_migrations WHERE version=10;
+         DROP TABLE evidence_reviews;
+         DELETE FROM schema_migrations WHERE version=9;
+         DROP TABLE agent_effects;
+         DELETE FROM schema_migrations WHERE version=8;
+         DROP TABLE agent_audit_events;
+         DROP TABLE agent_runs;
+         DELETE FROM schema_migrations WHERE version=7;
+         DROP TABLE draft_source_links;
+         DROP TABLE study_source_jobs;
+         DROP TABLE draft_versions;
+         DROP TABLE creative_drafts;
+         DROP TABLE study_briefs;
+         DROP TABLE study_evidence;
+         DROP TABLE study_sources;
+         DROP TABLE content_studies;
+         DELETE FROM schema_migrations WHERE version=6;",
+        )
+        .unwrap();
     connection
         .execute_batch(
             "DROP TRIGGER creators_project_reassignment_guard;
@@ -440,7 +493,7 @@ fn historical_v4_to_v5_upgrade_preserves_project_jobs_and_settings() {
     let upgraded = SqliteStore::open(&path).unwrap();
     upgraded.run_integration_migrations().unwrap();
     upgraded.run_integration_migrations().unwrap();
-    assert_eq!(upgraded.schema_version().unwrap(), 5);
+    assert_eq!(upgraded.schema_version().unwrap(), LATEST_SCHEMA_VERSION);
     assert_eq!(upgraded.get_project(project.id).unwrap(), project);
     assert_eq!(upgraded.get_job(job.id).unwrap().project_id, project.id);
     assert_eq!(

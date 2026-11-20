@@ -1,0 +1,30 @@
+name: Agent10 independent preview publisher approval policy (read-only)
+
+on:
+  push:
+    branches: [agent-10/p0-prebuild-absolute-import-probe-20261119]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview-owner-authorization:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify policy probe source and exact checkout
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          node --check tests/defragmentation/security/agent10_preview_release_approval_probe.mjs
+      - name: Prove read-only negative and positive authorization controls
+        shell: bash
+        run: node tests/defragmentation/security/agent10_preview_release_approval_probe.mjs
+      - name: Require independent owner-only approval (expected RED on legacy publisher)
+        shell: bash
+        run: node tests/defragmentation/security/agent10_preview_release_approval_probe.mjs --assert-owner-only

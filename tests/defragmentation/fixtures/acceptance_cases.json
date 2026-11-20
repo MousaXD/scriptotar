@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "claim": "UNEXECUTED FUTURE ACCEPTANCE CASES, not passing product tests",
+  "cases": [
+    {
+      "id": "p0-create-switch",
+      "phase": "P0",
+      "surface": "project",
+      "steps": "Create A and B, switch twice and restart",
+      "expected": "A and B persist; no cross-project results",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-watchlists",
+      "phase": "P0",
+      "surface": "research",
+      "steps": "Save watchlist, rescan and reopen",
+      "expected": "Watchlist state and source identity retained",
+      "environment": "rust-ipc",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-media-restart",
+      "phase": "P0",
+      "surface": "jobs",
+      "steps": "Queue media, terminate during processing and reopen",
+      "expected": "Interrupted state and retry are visible; no false completion",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-transcript-export",
+      "phase": "P0",
+      "surface": "transcript",
+      "steps": "Open exact transcript; export TXT/SRT/VTT/JSON",
+      "expected": "Each artifact matches persisted ID and content",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-ai-copy",
+      "phase": "P0",
+      "surface": "ai",
+      "steps": "Build Copy Prompt without provider credentials",
+      "expected": "No external request or stored secret; clipboard content correct",
+      "environment": "browser-mock",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-ai-history",
+      "phase": "P0",
+      "surface": "library",
+      "steps": "Create AI run, navigate away, reopen from Library",
+      "expected": "Exact saved run restored by ID",
+      "environment": "rust-ipc",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-library-item",
+      "phase": "P0",
+      "surface": "library",
+      "steps": "Open two similarly titled research entries",
+      "expected": "Selected ID determines opened record, not title",
+      "environment": "browser-mock",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-mcp-deny",
+      "phase": "P0",
+      "surface": "mcp",
+      "steps": "Attempt denied tool through both transports",
+      "expected": "Default deny enforced; no mutation",
+      "environment": "mcp-e2e",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-project-isolation",
+      "phase": "P0",
+      "surface": "security",
+      "steps": "Try source/draft IDs belonging to other project",
+      "expected": "Explicit denial and no foreign data",
+      "environment": "rust-ipc",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-stale-edits",
+      "phase": "P0",
+      "surface": "draft",
+      "steps": "Save revisions with two stale editors",
+      "expected": "Conflict is surfaced; no silent overwrite",
+      "environment": "rust-ipc",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p0-localization",
+      "phase": "P0",
+      "surface": "ui",
+      "steps": "Switch EN/AR then resize and use keyboard",
+      "expected": "RTL, focus order, labels and error messaging correct",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-approval",
+      "phase": "P1",
+      "surface": "agent",
+      "steps": "Plan a paid external-provider step without consent",
+      "expected": "Paused for explicit approval; zero paid calls",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-restart-resume",
+      "phase": "P1",
+      "surface": "agent",
+      "steps": "Restart during approved step and retry",
+      "expected": "Durable checkpoint prevents duplicate execution",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-duplicate-tools",
+      "phase": "P1",
+      "surface": "agent",
+      "steps": "Deliver duplicate tool result/event",
+      "expected": "At-most-once side effects; auditable outcome",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-cancel",
+      "phase": "P1",
+      "surface": "agent",
+      "steps": "Cancel while queued and while in flight",
+      "expected": "Bounded cancellation and truthful state",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-provider-failure",
+      "phase": "P1",
+      "surface": "ai",
+      "steps": "Reject request, timeout and malformed provider response",
+      "expected": "No false completion; redacted errors; retry bounded",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-expense",
+      "phase": "P1",
+      "surface": "security",
+      "steps": "Exceed token/cost budget with BYOK",
+      "expected": "No unapproved over-budget request",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p1-arabic",
+      "phase": "P1",
+      "surface": "writing",
+      "steps": "Create Arabic scripts with named source clips",
+      "expected": "Arabic, RTL, evidence and original phrasing preserved",
+      "environment": "agent-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p2-multi-source",
+      "phase": "P2",
+      "surface": "evidence",
+      "steps": "Combine three conflicting observations",
+      "expected": "Each claim preserves source, locator and contradiction",
+      "environment": "research-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p2-unverified",
+      "phase": "P2",
+      "surface": "evidence",
+      "steps": "Supply unsupported claim and injected tool command",
+      "expected": "Unsupported flag; source text never treated as instruction",
+      "environment": "research-fixture",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p2-large-library",
+      "phase": "P2",
+      "surface": "performance",
+      "steps": "Load 100/1k/10k synthetic records with saved filters",
+      "expected": "Latency, RSS and payload recorded without data leak",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p2-background-jobs",
+      "phase": "P2",
+      "surface": "performance",
+      "steps": "Navigate reader while jobs and transcription active",
+      "expected": "UI remains responsive and state converges",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p3-controls",
+      "phase": "P3",
+      "surface": "ui",
+      "steps": "Inspect dropdown/range styling at three widths",
+      "expected": "No native fallback outside documented allowlist",
+      "environment": "browser-mock",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p3-reader",
+      "phase": "P3",
+      "surface": "ui",
+      "steps": "Read long RTL transcript at narrow dimensions",
+      "expected": "No overflow, lost focus or text corruption",
+      "environment": "native-installed",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    },
+    {
+      "id": "p3-a11y",
+      "phase": "P3",
+      "surface": "ui",
+      "steps": "Keyboard-only journey with screen-reader inspection",
+      "expected": "Usable names, status messages, focus order",
+      "environment": "manual-native",
+      "automation": "NOT_WIRED",
+      "result": "NOT_RUN"
+    }
+  ]
+}

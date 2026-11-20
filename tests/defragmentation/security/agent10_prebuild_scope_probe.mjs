@@ -1,0 +1,300 @@
+#!/usr/bin/env node
+/**
+ * Agent10 independent adversarial pre-Vite *scope* regression.
+ *
+ * Drives the actual separately checked-out immutable guard against disposable
+ * copies of the real source/config, without installing npm or invoking Vite.
+ * This test explicitly revalidates the previous RED against the newer
+ * hardened 55ce3ac389b7e1fcab99b3a5acc84b526630af72 guard, not its older vulnerable 75ec9e ancestor. It does not prove the original 19-pattern parser vulnerability is
+ * patched or establish installed desktop-app security.
+ */
+import assert from 'node:assert/strict';
+import {
+  cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+} from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const guard = join(repo, '.agent10-trusted-guard', 'apps', 'desktop-ui', 'scripts', 'guard-vite-build-patterns.mjs');
+const source = join(repo, 'apps', 'desktop-ui');
+assert.ok(existsSync(guard), 'Separately pinned guard checkout is missing');
+const tmp = mkdtempSync(join(tmpdir(), 'agent10-prebuild-scope-'));
+const ws = join(tmp, 'apps', 'desktop-ui');
+const main = join(ws, 'src', 'main.ts');
+const qa = join(ws, 'qa', 'hostile.ts');
+
+function run() {
+  const result = spawnSync(process.execPath, [guard, '--workspace', ws], {
+    cwd: tmp, encoding: 'utf8', timeout: 12000, maxBuffer: 512 * 1024, windowsHide: true,
+  });
+  if (result.error) throw result.error;
+  return result;
+}
+function write(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, value);
+}
+const bypasses = [];
+function verdict(label, output, requiredDenial) {
+  const success = output.status === 0;
+  const evidence = {
+    label, status: output.status, fail_closed: !success,
+    findings: output.stdout.includes('findings') ? output.stdout.slice(0, 1700) : output.stderr.slice(0, 700),
+  };
+  console.log(JSON.stringify(evidence));
+  if (requiredDenial && success) bypasses.push(label);
+}
+try {
+  mkdirSync(ws, { recursive: true });
+  cpSync(join(source, 'src'), join(ws, 'src'), { recursive: true });
+  for (const filename of ['vite.config.ts', 'package.json', 'package-lock.json', 'tsconfig.json', 'index.html']) {
+    cpSync(join(source, filename), join(ws, filename));
+  }
+  const tauriDir = join(tmp, 'apps', 'desktop', 'src-tauri');
+  mkdirSync(tauriDir, { recursive: true });
+  cpSync(join(repo, 'apps', 'desktop', 'src-tauri', 'tauri.conf.json'), join(tauriDir, 'tauri.conf.json'));
+
+  const clean = run();
+  assert.equal(clean.status, 0, 'Clean exact source failed trusted guard: ' + clean.stdout + clean.stderr);
+  console.log('CONTROL CLEAN SOURCE: PASS');
+
+  // Independently verify that Agent10's previous dotfile issue really is fixed.
+  const dotfile = join(ws, '.postcssrc.cjs');
+  write(dotfile, 'module.exports = { plugins: {} };\n');
+  const postcss = run();
+  verdict('dotfile .postcssrc.cjs correctly blocked', postcss, true);
+  assert.match(postcss.stdout, /Unreviewed shadow npm\/build configuration/);
+  rmSync(dotfile);
+
+  // Vite root-absolute module specifiers resolve from the project root,
+  // but the present guard's relativeLiteral only sees quoted ../ strings.
+  const original = readFileSync(main, 'utf8');
+  write(qa, "const modules = import.meta.glob('./+(*a)'); export { modules };\n");
+  write(main, original + "\nimport '/qa/hostile.ts';\n");
+  const absolute = run();
+  verdict('Vite root-absolute /qa/hostile.ts bypass', absolute, true);
+  write(main, original);
+
+  // A path beginning ./ can normalize outside src without beginning ../ .
+  // This is an independent string-level scope escape negative control;
+  // source-compiled Vite reachability must be separately tested.
+  mkdirSync(join(ws, 'src', 'staging'), { recursive: true });
+  write(main, original + "\nimport './staging/../../qa/hostile.ts';\n");
+  const normalized = run();
+  verdict('normalized ./staging/../../qa/hostile.ts bypass', normalized, true);
+  write(main, original);
+
+  // Independent Agent10 negative controls beyond Agent11's fixture matrix.
+  // Require a typed source/config finding, not just an arbitrary nonzero exit.
+  function requireBlocked(label, mutate, reason) {
+    const undo = mutate();
+    try {
+      const out = run();
+      verdict(label, out, true);
+      assert.notEqual(out.status, 0, label + ' unexpectedly accepted');
+      assert.match(out.stdout, reason, label + ': missing expected finding');
+    } finally { undo(); }
+  }
+  for (const [label, stmt, reason] of [
+    ['static absolute import', "import '/qa/hostile.ts';", /Unreviewed absolute\/root-relative module import/],
+    ['export-from absolute', "export { modules } from '/qa/hostile.ts';", /Unreviewed absolute\/root-relative module import/],
+    ['dynamic absolute', "void import('/qa/hostile.ts');", /Unreviewed absolute\/root-relative module import/],
+    ['commented dynamic absolute', "void import(/* review */ '/qa/hostile.ts');", /Unreviewed absolute\/root-relative module import/],
+    ['absolute backtick dynamic', "void import(\x60/qa/hostile.ts\x60);", /Unreviewed absolute\/root-relative module import/],
+    ['nested relative traversal', "import './stage/../../qa/hostile.ts';", /Unreviewed out-of-scope relative source reference/],
+    ['export-from traversal', "export { modules } from '../qa/hostile.ts';", /Unreviewed out-of-scope relative source reference/],
+  ]) {
+    requireBlocked(label, () => {
+      write(main, original + '\n' + stmt + '\n');
+      return () => write(main, original);
+    }, reason);
+  }
+  // Validate all common JS syntax-level dot escapes; the guard must reason
+  // about decoded import values, not only raw quote-delimited source bytes.
+  const escapedDotVariants = [
+    ['Unicode \u005cu002e', String.raw`.\u002e/qa/hostile.ts`],
+    ['Unicode brace', String.raw`.\u{2e}/qa/hostile.ts`],
+    ['Hex dot', String.raw`.\x2e/qa/hostile.ts`],
+  ];
+  for (const [label, literal] of escapedDotVariants) {
+    assert.ok(literal.includes('\\') && !literal.startsWith('../'));
+    write(main, original + "\nimport '" + literal + "';\n");
+    try {
+      const out = run();
+      verdict('JS encoded parent import: '+label, out, true);
+      if (out.status !== 0) {
+        assert.match(out.stdout,/Unreviewed out-of-scope relative source reference/,
+          'Blocked for another reason, not decoded import traversal');
+      }
+    } finally { write(main,original); }
+  }
+
+  // Independent Agent10 forms deliberately absent from Agent11's own fixtures:
+  // the source guard must inspect effective JS module specifiers in all
+  // static/from/export/dynamic/backtick paths, not just textual import regexes.
+  const encodedParent = '.' + '\\u002e/qa/hostile.ts';
+  for (const [label, statement] of [
+    ['export-from named', "export { modules } from '" + encodedParent + "';"],
+    ['export-from star', "export * from '" + encodedParent + "';"],
+    ['dynamic import literal', "void import('" + encodedParent + "');"],
+    ['mixed escaped slash', "import './staging/..\\u002f..\\u002fqa/hostile.ts';"],
+    ['plain backtick import', 'import ' + String.fromCharCode(96) + encodedParent +
+      String.fromCharCode(96) + ';'],
+    ['dynamic backtick import', 'void import(' + String.fromCharCode(96) +
+      encodedParent + String.fromCharCode(96) + ');'],
+  ]) {
+    write(main, original + '\n' + statement + '\n');
+    try {
+      const result = run();
+      verdict('decoded JS import form: ' + label, result, true);
+      if (result.status !== 0)
+        assert.match(result.stdout,/Unreviewed out-of-scope relative source reference/,
+          'Wrong reason for blocking '+label);
+    } finally {write(main,original);}
+  }
+  // Benign effective in-src escape and ordinary non-module source string.
+  for (const benign of [
+    "import '.\\u002fviews/DashboardView.svelte';",
+    "const plainUserText = '.\\u002e/qa/hostile.ts';",
+  ]) {
+    write(main,original+'\n'+benign+'\n');
+    try {
+      const cleanResult=run();
+      assert.equal(cleanResult.status,0,
+        'Benign encoded source unexpectedly blocked: '+benign+cleanResult.stdout+cleanResult.stderr);
+      console.log(JSON.stringify({test:'benign JS import/text control',result:'PASS',statement:benign}));
+    } finally {write(main,original);}
+  }
+  // An enormous but valid named import can exceed the 2048-token traversal
+  // limit; fail-closed manual review is acceptable, silently accepting an
+  // encoded out-of-src specifier is not.
+  const namedBindings=Array.from({length:1150},(_,i)=>'s'+String(i).padStart(4,'0'));
+  const longFrom="import { "+namedBindings.join(', ')+" } from '"+encodedParent+"';";
+  assert.ok(longFrom.length < 100000);
+  write(main,original+'\n'+longFrom+'\n');
+  try {
+    const longResult=run();
+    verdict('1150-binding escaped parent path after lexer scan cap',longResult,true);
+    if (longResult.status !== 0)
+      assert.match(longResult.stdout,
+        /Unreviewed out-of-scope relative source reference|Ambiguous\/overlong module declaration requires review/,
+        'Not denied for path or fail-closed module declaration');
+  } finally {write(main,original);}
+
+  // Policy/config paths that independently influence actual source compilation.
+  for (const [label, path, body] of [
+    ['shadow workspace npmrc', join(ws, '.npmrc'), 'ignore-scripts=false\n'],
+    ['shadow ancestor npmrc', join(tmp, 'apps', '.npmrc'), 'registry=https://example.invalid\n'],
+    ['shadow package shrinkwrap', join(ws, 'npm-shrinkwrap.json'), '{}\n'],
+    ['shadow ancestor PostCSS', join(tmp, '.postcssrc.yaml'), 'plugins: []\n'],
+    ['unreviewed PostCSS TOML', join(ws, '.postcssrc.toml'), 'plugins = []\n'],
+    ['alternate PostCSS YAML config', join(ws, 'postcss.config.yaml'), 'plugins: []\n'],
+    ['unreviewed alternate Vite config', join(ws, 'vite.config.mjs'), 'export default {}\n'],
+    ['shadow Vite environment', join(ws, '.env.production'), 'VITE_MODE=evil\n'],
+  ]) {
+    requireBlocked(label, () => {
+      write(path, body);
+      return () => rmSync(path, {force:true});
+    }, /Unreviewed shadow npm\/build configuration|New unreviewed build configuration file/);
+  }
+  const pkg = join(ws, 'package.json');
+  const pkgOriginal = readFileSync(pkg, 'utf8');
+  requireBlocked('alternate npm compiler command', () => {
+    write(pkg, pkgOriginal.replace('"vite build"', '"vite build --config evil.config.ts"'));
+    return () => write(pkg, pkgOriginal);
+  }, /Unreviewed build manifest\/lock\/Tauri contract/);
+  const viteConfig = join(ws, 'vite.config.ts');
+  const viteOriginal = readFileSync(viteConfig, 'utf8');
+  requireBlocked('unreviewed Vite plugin and source alias', () => {
+    write(viteConfig, viteOriginal + '\n// eslint-plugin dynamic alias\n');
+    return () => write(viteConfig, viteOriginal);
+  }, /Unreviewed Vite config SHA-256/);
+  const index = join(ws, 'index.html');
+  const htmlOriginal = readFileSync(index, 'utf8');
+  requireBlocked('alternate HTML module entrypoint', () => {
+    write(index, htmlOriginal + '\n<script type="module" src="/qa/hostile.ts"></script>\n');
+    return () => write(index, htmlOriginal);
+  }, /Unreviewed build manifest\/lock\/Tauri contract/);
+  // Windows runners may disallow creating symlinks without privilege. Record
+  // NOT TESTED rather than silently converting unsupported into PASS.
+  const symlinkPath = join(ws, 'src', 'agent10-hostile-symlink.ts');
+  let linked = false;
+  try {
+    symlinkSync(qa, symlinkPath, 'file');
+    linked = true;
+  } catch (error) {
+    console.log(JSON.stringify({test:'source symlink escape',outcome:'NOT TESTED',reason:error.code}));
+  }
+  if (linked) {
+    try {
+      const out = run();
+      verdict('source symlink escape', out, true);
+      assert.notEqual(out.status,0);
+      assert.match(out.stdout,/Source symlink requires review/);
+    } finally {rmSync(symlinkPath,{force:true});}
+  }
+  // Independently validate the newly reviewed Vite .mts/.cts source
+  // extension coverage against the immutable new Agent11 guard.
+  const tsVariantDir = join(ws, 'src', 'agent10-unreviewed-ts-variants');
+  mkdirSync(tsVariantDir,{recursive:true});
+  try {
+    write(join(tsVariantDir,'a'.repeat(36)+'b'), 'near miss only\n');
+    for (const suffix of ['.mts','.cts']) {
+      const hostileVariant=join(tsVariantDir,'hostile'+suffix);
+      write(hostileVariant,"export const modules = import.meta.glob('./+(*a)');\n");
+      write(main,original+"\nimport './agent10-unreviewed-ts-variants/hostile"+suffix+"';\n");
+      try {
+        const out=run();
+        verdict('Vite module suffix '+suffix+' hostile first-party macro',out,true);
+        assert.notEqual(out.status,0,'UNBLOCKED hostile source extension '+suffix);
+        assert.match(out.stdout,/Vite import.meta.glob macro/);
+      } finally {
+        write(main,original);
+        rmSync(hostileVariant,{force:true});
+      }
+    }
+    for (const suffix of ['.mts','.cts']) {
+      const benignVariant=join(tsVariantDir,'safe'+suffix);
+      write(benignVariant,'export const safeVariant = true;\n');
+      try {
+        const out=run();
+        assert.equal(out.status,0,'Clean source variant unexpectedly denied: '+suffix+
+          ': '+out.stdout);
+        console.log(JSON.stringify({test:'clean source variant '+suffix,outcome:'PASS'}));
+      } finally {
+        rmSync(benignVariant,{force:true});
+      }
+    }
+  } finally {
+    write(main,original);
+    rmSync(tsVariantDir,{recursive:true,force:true});
+  }
+  // P0 candidate: the import-literal scanner caps specifiers at 400 chars.
+  // Redundant "./" segments can exceed that lexical cap while resolving to
+  // the same valid out-of-src location in Vite's module graph.
+  const longTraversal = './staging/' + './'.repeat(220) + '../../qa/hostile.ts';
+  assert.ok(longTraversal.length > 400, 'Control must exceed scanner cap');
+  requireBlocked('over-400-character normalized relative module escape', () => {
+    write(main, original + '\nimport ' + JSON.stringify(longTraversal) + ';\n');
+    return () => write(main, original);
+  }, /Unreviewed out-of-scope relative source reference/);
+
+  // Deliberately demonstrate the boundary of this tool: the scanner does not
+  // inspect workflow files. A malicious PR can bypass an unenforced workflow.
+  // This is a governance RED, not an exploit result against the new source scanner.
+  const untrustedWorkflow = join(tmp,'.github','workflows','ci.yml');
+  write(untrustedWorkflow,'name: bypassed-guard\njobs: {}\n');
+  const workflowGap=run();
+  console.log(JSON.stringify({test:'PR-authored workflow replacement',guard_status:workflowGap.status,
+    classification:'UNPROTECTED CI POLICY GAP: scanner cannot independently enforce its own invocation'}));
+  assert.equal(workflowGap.status,0,'Workflow-file-only change must not be misclassified as scanner coverage');
+  rmSync(join(tmp,'.github'),{recursive:true,force:true});
+  
+  assert.deepEqual(bypasses, [], 'UNBLOCKED PREBUILD GUARD SCOPES: ' + bypasses.join(', '));
+  console.log('PASS: hardened guard rejected tested source and build-config escapes; workflow governance remains separate');
+} finally {
+  rmSync(tmp, { recursive: true, force: true });
+}

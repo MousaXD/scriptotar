@@ -18,7 +18,12 @@ TEST = (ROOT / 'apps/desktop-ui/src/api/tauriClient.test.ts').read_text()
 
 
 def actual_commands() -> set[str]:
-    return set(re.findall(r'#\[tauri::command\]\s*(?:async\s+)?fn\s+(\w+)\s*\(', RUST))
+    # Real Tauri handlers can have additional bounded Rust attributes (for
+    # example, a checked Clippy expectation documenting stable IPC fields).
+    # Never omit the handler from the exact registered-command inventory.
+    return set(re.findall(
+        r'#\[tauri::command\]\s*(?:#\[[^\]]{0,500}\]\s*)*(?:async\s+)?fn\s+(\w+)\s*\(', RUST
+    ))
 
 
 def dispatched_commands() -> set[str]:
@@ -41,15 +46,17 @@ def methods() -> set[str]:
 
 class ApiSurfaceContractTests(unittest.TestCase):
     def test_every_rust_command_is_dispatched(self):
+        self.assertIn('interpret_study_angles', actual_commands(),
+                      'Decorated Tauri handler must remain counted')
         self.assertEqual(actual_commands(), dispatched_commands())
-        self.assertEqual(len(actual_commands()), 34, "Update coverage inventory when Tauri commands change")
+        self.assertEqual(len(actual_commands()), 63, "Update coverage inventory when Tauri commands change")
 
     def test_every_rust_command_is_accessible_via_frontend_client(self):
         self.assertEqual(dispatched_commands(), wired_commands())
 
     def test_every_frontend_method_has_an_implementation_and_contract_invocation(self):
         names = methods()
-        self.assertEqual(len(names), 36, "Update coverage inventory when frontend APIs change")
+        self.assertEqual(len(names), 65, "Update coverage inventory when frontend APIs change")
         # The exact invoked command mapping is covered above.
         for name in names:
             self.assertRegex(TAURI, rf'(?m)^\s+{name}:', f'Missing frontend binding: {name}')

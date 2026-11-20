@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { locale } from '../i18n';
   import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
   import { extractUrlsFromText } from '../utils/textUtils';
+  import { newNativeRequestId, matchesNativeDenial } from '../utils/nativeDenial';
   import JobRow from '../components/JobRow.svelte';
   import EmptyState from '../components/EmptyState.svelte';
 
@@ -13,7 +14,7 @@
   export let onRetry: (jobId: string) => Promise<void> | void;
   export let onChooseLocal: () => Promise<string | null> | string | null;
   export let onEnqueueLocal: (path: string) => Promise<void> | void;
-  export let onEnqueueUrl: (url: string) => Promise<void> | void;
+  export let onEnqueueUrl: (url: string, requestId?: string) => Promise<void> | void;
   export let onOpenCompleted: (job: Job) => Promise<void> | void;
 
   type QueueFilter = 'all' | 'active' | 'attention' | 'done';
@@ -24,6 +25,9 @@
   let manualPath = '';
   let sourceUrl = '';
   let actionError = '';
+  let actionErrorElement: HTMLParagraphElement | undefined;
+  let urlRejected = false;
+  let urlDenialId = '';
   let actionStatus = '';
   let busy = false;
   let dragActive = false;
@@ -53,10 +57,20 @@
     if (busy) return;
     busy = true;
     actionError = '';
+    urlRejected = false;
+    urlDenialId = '';
     actionStatus = '';
     try { await action(); }
     catch (error) { actionError = error instanceof Error ? error.message : String(error); }
-    finally { busy = false; }
+    finally {
+      busy = false;
+      if (actionError) {
+        // WebKitGTK can render an alert without exposing a reliably named
+        // native node until it receives focus. Do not alter Rust admission.
+        await tick();
+        if (actionError) actionErrorElement?.focus();
+      }
+    }
   }
 
   async function chooseLocal() {
@@ -108,7 +122,29 @@
     return run(async () => {
       const url = sourceUrl.trim();
       if (!url) return;
-      await onEnqueueUrl(url);
+      const requestId = newNativeRequestId();
+      try {
+        // Keep Rust as the authority for URL admission: even unsupported schemes
+        // must reach the backend and must never enqueue a canonical job.
+        await onEnqueueUrl(url, requestId);
+      } catch (error) {
+        if (matchesNativeDenial(error, 'INVALID_MEDIA_URL', requestId)) {
+          urlRejected = true;
+          urlDenialId = requestId;
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
+        const detail = error instanceof Error ? error.message : String(error);
+        // Never display an unrelated request's opaque backend marker as a
+        // native authorization or proof identity.
+        if (/^SCRIPTOTAR_DENIAL:[A-Z_]+:[0-9a-f]{32}$/.test(detail)) {
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
+        if (detail.includes('research URL is invalid: only http and https are supported')) {
+          urlRejected = true;
+          throw new Error($translator('queue.unsupportedUrl'));
+        }
+        throw error;
+      }
       sourceUrl = '';
       actionStatus = $translator('queue.queuedUrl');
     });
@@ -187,10 +223,11 @@
 
 <header class="queue-header" data-i18n-ignore>
   <h1>{$translator('queue.heading')}</h1>
-  <div class="queue-indicators" aria-label={$translator('queue.filters')}>
-    <span>{activeCount} {$translator('queue.filterActive')}</span>
-    {#if attentionCount}<span class="attention-indicator">{attentionCount} {$translator('queue.filterAttention')}</span>{/if}
-  </div>
+  {#if attentionCount}
+    <div class="queue-indicators" aria-label={$translator('queue.filterAttention')}>
+      <span class="attention-indicator">{attentionCount} {$translator('queue.filterAttention')}</span>
+    </div>
+  {/if}
 </header>
 
 <section
@@ -227,7 +264,7 @@
     <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
       <form class="url-form" on:submit|preventDefault={enqueueUrl}>
         <label for="queue-url">{$translator('queue.supportedUrl')}</label>
-        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} bind:value={sourceUrl} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
         <div class="capture-actions">
           <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
           <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
@@ -244,7 +281,7 @@
   </details>
 </section>
 
-{#if actionError}<p class="queue-feedback error-message" role="alert" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · request ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="ltr"> Request ID: {urlDenialId}</small>{/if}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>
@@ -260,7 +297,16 @@
   </div>
   <div class="jobs-list" aria-busy={busy}>
     {#if visible.length === 0}
-      <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
+      {#if jobs.length > 0 && filter !== 'all'}
+        <div class="queue-filter-empty">
+          <strong>{$locale === 'ar' ? 'لا توجد مهام بهذه الحالة' : 'No jobs in this filter'}</strong>
+          <button type="button" class="button secondary" on:click={() => changeFilter('all')}>
+            {$locale === 'ar' ? 'عرض كل المهام' : 'Show all jobs'}
+          </button>
+        </div>
+      {:else}
+        <EmptyState title={$translator('queue.emptyTitle')} message={$translator('queue.emptyMessage')} />
+      {/if}
     {:else}
       {#each shown as job (job.id)}
         <div class="job-with-actions">
@@ -282,6 +328,8 @@
 </section>
 
 <style>
+  .queue-filter-empty { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-5); }
+  .queue-filter-empty strong { font-size: var(--text-sm); color: var(--color-text-muted); }
   .queue-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-4); }
   .queue-header h1 { margin: 0; font-size: var(--text-xl); }
   .queue-indicators { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); color: var(--color-text-muted); font-size: var(--text-sm); }

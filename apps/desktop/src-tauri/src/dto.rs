@@ -228,6 +228,210 @@ pub struct UiAiRun {
     pub status: String,
 }
 
+/// Exact persisted AI artifact, including its original prompt/result (never a credential).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiAiRunDetail {
+    #[serde(flatten)]
+    pub summary: UiAiRun,
+    pub project_id: String,
+    pub prompt: String,
+    pub result: Option<String>,
+}
+
+/// Exact research item, not a navigation-only library row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiResearchItemDetail {
+    #[serde(flatten)]
+    pub item: UiResearchItem,
+    pub project_id: String,
+    pub scanned_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioBrief {
+    pub title: String,
+    pub goal: String,
+    pub audience: String,
+    pub platform: String,
+    pub language: String,
+    pub duration: String,
+    pub style: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioSourceRef {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidenceInput {
+    pub source: UiStudioSourceRef,
+    pub claim: String,
+    pub locator: String,
+    pub timestamp_seconds: Option<f64>,
+    pub uncertainty_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidenceReview {
+    pub id: String,
+    pub previous_certainty: String,
+    pub next_certainty: String,
+    pub note: String,
+    pub reviewed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyEvidence {
+    pub id: String,
+    pub project_id: String,
+    pub study_id: String,
+    pub source: Option<UiStudioSourceRef>,
+    pub source_label: String,
+    pub source_available: bool,
+    pub claim: String,
+    pub locator: String,
+    pub timestamp_seconds: Option<f64>,
+    pub certainty: String,
+    pub uncertainty_note: Option<String>,
+    pub created_at: String,
+    pub review_history: Vec<UiStudyEvidenceReview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioDraftVersion {
+    pub id: String,
+    pub revision: i64,
+    pub content: String,
+    pub created_at: String,
+}
+
+/// Local-only typed 3-angle prompt prepared from authorized Study material.
+/// This is NOT an AI result, fact verification or authorization to send data.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyAnglePrompt {
+    pub prompt: String,
+    pub attached_source_count: usize,
+    pub transcript_excerpt_count: usize,
+    pub unverified_observation_count: usize,
+    pub limitations: Vec<String>,
+}
+
+/// Model-proposed creative options validated locally against current Study evidence.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioAngleOption {
+    pub id: String,
+    pub approach: String,
+    pub hook: String,
+    pub promise: String,
+    pub outline: Vec<String>,
+    pub estimated_seconds: u32,
+    pub evidence_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyAngleInterpretation {
+    pub angles: Vec<UiStudioAngleOption>,
+    pub draft_prompt: Option<String>,
+    pub limitations: Vec<String>,
+}
+
+/// Exact user-supplied script context. This does not grant provider execution.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyScriptInput {
+    pub expected_study_revision: i64,
+    pub angle_prompt: String,
+    pub angles_response_json: String,
+    pub selected_angle_id: String,
+    pub prepared_draft_prompt: String,
+    pub script_response_json: String,
+    pub accept_as_new_candidate: bool,
+}
+
+/// Locally validated model-proposed content, not independent fact verification.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudyScriptReview {
+    pub title: String,
+    pub body: String,
+    pub angle_id: String,
+    pub referenced_source_count: usize,
+    pub claim_count: usize,
+    pub needs_fact_review_count: usize,
+    pub limitations: Vec<String>,
+    pub saved_study: Option<UiStudioStudy>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioDraftSummary {
+    pub id: String,
+    pub title: String,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudy {
+    pub id: String,
+    pub project_id: String,
+    pub revision: i64,
+    pub brief: UiStudioBrief,
+    pub sources: Vec<UiStudioSourceRef>,
+    pub draft: String,
+    pub draft_versions: Vec<UiStudioDraftVersion>,
+    pub draft_id: Option<String>,
+    pub draft_revision: Option<i64>,
+    pub drafts: Vec<UiStudioDraftSummary>,
+    pub archived_drafts: Vec<UiStudioDraftSummary>,
+}
+
+/// Read-only immutable v11 batch receipt metadata. Never expose source
+/// excerpts, raw provider responses, credentials or client-provided provenance.
+/// The three IDs correspond to exactly one canonical atomic insertion.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioWritingBatch {
+    pub run_id: String,
+    pub project_id: String,
+    pub study_id: String,
+    pub draft_ids: [String; 3],
+    pub committed_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudySummary {
+    pub id: String,
+    pub project_id: String,
+    pub revision: i64,
+    pub brief: UiStudioBrief,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UiStudioStudyPatch {
+    pub brief: Option<UiStudioBrief>,
+    pub sources: Option<Vec<UiStudioSourceRef>>,
+    pub draft: Option<String>,
+    /// Optional only for old clients; current Studio always submits exact identity.
+    pub draft_id: Option<String>,
+    pub draft_revision: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UiLibraryItem {

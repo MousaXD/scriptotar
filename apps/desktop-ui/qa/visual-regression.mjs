@@ -58,10 +58,11 @@ async function routeTo(page, view) {
   if (view.index === null) {
     await page.locator('.sidebar-utility .settings-link[aria-current="page"]').waitFor({ timeout: 5000 });
   } else {
-    await page.waitForFunction((index) => {
-      const buttons = document.querySelectorAll('.primary-nav button');
-      return buttons[index]?.getAttribute('aria-current') === 'page';
-    }, view.index, { timeout: 5000 });
+    // Stable view identity: adding Studio must not change existing QA routes.
+    // Legacy AI tools retain the A shortcut; Studio is the consolidated rail destination.
+    const viewId = view.name === 'ai-studio' ? 'studio' : view.name;
+    await page.locator(`.primary-nav button[data-view-id="${viewId}"][aria-current="page"]`)
+      .waitFor({ timeout: 5000 });
   }
   return performance.now() - start;
 }
@@ -365,6 +366,15 @@ async function runBootState(browser, locale, theme, state) {
       ? page.locator('[aria-busy="true"]').first()
       : page.getByText('QA injected bootstrap failure');
     await indicator.waitFor({ timeout: 15000 });
+    if (state === 'loading') {
+      // Startup may contain skeletal work rows, but must not advertise fake
+      // dashboard metrics while the real workspace is still unavailable.
+      const metricSkeletonsVisible = await page.locator('.workspace-skeleton .metric-skeletons')
+        .evaluate((element) => getComputedStyle(element).display !== 'none');
+      if (metricSkeletonsVisible) {
+        recordFailure(label + '/loading-hierarchy', 'Startup still displays a decorative metric dashboard');
+      }
+    }
     await screenshot(page, label);
   } catch (error) {
     recordFailure(label, error);

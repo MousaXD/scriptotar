@@ -82,7 +82,7 @@
     promptGeneration += 1;
     building = false;
     invalidateRun();
-    status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK runs only when you choose Run with API.';
+    status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK sending is unavailable until per-request consent, price limits and durable usage receipts are certified. Use Copy Prompt.';
   }
 
   function sourceInputChanged() {
@@ -241,9 +241,9 @@
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
-      <label><span>API key · session only</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" placeholder="Paste key for this run" /></label>
+      <label><span>API key · pending certification</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" disabled placeholder="Provider sending unavailable" /></label>
       {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
-      <p>Session-only credentials. Nothing is saved by this frontend.</p>
+      <p>Direct BYOK sending is disabled until consent and spending safeguards are certified. Build and copy a prompt instead; no API key is needed.</p>
     </div>
   {/if}
 </section>
@@ -305,7 +305,7 @@
   <div class="ai-actions">
     <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
     <button class="button primary" disabled={busy || building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
-    {#if mode === 'byok'}<button class="button secondary run-button" disabled={busy || building || sourceLoading || !!sourceError || provider === 'Local (coming later)'} on:click={runAi}>{busy ? 'Running…' : 'Run with API'}</button>{/if}
+    {#if mode === 'byok'}<button class="button secondary run-button" disabled aria-label="Run with API (unavailable)" title="Requires certified provider approval and usage receipts">Run with API (unavailable)</button>{/if}
   </div>
 </div>
 

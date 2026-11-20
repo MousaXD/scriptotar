@@ -1,0 +1,72 @@
+name: Agent10 independent hardened prebuild adversarial verification
+
+on:
+  push:
+    branches:
+      - agent-10/p0-prebuild-absolute-import-probe-20261119
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  absolute-import-escape:
+    name: Independent trusted-guard scope probe (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify immutable Agent10 test source
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='${{ github.sha }}')process.exit(1)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch immutable reviewed Agent11 production guard (separate checkout)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent10-trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Verify latest immutable hardened guard commit before testing
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['-C','.agent10-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='55ce3ac389b7e1fcab99b3a5acc84b526630af72')process.exit(1)"
+          node --check .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          node .agent10-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+      - name: Probe first-party import forms, shadow configs, symlinks, and workflow policy gap
+        run: node tests/defragmentation/security/agent10_prebuild_scope_probe.mjs
+
+  bounded-actual-vite-reachability:
+    name: Bounded actual Vite compiler source-escape evidence (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 16
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify exact adversarial source checkout
+        run: |
+          node -e "if(require('child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='${{ github.sha }}')process.exit(1)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install the real locked Vite frontend dependencies
+        run: npm ci --prefix apps/desktop-ui
+      - name: Run real baseline then two bounded hostile build-time reachability cases
+        run: node tests/defragmentation/security/agent10_vite_scope_reachability.mjs

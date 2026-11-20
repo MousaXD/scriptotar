@@ -13,7 +13,7 @@ beforeEach(() => {
 async function ready(api: ScriptotarApi = createMockClient()) {
   render(App, { props: { api } });
   await screen.findByRole('heading', { name: 'Creator Lab' });
-  await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+  await fireEvent.keyDown(window, { key: 'a' });
 }
 
 async function chooseSource(name: string) {
@@ -67,7 +67,7 @@ describe('AI source selection', () => {
     api.getTranscript = async () => ({ ...mockBootstrap.transcripts[0], id: 'unrelated-id' });
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
-    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+    await fireEvent.keyDown(window, { key: 'a' });
 
     await chooseSource('Hook breakdown — Arabic sample');
     expect(await screen.findByRole('alert')).toHaveTextContent('did not match the selected project and source ID');
@@ -87,25 +87,26 @@ describe('AI source selection', () => {
     expect(screen.getByTestId('ai-source-lineage')).toHaveTextContent('Locally edited excerpt');
   });
 
-  it('preserves keyless Copy Prompt and distinguishes the edited BYOK preview from its request', async () => {
+  it('preserves local Copy Prompt and keeps an edited BYOK preview offline', async () => {
     const api = createMockClient();
     const runCalls: string[] = [];
-    const runAi = api.runAi;
-    api.runAi = async (input) => { runCalls.push(input.sourceText); return runAi(input); };
-    render(App, { props: { api } });
-    await screen.findByRole('heading', { name: 'Creator Lab' });
-    await fireEvent.click(screen.getByRole('button', { name: /AI Studio/ }));
+    api.runAi = async (input) => { runCalls.push(input.sourceText); return 'UNSAFE_REMOTE_OUTPUT'; };
+    await ready(api);
 
     await fireEvent.input(screen.getByPlaceholderText('Paste or load transcript/research text…'), { target: { value: 'Manual source' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Build prompt' }));
-    await waitFor(() => expect((screen.getByPlaceholderText('Build a prompt to preview it here…') as HTMLTextAreaElement).value).toContain('Manual source'));
+    const preview = screen.getByPlaceholderText('Build a prompt to preview it here…');
+    await waitFor(() => expect((preview as HTMLTextAreaElement).value).toContain('Manual source'));
     expect(runCalls).toHaveLength(0);
 
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
-    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'test-only-key' } });
-    await fireEvent.input(screen.getByPlaceholderText('Build a prompt to preview it here…'), { target: { value: 'Changed preview, not a generated request' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
-    expect(screen.getByRole('status')).toHaveTextContent('edited prompt preview is for copying only');
+    expect(screen.getByLabelText('API key')).toBeDisabled();
+    await fireEvent.input(preview, { target: { value: 'Changed preview, not a generated request' } });
+    const send = screen.getByRole('button', { name: 'Run with API (unavailable)' });
+    expect(send).toBeDisabled();
+    await fireEvent.click(send);
+    expect(screen.getByRole('status')).toHaveTextContent('BYOK sending is unavailable');
+    expect(preview).toHaveValue('Changed preview, not a generated request');
     expect(runCalls).toHaveLength(0);
   });
 
@@ -152,38 +153,39 @@ describe('AI source selection', () => {
     expect(screen.getByRole('button', { name: 'Build prompt' })).toBeEnabled();
   });
 
-  it('discards the provider response when the provider or mode changes during the request', async () => {
+  it('does not start a provider request after changing provider or mode', async () => {
     const api = createMockClient();
-    const providerResponse = deferred<string>();
-    api.runAi = () => providerResponse.promise;
+    let calls = 0;
+    api.runAi = async () => { calls += 1; return 'STALE_PROVIDER_OUTPUT'; };
     await ready(api);
 
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
-    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'session-only-key' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
-    expect(screen.getByRole('button', { name: 'Running…' })).toBeDisabled();
+    const send = screen.getByRole('button', { name: 'Run with API (unavailable)' });
+    expect(send).toBeDisabled();
     await chooseProvider('Anthropic');
-    await fireEvent.click(screen.getByRole('button', { name: /Copy Prompt/ }));
-    await act(async () => {
-      providerResponse.resolve('STALE_PROVIDER_OUTPUT');
-      await providerResponse.promise;
-    });
+    await fireEvent.click(send);
+    await fireEvent.click(screen.getByRole('button', { name: 'Copy Prompt' }));
+    expect(calls).toBe(0);
     expect(screen.queryByText('STALE_PROVIDER_OUTPUT')).not.toBeInTheDocument();
-    expect(screen.getByRole('status')).not.toHaveTextContent('Finished with OpenAI');
   });
 
-  it('redacts the submitted API key from a provider error', async () => {
+  it('does not accept a provider secret while BYOK egress is uncertified', async () => {
     const api = createMockClient();
     const secret = 'test-provider-secret-123';
-    api.runAi = async () => { throw new Error(`Provider rejected token ${secret}`); };
+    let called = false;
+    api.runAi = async () => { called = true; throw new Error(`Provider rejected token ${secret}`); };
     await ready(api);
 
     await fireEvent.click(screen.getByRole('button', { name: /BYOK/ }));
-    await fireEvent.input(screen.getByLabelText('API key'), { target: { value: secret } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Run with API' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('AI request failed:'));
-    expect(screen.getByRole('status')).toHaveTextContent('[redacted]');
+    const key = screen.getByLabelText('API key');
+    expect(key).toBeDisabled();
+    expect(key).toHaveValue('');
+    const send = screen.getByRole('button', { name: 'Run with API (unavailable)' });
+    expect(send).toBeDisabled();
+    await fireEvent.click(send);
+    expect(called).toBe(false);
     expect(screen.getByRole('status')).not.toHaveTextContent(secret);
+    expect(screen.getByRole('status')).not.toHaveTextContent('AI request failed');
   });
 
   it('rejects an exact transcript ID that belongs to another project', async () => {

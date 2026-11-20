@@ -16,17 +16,68 @@ use std::{
     sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError},
 };
 
+use scriptotar_agent::RunSnapshot;
+
 use dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiJob, UiMigrationStatus, UiSettings,
-    UiTranscript, UiTranscriptSummary, UiWatchlistStatus,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRunDetail, UiJob, UiMigrationStatus,
+    UiResearchItemDetail, UiSettings, UiStudioBrief, UiStudioStudy, UiStudioStudyPatch,
+    UiStudioStudySummary, UiStudyEvidence, UiStudyEvidenceInput, UiTranscript, UiTranscriptSummary,
+    UiWatchlistStatus,
 };
 use mcp_connect::{McpConnectionState, McpConnectionStatus};
-use scriptotar_core::{LegacyImportReport, SettingsRepository, WatchlistRepository};
+use scriptotar_core::{
+    LegacyImportReport, RepositoryError, SettingsRepository, WatchlistRepository,
+};
 use scriptotar_db::{SqliteStore, WatchlistRefreshState};
 use scriptotar_mcp::{load_permissions, McpPermissions};
 use services::AppServices;
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
+
+/// Opaque, high-entropy request identity travels through real Tauri errors.
+/// Neither untrusted payloads nor credentials are ever echoed in this marker.
+fn validate_native_request_id(request_id: Option<&str>) -> Result<(), String> {
+    if let Some(value) = request_id {
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("invalid native request identity".to_owned());
+        }
+    }
+    Ok(())
+}
+
+fn native_denial(code: &str, request_id: Option<&str>, fallback: String) -> String {
+    match request_id {
+        Some(id) => {
+            // CI can independently correlate an actual host denial with the
+            // native accessible alert; this logs NO source, URL, model text
+            // or provider key and grants no authority.
+            eprintln!("[scriptotar-native-denial] code={code} request_id={id}");
+            format!("SCRIPTOTAR_DENIAL:{code}:{id}")
+        }
+        None => fallback,
+    }
+}
+
+/// The authenticated active-project mutex rejects a foreign project before any
+/// Study/draft data read. Only that exact denial receives a native request
+/// marker; ordinary missing Studies, invalid IDs and storage failures retain
+/// their existing redacted/default error behavior.
+fn study_reference_denial(error: RepositoryError, request_id: Option<&str>) -> String {
+    let wrong_project = matches!(
+        &error,
+        RepositoryError::NotFound(reason) if reason == "project is not active"
+    );
+    let fallback = command_error(error);
+    if wrong_project {
+        native_denial("FOREIGN_STUDY_REFERENCE", request_id, fallback)
+    } else {
+        fallback
+    }
+}
 
 const MIGRATION_COMPLETED_MARKER: &str = ".legacy-migration-completed";
 static MIGRATION_OPERATION: OnceLock<Mutex<()>> = OnceLock::new();
@@ -488,10 +539,14 @@ fn migration_lock_status(error: MigrationLockError) -> UiMigrationStatus {
 }
 
 #[tauri::command]
-fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
-    Ok(BackendHealth {
-        schema_version: state.schema_version().map_err(command_error)?,
+async fn backend_health(state: tauri::State<'_, AppServices>) -> Result<BackendHealth, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        Ok(BackendHealth {
+            schema_version: services.schema_version().map_err(command_error)?,
+        })
     })
+    .await
 }
 
 /// Retains the original full-data payload for existing callers. New callers
@@ -532,14 +587,18 @@ async fn list_jobs(state: tauri::State<'_, AppServices>) -> Result<Vec<UiJob>, S
 }
 
 #[tauri::command]
-fn search_transcripts(
+async fn search_transcripts(
     query: String,
     limit: Option<usize>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<Vec<String>, String> {
-    state
-        .search_transcripts(&query, limit.unwrap_or(10))
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .search_transcripts(&query, limit.unwrap_or(10))
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -558,59 +617,715 @@ async fn get_transcript(
     .await
 }
 
+fn artifact_uuid(raw: &str, label: &str) -> Result<Uuid, String> {
+    if raw.len() > 64 {
+        return Err(format!("invalid {label}"));
+    }
+    Uuid::parse_str(raw).map_err(|_| format!("invalid {label}"))
+}
+
 #[tauri::command]
-fn get_watchlist_statuses(
+async fn get_ai_run(
+    project_id: String,
+    ai_run_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let ai_run_id = artifact_uuid(&ai_run_id, "AI run id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_ai_run(project_id, ai_run_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_research_item(
+    project_id: String,
+    research_item_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiResearchItemDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let research_item_id = artifact_uuid(&research_item_id, "research item id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .get_research_item(project_id, research_item_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_copy_prompt(
+    project_id: String,
+    input: AiPromptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiAiRunDetail, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    security::validate_ai_input(&input)?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_copy_prompt(project_id, &input)).await
+}
+
+#[tauri::command]
+async fn list_studies(
+    project_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<UiStudioStudySummary>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_studies(project_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_study(
+    project_id: String,
+    brief: UiStudioBrief,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .create_studio_study(project_id, brief)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_study(
+    project_id: String,
+    study_id: String,
+    draft_id: Option<String>,
+    request_id: Option<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    validate_native_request_id(request_id.as_deref())?;
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = draft_id
+        .map(|value| artifact_uuid(&value, "draft id"))
+        .transpose()?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        match draft_id {
+            Some(id) => services.get_studio_study_draft(project_id, study_id, id),
+            None => services.get_studio_study(project_id, study_id),
+        }
+        .map_err(|error| study_reference_denial(error, request_id.as_deref()))
+    })
+    .await
+}
+
+/// Recovery/readback only. This command cannot approve AI, create an
+/// external effect, or recover a missing usage receipt as a new dispatch.
+#[tauri::command]
+async fn list_study_writing_batches(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<crate::dto::UiStudioWritingBatch>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_writing_batches(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn duplicate_study_draft(
+    project_id: String,
+    study_id: String,
+    draft_id: String,
+    expected_draft_revision: i64,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = artifact_uuid(&draft_id, "draft id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .duplicate_studio_draft(project_id, study_id, draft_id, expected_draft_revision)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn rename_study_draft(
+    project_id: String,
+    study_id: String,
+    draft_id: String,
+    expected_draft_revision: i64,
+    title: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = artifact_uuid(&draft_id, "draft id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .rename_studio_draft(
+                project_id,
+                study_id,
+                draft_id,
+                expected_draft_revision,
+                &title,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_study_draft_archived(
+    project_id: String,
+    study_id: String,
+    draft_id: String,
+    expected_draft_revision: i64,
+    archived: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let draft_id = artifact_uuid(&draft_id, "draft id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .set_studio_draft_archived(
+                project_id,
+                study_id,
+                draft_id,
+                expected_draft_revision,
+                archived,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn prepare_study_angles(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<crate::dto::UiStudyAnglePrompt, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .prepare_studio_angle_prompt(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserve the stable flat Tauri IPC argument names required by installed desktop clients"
+)]
+async fn interpret_study_angles(
+    project_id: String,
+    study_id: String,
+    expected_study_revision: i64,
+    prepared_prompt: String,
+    response_json: String,
+    selected_angle_id: Option<String>,
+    request_id: Option<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<crate::dto::UiStudyAngleInterpretation, String> {
+    validate_native_request_id(request_id.as_deref())?;
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .interpret_studio_angles(
+                project_id,
+                study_id,
+                expected_study_revision,
+                &prepared_prompt,
+                &response_json,
+                selected_angle_id.as_deref(),
+            )
+            .map_err(|error| {
+                let code = match &error {
+                    RepositoryError::Validation(_) => Some("INVALID_STUDY_ANGLES"),
+                    RepositoryError::Conflict(_) => Some("STALE_STUDY_ANGLES"),
+                    _ => None,
+                };
+                let fallback = command_error(error);
+                match code {
+                    Some(code) => native_denial(code, request_id.as_deref(), fallback),
+                    None => fallback,
+                }
+            })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_study_script(
+    project_id: String,
+    study_id: String,
+    input: crate::dto::UiStudyScriptInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<crate::dto::UiStudyScriptReview, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .review_studio_script(project_id, study_id, &input)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// A real installed WebView can invoke the existing, project-scoped save
+/// command with a foreign Study ID. Only the actual active-project gate's
+/// rejection is identity-bound for native security auditing. This is never
+/// an authorization token and never logs project IDs, draft content or input.
+fn denied_foreign_study_mutation(error: RepositoryError, request_id: Option<&str>) -> String {
+    let inactive_project = matches!(
+        &error,
+        RepositoryError::NotFound(reason) if reason == "project is not active"
+    );
+    let fallback = command_error(error);
+    if inactive_project {
+        native_denial("FOREIGN_STUDY_WRITE", request_id, fallback)
+    } else {
+        fallback
+    }
+}
+
+#[tauri::command]
+async fn save_study(
+    project_id: String,
+    study_id: String,
+    expected_revision: i64,
+    patch: UiStudioStudyPatch,
+    request_id: Option<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    validate_native_request_id(request_id.as_deref())?;
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .save_studio_study(project_id, study_id, expected_revision, patch)
+            .map_err(|error| denied_foreign_study_mutation(error, request_id.as_deref()))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn revoke_study_source_access(
+    project_id: String,
+    study_id: String,
+    expected_revision: i64,
+    kind: String,
+    reference_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudioStudy, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let reference_id = artifact_uuid(&reference_id, "source reference id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .revoke_studio_source_access(
+                project_id,
+                study_id,
+                expected_revision,
+                &kind,
+                reference_id,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_evidence(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<UiStudyEvidence>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .list_studio_evidence(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_study_evidence(
+    project_id: String,
+    study_id: String,
+    input: UiStudyEvidenceInput,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudyEvidence, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .add_studio_evidence(project_id, study_id, input)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn review_study_evidence(
+    project_id: String,
+    study_id: String,
+    evidence_id: String,
+    expected_certainty: String,
+    action: String,
+    note: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<UiStudyEvidence, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let evidence_id = artifact_uuid(&evidence_id, "evidence id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .review_studio_evidence(
+                project_id,
+                study_id,
+                evidence_id,
+                &expected_certainty,
+                &action,
+                &note,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Preview the authoritative Study prompt and exact sealed OpenAI wire.
+/// Preview does not approve spending and cannot perform network I/O.
+#[tauri::command]
+async fn prepare_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    model: String,
+    max_output_tokens: u64,
+    limits: scriptotar_ai::provider_consent::RunBudget,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_ai::provider_consent::ConsentPreview, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .preview_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                model,
+                max_output_tokens,
+                limits,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// A fingerprint alone is not authority: price must also be verified by the
+/// trusted host and the Study/source snapshot must remain unchanged.
+#[tauri::command]
+async fn decide_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    approve: bool,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .decide_openai_provider_consent(project, study, &run_id, &fingerprint, approve)
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// Actual sealed host dispatch entrypoint. It delegates to the durable v12
+/// provider fence and genuine OpenAI Responses transport, but is intentionally
+/// unavailable for live egress until pricing and end-to-end certification.
+#[tauri::command]
+async fn execute_provider_consent_sealed(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    fingerprint: String,
+    request_time_api_key: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<String, String> {
+    let project = artifact_uuid(&project_id, "project id")?;
+    let study = artifact_uuid(&study_id, "study id")?;
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .execute_openai_provider_consent(
+                project,
+                study,
+                &run_id,
+                &fingerprint,
+                &request_time_api_key,
+            )
+            .map_err(command_error)
+    })
+    .await
+}
+
+/// A read-only plan. Nothing executes before explicit approval.
+#[tauri::command]
+async fn start_local_inspection(
+    project_id: String,
+    study_id: String,
+    transcript_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let transcript_id = artifact_uuid(&transcript_id, "transcript id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .start_local_inspection(project_id, study_id, transcript_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_local_inspections(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<RunSnapshot>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_local_inspections(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn decide_local_inspection(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    action: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    if !scriptotar_agent::valid_id(&run_id) {
+        return Err("invalid agent run ID".into());
+    }
+    if !matches!(action.as_str(), "approve" | "deny" | "cancel" | "recover") {
+        return Err("unsupported agent action".into());
+    }
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .decide_local_inspection(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_research_sources(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<services::study_research::StudyResearchSource>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_sources(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn start_study_research(
+    project_id: String,
+    study_id: String,
+    source_ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    if source_ids.is_empty() || source_ids.len() > 8 {
+        return Err("select one to eight Study sources".into());
+    }
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let source_ids = source_ids
+        .iter()
+        .map(|id| artifact_uuid(id, "Study source id"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .start_study_research(project_id, study_id, source_ids)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_study_research_runs(
+    project_id: String,
+    study_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<Vec<RunSnapshot>, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .list_study_research_runs(project_id, study_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn decide_study_research(
+    project_id: String,
+    study_id: String,
+    run_id: String,
+    action: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<RunSnapshot, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    if !scriptotar_agent::valid_id(&run_id) {
+        return Err("invalid research run ID".into());
+    }
+    if !matches!(action.as_str(), "approve" | "deny" | "cancel" | "recover") {
+        return Err("unsupported research action".into());
+    }
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .decide_study_research(project_id, study_id, &run_id, &action)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_study_research_report(
+    project_id: String,
+    study_id: String,
+    artifact_id: String,
+    state: tauri::State<'_, AppServices>,
+) -> Result<scriptotar_research::study_intelligence::StudyResearchReport, String> {
+    let project_id = artifact_uuid(&project_id, "project id")?;
+    let study_id = artifact_uuid(&study_id, "study id")?;
+    let artifact_id = artifact_uuid(&artifact_id, "research artifact id")?;
+    let service = state.inner().clone();
+    on_blocking_worker(move || {
+        service
+            .read_study_research_report(project_id, study_id, artifact_id)
+            .map_err(command_error)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_watchlist_statuses(
     state: tauri::State<'_, OperationalState>,
 ) -> Result<Vec<UiWatchlistStatus>, String> {
-    let watchlists = state.store.list_watchlists(None).map_err(command_error)?;
-    let persisted = state
-        .store
-        .list_watchlist_refresh_status(None)
-        .map_err(command_error)?
-        .into_iter()
-        .map(|status| (status.watchlist_id, status))
-        .collect::<HashMap<_, _>>();
-    let auto_watch = state
-        .store
-        .load_settings()
-        .map_err(command_error)?
-        .auto_watch;
+    let store = state.store.clone();
+    on_blocking_worker(move || {
+        let watchlists = store.list_watchlists(None).map_err(command_error)?;
+        let persisted = store
+            .list_watchlist_refresh_status(None)
+            .map_err(command_error)?
+            .into_iter()
+            .map(|status| (status.watchlist_id, status))
+            .collect::<HashMap<_, _>>();
+        let auto_watch = store.load_settings().map_err(command_error)?.auto_watch;
 
-    Ok(watchlists
-        .into_iter()
-        .map(|watchlist| {
-            let status = persisted.get(&watchlist.id);
-            let mut state_name = status
-                .map(|status| status.state.as_str())
-                .unwrap_or_else(|| {
-                    if watchlist.last_scan_at.is_some() {
-                        "healthy"
+        Ok(watchlists
+            .into_iter()
+            .map(|watchlist| {
+                let status = persisted.get(&watchlist.id);
+                let mut state_name = status
+                    .map(|status| status.state.as_str())
+                    .unwrap_or_else(|| {
+                        if watchlist.last_scan_at.is_some() {
+                            "healthy"
+                        } else {
+                            "never_scanned"
+                        }
+                    })
+                    .to_owned();
+                if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
+                    state_name = "failed".to_owned();
+                }
+                UiWatchlistStatus {
+                    watchlist_id: watchlist.id.to_string(),
+                    project_id: watchlist.project_id.to_string(),
+                    label: watchlist.label,
+                    state: state_name,
+                    last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
+                    last_successful_scan_at: status
+                        .and_then(|status| status.last_success_at.clone())
+                        .or(watchlist.last_scan_at),
+                    last_error: status.and_then(|status| status.last_error.clone()),
+                    next_retry_at: if auto_watch {
+                        status.and_then(|status| status.next_retry_at.clone())
                     } else {
-                        "never_scanned"
-                    }
-                })
-                .to_owned();
-            if !auto_watch && state_name == WatchlistRefreshState::RetryScheduled.as_str() {
-                state_name = "failed".to_owned();
-            }
-            UiWatchlistStatus {
-                watchlist_id: watchlist.id.to_string(),
-                project_id: watchlist.project_id.to_string(),
-                label: watchlist.label,
-                state: state_name,
-                last_attempt_at: status.and_then(|status| status.last_attempt_at.clone()),
-                last_successful_scan_at: status
-                    .and_then(|status| status.last_success_at.clone())
-                    .or(watchlist.last_scan_at),
-                last_error: status.and_then(|status| status.last_error.clone()),
-                next_retry_at: if auto_watch {
-                    status.and_then(|status| status.next_retry_at.clone())
-                } else {
-                    None
-                },
-            }
-        })
-        .collect())
+                        None
+                    },
+                }
+            })
+            .collect())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -679,25 +1394,49 @@ async fn create_project(
 }
 
 #[tauri::command]
-fn enqueue_local_media(
+async fn enqueue_local_media(
     project_id: Uuid,
     path: String,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
     let path = security::validated_local_media_path(&path)?;
-    state
-        .enqueue_local_media(project_id, path)
-        .map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services
+            .enqueue_local_media(project_id, path)
+            .map_err(command_error)
+    })
+    .await
 }
 
 #[tauri::command]
-fn enqueue_url(
+async fn enqueue_url(
     project_id: Uuid,
     url: String,
+    request_id: Option<String>,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
-    security::validate_url_argument("media URL", &url)?;
-    state.enqueue_url(project_id, url).map_err(command_error)
+    validate_native_request_id(request_id.as_deref())?;
+    if let Err(error) = security::validate_url_argument("media URL", &url) {
+        return Err(native_denial(
+            "INVALID_MEDIA_URL",
+            request_id.as_deref(),
+            error,
+        ));
+    }
+    let services = state.inner().clone();
+    on_blocking_worker(move || {
+        services.enqueue_url(project_id, url).map_err(|error| {
+            let kind = matches!(&error, RepositoryError::Validation(_));
+            let fallback = command_error(error);
+            if kind {
+                native_denial("INVALID_MEDIA_URL", request_id.as_deref(), fallback)
+            } else {
+                fallback
+            }
+        })
+    })
+    .await
 }
 
 #[tauri::command]
@@ -711,21 +1450,24 @@ fn choose_output_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.cancel_job(job_id).map_err(command_error)
+async fn cancel_job(job_id: Uuid, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.cancel_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn retry_job(
+async fn retry_job(
     job_id: Uuid,
     state: tauri::State<'_, AppServices>,
 ) -> Result<scriptotar_core::Job, String> {
-    state.retry_job(job_id).map_err(command_error)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.retry_job(job_id).map_err(command_error)).await
 }
 
 #[tauri::command]
-fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
-    state.load_settings().map_err(command_error)
+async fn get_settings(state: tauri::State<'_, AppServices>) -> Result<UiSettings, String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.load_settings().map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -753,8 +1495,12 @@ fn save_mcp_permissions(
 }
 
 #[tauri::command]
-fn save_settings(settings: UiSettings, state: tauri::State<'_, AppServices>) -> Result<(), String> {
-    state.save_settings(settings).map_err(command_error)
+async fn save_settings(
+    settings: UiSettings,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.save_settings(settings).map_err(command_error)).await
 }
 
 #[tauri::command]
@@ -778,18 +1524,23 @@ async fn scan_creator(
 }
 
 #[tauri::command]
-fn queue_research(ids: Vec<String>, state: tauri::State<'_, AppServices>) -> Result<(), String> {
+async fn queue_research(
+    ids: Vec<String>,
+    state: tauri::State<'_, AppServices>,
+) -> Result<(), String> {
     security::validate_research_ids(&ids)?;
-    state.queue_research(ids)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.queue_research(ids)).await
 }
 
 #[tauri::command]
-fn build_ai_prompt(
+async fn build_ai_prompt(
     input: AiPromptInput,
     state: tauri::State<'_, AppServices>,
 ) -> Result<String, String> {
     security::validate_ai_input(&input)?;
-    state.build_ai_prompt(&input)
+    let services = state.inner().clone();
+    on_blocking_worker(move || services.build_ai_prompt(&input)).await
 }
 
 #[tauri::command]
@@ -958,6 +1709,35 @@ pub fn run() {
             list_jobs,
             search_transcripts,
             get_transcript,
+            get_ai_run,
+            get_research_item,
+            save_copy_prompt,
+            list_studies,
+            create_study,
+            get_study,
+            list_study_writing_batches,
+            duplicate_study_draft,
+            rename_study_draft,
+            set_study_draft_archived,
+            prepare_study_angles,
+            interpret_study_angles,
+            review_study_script,
+            save_study,
+            revoke_study_source_access,
+            list_study_evidence,
+            add_study_evidence,
+            review_study_evidence,
+            prepare_provider_consent_sealed,
+            decide_provider_consent_sealed,
+            execute_provider_consent_sealed,
+            start_local_inspection,
+            list_local_inspections,
+            decide_local_inspection,
+            list_study_research_sources,
+            start_study_research,
+            list_study_research_runs,
+            decide_study_research,
+            read_study_research_report,
             get_watchlist_statuses,
             get_migration_status,
             retry_legacy_migration,
@@ -1071,6 +1851,17 @@ mod tests {
     }
 
     #[test]
+    fn artifact_uuid_rejects_invalid_and_oversized_values() {
+        let valid = Uuid::new_v4();
+        assert_eq!(
+            artifact_uuid(&valid.to_string(), "AI run id").unwrap(),
+            valid
+        );
+        assert!(artifact_uuid("not-a-uuid", "AI run id").is_err());
+        assert!(artifact_uuid(&"x".repeat(100), "AI run id").is_err());
+    }
+
+    #[test]
     fn blocking_worker_keeps_results_and_errors_and_runs_off_caller_thread() {
         let caller = std::thread::current().id();
         let worker = tauri::async_runtime::block_on(on_blocking_worker(move || {
@@ -1155,5 +1946,94 @@ mod tests {
         symlink(&target, temp.path().join(MIGRATION_COMPLETED_MARKER)).unwrap();
         assert!(migration_completed(temp.path()).is_err());
         assert!(mark_migration_completed(temp.path()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod native_denial_identity_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_weak_or_untrusted_request_identity_before_host_dispatch() {
+        for value in [
+            "",
+            "123",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "fffffffffffffffffffffffffffffff",
+            "fffffffffffffffffffffffffffffffff",
+            "ff?not-a-uuid",
+        ] {
+            assert!(validate_native_request_id(Some(value)).is_err());
+        }
+        assert!(validate_native_request_id(Some("0123456789abcdef0123456789abcdef")).is_ok());
+        assert!(validate_native_request_id(None).is_ok());
+    }
+
+    #[test]
+    fn only_active_project_study_reference_denial_gets_correlated_marker() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            study_reference_denial(
+                RepositoryError::NotFound("project is not active".into()),
+                Some(id),
+            ),
+            format!("SCRIPTOTAR_DENIAL:FOREIGN_STUDY_REFERENCE:{id}")
+        );
+        let missing = study_reference_denial(
+            RepositoryError::NotFound("selected draft in this Study".into()),
+            Some(id),
+        );
+        assert!(missing.contains("selected draft in this Study"));
+        assert!(!missing.contains("SCRIPTOTAR_DENIAL:"));
+        let internal = study_reference_denial(
+            RepositoryError::Storage("test storage failure".into()),
+            Some(id),
+        );
+        assert!(!internal.contains("SCRIPTOTAR_DENIAL:"));
+    }
+
+    #[test]
+    fn forged_mutating_project_denial_receipt_is_exact_and_redacted() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(
+            denied_foreign_study_mutation(
+                RepositoryError::NotFound("project is not active".into()),
+                Some(id),
+            ),
+            format!("SCRIPTOTAR_DENIAL:FOREIGN_STUDY_WRITE:{id}")
+        );
+        // A nonexistent Study or stale CAS must not masquerade as a foreign
+        // active-project denial even with a plausible request identity.
+        let no_study = denied_foreign_study_mutation(
+            RepositoryError::NotFound("Study not found".into()),
+            Some(id),
+        );
+        assert!(!no_study.contains("SCRIPTOTAR_DENIAL:"));
+        let stale = denied_foreign_study_mutation(
+            RepositoryError::Conflict("stale revision".into()),
+            Some(id),
+        );
+        assert!(!stale.contains("SCRIPTOTAR_DENIAL:"));
+        assert_eq!(
+            denied_foreign_study_mutation(
+                RepositoryError::NotFound("project is not active".into()),
+                None,
+            ),
+            "not found: project is not active"
+        );
+    }
+
+    #[test]
+    fn redacted_native_denial_never_contains_untrusted_payload() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let payload = "UNTRUSTED JSON PRIVATE BODY";
+        assert_eq!(
+            native_denial("INVALID_STUDY_ANGLES", Some(id), payload.into()),
+            format!("SCRIPTOTAR_DENIAL:INVALID_STUDY_ANGLES:{id}")
+        );
+        assert_eq!(
+            native_denial("INVALID_MEDIA_URL", None, payload.into()),
+            payload
+        );
     }
 }

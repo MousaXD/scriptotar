@@ -1,0 +1,11 @@
+[package]
+name = "scriptotar-independent-security-tests"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Nested security harness: no changes to production workspace/feature owners.
+[workspace]
+
+[dependencies]
+scriptotar-ai = { path = "../../../crates/scriptotar-ai" }

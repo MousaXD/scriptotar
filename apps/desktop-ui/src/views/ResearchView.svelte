@@ -7,6 +7,7 @@
   export let items: ResearchItem[];
   export let watchlistStatuses: WatchlistStatus[] = [];
   export let onQueue: (ids: string[]) => Promise<void> | void;
+  export let onUseInStudio: ((item: ResearchItem) => void) | undefined = undefined;
   export let onScan: (url: string, limit: number) => Promise<void> | void;
   export let onSave: (url: string, limit: number) => Promise<void> | void;
 
@@ -19,6 +20,11 @@
     refreshing: 'Refreshing',
     retry_scheduled: 'Retry scheduled',
     failed: 'Failed'
+  };
+
+  const arabicStateLabel: Record<WatchlistOperationalState, string> = {
+    healthy: 'سليمة', never_scanned: 'لم تُفحص', refreshing: 'جارٍ التحديث',
+    retry_scheduled: 'إعادة المحاولة مجدولة', failed: 'فشل'
   };
 
   let query = '';
@@ -116,10 +122,10 @@
     try {
       await onScan(profileUrl.trim(), limit);
       statusError = false;
-      status = 'Research scan completed.';
+      status = isArabic ? 'اكتمل فحص الملف.' : 'Research scan completed.';
     } catch (error) {
       statusError = true;
-      status = 'Research scan unavailable: ' + (error instanceof Error ? error.message : String(error));
+      status = (isArabic ? 'تعذر فحص الملف: ' : 'Research scan unavailable: ') + (error instanceof Error ? error.message : String(error));
     } finally {
       scanning = false;
     }
@@ -132,10 +138,10 @@
     try {
       await onSave(profileUrl.trim(), limit);
       statusError = false;
-      status = 'Watchlist saved locally for this project.';
+      status = isArabic ? 'حُفظت قائمة المتابعة محلياً لهذا المشروع.' : 'Watchlist saved locally for this project.';
     } catch (error) {
       statusError = true;
-      status = 'Watchlist save failed: ' + (error instanceof Error ? error.message : String(error));
+      status = (isArabic ? 'تعذر حفظ قائمة المتابعة: ' : 'Watchlist save failed: ') + (error instanceof Error ? error.message : String(error));
     } finally {
       saving = false;
     }
@@ -157,12 +163,12 @@
         completed += batch.length;
       }
       statusError = false;
-      status = 'Selected media queued.';
+      status = isArabic ? 'أُضيفت الوسائط المحددة إلى الطابور.' : 'Selected media queued.';
     } catch (error) {
       statusError = true;
       const detail = error instanceof Error ? error.message : String(error);
-      status = 'Queue unavailable: ' + detail
-        + (completed ? ' (' + completed + ' submitted; remaining selection preserved)' : '');
+      status = (isArabic ? 'تعذر الإضافة إلى الطابور: ' : 'Queue unavailable: ') + detail
+        + (completed ? (isArabic ? ' (' + completed + ' أُرسلت؛ وبقي التحديد المتبقي)' : ' (' + completed + ' submitted; remaining selection preserved)') : '');
     } finally {
       queuing = false;
     }
@@ -170,7 +176,7 @@
 </script>
 
 <section class="view-head research-head">
-  <h1>Research</h1>
+  <h1>{isArabic ? 'البحث' : 'Research'}</h1>
   <div class="research-summary">
     <span class="result-count" aria-live="polite">{filtered.length} / {items.length}</span>
     {#if attentionCount > 0}
@@ -180,21 +186,21 @@
 </section>
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
-  <label class="url-field"><span>Creator / profile URL</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label="Creator profile URL" spellcheck="false" /></label>
+  <label class="url-field"><span>{isArabic ? 'رابط المنشئ / الملف الشخصي' : 'Creator / profile URL'}</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label={isArabic ? 'رابط ملف المنشئ' : 'Creator profile URL'} spellcheck="false" /></label>
   <div class="small-field">
     <Select label={isArabic ? 'حد الفحص' : 'Scan limit'} value={String(limit)}
       options={[10, 25, 50, 100].map((value) => ({ value: String(value), label: String(value) }))}
       onChange={(next) => { limit = Number(next); }} />
   </div>
-  <button type="submit" class="button primary" disabled={scanning || saving || !profileUrl.trim()}>{scanning ? 'Scanning…' : 'Scan profile'}</button>
-  <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? 'Saving…' : 'Save watchlist'}</button>
+  <button type="submit" class="button primary" disabled={scanning || saving || !profileUrl.trim()}>{scanning ? (isArabic ? 'جارٍ الفحص…' : 'Scanning…') : (isArabic ? 'فحص الملف' : 'Scan profile')}</button>
+  <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? (isArabic ? 'جارٍ الحفظ…' : 'Saving…') : (isArabic ? 'حفظ قائمة المتابعة' : 'Save watchlist')}</button>
 </form>
 
 {#if status}<p class="status-copy action-status" role={statusError ? 'alert' : 'status'}>{status}</p>{/if}
 
-<section class="panel research-panel" aria-label="Research results">
+<section class="panel research-panel" aria-label={isArabic ? 'نتائج البحث' : 'Research results'}>
   <div class="filter-bar">
-    <label class="search-field research-search"><span class="sr-only">Filter research</span><input aria-label="Filter research" value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder="Filter title or creator…" /></label>
+    <label class="search-field research-search"><span class="sr-only">{isArabic ? 'تصفية البحث' : 'Filter research'}</span><input aria-label={isArabic ? 'تصفية البحث' : 'Filter research'} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={isArabic ? 'تصفية العنوان أو المنشئ…' : 'Filter title or creator…'} /></label>
     <Select label={isArabic ? 'مرشح المنصة' : 'Platform filter'} value={platform}
       options={[{ value: 'All', label: isArabic ? 'الكل' : 'All' }, ...platforms.map((option) => ({ value: option, label: option }))]}
       onChange={updatePlatform} />
@@ -220,20 +226,28 @@
       <button type="button" class="text-action" on:click={() => selected = new Set()}>{isArabic ? 'مسح التحديد' : 'Clear selection'}</button>
     {/if}
     <button type="button" class="button primary queue-action" disabled={queuing || !items.some((item) => selected.has(item.id) && !item.queued)} on:click={queueSelected}>
-      {queuing ? (isArabic ? 'جارٍ الإضافة…' : 'Queueing…') : 'Queue selected (' + selectedCount + ')'}
+      {queuing ? (isArabic ? 'جارٍ الإضافة…' : 'Queueing…') : (isArabic ? 'إضافة المحدد (' : 'Queue selected (') + selectedCount + ')'}
     </button>
   </div>
 
   {#if filtered.length === 0}
-    <div class="no-results"><strong>No matching research</strong><p>Change the filters or scan another creator profile.</p></div>
+    <div class="no-results">
+      <strong>{isArabic ? 'لا توجد نتائج مطابقة' : 'No matching research'}</strong>
+      <p>{isArabic ? 'غيّر عوامل التصفية أو افحص ملف منشئ آخر.' : 'Change the filters or scan another creator profile.'}</p>
+      {#if items.length > 0}
+        <button type="button" class="button secondary clear-filters" on:click={() => { updateQuery(''); updatePlatform('All'); }}>
+          {isArabic ? 'مسح عوامل التصفية' : 'Clear filters'}
+        </button>
+      {/if}
+    </div>
   {:else}
-    <div class="research-table" role="table" aria-label="Research results">
+    <div class="research-table" role="table" aria-label={isArabic ? 'نتائج البحث' : 'Research results'}>
       <div class="research-row table-head" role="row">
-        <span aria-hidden="true"></span><span role="columnheader">Media</span><span role="columnheader">Views</span><span role="columnheader">Likes</span><span role="columnheader">Comments</span><span role="columnheader">Date</span><span role="columnheader">Duration</span>
+        <span aria-hidden="true"></span><span role="columnheader">{isArabic ? 'الوسائط' : 'Media'}</span><span role="columnheader">{isArabic ? 'المشاهدات' : 'Views'}</span><span role="columnheader">{isArabic ? 'الإعجابات' : 'Likes'}</span><span role="columnheader">{isArabic ? 'التعليقات' : 'Comments'}</span><span role="columnheader">{isArabic ? 'التاريخ' : 'Date'}</span><span role="columnheader">{isArabic ? 'المدة' : 'Duration'}</span>
       </div>
       {#each pageItems as item (item.id)}
         <div class="research-row" role="row" data-testid={'research-' + item.id}>
-          <div class="check-only" role="cell"><label><input type="checkbox" checked={selected.has(item.id) && !item.queued} disabled={Boolean(item.queued)} on:change={() => toggle(item.id)} aria-label={'Select ' + item.title} /></label></div>
+          <div class="check-only" role="cell"><label><input type="checkbox" checked={selected.has(item.id) && !item.queued} disabled={Boolean(item.queued)} on:change={() => toggle(item.id)} aria-label={(isArabic ? 'تحديد ' : 'Select ') + item.title} /></label></div>
           <div class="media-cell" role="cell">
             {#if item.thumbnail && !failedThumbnails.has(item.id + ":" + item.thumbnail)}
               <img class="research-thumbnail" src={item.thumbnail} alt="" loading="lazy" on:error={() => failedThumbnails = new Set([...failedThumbnails, item.id + ":" + item.thumbnail])} />
@@ -243,14 +257,15 @@
             <div class="media-copy">
               <strong title={item.title}>{item.title}</strong>
               <small><span class="creator-name">{item.creator}</span><span class="source-platform">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
-              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title="Likes plus comments divided by observed views; not unique people or causal performance">{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
+              {#if onUseInStudio}<button type="button" class="text-action" on:click={() => onUseInStudio?.(item)}>{isArabic ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
+              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
             </div>
           </div>
-          <div class="metric metric-views" role="cell"><span class="mobile-metric-label">Views</span><strong>{metric(item.views)}</strong></div>
-          <span class="metric metric-likes" role="cell"><span class="mobile-metric-label">Likes</span>{metric(item.likes)}</span>
-          <span class="metric metric-comments" role="cell"><span class="mobile-metric-label">Comments</span>{metric(item.comments)}</span>
-          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">Date</span>{item.publishedAt || '—'}</span>
-          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">Duration</span>{duration(item.durationSeconds)}</span>
+          <div class="metric metric-views" role="cell"><span class="mobile-metric-label">{isArabic ? 'المشاهدات' : 'Views'}</span><strong>{metric(item.views)}</strong></div>
+          <span class="metric metric-likes" role="cell"><span class="mobile-metric-label">{isArabic ? 'الإعجابات' : 'Likes'}</span>{metric(item.likes)}</span>
+          <span class="metric metric-comments" role="cell"><span class="mobile-metric-label">{isArabic ? 'التعليقات' : 'Comments'}</span>{metric(item.comments)}</span>
+          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">{isArabic ? 'التاريخ' : 'Date'}</span>{item.publishedAt || '—'}</span>
+          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">{isArabic ? 'المدة' : 'Duration'}</span>{duration(item.durationSeconds)}</span>
         </div>
       {/each}
     </div>
@@ -268,28 +283,28 @@
 
 <section class="watch-health" aria-labelledby="watch-health-title">
   <header class="watch-health-head">
-    <h2 id="watch-health-title">Watchlist health</h2>
+    <h2 id="watch-health-title">{isArabic ? 'حالة قوائم المتابعة' : 'Watchlist health'}</h2>
     <span class:attention={attentionCount > 0} class="health-summary">{watchlistStatuses.length} {isArabic ? 'قوائم متابعة' : 'watchlists'}{#if attentionCount > 0} · {attentionCount} {isArabic ? 'تحتاج انتباهاً' : 'need attention'}{/if}</span>
   </header>
   {#if watchlistStatuses.length === 0}
-    <p class="watch-empty">No saved watchlists in this project yet.</p>
+    <p class="watch-empty">{isArabic ? 'لا توجد قوائم متابعة محفوظة لهذا المشروع.' : 'No saved watchlists in this project yet.'}</p>
   {:else}
     <div class="watch-health-list">
       {#each watchlistStatuses as watchlist (watchlist.watchlistId)}
         <article class={'watch-health-card state-' + watchlist.state} data-testid={'watchlist-status-' + watchlist.watchlistId}>
           <div class="watch-health-title-row">
             <strong>{watchlist.label}</strong>
-            <span class="watch-state">{stateLabel[watchlist.state]}</span>
+            <span class="watch-state">{isArabic ? arabicStateLabel[watchlist.state] : stateLabel[watchlist.state]}</span>
           </div>
           {#if watchlist.lastError}<p class="watch-error" role="status">{watchlist.lastError}</p>{/if}
           {#if watchlist.nextRetryAt}
-            <p class="retry-time"><span>Next retry</span> <time>{displayTime(watchlist.nextRetryAt)}</time></p>
+            <p class="retry-time"><span>{isArabic ? 'المحاولة التالية' : 'Next retry'}</span> <time>{displayTime(watchlist.nextRetryAt)}</time></p>
           {/if}
           <details class="watch-diagnostics">
             <summary>{isArabic ? 'تفاصيل التحديث' : 'Refresh details'}</summary>
             <dl>
-              <div><dt>Last attempt</dt><dd>{displayTime(watchlist.lastAttemptAt)}</dd></div>
-              <div><dt>Last success</dt><dd>{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر محاولة' : 'Last attempt'}</dt><dd>{displayTime(watchlist.lastAttemptAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر نجاح' : 'Last success'}</dt><dd>{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
             </dl>
           </details>
         </article>
@@ -346,6 +361,7 @@
   .no-results { padding: 34px 22px; }
   .no-results strong { font-size: 14px; }
   .no-results p { color: var(--color-text-muted); margin: 6px 0 0; }
+  .no-results .clear-filters { margin-block-start: var(--space-3); }
   .page-controls { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-block-start: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--text-sm); }
   .page-controls > div { display: flex; gap: 8px; }
   .page-controls button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-raised); }

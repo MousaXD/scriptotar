@@ -1,5 +1,9 @@
-import type { AiPromptInput, ResearchQuery, ScriptotarApi } from './client';
+import type { AiPromptInput, ResearchQuery, ScriptotarApi, ProviderConsentPreview } from './client';
+import type { ContentStudy, CreativeBrief, StudyAnglePrompt, StudyAngleInterpretation, StudyScriptReview, StudyEvidence, StudyEvidenceInput, StudyEvidenceReviewInput, StudyWritingBatch } from '../studio/contract';
+import type { LocalInspectionRun, StudyResearchSource, StudyResearchRun, StudyResearchReport } from '../studio/agent';
 import type {
+  AiRunDetail,
+  ResearchItemDetail,
   AppSettings,
   BackendJob,
   BootstrapData,
@@ -21,6 +25,7 @@ export type TauriListen = <T>(
 type BootstrapStatus = Pick<BootstrapData, 'watchlistStatuses' | 'migrationStatus'>;
 type CoreBootstrapData = Omit<BootstrapData, keyof BootstrapStatus>;
 type CoreBootstrapSummaryData = Omit<BootstrapSummaryData, keyof BootstrapStatus>;
+type UiStudioStudySummary = Pick<ContentStudy, 'id' | 'projectId' | 'brief' | 'revision'>;
 
 async function hydrateBootstrap<T extends CoreBootstrapData | CoreBootstrapSummaryData>(
   invoke: TauriInvoke,
@@ -44,6 +49,83 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     searchTranscripts: (query, limit = 10) =>
       invoke<string[]>('search_transcripts', { query, limit }),
     getTranscript: (id) => invoke<Transcript>('get_transcript', { transcriptId: id }),
+    getAiRun: (projectId, aiRunId) => invoke<AiRunDetail>('get_ai_run', { projectId, aiRunId }),
+    getResearchItem: (projectId, researchItemId) => invoke<ResearchItemDetail>('get_research_item', { projectId, researchItemId }),
+    saveCopyPrompt: (projectId, input) => invoke<AiRunDetail>('save_copy_prompt', { projectId, input }),
+    listStudies: (projectId) => invoke<UiStudioStudySummary[]>('list_studies', { projectId }),
+    createStudy: (projectId, brief: CreativeBrief) => invoke<ContentStudy>('create_study', { projectId, brief }),
+    getStudy: (projectId, studyId, draftId, requestId) => invoke<ContentStudy>('get_study', {
+      projectId, studyId,
+      ...(draftId ? { draftId } : {}),
+      ...(requestId ? { requestId } : {})
+    }),
+    listStudyWritingBatches: (projectId, studyId) =>
+      invoke<StudyWritingBatch[]>('list_study_writing_batches', { projectId, studyId }),
+    duplicateStudyDraft: (projectId, studyId, draftId, expectedDraftRevision) =>
+      invoke<ContentStudy>('duplicate_study_draft', { projectId, studyId, draftId, expectedDraftRevision }),
+    renameStudyDraft: (projectId, studyId, draftId, expectedDraftRevision, title) =>
+      invoke<ContentStudy>('rename_study_draft', { projectId, studyId, draftId, expectedDraftRevision, title }),
+    setStudyDraftArchived: (projectId, studyId, draftId, expectedDraftRevision, archived) =>
+      invoke<ContentStudy>('set_study_draft_archived', { projectId, studyId, draftId, expectedDraftRevision, archived }),
+    prepareStudyAngles: (projectId, studyId) =>
+      invoke<StudyAnglePrompt>('prepare_study_angles', { projectId, studyId }),
+    interpretStudyAngles: (projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson, selectedAngleId, requestId) =>
+      invoke<StudyAngleInterpretation>('interpret_study_angles', {
+        projectId, studyId, expectedStudyRevision, preparedPrompt, responseJson,
+        selectedAngleId: selectedAngleId ?? null,
+        requestId: requestId ?? null
+      }),
+    reviewStudyScript: (projectId, studyId, expectedStudyRevision, anglePrompt,
+      anglesResponseJson, selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate) =>
+      invoke<StudyScriptReview>('review_study_script', {
+        projectId, studyId, input: {
+          expectedStudyRevision, anglePrompt, anglesResponseJson,
+          selectedAngleId, preparedDraftPrompt, scriptResponseJson, acceptAsNewCandidate
+        }
+      }),
+    saveStudy: (projectId, studyId, expectedRevision, patch) =>
+      invoke<ContentStudy>('save_study', { projectId, studyId, expectedRevision, patch }),
+    revokeStudySourceAccess: (projectId, studyId, expectedRevision, source) =>
+      invoke<ContentStudy>('revoke_study_source_access', {
+        projectId, studyId, expectedRevision, kind: source.kind, referenceId: source.id
+      }),
+    listStudyEvidence: (projectId, studyId) =>
+      invoke<StudyEvidence[]>('list_study_evidence', { projectId, studyId }),
+    addStudyEvidence: (projectId, studyId, input: StudyEvidenceInput) =>
+      invoke<StudyEvidence>('add_study_evidence', { projectId, studyId, input }),
+    reviewStudyEvidence: (projectId, studyId, evidenceId, input: StudyEvidenceReviewInput) =>
+      invoke<StudyEvidence>('review_study_evidence', {
+        projectId, studyId, evidenceId, expectedCertainty: input.expectedCertainty,
+        action: input.action, note: input.note
+      }),
+    prepareProviderConsentSealed: (projectId, studyId, runId, model, maxOutputTokens, limits) =>
+      invoke<ProviderConsentPreview>('prepare_provider_consent_sealed', {
+        projectId, studyId, runId, model, maxOutputTokens, limits
+      }),
+    decideProviderConsentSealed: (projectId, studyId, runId, fingerprint, approve) =>
+      invoke<void>('decide_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, approve
+      }),
+    executeProviderConsentSealed: (projectId, studyId, runId, fingerprint, requestTimeApiKey) =>
+      invoke<string>('execute_provider_consent_sealed', {
+        projectId, studyId, runId, fingerprint, requestTimeApiKey
+      }),
+    startLocalInspection: (projectId, studyId, transcriptId) =>
+      invoke<LocalInspectionRun>('start_local_inspection', { projectId, studyId, transcriptId }),
+    listLocalInspections: (projectId, studyId) =>
+      invoke<LocalInspectionRun[]>('list_local_inspections', { projectId, studyId }),
+    decideLocalInspection: (projectId, studyId, runId, action) =>
+      invoke<LocalInspectionRun>('decide_local_inspection', { projectId, studyId, runId, action }),
+    listStudyResearchSources: (projectId, studyId) =>
+      invoke<StudyResearchSource[]>('list_study_research_sources', { projectId, studyId }),
+    startStudyResearch: (projectId, studyId, sourceIds) =>
+      invoke<StudyResearchRun>('start_study_research', { projectId, studyId, sourceIds }),
+    listStudyResearchRuns: (projectId, studyId) =>
+      invoke<StudyResearchRun[]>('list_study_research_runs', { projectId, studyId }),
+    decideStudyResearch: (projectId, studyId, runId, action) =>
+      invoke<StudyResearchRun>('decide_study_research', { projectId, studyId, runId, action }),
+    readStudyResearchReport: (projectId, studyId, artifactId) =>
+      invoke<StudyResearchReport>('read_study_research_report', { projectId, studyId, artifactId }),
     subscribeJobChanges: (listener) =>
       listen
         ? listen<string>('scriptotar://job-changed', (event) => listener(event.payload))
@@ -60,7 +142,9 @@ export function createTauriClient(invoke: TauriInvoke, listen?: TauriListen): Sc
     chooseLocalMedia: () => invoke<string | null>('choose_local_media'),
     chooseOutputDirectory: () => invoke<string | null>('choose_output_directory'),
     enqueueLocalMedia: (projectId, path) => invoke<BackendJob>('enqueue_local_media', { projectId, path }),
-    enqueueUrl: (projectId, url) => invoke<BackendJob>('enqueue_url', { projectId, url }),
+    enqueueUrl: (projectId, url, requestId) => invoke<BackendJob>('enqueue_url', {
+      projectId, url, requestId: requestId ?? null
+    }),
     retryJob: (jobId) => invoke<BackendJob>('retry_job', { jobId }),
     saveWatchlist: (query: ResearchQuery) =>
       hydrateBootstrap(invoke, invoke<CoreBootstrapData>('save_watchlist', { query })),

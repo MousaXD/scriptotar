@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/scriptotar-agent",
     "crates/scriptotar-core",
     "crates/scriptotar-db",
     "crates/scriptotar-jobs",

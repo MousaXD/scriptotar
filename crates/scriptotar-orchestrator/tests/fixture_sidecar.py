@@ -91,8 +91,20 @@ def main() -> int:
             # unaffected.
             time.sleep(0.5)
         emit("progress", job_id=job_id, stage="transcribing", percent=50.0, message="fixture")
-        if "progress-hold" in name:
-            time.sleep(0.15)
+        if name == "progress-hold.mp4" and input_kind == "file":
+            # Only this deterministic test fixture waits here. The real Rust
+            # orchestrator must first persist the Progress event into SQLite;
+            # the test then creates the marker AFTER reading that exact row.
+            # A wall-clock sleep cannot reliably certify a transient state on
+            # heavily loaded CI hosts. The marker never fabricates progress.
+            observed = Path(source).with_suffix(".progress-observed")
+            deadline = time.monotonic() + 20.0
+            while not observed.is_file() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if not observed.is_file():
+                print("[fixture] persisted transcribing progress not observed in 20s",
+                      file=sys.stderr, flush=True)
+                return 24
         emit("result", job_id=job_id, result=result_for(source, input_kind))
     return 0
 

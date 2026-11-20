@@ -1,5 +1,30 @@
+mod agent_inspection;
+// Private-only provider fence: compile in the real desktop host without IPC/egress.
+// The source is included inside a module until Agent 00 normalizes formatting.
+#[allow(dead_code)]
+mod agent_effect_driver {
+    include!("services/agent_effect_driver.rs");
+}
+mod artifact_details;
 #[cfg(test)]
 mod project_jobs;
+// Compiled host consent policy; paid egress stays disabled until shared dispatch fencing.
+#[allow(dead_code)]
+mod provider_consent;
+// Wire-ready transport is private; no reviewed price catalog or public paid IPC yet.
+#[allow(dead_code)]
+mod provider_openai_wire;
+mod study_gateway;
+// Compile the scoped offline research adapter privately before exposing IPC.
+pub(super) mod study_research;
+// Fail-closed, read-only claim verification; no public certification endpoint yet.
+mod study_verification;
+// Compile the original-writing engine and canonical atomic sink privately.
+// Paid provider/egress and public generation IPC remain explicitly disabled.
+#[allow(dead_code)]
+mod study_writing;
+#[allow(dead_code)]
+mod study_writing_persistence;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -14,9 +39,8 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use scriptotar_ai::{
-    AiRequest, AiService, EndpointPolicy, HttpAiProvider, ProviderConfig, ProviderKind,
-};
+#[cfg(test)]
+use scriptotar_ai::{EndpointPolicy, ProviderConfig, ProviderKind};
 use scriptotar_core::{
     now_rfc3339, AiRun, AiRunMode, AiRunRepository, ApplicationSettings, ContentRepository,
     Creator, Job, JobInput, JobRepository, JobState, Project, ProjectRepository, RepositoryError,
@@ -32,8 +56,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::dto::{
-    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiCreator, UiJob, UiLibraryItem,
-    UiProject, UiResearchItem, UiSettings, UiTranscript, UiTranscriptSegment, UiTranscriptSummary,
+    AiPromptInput, BootstrapData, ResearchQuery, UiAiRun, UiAiRunDetail, UiCreator, UiJob,
+    UiLibraryItem, UiProject, UiResearchItem, UiResearchItemDetail, UiSettings, UiTranscript,
+    UiTranscriptSegment, UiTranscriptSummary,
 };
 
 const MAX_RESEARCH_QUEUE_ITEMS: usize = 200;
@@ -68,6 +93,7 @@ pub struct AppServices {
     store: SqliteStore,
     orchestrator: JobOrchestrator<SqliteStore>,
     active_project: Arc<Mutex<Uuid>>,
+    provider_session: Arc<provider_consent::HostProviderSession>,
     legacy_path: PathBuf,
     research_command: YtDlpCommand,
     _watchlist_refresher: WatchlistRefresher,
@@ -116,14 +142,32 @@ impl AppServices {
             settings.active_project_id = Some(active_project);
             store.save_settings(&settings)?;
         }
-        let orchestrator = JobOrchestrator::start_with_notifier(
+        // Every foreground Studio mutation and in-process research-origin
+        // writer must share this host authorization gate with paid admission.
+        let active_project_gate = Arc::new(Mutex::new(active_project));
+        let transcription_write_guard = Arc::clone(&active_project_gate);
+        let orchestrator = JobOrchestrator::start_with_notifier_and_content_gate(
             store.clone(),
             runtime_config(data_dir.join("transcription-output")),
             notifier,
+            Arc::new(move |commit| {
+                // The sidecar can run without this lock. Only its final
+                // Source/Media/Transcript transaction must serialize with
+                // Studio source changes and the provider pre-send CAS.
+                let _guard = transcription_write_guard.lock().map_err(|_| {
+                    scriptotar_orchestrator::OrchestratorError::Unavailable(
+                        "host source authorization gate unavailable".into(),
+                    )
+                })?;
+                commit()
+            }),
         );
         let research_command = YtDlpCommand::from_environment();
-        let watchlist_refresher =
-            spawn_watchlist_refresher(store.clone(), research_command.clone());
+        let watchlist_refresher = spawn_watchlist_refresher(
+            store.clone(),
+            research_command.clone(),
+            Arc::clone(&active_project_gate),
+        );
 
         if env::var_os("SCRIPTOTAR_PROFILE_STARTUP").is_some() {
             eprintln!(
@@ -139,7 +183,8 @@ impl AppServices {
         Ok(Self {
             store,
             orchestrator,
-            active_project: Arc::new(Mutex::new(active_project)),
+            active_project: active_project_gate,
+            provider_session: Arc::new(provider_consent::HostProviderSession::default()),
             legacy_path,
             research_command,
             _watchlist_refresher: watchlist_refresher,
@@ -196,6 +241,54 @@ impl AppServices {
         Ok(transcript_to_ui(&transcript))
     }
 
+    /// A historical AI run must be resolved by ID within its originating project.
+    /// Unlike bootstrap(), this returns the exact stored prompt and result.
+    pub fn get_ai_run(&self, project_id: Uuid, ai_run_id: Uuid) -> RepositoryResult<UiAiRunDetail> {
+        self.require_active_project(project_id)?;
+        let run = artifact_details::read_ai_run(&self.store, project_id, ai_run_id)?;
+        self.require_active_project(project_id)?;
+        Ok(ai_run_detail(&run))
+    }
+
+    pub fn get_research_item(
+        &self,
+        project_id: Uuid,
+        research_item_id: Uuid,
+    ) -> RepositoryResult<UiResearchItemDetail> {
+        self.require_active_project(project_id)?;
+        let item = self
+            .store
+            .get_research_items(&[research_item_id])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                RepositoryError::NotFound(format!("research item {research_item_id}"))
+            })?;
+        if item.project_id != project_id {
+            return Err(RepositoryError::NotFound(format!(
+                "research item {research_item_id} in active project"
+            )));
+        }
+        let creators = self.store.list_creators(Some(project_id))?;
+        let by_id = creators
+            .iter()
+            .map(|creator| (creator.id, creator))
+            .collect::<HashMap<_, _>>();
+        let queued =
+            artifact_details::is_research_source_queued(&self.store, project_id, &item.source_url)?;
+        self.require_active_project(project_id)?;
+        let queued_sources = if queued {
+            HashSet::from([item.source_url.clone()])
+        } else {
+            HashSet::new()
+        };
+        Ok(UiResearchItemDetail {
+            item: research_to_ui(&item, &by_id, &queued_sources),
+            project_id: project_id.to_string(),
+            scanned_at: item.scanned_at,
+        })
+    }
+
     pub fn select_project(&self, project_id: Uuid) -> RepositoryResult<BootstrapData> {
         self.store.get_project(project_id)?;
         let mut active_project = self
@@ -223,6 +316,16 @@ impl AppServices {
     }
 
     pub fn enqueue_local_media(&self, project_id: Uuid, path: String) -> RepositoryResult<Job> {
+        // A delayed/stale UI command must never enqueue work in another project.
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let input_path = Path::new(path.trim());
         if !input_path.is_file() {
@@ -245,6 +348,15 @@ impl AppServices {
     }
 
     pub fn enqueue_url(&self, project_id: Uuid, url: String) -> RepositoryResult<Job> {
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        if *active != project_id {
+            return Err(RepositoryError::NotFound(
+                "project is not active".to_owned(),
+            ));
+        }
         self.store.get_project(project_id)?;
         let validated = NetworkPolicy
             .validate(url.trim())
@@ -258,13 +370,32 @@ impl AppServices {
     }
 
     pub fn cancel_job(&self, job_id: Uuid) -> RepositoryResult<()> {
-        self.store.get_job(job_id)?;
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let job = self.store.get_job(job_id)?;
+        if job.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         self.orchestrator
             .cancel(job_id)
             .map_err(|error| RepositoryError::Storage(error.to_string()))
     }
 
     pub fn retry_job(&self, job_id: Uuid) -> RepositoryResult<Job> {
+        let active = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".to_owned()))?;
+        let previous = self.store.get_job(job_id)?;
+        if previous.project_id != *active {
+            return Err(RepositoryError::NotFound(
+                "job in active project".to_owned(),
+            ));
+        }
         let job = JobService::new(self.store.clone()).retry(job_id)?;
         self.orchestrator
             .enqueue(job.id)
@@ -288,6 +419,13 @@ impl AppServices {
     }
 
     pub fn import_legacy_data(&self) -> RepositoryResult<scriptotar_core::LegacyImportReport> {
+        // Legacy import can change canonical sources, research and Studio
+        // records. Never allow an import to race a scope-locked pre-send CAS.
+        // The import is local SQLite I/O; no network runs under this mutex.
+        let _scope_guard = self
+            .active_project
+            .lock()
+            .map_err(|_| RepositoryError::Storage("active project lock poisoned".into()))?;
         self.store.import_legacy_database(&self.legacy_path)
     }
 
@@ -342,6 +480,7 @@ impl AppServices {
         let result = scan_and_persist_research(
             &self.store,
             &self.research_command,
+            &self.active_project,
             active_project,
             &canonical_url,
             query.limit,
@@ -435,75 +574,88 @@ impl AppServices {
         build_ai_prompt_text(input)
     }
 
-    pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
-        let prompt = self.build_ai_prompt(input)?;
-        let active_project = self
-            .active_project_id()
-            .map_err(|error| error.to_string())?;
-        if !input.mode.eq_ignore_ascii_case("byok") {
-            self.store
-                .insert_ai_run(&AiRun {
-                    id: Uuid::new_v4(),
-                    project_id: active_project,
-                    task: input.task.trim().to_owned(),
-                    mode: AiRunMode::CopyPrompt,
-                    provider: None,
-                    model: None,
-                    prompt: prompt.clone(),
-                    result: None,
-                    created_at: now_rfc3339(),
-                })
-                .map_err(|error| error.to_string())?;
-            return Ok(prompt);
+    /// Explicit save action. Building/copying a preview never writes history.
+    /// The active-project lock prevents a stale UI action saving into another project.
+    pub fn save_copy_prompt(
+        &self,
+        project_id: Uuid,
+        input: &AiPromptInput,
+    ) -> Result<UiAiRunDetail, String> {
+        if !input.mode.eq_ignore_ascii_case("copy") {
+            return Err("Save Copy Prompt requires copy mode".to_owned());
         }
-
-        let api_key = input
+        if input
             .api_key
             .as_deref()
-            .map(str::trim)
-            .filter(|key| !key.is_empty())
-            .ok_or_else(|| "an API key is required for BYOK mode".to_owned())?;
-        let provider = provider_kind(&input.provider)?;
-        if provider == ProviderKind::Local {
-            return Err("local AI provider execution is not enabled yet".to_owned());
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err("Copy Prompt saving does not accept API credentials".to_owned());
         }
-        let config = ProviderConfig {
-            provider,
-            model: input.model.trim().to_owned(),
-            base_url: input
-                .base_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned),
+        let prompt = self.build_ai_prompt(input)?;
+        let guard = self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
+        if *guard != project_id {
+            return Err("not found: active project has changed".to_owned());
+        }
+        let run = AiRun {
+            id: Uuid::new_v4(),
+            project_id,
+            task: input.task.trim().to_owned(),
+            mode: AiRunMode::CopyPrompt,
+            provider: None,
+            model: None,
+            prompt,
+            result: None,
+            created_at: now_rfc3339(),
         };
-        EndpointPolicy
-            .endpoint_for(&config)
+        self.store
+            .insert_ai_run(&run)
             .map_err(|error| error.to_string())?;
-        let provider_client = HttpAiProvider::new(provider).map_err(|error| error.to_string())?;
-        let response = AiService::new(provider_client)
-            .generate(
-                &config,
-                api_key,
-                &AiRequest {
-                    prompt: prompt.clone(),
-                },
-            )
-            .map_err(|error| error.to_string())?;
+        drop(guard);
+        Ok(ai_run_detail(&run))
+    }
+
+    /// Legacy AI Studio compatibility. Never dispatch a raw BYOK request:
+    /// this path has no per-request scope approval, v10 effect reservation,
+    /// trusted model pricing or authenticated bounded usage receipt. The
+    /// sealed provider adapter remains private until all release gates pass.
+    pub fn run_ai(&self, input: &AiPromptInput) -> Result<String, String> {
+        if input.mode.eq_ignore_ascii_case("byok") {
+            return Err("Direct BYOK execution is disabled until explicit provider approval, trusted pricing and durable usage accounting are certified. Use Copy Prompt instead.".to_owned());
+        }
+
+        // Preserve the historical prompt-only behavior. Serialize the write
+        // against project switching and final provider scope admission.
+        let prompt = self.build_ai_prompt(input)?;
+        let active_project = self
+            .active_project
+            .lock()
+            .map_err(|_| "active project lock poisoned".to_owned())?;
         self.store
             .insert_ai_run(&AiRun {
                 id: Uuid::new_v4(),
-                project_id: active_project,
+                project_id: *active_project,
                 task: input.task.trim().to_owned(),
-                mode: AiRunMode::Byok,
-                provider: Some(input.provider.clone()),
-                model: Some(config.model),
-                prompt,
-                result: Some(response.text.clone()),
+                mode: AiRunMode::CopyPrompt,
+                provider: None,
+                model: None,
+                prompt: prompt.clone(),
+                result: None,
                 created_at: now_rfc3339(),
             })
             .map_err(|error| error.to_string())?;
-        Ok(response.text)
+        Ok(prompt)
+    }
+
+    fn require_active_project(&self, project_id: Uuid) -> RepositoryResult<()> {
+        if self.active_project_id()? != project_id {
+            return Err(RepositoryError::NotFound(
+                "artifact in active project".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     fn active_project_id(&self) -> RepositoryResult<Uuid> {
@@ -688,9 +840,23 @@ impl AppServices {
     }
 }
 
+/// Every in-process research origin mutation must pass the *same* mutex as
+/// ScopeDispatchGuard, including automatic watchlist and manual scans. Never
+/// hold it while yt-dlp or other network collection is running.
+fn with_research_origin_gate<T>(
+    scope_gate: &Arc<Mutex<Uuid>>,
+    mutation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let _guard = scope_gate
+        .lock()
+        .map_err(|_| "Research authorization gate is unavailable".to_owned())?;
+    mutation()
+}
+
 fn scan_and_persist_research(
     store: &SqliteStore,
     command: &YtDlpCommand,
+    scope_gate: &Arc<Mutex<Uuid>>,
     project_id: Uuid,
     profile_url: &str,
     limit: u16,
@@ -707,30 +873,37 @@ fn scan_and_persist_research(
         return Err("authenticated creator scanning requires HTTPS".to_owned());
     }
     let canonical_url = validated.as_url().to_string();
-    let creator = store
-        .upsert_creator(&Creator {
-            id: Uuid::new_v4(),
-            project_id,
-            platform: source_platform(&canonical_url, SourceType::Url),
-            profile_url: canonical_url.clone(),
-            display_name: Some(profile_label(validated.as_url())),
-            created_at: now_rfc3339(),
-        })
-        .map_err(|error| error.to_string())?;
+    let creator = with_research_origin_gate(scope_gate, || {
+        store
+            .upsert_creator(&Creator {
+                id: Uuid::new_v4(),
+                project_id,
+                platform: source_platform(&canonical_url, SourceType::Url),
+                profile_url: canonical_url.clone(),
+                display_name: Some(profile_label(validated.as_url())),
+                created_at: now_rfc3339(),
+            })
+            .map_err(|error| error.to_string())
+    })?;
     let provider = YtDlpProvider::new(command.clone())
         .with_cookie_browser(cookie_browser)
         .map_err(|error| error.to_string())?;
     let items = ResearchService::new(provider)
         .scan(project_id, Some(creator.id), &canonical_url, limit)
         .map_err(|error| error.to_string())?;
-    let persisted = store
-        .upsert_research_items(&items)
-        .map_err(|error| error.to_string())?;
-    let scanned_at = now_rfc3339();
-    store
-        .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
-        .map_err(|error| error.to_string())?;
-    Ok(persisted.len())
+    // Run network collection with no lock, then serialize the actual research
+    // origin mutations with Studio edits, consent revocation and the final
+    // pre-send CAS. No SQLite write transaction spans network I/O.
+    with_research_origin_gate(scope_gate, || {
+        let persisted = store
+            .upsert_research_items(&items)
+            .map_err(|error| error.to_string())?;
+        let scanned_at = now_rfc3339();
+        store
+            .mark_watchlist_scanned_by_profile(project_id, &canonical_url, &scanned_at)
+            .map_err(|error| error.to_string())?;
+        Ok(persisted.len())
+    })
 }
 
 fn persisted_retry_delay(value: &str, now: DateTime<Utc>) -> Option<Duration> {
@@ -772,7 +945,11 @@ fn safe_watchlist_error(error: &str) -> String {
     }
 }
 
-fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> WatchlistRefresher {
+fn spawn_watchlist_refresher(
+    store: SqliteStore,
+    command: YtDlpCommand,
+    scope_gate: Arc<Mutex<Uuid>>,
+) -> WatchlistRefresher {
     let (stop, receiver) = mpsc::channel();
     let handle = thread::spawn(move || loop {
         match receiver.recv_timeout(WATCHLIST_TICK) {
@@ -838,6 +1015,7 @@ fn spawn_watchlist_refresher(store: SqliteStore, command: YtDlpCommand) -> Watch
             match scan_and_persist_research(
                 &store,
                 &command,
+                &scope_gate,
                 watchlist.project_id,
                 &watchlist.profile_url,
                 watchlist.limit_count.min(200) as u16,
@@ -1050,6 +1228,15 @@ fn research_to_ui(
         duration_seconds: item.duration_seconds,
         thumbnail,
         queued: Some(queued_sources.contains(&item.source_url)),
+    }
+}
+
+fn ai_run_detail(run: &AiRun) -> UiAiRunDetail {
+    UiAiRunDetail {
+        summary: ai_run_to_ui(run),
+        project_id: run.project_id.to_string(),
+        prompt: run.prompt.clone(),
+        result: run.result.clone(),
     }
 }
 
@@ -1431,7 +1618,7 @@ fn settings_from_ui(
             ))
         }
     };
-    if !["dark", "system"].contains(&ui.appearance.as_str()) {
+    if !["dark", "light", "system"].contains(&ui.appearance.as_str()) {
         return Err(RepositoryError::Validation(
             "unsupported appearance setting".to_owned(),
         ));
@@ -1475,17 +1662,6 @@ fn validate_output_directory(value: Option<String>) -> RepositoryResult<Option<S
     Ok(Some(canonical.to_string_lossy().into_owned()))
 }
 
-fn provider_kind(provider: &str) -> Result<ProviderKind, String> {
-    match provider {
-        "OpenAI" => Ok(ProviderKind::OpenAi),
-        "Anthropic" => Ok(ProviderKind::Anthropic),
-        "Gemini" => Ok(ProviderKind::Gemini),
-        "OpenAI-compatible" => Ok(ProviderKind::OpenAiCompatible),
-        "Local (coming later)" => Ok(ProviderKind::Local),
-        _ => Err("unsupported AI provider".to_owned()),
-    }
-}
-
 fn push_prompt_field(sections: &mut Vec<String>, label: &str, value: &str) {
     let value = value.trim();
     if !value.is_empty() {
@@ -1498,6 +1674,73 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
     use tempfile::TempDir;
+
+    #[test]
+    fn explicit_light_appearance_round_trips_but_unknown_values_stay_denied() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let mut ui = services.load_settings().unwrap();
+        ui.appearance = "light".to_owned();
+        services.save_settings(ui).unwrap();
+        assert_eq!(services.load_settings().unwrap().appearance, "light");
+
+        let mut invalid = services.load_settings().unwrap();
+        invalid.appearance = "auto".to_owned();
+        assert!(services.save_settings(invalid).is_err());
+        assert_eq!(services.load_settings().unwrap().appearance, "light");
+    }
+
+    #[test]
+    fn legacy_import_waits_for_authorization_guard_before_mutating_sources() {
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let held_by_dispatch = services.active_project.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let worker_services = services.clone();
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            // The fixture has no legacy snapshot. The result itself is not the
+            // assertion: import must not even inspect/write while scope is held.
+            let result = worker_services.import_legacy_data();
+            finished_tx.send(result.is_ok()).unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            finished_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        finished_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn background_research_origin_writer_respects_host_authorization_gate() {
+        // The controlled writer performs no network activity; it tests the
+        // shared lock that both creator scans and paid scope guards use.
+        let gate = Arc::new(Mutex::new(Uuid::new_v4()));
+        let held_by_dispatch = gate.lock().unwrap();
+        let (arrived_tx, arrived_rx) = mpsc::channel();
+        let (written_tx, written_rx) = mpsc::channel();
+        let writer_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            arrived_tx.send(()).unwrap();
+            with_research_origin_gate(&writer_gate, || {
+                written_tx.send(()).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        arrived_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            written_rx.recv_timeout(Duration::from_millis(50)),
+            Err(RecvTimeoutError::Timeout)
+        ));
+        drop(held_by_dispatch);
+        written_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        worker.join().unwrap();
+    }
 
     fn prompt_input(task: &str) -> AiPromptInput {
         AiPromptInput {
@@ -1522,6 +1765,235 @@ mod tests {
 
     fn database_path(temp: &TempDir) -> PathBuf {
         temp.path().join("scriptotar.sqlite3")
+    }
+
+    #[test]
+    fn legacy_byok_host_command_fails_closed_without_receipt_or_network() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let prior = services.store.list_ai_runs(Some(project_id)).unwrap().len();
+
+        // Deliberately supply credentials and a custom endpoint. Neither
+        // may trigger legacy HTTP execution, spending, or a false AI receipt.
+        let mut request = prompt_input("Hook ideas");
+        request.provider = "OpenAI-compatible".to_owned();
+        request.base_url = Some("https://example.com/v1".to_owned());
+        let refusal = services.run_ai(&request).unwrap_err();
+        assert!(refusal.contains("Direct BYOK execution is disabled"));
+        assert!(!refusal.contains("super-secret"));
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            prior
+        );
+
+        request.mode = "copy_prompt".to_owned();
+        let preview = services.run_ai(&request).unwrap();
+        assert!(preview.contains("10 distinct hooks"));
+        let runs = services.store.list_ai_runs(Some(project_id)).unwrap();
+        assert_eq!(runs.len(), prior + 1);
+        assert_eq!(runs.last().unwrap().mode, AiRunMode::CopyPrompt);
+    }
+
+    #[test]
+    fn exact_artifact_details_are_project_scoped_and_survive_restart() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let prompt = "Exact historical prompt that must survive restart";
+        let result = "Exact historical response; not a regenerated answer";
+        let run = AiRun {
+            id: Uuid::new_v4(),
+            project_id,
+            task: "New short-form script".to_owned(),
+            mode: AiRunMode::Byok,
+            provider: Some("OpenAI".to_owned()),
+            model: Some("test-model".to_owned()),
+            prompt: prompt.to_owned(),
+            result: Some(result.to_owned()),
+            created_at: now_rfc3339(),
+        };
+        services.store.insert_ai_run(&run).unwrap();
+
+        let research = ResearchItem {
+            id: Uuid::new_v4(),
+            project_id,
+            creator_id: None,
+            source_url: "https://example.org/reel/123".to_owned(),
+            platform: "test".to_owned(),
+            title: Some("Exact research item".to_owned()),
+            view_count: Some(12),
+            like_count: None,
+            comment_count: None,
+            published_at: None,
+            duration_seconds: None,
+            raw_json: None,
+            scanned_at: now_rfc3339(),
+        };
+        let stored = services.store.upsert_research_items(&[research]).unwrap();
+        let research_id = stored[0].id;
+
+        let ai_detail = services.get_ai_run(project_id, run.id).unwrap();
+        assert_eq!(ai_detail.prompt, prompt);
+        assert_eq!(ai_detail.result.as_deref(), Some(result));
+        assert_eq!(ai_detail.project_id, project_id.to_string());
+        assert_eq!(ai_detail.summary.id, run.id.to_string());
+        assert_eq!(ai_detail.summary.mode, "byok");
+
+        let research_detail = services.get_research_item(project_id, research_id).unwrap();
+        assert_eq!(research_detail.item.id, research_id.to_string());
+        assert_eq!(research_detail.item.title, "Exact research item");
+        assert_eq!(research_detail.item.queued, Some(false));
+
+        assert!(matches!(
+            services.get_ai_run(project_id, Uuid::new_v4()),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(project_id, Uuid::new_v4()),
+            Err(RepositoryError::NotFound(_))
+        ));
+
+        let other = bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        assert_ne!(other, project_id);
+        // Wrong project must never return a result; nor should a stale command.
+        assert!(matches!(
+            services.get_ai_run(other, run.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(other, research_id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_ai_run(project_id, run.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.get_research_item(project_id, research_id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        services.select_project(project_id).unwrap();
+        drop(services);
+
+        let reopened = AppServices::new(temp.path()).unwrap();
+        let restored = reopened.get_ai_run(project_id, run.id).unwrap();
+        assert_eq!(restored.prompt, prompt);
+        assert_eq!(restored.result.as_deref(), Some(result));
+        assert_eq!(
+            reopened
+                .get_research_item(project_id, research_id)
+                .unwrap()
+                .item
+                .id,
+            research_id.to_string()
+        );
+    }
+
+    #[test]
+    fn job_mutations_and_enqueue_reject_foreign_and_stale_project_commands() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let original_project = bootstrap_active_id(&services.bootstrap().unwrap());
+        let foreign_job = Job::new(
+            original_project,
+            JobInput::Url("https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()),
+        );
+        services.store.insert_job(&foreign_job).unwrap();
+
+        let other_project =
+            bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        assert_ne!(original_project, other_project);
+
+        // These calls previously accepted any existing project's id or job.
+        assert!(matches!(
+            services.cancel_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.retry_job(foreign_job.id),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_url(
+                original_project,
+                "https://www.youtube.com/watch?v=aqz-KE-bpKQ".to_owned()
+            ),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert!(matches!(
+            services.enqueue_local_media(original_project, "/does/not/exist.mp4".to_owned()),
+            Err(RepositoryError::NotFound(_))
+        ));
+        assert_eq!(
+            services.store.get_job(foreign_job.id).unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            services.store.list_jobs(Some(other_project)).unwrap().len(),
+            0
+        );
+    }
+
+    #[test]
+    fn preview_is_not_saved_but_explicit_copy_save_is_durable() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let mut input = prompt_input("Hook ideas");
+        input.mode = "copy".to_owned();
+        input.api_key = None;
+        let prompt = services.build_ai_prompt(&input).unwrap();
+        assert!(services
+            .store
+            .list_ai_runs(Some(project_id))
+            .unwrap()
+            .is_empty());
+        let saved = services.save_copy_prompt(project_id, &input).unwrap();
+        assert_eq!(saved.prompt, prompt);
+        assert_eq!(saved.result, None);
+        assert_eq!(saved.summary.mode, "copy");
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
+
+        input.api_key = Some("never-persist-me".to_owned());
+        assert!(services.save_copy_prompt(project_id, &input).is_err());
+        assert_eq!(
+            services.store.list_ai_runs(Some(project_id)).unwrap().len(),
+            1
+        );
+
+        let other = bootstrap_active_id(&services.create_project("Other".to_owned()).unwrap());
+        input.api_key = None;
+        assert!(services.save_copy_prompt(project_id, &input).is_err());
+        assert!(services.store.list_ai_runs(Some(other)).unwrap().is_empty());
+
+        services.select_project(project_id).unwrap();
+        drop(services);
+        let reopened = AppServices::new(temp.path()).unwrap();
+        let persisted_id = Uuid::parse_str(&saved.summary.id).unwrap();
+        assert_eq!(
+            reopened
+                .get_ai_run(project_id, persisted_id)
+                .unwrap()
+                .prompt,
+            prompt
+        );
+    }
+
+    #[test]
+    fn artifact_read_surfaces_storage_failure_not_false_not_found() {
+        let temp = TempDir::new().unwrap();
+        let services = AppServices::new(temp.path()).unwrap();
+        let project_id = bootstrap_active_id(&services.bootstrap().unwrap());
+        let connection = Connection::open(database_path(&temp)).unwrap();
+        connection.execute_batch("DROP TABLE ai_runs;").unwrap();
+        assert!(matches!(
+            services.get_ai_run(project_id, Uuid::new_v4()),
+            Err(RepositoryError::Storage(_))
+        ));
     }
 
     #[test]

@@ -57,6 +57,20 @@ describe('Settings UX', () => {
     expect(screen.getByText(/تم حفظ الإعدادات/)).toBeInTheDocument();
   });
 
+  it('persists explicit Light separately from System/Dark, with an Arabic option', async () => {
+    const { api, onSaved } = setup();
+    const save = vi.spyOn(api, 'saveSettings');
+    await chooseSetting('Theme', 'Light');
+    expect(save).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(save).toHaveBeenCalledWith(expect.objectContaining({ appearance: 'light' })));
+    expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ appearance: 'light' }));
+    expect(document.documentElement.dataset.theme).toBe('light');
+    expect(window.localStorage.getItem('scriptotar.appearance')).toBe('light');
+    await chooseSetting('Settings interface language', 'Arabic');
+    expect(screen.getByRole('combobox', { name: 'السمة' })).toHaveTextContent('فاتح');
+  });
+
   it('does not treat edits made during an in-flight save as persisted', async () => {
     const { api } = setup();
     let completeSave: (() => void) | undefined;

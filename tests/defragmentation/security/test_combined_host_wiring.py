@@ -1,0 +1,237 @@
+"""Fail closed for an unregistered Tauri consent/effect host.
+
+Structural checks are necessary but are not independent proof that all project,
+Study and source mutations acquire the same lock during network egress.
+"""
+import pathlib
+import re
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+HOST = ROOT / "apps/desktop/src-tauri/src"
+AI_LIB = ROOT / "crates/scriptotar-ai/src/lib.rs"
+
+
+def executable_rust(source: str) -> str:
+    # Ordinary comments must not satisfy a production wiring assertion.
+    source = re.sub(r"/\*[\s\S]*?\*/", "", source)
+    return re.sub(r"(?m)^\s*//[^\n]*$", "", source)
+
+
+
+def production_rust(source: str) -> str:
+    """Drop ordinary unit-test module tails: test-only trait impls cannot certify a host."""
+    source = executable_rust(source)
+    return re.sub(r"(?s)#\[cfg\(test\)\]\s*mod\s+\w+\s*\{.*\Z", "", source)
+
+
+def rust_dispatch_calls(source: str) -> list[str]:
+    """Read argument lists for .dispatch(...), balancing nested Rust call parentheses."""
+    calls: list[str] = []
+    for found in re.finditer(r"\.dispatch\s*\(", source):
+        opened = source.find("(", found.start())
+        depth = 1
+        i = opened + 1
+        while i < len(source) and depth:
+            if source[i] == "(":
+                depth += 1
+            elif source[i] == ")":
+                depth -= 1
+            i += 1
+        if depth == 0:
+            calls.append(source[opened + 1:i - 1])
+    return calls
+
+class CombinedHostWiringSecurity(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.services = production_rust((HOST / "services.rs").read_text())
+        cls.ai_lib = executable_rust(AI_LIB.read_text())
+        cls.consent_host = production_rust((HOST / "services/provider_consent.rs").read_text())
+        cls.production = "\n".join(
+            production_rust(path.read_text())
+            for path in HOST.rglob("*.rs")
+        )
+
+    @staticmethod
+    def require(pattern: str, content: str, message: str) -> None:
+        # Never include full application source in a failing assertion's logs.
+        if re.search(pattern, content) is None:
+            raise AssertionError(message)
+
+    def test_provider_policy_is_exported_and_included_by_real_service_graph(self):
+        self.require(
+            r"\bpub\s+mod\s+provider_consent\s*;",
+            self.ai_lib,
+            "provider policy is not exported by the compiled AI crate",
+        )
+        self.require(
+            r"\bprovider_consent\b",
+            self.services,
+            "provider policy missing from central AppServices compilation graph",
+        )
+
+    def test_actual_host_implements_shared_scope_guard_and_authority(self):
+        for trait in ("ScopeAuthority", "ScopeDispatchGuard"):
+            self.require(
+                r"\bimpl(?:\s*<[^>]+>)?\s+" + trait + r"\s+for\b",
+                self.production,
+                f"no real host {trait} implementation (mock/default denial is not integration)",
+            )
+        for method in ("lock_dispatch_scope", "now_ms"):
+            self.assertTrue(
+                method in self.production,
+                f"host has no authoritative dispatch-scope method {method}",
+            )
+
+    def test_actual_host_has_durable_paid_claim_and_pre_send_cas_adapter(self):
+        self.require(
+            r"\bimpl(?:\s*<[^>]+>)?\s+PaidEffectFence\s+for\b",
+            self.production,
+            "host has no PaidEffectFence implementation bridging consent to v10 ledger",
+        )
+        self.assertTrue(
+            "mark_dispatched_once" in self.production,
+            "host has no pre-egress DISPATCHED compare-and-swap adapter",
+        )
+
+
+    def test_paid_fence_is_reached_by_a_non_disabled_host_dispatch(self):
+        # An unused impl PaidEffectFence for SqlitePaidEffectFence must NOT make
+        # combined-host authorization green. No provider or keys are invoked.
+        self.require(
+            r"\bSqlitePaidEffectFence\s*::\s*from_approved_context\s*\(",
+            self.production,
+            "durable paid fence exists but is never constructed on a production host path",
+        )
+        actual_calls = rust_dispatch_calls(self.consent_host)
+        self.assertTrue(
+            any(
+                "DisabledPaidEffectFence" not in args
+                and "NoTrustedPricing" not in args
+                and "ExistingAiServiceAdapter" not in args
+                for args in actual_calls
+            ),
+            "only fail-closed legacy dispatch is wired; no scope-guarded bounded paid host path",
+        )
+
+
+    def test_public_legacy_byok_command_cannot_bypass_sealed_consent(self):
+        """Public run_ai is still registered, but must be non-networking.
+
+        Verify the exact production service method, not a fake unit-test
+        helper or an unused deny function. The actual host Rust test also
+        executes BYOK with a synthetic key and hostile endpoint to prove
+        refusal without inserting an AI receipt.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        self.require(
+            r"(?s)async\s+fn\s+run_ai\s*\([^)]*\)[^{]*\{[\s\S]*?"
+            r"services\s*\.\s*run_ai\s*\(\s*&input\s*\)",
+            tauri,
+            "public Tauri run_ai does not delegate to audited AppServices::run_ai",
+        )
+        start = self.services.find("pub fn run_ai(")
+        self.assertGreaterEqual(start, 0, "production AppServices::run_ai missing")
+        end = self.services.find("\n    fn require_active_project(", start)
+        self.assertGreater(end, start, "cannot isolate production BYOK handler")
+        body = self.services[start:end]
+        self.require(
+            r'if\s+input\.mode\.eq_ignore_ascii_case\(\s*"byok"\s*\)'
+            r'\s*\{\s*return\s+Err\s*\(',
+            body,
+            "public legacy BYOK request is not rejected before paid network execution",
+        )
+        for forbidden in ("HttpAiProvider", "AiService::new", "send_prepared_once"):
+            self.assertNotIn(
+                forbidden, body,
+                f"public legacy run_ai still references an unsealed paid egress API: {forbidden}",
+            )
+
+
+    def test_approved_paid_provider_dispatch_is_exposed_through_tauri_host(self):
+        """A private adapter or unit-test-only constructor is not an IPC path.
+
+        This is only an entrypoint check. A green result is not a substitute
+        for runtime authorization, durable CAS and controlled wire-byte tests.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        generated = re.search(
+            r"\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)",
+            tauri,
+        )
+        self.assertIsNotNone(
+            generated, "Tauri production command registration not found",
+        )
+        registered = {
+            name.strip().split("::")[-1]
+            for name in generated.group(1).split(",")
+            if name.strip()
+        }
+        paid = {
+            name for name in registered
+            if re.search(r"(?:provider|consent|paid)", name, re.I)
+            and re.search(r"(?:dispatch|execute|generate|send)", name, re.I)
+        }
+        self.assertTrue(
+            paid,
+            "no real consent-approved paid provider execution entrypoint in Tauri generate_handler",
+        )
+
+
+    def test_registered_paid_host_has_real_serialized_openai_transport(self):
+        """A named Tauri command is not enough: production must call the sealed
+        handler and construct its actual hardened OpenAI Responses transport.
+
+        Structural evidence only. A green result still requires exact-wire,
+        synchronous revocation/consent, pricing and no-billable-replay tests.
+        """
+        tauri = production_rust((HOST / "lib.rs").read_text())
+        generated = re.search(
+            r"\.invoke_handler\s*\(\s*tauri::generate_handler!\s*\[([\s\S]*?)\]\s*\)",
+            tauri,
+        )
+        self.assertIsNotNone(generated, "production Tauri command registry missing")
+        registered = {
+            name.strip().split("::")[-1]
+            for name in generated.group(1).split(",")
+            if name.strip()
+        }
+        paid = {
+            name for name in registered
+            if re.search(r"(?:provider|consent|paid)", name, re.I)
+            and re.search(r"(?:dispatch|execute|generate|send)", name, re.I)
+        }
+        self.assertTrue(paid, "no public registered approved paid command to audit")
+        self.require(
+            r"\.\s*dispatch_provider_angle_consent_sealed\s*\(",
+            self.production,
+            "real sealed Tauri service dispatch has no non-test caller",
+        )
+        self.require(
+            r"\bHostOpenAiResponsesWire\s*::\s*new\s*\(",
+            self.production,
+            "real OpenAI Responses transport is not constructed on production host path",
+        )
+        self.require(
+            r"\bCertifiedWireTransport\s+for\s+HostOpenAiResponsesWire\b",
+            self.production,
+            "real OpenAI wire adapter does not implement the sealed host transport",
+        )
+        # The registered IPC callback must at least delegate to production
+        # service logic; merely registering an unrelated no-op returns FAIL.
+        self.assertTrue(
+            any(re.search(
+                r"(?s)(?:async\s+)?fn\s+" + re.escape(name)
+                + r"\s*\([^)]*\)[^{]*\{[\s\S]{0,4000}?\bservices\s*\.",
+                tauri,
+            ) for name in paid),
+            "registered paid Tauri command never delegates to AppServices",
+        )
+        # Runtime tests must still prove source locking, exact model/pricing,
+        # authenticated provider receipts and no HTTP execution on revoked
+        # consent. Static symbols cannot certify a billable transaction.
+
+
+if __name__ == "__main__":
+    unittest.main()

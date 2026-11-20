@@ -9,7 +9,7 @@ function setup(jobs: Job[] = []) {
   const props = {
     jobs, onCancel: vi.fn(async (_id: string) => {}), onRetry: vi.fn(async (_id: string) => {}),
     onChooseLocal: vi.fn(async () => '/safe/recording.mp4'),
-    onEnqueueLocal: vi.fn(async (_path: string) => {}), onEnqueueUrl: vi.fn(async (_url: string) => {}),
+    onEnqueueLocal: vi.fn(async (_path: string) => {}), onEnqueueUrl: vi.fn(async (_url: string, _requestId?: string) => {}),
     onOpenCompleted: vi.fn(async (_job: Job) => {})
   };
   return { ...render(JobsView, { props }), ...props };
@@ -18,6 +18,14 @@ function setup(jobs: Job[] = []) {
 beforeEach(() => { window.localStorage.clear(); setLocale('en'); delete (window as Window & { __TAURI__?: unknown }).__TAURI__; });
 
 describe('jobs workspace', () => {
+  it('offers a direct recovery action when a status filter has no matching jobs', async () => {
+    const { container } = setup([job('finished', 'completed')]);
+    await fireEvent.click(screen.getByRole('button', { name: /Needs attention/ }));
+    expect(screen.getByText('No jobs in this filter')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Show all jobs' }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(1);
+  });
+
   it('handles safe native picker selection and queues the exact selected path', async () => {
     const { onChooseLocal, onEnqueueLocal } = setup();
     await fireEvent.click(screen.getByRole('button', { name: 'Choose video' }));
@@ -33,7 +41,74 @@ describe('jobs workspace', () => {
     const { onEnqueueUrl } = setup();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Media URL' }), { target: { value: 'https://example.com/clip' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
-    await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/clip'));
+    await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/clip', expect.stringMatching(/^[0-9a-f]{32}$/)));
+  });
+
+  it('announces a rejected file: URL to assistive tech, without creating a job, and recovers on valid input', async () => {
+    const { onEnqueueUrl, container } = setup();
+    onEnqueueUrl.mockRejectedValueOnce('validation failed: research URL is invalid: only http and https are supported');
+    const input = screen.getByRole('textbox', { name: 'Media URL' });
+    await fireEvent.input(input, { target: { value: 'file:///scriptotar-native-qa-denied-media.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    const message = 'Invalid media URL. Only HTTP and HTTPS URLs are supported.';
+    const alert = await screen.findByRole('alert', { name: message });
+    expect(alert).toHaveTextContent(message);
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert).toHaveAttribute('aria-live', 'assertive');
+    expect(alert).toHaveAttribute('aria-atomic', 'true');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(input).toHaveAttribute('aria-describedby', 'queue-action-error');
+    expect(onEnqueueUrl).toHaveBeenCalledWith('file:///scriptotar-native-qa-denied-media.mp4', expect.stringMatching(/^[0-9a-f]{32}$/));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(0);
+
+    await fireEvent.input(input, { target: { value: 'https://example.com/safe-video' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).not.toHaveAttribute('aria-invalid');
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/safe-video', expect.stringMatching(/^[0-9a-f]{32}$/)));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('exposes the same backend URL rejection in Arabic with a named native alert', async () => {
+    setLocale('ar');
+    const { onEnqueueUrl } = setup();
+    onEnqueueUrl.mockRejectedValueOnce(new Error('validation failed: research URL is invalid: only http and https are supported'));
+    const input = screen.getByRole('textbox', { name: 'رابط الوسائط' });
+    await fireEvent.input(input, { target: { value: 'file:///scriptotar-native-qa-denied-media.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'إضافة الرابط للطابور' }));
+    const arabicMessage = 'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.';
+    const alert = await screen.findByRole('alert', { name: arabicMessage });
+    expect(alert).toHaveTextContent(arabicMessage);
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert).toHaveAttribute('dir', 'auto');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(onEnqueueUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes only the actual host-echoed Queue denial identity and ignores spoofed IDs', async () => {
+    const { onEnqueueUrl } = setup();
+    onEnqueueUrl.mockImplementationOnce(async (_url: string, requestId?: string) => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_MEDIA_URL:' + requestId);
+    });
+    const input = screen.getByRole('textbox', { name: 'Media URL' });
+    await fireEvent.input(input, { target: { value: 'file:///host-rejected.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    const currentId = onEnqueueUrl.mock.calls[0]?.[1] as string;
+    expect(currentId).toMatch(/^[0-9a-f]{32}$/);
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveAttribute('aria-label',
+      'Invalid media URL. Only HTTP and HTTPS URLs are supported. · request ' + currentId);
+    expect(alert).toHaveTextContent('Request ID: ' + currentId);
+    await waitFor(() => expect(alert).toHaveFocus());
+
+    onEnqueueUrl.mockImplementationOnce(async () => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_MEDIA_URL:ffffffffffffffffffffffffffffffff');
+    });
+    await fireEvent.input(input, { target: { value: 'file:///another-rejection.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    const newer = await screen.findByRole('alert');
+    expect(newer).not.toHaveTextContent('Request ID:');
+    expect(newer).not.toHaveAttribute('aria-label', expect.stringContaining(' · request '));
   });
 
   it('allows cancel, retry and open completed transcript without hiding failure details', async () => {

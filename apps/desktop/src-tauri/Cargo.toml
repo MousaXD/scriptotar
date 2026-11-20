@@ -18,6 +18,7 @@ chrono.workspace = true
 keyring = { version = "3.6.3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 tempfile.workspace = true
 scriptotar-ai = { path = "../../../crates/scriptotar-ai" }
+scriptotar-agent = { path = "../../../crates/scriptotar-agent" }
 scriptotar-core = { path = "../../../crates/scriptotar-core" }
 scriptotar-db = { path = "../../../crates/scriptotar-db" }
 scriptotar-jobs = { path = "../../../crates/scriptotar-jobs" }

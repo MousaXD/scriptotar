@@ -7,7 +7,7 @@ export function loadAppearance(fallback: AppearanceMode): AppearanceMode {
   if (typeof window === 'undefined') return fallback;
   try {
     const stored = window.localStorage.getItem(APPEARANCE_STORAGE_KEY);
-    return stored === 'dark' || stored === 'system' ? stored : fallback;
+    return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : fallback;
   } catch {
     return fallback;
   }

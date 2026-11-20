@@ -32,6 +32,7 @@ describe('Tauri client command contract', () => {
     await api.chooseOutputDirectory();
     await api.enqueueLocalMedia('project-id', '/tmp/a.mp4');
     await api.enqueueUrl('project-id', 'https://www.youtube.com/watch?v=fixture');
+    await api.enqueueUrl('project-id', 'file:///denied.mp4', '0123456789abcdef0123456789abcdef');
     await api.retryJob('job-id');
     await api.saveWatchlist({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
     await api.scanCreator({ profileUrl: 'https://www.youtube.com/@fixture', limit: 25 });
@@ -63,6 +64,54 @@ describe('Tauri client command contract', () => {
     await api.mcpDisconnect();
     await api.searchTranscripts('scriptotar', 6);
     await api.getTranscript('transcript-id');
+    await api.listStudies('project-id');
+    await api.createStudy('project-id', { title: 'Example', goal: 'Goal', audience: 'Audience',
+      platform: 'TikTok', language: 'Arabic', duration: '40', style: 'Direct' });
+    await api.getStudy('project-id', 'study-id');
+    await api.getStudy('project-id', 'study-id', 'draft-id');
+    await api.getStudy('project-id', 'study-id', undefined, '0123456789abcdef0123456789abcdef');
+    await api.listStudyWritingBatches('project-id', 'study-id');
+    await api.duplicateStudyDraft('project-id', 'study-id', 'draft-id', 3);
+    await api.renameStudyDraft('project-id', 'study-id', 'draft-id', 3, 'New angle');
+    await api.setStudyDraftArchived('project-id', 'study-id', 'draft-id', 3, true);
+    await api.prepareStudyAngles('project-id', 'study-id');
+    await api.interpretStudyAngles('project-id', 'study-id', 7, 'prepared prompt', '{"angles":[]}', 'angle-1');
+    await api.interpretStudyAngles('project-id', 'study-id', 7, 'prepared prompt', '{"angles":[]}', undefined,
+      '0123456789abcdef0123456789abcdef');
+    await api.reviewStudyScript('project-id', 'study-id', 7, 'angle prompt', '{"angles":[]}',
+      'angle-1', 'draft prompt', '{"beats":[]}', false);
+    await api.saveStudy('project-id', 'study-id', 2, { draft: 'New script' });
+    await api.revokeStudySourceAccess('project-id', 'study-id', 3,
+      { kind: 'transcript', id: 'transcript-id' });
+    await api.listStudyEvidence('project-id', 'study-id');
+    await api.addStudyEvidence('project-id', 'study-id', {
+      source: { kind: 'transcript', id: 'transcript-id' },
+      claim: 'Claim', locator: '0:02-0:05', uncertaintyNote: null
+    });
+    await api.reviewStudyEvidence('project-id', 'study-id', 'evidence-id', {
+      expectedCertainty: 'unverified', action: 'dispute', note: 'Original audio contradicts this'
+    });
+    const noCostBudget = {
+      max_tokens: 50000, max_tool_calls: 1, max_elapsed_ms: 30000,
+      max_cost_microusd: 20000
+    };
+    await api.prepareProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'gpt-4o-mini', 128, noCostBudget);
+    await api.decideProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'sealed-fingerprint', false);
+    await api.executeProviderConsentSealed('project-id', 'study-id', 'run-id',
+      'sealed-fingerprint', 'fixture-not-a-real-key');
+    await api.startLocalInspection('project-id', 'study-id', 'transcript-id');
+    await api.listLocalInspections('project-id', 'study-id');
+    await api.decideLocalInspection('project-id', 'study-id', 'run-id', 'approve');
+    await api.listStudyResearchSources('project-id', 'study-id');
+    await api.startStudyResearch('project-id', 'study-id', ['study-source-id']);
+    await api.listStudyResearchRuns('project-id', 'study-id');
+    await api.decideStudyResearch('project-id', 'study-id', 'run-id', 'approve');
+    await api.readStudyResearchReport('project-id', 'study-id', 'artifact-id');
+    await api.getAiRun('project-id', 'ai-run-id');
+    await api.getResearchItem('project-id', 'research-id');
+    await api.saveCopyPrompt('project-id', aiInput);
     await api.getMcpPermissions();
     await api.saveMcpPermissions({
       enabled: false, httpToken: '', urlToken: '', readData: false, writeData: false,
@@ -96,7 +145,11 @@ describe('Tauri client command contract', () => {
     });
     expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
       projectId: 'project-id',
-      url: 'https://www.youtube.com/watch?v=fixture'
+      url: 'https://www.youtube.com/watch?v=fixture', requestId: null
+    });
+    expect(invokeMock).toHaveBeenCalledWith('enqueue_url', {
+      projectId: 'project-id', url: 'file:///denied.mp4',
+      requestId: '0123456789abcdef0123456789abcdef'
     });
     expect(invokeMock).toHaveBeenCalledWith('retry_job', { jobId: 'job-id' });
     expect(invokeMock).toHaveBeenCalledWith('save_watchlist', {
@@ -120,6 +173,101 @@ describe('Tauri client command contract', () => {
     expect(invokeMock).toHaveBeenCalledWith('mcp_disconnect');
     expect(invokeMock).toHaveBeenCalledWith('search_transcripts', { query: 'scriptotar', limit: 6 });
     expect(invokeMock).toHaveBeenCalledWith('get_transcript', { transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('list_studies', { projectId: 'project-id' });
+    expect(invokeMock).toHaveBeenCalledWith('create_study', { projectId: 'project-id',
+      brief: expect.objectContaining({ title: 'Example', goal: 'Goal' }) });
+    expect(invokeMock).toHaveBeenCalledWith('get_study', { projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_study', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('get_study', {
+      projectId: 'project-id', studyId: 'study-id', requestId: '0123456789abcdef0123456789abcdef'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_writing_batches', {
+      projectId: 'project-id', studyId: 'study-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('duplicate_study_draft', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id', expectedDraftRevision: 3
+    });
+    expect(invokeMock).toHaveBeenCalledWith('rename_study_draft', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id',
+      expectedDraftRevision: 3, title: 'New angle'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('set_study_draft_archived', {
+      projectId: 'project-id', studyId: 'study-id', draftId: 'draft-id',
+      expectedDraftRevision: 3, archived: true
+    });
+    expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
+      projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}',
+      selectedAngleId: 'angle-1', requestId: null
+    });
+    expect(invokeMock).toHaveBeenCalledWith('interpret_study_angles', {
+      projectId: 'project-id', studyId: 'study-id', expectedStudyRevision: 7,
+      preparedPrompt: 'prepared prompt', responseJson: '{"angles":[]}', selectedAngleId: null,
+      requestId: '0123456789abcdef0123456789abcdef'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('review_study_script', {
+      projectId: 'project-id', studyId: 'study-id',
+      input: {
+        expectedStudyRevision: 7, anglePrompt: 'angle prompt',
+        anglesResponseJson: '{"angles":[]}', selectedAngleId: 'angle-1',
+        preparedDraftPrompt: 'draft prompt', scriptResponseJson: '{"beats":[]}',
+        acceptAsNewCandidate: false
+      }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      model: 'gpt-4o-mini', maxOutputTokens: 128,
+      limits: {
+        max_tokens: 50000, max_tool_calls: 1, max_elapsed_ms: 30000,
+        max_cost_microusd: 20000
+      }
+    });
+    expect(invokeMock).toHaveBeenCalledWith('decide_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      fingerprint: 'sealed-fingerprint', approve: false
+    });
+    expect(invokeMock).toHaveBeenCalledWith('execute_provider_consent_sealed', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id',
+      fingerprint: 'sealed-fingerprint', requestTimeApiKey: 'fixture-not-a-real-key'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('prepare_study_angles', {
+      projectId: 'project-id', studyId: 'study-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('save_study', { projectId: 'project-id',
+      studyId: 'study-id', expectedRevision: 2, patch: { draft: 'New script' } });
+    expect(invokeMock).toHaveBeenCalledWith('revoke_study_source_access', {
+      projectId: 'project-id', studyId: 'study-id', expectedRevision: 3,
+      kind: 'transcript', referenceId: 'transcript-id'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_evidence', { projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('add_study_evidence', { projectId: 'project-id',
+      studyId: 'study-id', input: { source: { kind: 'transcript', id: 'transcript-id' },
+        claim: 'Claim', locator: '0:02-0:05', uncertaintyNote: null } });
+    expect(invokeMock).toHaveBeenCalledWith('review_study_evidence', {
+      projectId: 'project-id', studyId: 'study-id', evidenceId: 'evidence-id',
+      expectedCertainty: 'unverified', action: 'dispute', note: 'Original audio contradicts this'
+    });
+    expect(invokeMock).toHaveBeenCalledWith('start_local_inspection', {
+      projectId: 'project-id', studyId: 'study-id', transcriptId: 'transcript-id' });
+    expect(invokeMock).toHaveBeenCalledWith('list_local_inspections', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('decide_local_inspection', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id', action: 'approve' });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_research_sources', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('start_study_research', {
+      projectId: 'project-id', studyId: 'study-id', sourceIds: ['study-source-id'] });
+    expect(invokeMock).toHaveBeenCalledWith('list_study_research_runs', {
+      projectId: 'project-id', studyId: 'study-id' });
+    expect(invokeMock).toHaveBeenCalledWith('decide_study_research', {
+      projectId: 'project-id', studyId: 'study-id', runId: 'run-id', action: 'approve' });
+    expect(invokeMock).toHaveBeenCalledWith('read_study_research_report', {
+      projectId: 'project-id', studyId: 'study-id', artifactId: 'artifact-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_ai_run', { projectId: 'project-id', aiRunId: 'ai-run-id' });
+    expect(invokeMock).toHaveBeenCalledWith('get_research_item', { projectId: 'project-id', researchItemId: 'research-id' });
+    expect(invokeMock).toHaveBeenCalledWith('save_copy_prompt', { projectId: 'project-id', input: aiInput });
     expect(invokeMock).toHaveBeenCalledWith('get_mcp_permissions');
     expect(invokeMock).toHaveBeenCalledWith('save_mcp_permissions', {
       permissions: expect.objectContaining({ readData: false, enabled: false }),
