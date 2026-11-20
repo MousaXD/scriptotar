@@ -259,7 +259,11 @@ describe('Library workspace', () => {
     expect(button).toHaveTextContent('Original creator title');
     expect(screen.getByText('محلي')).toBeInTheDocument();
     await fireEvent.click(button);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Artifact offline');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Artifact offline');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert.previousElementSibling).toHaveClass('library-result-bar');
   });
 });
 
