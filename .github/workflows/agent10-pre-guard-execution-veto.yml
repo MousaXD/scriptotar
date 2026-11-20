@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 32c41adc6a600b276a1c1886d5b72b7bdef2b8a8
+          ref: fc94baacf49ed011fbf68e34c005b8bc6cb77b57
           path: .agent10-pr158-target
           persist-credentials: false
           sparse-checkout: |
@@ -39,7 +39,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: Assert reviewed PR158 SHA
         shell: bash
-        run: test "$(git -C .agent10-pr158-target rev-parse HEAD)" = '32c41adc6a600b276a1c1886d5b72b7bdef2b8a8'
+        run: test "$(git -C .agent10-pr158-target rev-parse HEAD)" = 'fc94baacf49ed011fbf68e34c005b8bc6cb77b57'
       - name: Checkout immutable reviewed guard for benign worktree tamper control
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
