@@ -50,9 +50,9 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.getByText(/No AI provider or paid request/)).toBeInTheDocument();
     await fireEvent.click(prepare);
     const approve = await screen.findByRole('button', { name: 'Approve local analysis' });
-    expect(await screen.findByText(/awaiting_approval/)).toBeInTheDocument();
+    expect(await screen.findByText(/Awaiting approval/)).toBeInTheDocument();
     await fireEvent.click(approve);
-    await waitFor(() => expect(screen.getByText(/completed/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/Completed/)).toBeInTheDocument());
     expect(screen.getAllByText(/not independently fact-checked/).length).toBe(2);
     expect(screen.getByText('Observed opening question')).toBeInTheDocument();
     expect(screen.getByText('What would you do first?')).toBeInTheDocument();
@@ -91,4 +91,47 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.getByText(/دون طلب مدفوع/)).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'تحضير البحث' })).toBeInTheDocument();
   });
+  it('quarantines a completed report with a mismatched observation source', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const canonical = api.readStudyResearchReport.bind(api);
+    api.readStudyResearchReport = async (project, study, artifact) => {
+      const report = await canonical(project, study, artifact);
+      const source = report.sources[0];
+      source.observations = [{
+        statement: 'Claim from a different source', beat: null, feature: null,
+        confidence: 'source_observation', limitations: [],
+        evidence: {
+          study_source_id: source.study_source_id,
+          reference_id: 'foreign-origin',
+          locator: source.locator, transcript_id: 'foreign-origin',
+          transcript_revision: '1', segment_id: 'segment-1',
+          start_ms: 100, end_ms: 200, excerpt: 'Untrusted excerpt'
+        }
+      }];
+      return report;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Approve local analysis' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.queryByText('Claim from a different source')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
+  });
+
+  it('rejects a prepare response whose canonical source selection was changed', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const original = api.startStudyResearch.bind(api);
+    api.startStudyResearch = async (project, study, ids) => {
+      const run = await original(project, study, ids);
+      run.plan.steps[0].input.source_ids = ['a-different-attached-source'];
+      return run;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+  });
+
 });
