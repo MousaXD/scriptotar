@@ -1,0 +1,46 @@
+# Test-only Agent10 independent review of exact PR158 candidate.
+# Deliberately RED until pre-guard execution/credentials are repaired.
+# Does not execute any script from the untrusted source checkout.
+name: Agent10 independent pre-guard execution veto
+
+on:
+  push:
+    branches: [agent-10/p0-pre-guard-execution-regression-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-pr158-order:
+    name: Original PR158 command-order and credential denial (strict)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify test source identity
+        shell: bash
+        env:
+          AGENT10_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AGENT10_SHA"
+      - name: Checkout exact untrusted PR158 candidate as DATA only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 32c41adc6a600b276a1c1886d5b72b7bdef2b8a8
+          path: .agent10-pr158-target
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/windows-tauri.yml
+            .github/workflows/installed-webview-acceptance.yml
+          sparse-checkout-cone-mode: false
+      - name: Assert reviewed PR158 SHA
+        shell: bash
+        run: test "$(git -C .agent10-pr158-target rev-parse HEAD)" = '32c41adc6a600b276a1c1886d5b72b7bdef2b8a8'
+      - name: Independent negative-mutation self-test
+        run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --self-test
+      - name: Strict original PR158 pre-guard audit (RED is release veto)
+        run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --target .agent10-pr158-target
