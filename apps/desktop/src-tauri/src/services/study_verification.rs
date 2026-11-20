@@ -1563,6 +1563,60 @@ mod authenticity_tests {
     }
 
     #[test]
+    fn canonical_writing_transcript_index_requires_exact_current_segment() {
+        let origin = Uuid::new_v4();
+        let canonical_text = "Quoted literal words, not a verified factual assertion";
+        let binding = HostSourceBinding {
+            content_sha256: Some(verification::canonical_source_sha256(&[
+                canonical_text.as_bytes(),
+            ])),
+            segments: vec![CanonicalTranscriptSegment {
+                id: Some("real-segment-7".into()),
+                start: 10.5,
+                end: 12.0,
+                text: canonical_text.into(),
+            }],
+        };
+        let mut evidence = writing::EvidenceRef {
+            id: format!("transcript:{origin}:0"),
+            locator: writing::EvidenceLocator {
+                source_id: origin.to_string(),
+                canonical_url: None,
+                timestamp_seconds: Some(10),
+                document_section: Some(
+                    "Transcript segment real-segment-7 (10.500-12.000s)".into(),
+                ),
+                collected_at: None,
+            },
+            excerpt: canonical_text.into(),
+            kind: writing::EvidenceKind::SocialTranscript,
+            status: writing::EvidenceStatus::Attributed,
+        };
+        assert_eq!(
+            exact_written_transcript_segment(&evidence, &binding),
+            Some(("real-segment-7".into(), 10_500))
+        );
+        assert_eq!(
+            source_attribution(EvidenceState::Unreviewed),
+            SourceAttribution::LiteralExcerptUnreviewed
+        );
+        evidence.excerpt.push_str(" forged addition");
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.excerpt = canonical_text.into();
+        evidence.locator.timestamp_seconds = Some(11);
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.locator.timestamp_seconds = Some(10);
+        evidence.locator.document_section = Some("Invented segment title".into());
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.locator.document_section =
+            Some("Transcript segment real-segment-7 (10.500-12.000s)".into());
+        evidence.id = format!("transcript:{origin}:text");
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.id = format!("transcript:{origin}:44");
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+    }
+
+    #[test]
     fn exact_stored_segment_id_time_and_quote_are_all_required() {
         let binding = HostSourceBinding {
             content_sha256: Some(verification::canonical_source_sha256(&[b"transcript"])),
