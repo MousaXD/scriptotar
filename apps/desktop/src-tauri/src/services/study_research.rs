@@ -5,8 +5,8 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::Write,
-    path::PathBuf,
+    io::{Read, Write},
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -492,12 +492,24 @@ fn artifact_path(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<
         .join(format!("{artifact_id}.json")))
 }
 
-fn load_envelope(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<ReportEnvelope> {
-    let path = artifact_path(services, artifact_id)?;
-    let bytes = fs::read(path).map_err(|_| not_found())?;
+/// Reads at most one byte past the hard artifact limit so a malicious or
+/// corrupted file cannot allocate its entire contents before admission.
+fn read_bounded_report_file(path: &Path) -> RepositoryResult<Vec<u8>> {
+    let mut file = fs::File::open(path).map_err(|_| not_found())?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((MAX_REPORT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| storage())?;
     if bytes.len() > MAX_REPORT_BYTES {
         return Err(storage());
     }
+    Ok(bytes)
+}
+
+fn load_envelope(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<ReportEnvelope> {
+    let path = artifact_path(services, artifact_id)?;
+    let bytes = read_bounded_report_file(&path)?;
     serde_json::from_slice(&bytes).map_err(|_| storage())
 }
 
@@ -518,7 +530,7 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     #[cfg(not(unix))]
     fs::create_dir_all(directory).map_err(|_| storage())?;
     if path.exists() {
-        let existing = fs::read(&path).map_err(|_| storage())?;
+        let existing = read_bounded_report_file(&path)?;
         return if existing == data {
             Ok(())
         } else {
@@ -1648,6 +1660,21 @@ mod tests {
             Some(artifact.to_string().as_str())
         );
         assert!(read_study_research_artifact(&restarted, Uuid::new_v4(), study, artifact).is_err());
+    }
+
+    #[test]
+    fn oversized_cached_artifact_is_rejected_before_full_read() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("oversized.json");
+        let mut file = fs::File::create(&path).unwrap();
+        file.set_len((MAX_REPORT_BYTES as u64) + 4_096).unwrap();
+        drop(file);
+        assert!(read_bounded_report_file(&path).is_err());
+
+        let exact = dir.path().join("exact-limit.json");
+        fs::write(&exact, vec![b'x'; MAX_REPORT_BYTES]).unwrap();
+        assert_eq!(read_bounded_report_file(&exact).unwrap().len(), MAX_REPORT_BYTES);
+        assert!(read_bounded_report_file(&dir.path().join("missing.json")).is_err());
     }
 
     #[test]
