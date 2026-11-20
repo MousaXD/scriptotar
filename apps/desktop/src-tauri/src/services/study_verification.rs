@@ -175,7 +175,8 @@ fn from_study_evidence(
     let literal_quote = binding.content_sha256.is_some()
         && match source.kind {
             StudySourceKind::Manual => source.manual_text.as_deref().is_some_and(|text| {
-                !evidence.input.claim.trim().is_empty()
+                evidence.input.locator == source.locator
+                    && !evidence.input.claim.trim().is_empty()
                     && text.contains(evidence.input.claim.as_str())
             }),
             StudySourceKind::Transcript => verified_segment.is_some(),
@@ -585,6 +586,12 @@ mod tests {
         forged.input.claim = "An invented quotation".into();
         assert_eq!(
             from_study_evidence(&forged, &source, &bound).state,
+            EvidenceState::Untrusted
+        );
+        let mut fake_locator = reference.clone();
+        fake_locator.input.locator = "unrelated-source:paragraph".into();
+        assert_eq!(
+            from_study_evidence(&fake_locator, &source, &bound).state,
             EvidenceState::Untrusted
         );
         let mut injected = reference;
