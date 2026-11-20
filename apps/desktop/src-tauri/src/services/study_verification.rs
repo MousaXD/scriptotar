@@ -1140,6 +1140,68 @@ mod tests {
         assert!(services
             .verify_studio_claims_read_only(project, study_id, study.revision, 2, &actual)
             .is_err());
+
+        // A second source is legitimately attached to this same Study, but
+        // its observation may not be smuggled under the first draft-linked
+        // source's lineage. "Study membership" is not "draft provenance".
+        let second_source = services
+            .store
+            .add_study_source(
+                project,
+                study_id,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("other-section".into()),
+                    manual_text: Some("A second source makes a distinct claim.".into()),
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        let second_evidence = services
+            .store
+            .add_evidence_reference(
+                project,
+                study_id,
+                &EvidenceInput {
+                    study_source_id: second_source.id,
+                    claim: "A second source makes a distinct claim.".into(),
+                    locator: "other-section".into(),
+                    timestamp_seconds: None,
+                    certainty: EvidenceCertainty::Unverified,
+                    uncertainty_note: None,
+                },
+            )
+            .unwrap();
+        let mut switched = candidate.clone();
+        switched.draft.claims[0].evidence_ids = vec![second_evidence.id.to_string()];
+        switched.lineage[0].evidence[0].id = second_evidence.id.to_string();
+        let switched_body = export_candidate(&switched);
+        let other_draft = services
+            .store
+            .create_draft(project, study_id, &switched.draft.title, &switched_body)
+            .unwrap();
+        services
+            .store
+            .attach_source_to_draft(project, other_draft.id, attached.id)
+            .unwrap();
+        db.execute(
+            "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+             VALUES(?1,1,?2)",
+            params![
+                other_draft.id.to_string(),
+                serde_json::to_string(&switched).unwrap()
+            ],
+        )
+        .unwrap();
+        let mut switched_claims = switched.draft.clone();
+        switched_claims.id = other_draft.id.to_string();
+        assert!(services
+            .verify_studio_claims_read_only(
+                project, study_id, study.revision, 1, &switched_claims,
+            )
+            .is_err());
         drop(db);
         drop(services);
         let reopened = AppServices::new(tmp.path()).unwrap();
