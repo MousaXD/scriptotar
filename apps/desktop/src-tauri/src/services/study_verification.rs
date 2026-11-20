@@ -241,6 +241,41 @@ fn saved_version_digest(
     ])
 }
 
+/// Canonical writing IDs are NOT all UUIDs: host-generated transcript
+/// excerpts use transcript:<origin-id>:<index|text>, and observation entries
+/// use observation:<evidence-uuid>. Validate their real attached-source
+/// relationship without treating generated excerpts as independent facts.
+fn saved_lineage_id_matches_source(
+    evidence_id: &str,
+    source: &scriptotar_core::StudySource,
+    actual_evidence_sources: &HashMap<Uuid, Uuid>,
+) -> bool {
+    if let Some(raw) = evidence_id.strip_prefix("observation:") {
+        return Uuid::parse_str(raw)
+            .ok()
+            .and_then(|id| actual_evidence_sources.get(&id))
+            .is_some_and(|source_id| *source_id == source.id);
+    }
+    if let Some(raw) = evidence_id.strip_prefix("transcript:") {
+        let Some((origin, segment)) = raw.split_once(':') else {
+            return false;
+        };
+        let valid_segment = segment == "text"
+            || segment.parse::<usize>().ok().is_some_and(|index| {
+                index < 20_000 && index.to_string() == segment
+            });
+        return source.kind == StudySourceKind::Transcript
+            && Uuid::parse_str(origin).ok() == source.reference_id
+            && source.reference_id.is_some()
+            && valid_segment;
+    }
+    // The legacy exact Study evidence UUID form remains valid.
+    Uuid::parse_str(evidence_id)
+        .ok()
+        .and_then(|id| actual_evidence_sources.get(&id))
+        .is_some_and(|source_id| *source_id == source.id)
+}
+
 /// Match the entire typed manifest against a host-persisted structured
 /// revision, then require its rendered body to be byte-identical to the
 /// canonical immutable saved version. A model-selected UUID is not authority.
@@ -520,18 +555,16 @@ impl AppServices {
         let stored_candidate: GeneratedCandidate = serde_json::from_str(&structured)
             .map_err(|_| RepositoryError::Storage("corrupt structured claim revision".into()))?;
         for line in &stored_candidate.lineage {
-            if !source_map.contains_key(&line.source_id)
-                || !linked_sources.contains(&line.source_id)
-            {
+            let source = source_map.get(&line.source_id).ok_or_else(|| {
+                RepositoryError::Conflict("draft lineage source is no longer attached".into())
+            })?;
+            if !linked_sources.contains(&line.source_id) {
                 return Err(RepositoryError::Conflict(
-                    "draft lineage source is no longer attached to this Study".into(),
+                    "draft lineage source is not linked to this saved draft".into(),
                 ));
             }
             for item in &line.evidence {
-                let evidence_id = Uuid::parse_str(&item.id).map_err(|_| {
-                    RepositoryError::Conflict("invalid saved claim evidence UUID".into())
-                })?;
-                if evidence_source_map.get(&evidence_id) != Some(&line.source_id) {
+                if !saved_lineage_id_matches_source(&item.id, source, &evidence_source_map) {
                     return Err(RepositoryError::Conflict(
                         "saved claim evidence is attributed to the wrong source".into(),
                     ));
