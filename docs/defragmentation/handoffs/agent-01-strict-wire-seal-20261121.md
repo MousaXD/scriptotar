@@ -33,3 +33,7 @@ GitHub Actions and original independent-race tests must be checked on the **fina
 ## 21 November follow-up — visible price revision and real Studio mutation test
 
 The consent preview now exposes `trusted_pricing_revision: Option<String>` (TypeScript `string | null`). A missing revision blocks approval, and changed revision at dispatch returns `ChangedContext` before durable reservation. This is disclosure/contract hardening only, not a live price catalog. Added a native host test proving that real Studio brief edits cannot commit while a provider scope guard is held; the guard release then permits the edit and invalidates the approved scope. No cross-process SQLite safety claim is made.
+
+## 21 November follow-up — canonical transcript revocation race
+
+The host regression `dispatch_guard_blocks_real_transcript_revocation_and_invalidates_scope` now uses a real project-owned `sources -> media -> transcripts` fixture, attaches it through the Studio bundle, holds the exact provider scope gate, and races the public `revoke_studio_source_access` method. The revocation must not complete before guard release; once committed, its previous scope must be inadmissible. This proves this particular **in-process** host path only. It does not stop independent SQLite writers or certify paid-provider execution.
