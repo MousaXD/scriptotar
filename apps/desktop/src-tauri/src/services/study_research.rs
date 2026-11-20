@@ -2100,8 +2100,8 @@ mod tests {
             .decide_study_research(project, study, &proposed.plan.id, "approve")
             .unwrap();
         assert_eq!(completed.state, RunState::Completed);
-        assert_eq!(completed.usage.cost_microusd, 0);
-        assert_eq!(completed.usage.tokens, 0);
+        assert_eq!(completed.usage.reserved_cost_microusd, 0);
+        assert_eq!(completed.usage.reserved_tokens, 0);
         let artifact =
             Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
 
