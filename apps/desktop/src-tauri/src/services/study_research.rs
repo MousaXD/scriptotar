@@ -495,10 +495,9 @@ fn artifact_path(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<
 /// Reads at most one byte past the hard artifact limit so a malicious or
 /// corrupted file cannot allocate its entire contents before admission.
 fn read_bounded_report_file(path: &Path) -> RepositoryResult<Vec<u8>> {
-    let mut file = fs::File::open(path).map_err(|_| not_found())?;
+    let file = fs::File::open(path).map_err(|_| not_found())?;
     let mut bytes = Vec::new();
-    file.by_ref()
-        .take((MAX_REPORT_BYTES + 1) as u64)
+    file.take((MAX_REPORT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| storage())?;
     if bytes.len() > MAX_REPORT_BYTES {
@@ -1666,7 +1665,7 @@ mod tests {
     fn oversized_cached_artifact_is_rejected_before_full_read() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("oversized.json");
-        let mut file = fs::File::create(&path).unwrap();
+        let file = fs::File::create(&path).unwrap();
         file.set_len((MAX_REPORT_BYTES as u64) + 4_096).unwrap();
         drop(file);
         assert!(read_bounded_report_file(&path).is_err());
