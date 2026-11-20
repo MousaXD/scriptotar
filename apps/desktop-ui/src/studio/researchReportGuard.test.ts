@@ -81,6 +81,30 @@ describe('Study research report display scope', () => {
     expect(valid(missingRevision)).toBe(false);
   });
 
+  it('rejects fabricated creator-peer observations, invalid counters and feature bounds', () => {
+    const value = structuredClone(report);
+    value.sources[0].metrics = {
+      views: 40, likes: null, comments: 2, observed_interactions_per_view: 0.05,
+      creator_comparison: { status: 'unavailable', reason: 'insufficient_peers', eligible_peers: 0 }
+    };
+    expect(valid(value)).toBe(true);
+    const fakeMetric = structuredClone(value);
+    fakeMetric.sources[0].metrics!.views = -1;
+    expect(valid(fakeMetric)).toBe(false);
+    const forgedPeer = structuredClone(value);
+    forgedPeer.sources[0].metrics!.creator_comparison = {
+      status: 'observed', peer_count: 1, median_peer_views: 99,
+      views_relative_to_peer_median: 1.1, interpretation: 'Unverified comparison'
+    };
+    expect(valid(forgedPeer)).toBe(false);
+    const fakeSupport = structuredClone(value);
+    fakeSupport.feature_support = [{
+      feature: 'hook', distinct_selected_sources: 2,
+      meaning: 'Cannot exceed the one selected source'
+    }];
+    expect(valid(fakeSupport)).toBe(false);
+  });
+
   it('requires a completed authorized run with its exact saved selection', () => {
     expect(valid(report, { ...run, state: 'cancelled' })).toBe(false);
     expect(valid(report, { ...run, plan: { ...run.plan,
