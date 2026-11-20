@@ -14,7 +14,7 @@ from .ipc_trace import summarize_trace
 from .native_trials import summary
 from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, memory_snapshot
 from . import native_attach as native_attach_module
-from .native_attach import attach, process_image, same_image, process_instance_id
+from .native_attach import attach, process_image, same_image, process_instance_id, process_cpu_time_ns
 from .test_attached_memory_gate import AttachedMemoryGateTests  # run with current P2 CI suite
 
 SHA = "3" * 40
@@ -156,6 +156,18 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
             self.assertGreater(record.get("main_private_working_set_bytes") or 0, 0)
             self.assertGreater(record.get("main_private_commit_bytes") or 0, 0)
 
+    def test_root_cpu_counter_is_read_only_not_a_native_benchmark(self):
+        import os
+        import platform
+        cpu = process_cpu_time_ns(os.getpid())
+        if platform.system() in ("Linux", "Windows"):
+            self.assertIs(type(cpu), int)
+            self.assertGreaterEqual(cpu, 0)
+        else:
+            self.assertIsNone(cpu)
+        self.assertIsNone(process_cpu_time_ns(987654321))
+        self.assertIsNone(process_cpu_time_ns(-1))
+
     def test_attach_read_only_does_not_terminate_instrumented_process(self):
         import os
         import sys
@@ -182,6 +194,19 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
                             report["measurement_finished_monotonic_ns"])
             raw = report["raw_samples"]
             self.assertEqual(len(raw), report["sample_count"])
+            self.assertTrue(all("main_cpu_time_ns" in row for row in raw))
+            self.assertTrue(all(
+                row["sample_started_monotonic_ns"]
+                <= row["main_cpu_time_observed_monotonic_ns"]
+                <= row["sample_finished_monotonic_ns"]
+                for row in raw
+            ))
+            if platform.system() in ("Linux", "Windows"):
+                self.assertTrue(all(type(row["main_cpu_time_ns"]) is int for row in raw))
+                self.assertEqual(
+                    sorted(row["main_cpu_time_ns"] for row in raw),
+                    [row["main_cpu_time_ns"] for row in raw],
+                )
             self.assertTrue(all(
                 report["measurement_started_monotonic_ns"] <= item["sample_started_monotonic_ns"]
                 <= item["sample_finished_monotonic_ns"] <= report["measurement_finished_monotonic_ns"]

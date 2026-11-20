@@ -134,6 +134,43 @@ def preflight(report: dict, package: Path, executable: Path,
             raise ValueError(f"sample {i}: process-tree memory below main process")
     if end - previous_end > max_idle_ns:
         raise ValueError("sparse memory sampling cadence at window tail")
+    # Optional root-PID CPU time is cumulative, not a memory counter or a
+    # whole-WebView process-tree measurement. Never present missing CPU as 0.
+    cpu_times = [row.get("main_cpu_time_ns") for row in rows]
+    if all(value is None for value in cpu_times):
+        cpu_evidence = {
+            "status": "NOT_MEASURED",
+            "root_cpu_core_equivalents_uncertified": None,
+        }
+    else:
+        if any(not _int(value) or value < 0 for value in cpu_times):
+            raise ValueError("partial or invalid root process CPU counters")
+        if any(after < before for before, after in zip(cpu_times, cpu_times[1:])):
+            raise ValueError("root process CPU time decreased for same PID birth")
+        # Use the CPU read-completion clock, not memory-sample start; the
+        # latter may precede an expensive process-tree memory snapshot.
+        cpu_observed = [row.get("main_cpu_time_observed_monotonic_ns") for row in rows]
+        for i, (row, clock) in enumerate(zip(rows, cpu_observed), 1):
+            if (not _int(clock)
+                    or not row["sample_started_monotonic_ns"] <= clock
+                           <= row["sample_finished_monotonic_ns"]):
+                raise ValueError(f"sample {i}: missing or unbounded root CPU observation clock")
+        if any(after <= before for before, after in zip(cpu_observed, cpu_observed[1:])):
+            raise ValueError("root CPU observation clock is not strictly monotonic")
+        observation_ns = cpu_observed[-1] - cpu_observed[0]
+        if observation_ns <= 0:
+            raise ValueError("invalid root process CPU observation duration")
+        cpu_evidence = {
+            "status": "ROOT_ONLY_UNCERTIFIED",
+            "cpu_time_delta_ns": cpu_times[-1] - cpu_times[0],
+            "observation_elapsed_ns": observation_ns,
+            "root_cpu_core_equivalents_uncertified": round(
+                (cpu_times[-1] - cpu_times[0]) / observation_ns, 4
+            ),
+            "limitations": "Excludes WebKitGTK/WebView2 helper CPU. Uses independent CPU "
+                           "read-completion monotonic stamps rather than memory sampling start; "
+                           "read timing still has nonzero uncertainty. Not installed GUI certification.",
+        }
     return {
         "scope": "ATTACHED_MEMORY_PRECHECK_ONLY_NOT_INSTALLED_CERTIFICATION",
         "status": "ELIGIBLE_FOR_INDEPENDENT_AGENT07_REVIEW_NOT_CERTIFIED",
@@ -146,6 +183,7 @@ def preflight(report: dict, package: Path, executable: Path,
         "process_creation_id_reported": report["kernel_process_creation_id"],
         "study_count_operator_supplied_not_verified": report.get("study_count_operator_supplied"),
         "sample_count": len(rows),
+        "root_process_cpu_evidence": cpu_evidence,
         "window_elapsed_ms": round((end - begin) / 1_000_000, 3),
         "uncertified_memory_sample_percentiles": {k: _percentiles(v) for k, v in series.items()},
         "certification": "PENDING_INDEPENDENT_NATIVE_QA_AND_CANONICAL_STUDY_READBACK",

@@ -113,6 +113,56 @@ def process_instance_id(pid: int) -> str | None:
     return None
 
 
+def process_cpu_time_ns(pid: int) -> int | None:
+    """Read cumulative CPU time of the real root PID; helper CPU is NOT included.
+
+    Process identity is checked separately before/after every sample. Missing
+    kernel permission or an unavailable counter remains None, never zero.
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    if platform.system() == "Linux":
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+            after_comm = stat[stat.rfind(")") + 1:].split()
+            # /proc stat fields 14+15 (utime, stime): indices 11+12 after comm.
+            hz = os.sysconf("SC_CLK_TCK")
+            if hz <= 0:
+                return None
+            ticks = int(after_comm[11]) + int(after_comm[12])
+            return ticks * 1_000_000_000 // hz if ticks >= 0 else None
+        except (OSError, UnicodeError, IndexError, ValueError, TypeError):
+            return None
+    if platform.system() == "Windows":
+        try:
+            from ctypes import wintypes as w
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+            kernel.OpenProcess.restype = w.HANDLE
+            kernel.GetProcessTimes.argtypes = [w.HANDLE] + [ctypes.POINTER(w.FILETIME)] * 4
+            kernel.GetProcessTimes.restype = w.BOOL
+            kernel.CloseHandle.argtypes = [w.HANDLE]
+            handle = kernel.OpenProcess(0x1000, False, pid)
+            if not handle:
+                return None
+            try:
+                created, exited, kernel_time, user_time = (w.FILETIME() for _ in range(4))
+                if not kernel.GetProcessTimes(
+                    handle, ctypes.byref(created), ctypes.byref(exited),
+                    ctypes.byref(kernel_time), ctypes.byref(user_time)
+                ):
+                    return None
+                # Windows FILETIME CPU counters are units of 100 nanoseconds.
+                kernel_ticks = (kernel_time.dwHighDateTime << 32) | kernel_time.dwLowDateTime
+                user_ticks = (user_time.dwHighDateTime << 32) | user_time.dwLowDateTime
+                return (kernel_ticks + user_ticks) * 100
+            finally:
+                kernel.CloseHandle(handle)
+        except (OSError, ValueError, AttributeError):
+            return None
+    return None
+
+
 def attach(pid: int, executable: Path, package: Path, source_sha: str,
            seconds: float, interval_seconds: float, study_count: int | None,
            run_url: str | None) -> dict:
@@ -152,6 +202,12 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         except (OSError, RuntimeError, ValueError) as exc:
             memory = {"provider": platform.system(), "tree_memory_complete": False,
                       "sampling_error": type(exc).__name__}
+        # This is root-PID CPU time, not a whole-WebView tree CPU measurement.
+        main_cpu_time_ns = process_cpu_time_ns(pid)
+        # A read happens AFTER the potentially slow memory-tree snapshot.
+        # Timestamp the CPU observation separately instead of pretending the
+        # CPU ticks were sampled at sample_started_monotonic_ns.
+        main_cpu_time_observed_monotonic_ns = time.perf_counter_ns()
         sample_finished_monotonic_ns = time.perf_counter_ns()
         # The app can exit and the kernel can reuse its PID *during* the
         # memory snapshot. Never report a sample unless both probes bracket
@@ -164,6 +220,8 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
             "elapsed_ms": round((clock - begin) * 1000, 3),
             "sample_started_monotonic_ns": sample_started_monotonic_ns,
             "sample_finished_monotonic_ns": sample_finished_monotonic_ns,
+            "main_cpu_time_ns": main_cpu_time_ns,
+            "main_cpu_time_observed_monotonic_ns": main_cpu_time_observed_monotonic_ns,
             **memory,
         })
         remaining = seconds - (time.perf_counter() - begin)
@@ -204,7 +262,7 @@ def attach(pid: int, executable: Path, package: Path, source_sha: str,
         "end_reason": end_reason, "sample_count": len(records),
         "complete_tree_sample_count": sum(x.get("tree_memory_complete") is True for x in records),
         "metrics": samples, "raw_samples": records,
-        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching and start/end hash stability are not package signature verification; a transient change-and-restore between hashes is not detectable. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
+        "limitations": "No independent UI readiness, action/IPC timing or installed package attestation. Monotonic sample brackets do NOT establish cross-process WebView UI clock synchronization; a separately attested shared-clock calibration is required before joining native-driver events. Process image matching and start/end hash stability are not package signature verification; a transient change-and-restore between hashes is not detectable. Resident Linux PSS apportions shared pages; private resident excludes shared mappings. Windows private working set is resident and differs from private commit. Root process CPU time excludes WebKitGTK/WebView2 helper CPU and missing counters are unknown, never zero. CPU read completion is separately timestamped after the memory-tree observation and is not an instantaneous kernel timestamp. Descendant enumeration can miss reparented WebView helper processes, and missing permissions yield null rather than partial memory totals.",
     }
 
 

@@ -135,6 +135,50 @@ class AttachedMemoryGateTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "elapsed/monotonic timestamp"):
                     self.check(bad)
 
+    def test_root_cpu_counters_are_optional_complete_monotonic_and_noncertifying(self):
+        # Existing pure-memory archive remains usable without optional CPU.
+        self.assertEqual(self.check()["root_process_cpu_evidence"]["status"], "NOT_MEASURED")
+        valid = copy.deepcopy(self.report)
+        for i, row in enumerate(valid["raw_samples"]):
+            row["main_cpu_time_ns"] = 1_000_000_000 + i * 100_000_000
+            row["main_cpu_time_observed_monotonic_ns"] = (
+                row["sample_started_monotonic_ns"] + 50_000_000
+            )
+        cpu = self.check(valid)["root_process_cpu_evidence"]
+        self.assertEqual(cpu["status"], "ROOT_ONLY_UNCERTIFIED")
+        self.assertEqual(cpu["cpu_time_delta_ns"], 200_000_000)
+        self.assertAlmostEqual(cpu["root_cpu_core_equivalents_uncertified"], 0.3333, places=4)
+        self.assertIn("helper CPU", cpu["limitations"])
+
+        partial = copy.deepcopy(valid)
+        del partial["raw_samples"][1]["main_cpu_time_ns"]
+        with self.assertRaisesRegex(ValueError, "partial or invalid root process CPU"):
+            self.check(partial)
+
+        for invalid in (True, -1, 2.5):
+            bad = copy.deepcopy(valid)
+            bad["raw_samples"][1]["main_cpu_time_ns"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(
+                ValueError, "partial or invalid root process CPU"
+            ):
+                self.check(bad)
+
+        decrease = copy.deepcopy(valid)
+        decrease["raw_samples"][2]["main_cpu_time_ns"] = 1_099_999_999
+        with self.assertRaisesRegex(ValueError, "CPU time decreased"):
+            self.check(decrease)
+
+        for offset in (-1, 100_000_001, None, True):
+            invalid_clock = copy.deepcopy(valid)
+            invalid_clock["raw_samples"][1]["main_cpu_time_observed_monotonic_ns"] = (
+                invalid_clock["raw_samples"][1]["sample_started_monotonic_ns"] + offset
+                if type(offset) is int else offset
+            )
+            with self.subTest(cpu_clock_offset=offset), self.assertRaisesRegex(
+                ValueError, "missing or unbounded root CPU observation clock"
+            ):
+                self.check(invalid_clock)
+
     def test_windows_private_memory_is_not_linux_pss(self):
         bad = copy.deepcopy(self.report)
         bad["platform"] = "Windows-10.0.20348"
