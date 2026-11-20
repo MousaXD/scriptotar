@@ -1127,6 +1127,11 @@ pub(super) struct ResearchWritingContext {
     pub sources: Vec<ResearchWritingSource>,
     pub evidence: Vec<EvidenceRef>,
     pub findings: Vec<ResearchFinding>,
+    /// Number of distinct actual origin transcripts with attributable text.
+    pub attributed_source_count: usize,
+    /// Agent 05 must also validate the canonical Study brief and current source
+    /// set. This is only the minimum local-evidence admission condition.
+    pub meets_three_source_evidence_floor: bool,
     pub limitations: Vec<String>,
     pub source_text_is_untrusted_data: bool,
 }
@@ -1233,6 +1238,18 @@ fn research_writing_from_report(
         limitations
             .push("Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into());
     }
+    let attributed_source_count = evidence
+        .iter()
+        .filter(|item| item.status == EvidenceStatus::Attributed)
+        .map(|item| item.locator.source_id.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    let meets_three_source_evidence_floor = attributed_source_count >= 3;
+    if !meets_three_source_evidence_floor {
+        limitations.push(
+            "Fewer than three distinct source transcripts have attributable excerpts; metadata-only source selections do not qualify for three-source writing.".into(),
+        );
+    }
     limitations.push(
         "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research."
             .into(),
@@ -1243,6 +1260,8 @@ fn research_writing_from_report(
         sources,
         evidence,
         findings,
+        attributed_source_count,
+        meets_three_source_evidence_floor,
         limitations,
         source_text_is_untrusted_data: true,
     })
@@ -1777,6 +1796,8 @@ mod tests {
             .unwrap();
         assert_eq!(approved_bridge.sources.len(), 3);
         assert!(!approved_bridge.evidence.is_empty());
+        assert_eq!(approved_bridge.attributed_source_count, 1);
+        assert!(!approved_bridge.meets_three_source_evidence_floor);
         assert!(approved_bridge.evidence.iter().all(|observation| {
             observation.locator.source_id == transcript.to_string()
         }));
@@ -1984,6 +2005,149 @@ mod tests {
         assert!(restarted
             .read_study_research_report(Uuid::new_v4(), study, approved_artifact)
             .is_err());
+    }
+
+    #[test]
+    fn three_real_timed_transcripts_prepare_original_local_writing_request() {
+        use scriptotar_ai::writing::{CreativeBrief, WritingInput, WritingTask};
+        use scriptotar_agent::RunState;
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Three recorded transcripts", "")
+            .unwrap()
+            .id;
+        let timestamp = "2026-11-15T12:30:00Z";
+        let mut attached = Vec::new();
+        let mut origin_ids = Vec::new();
+        {
+            let db = Connection::open(services.store.path()).unwrap();
+            db.pragma_update(None, "foreign_keys", true).unwrap();
+            for index in 0..3 {
+                let original_source = Uuid::new_v4();
+                let media = Uuid::new_v4();
+                let transcript = Uuid::new_v4();
+                let locator = format!("/mock/three-source-{index}.mp4");
+                db.execute(
+                    "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+                     VALUES(?1,?2,'local_file',?3,'Offline original transcript',?4)",
+                    params![
+                        original_source.to_string(),
+                        project.to_string(),
+                        locator,
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+                     VALUES(?1,?2,?3,6.0,?4)",
+                    params![
+                        media.to_string(),
+                        original_source.to_string(),
+                        format!("/mock/three-source-{index}.mp4"),
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                let spoken = format!(
+                    "How can we make original tutorial {index}? First describe one method. Follow for more."
+                );
+                let segments = serde_json::json!([
+                    {"index":0,"start":0.0,"end":2.0,"text":spoken},
+                    {"index":1,"start":2.0,"end":4.0,"text":"A real timed explanation."},
+                    {"index":2,"start":4.0,"end":6.0,"text":"Return to the central question."}
+                ]);
+                db.execute(
+                    "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+                     VALUES(?1,?2,'en',?3,?4,?5,?5)",
+                    params![
+                        transcript.to_string(),
+                        media.to_string(),
+                        spoken,
+                        segments.to_string(),
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                let source = services
+                    .store
+                    .add_study_source(
+                        project,
+                        study,
+                        &StudySourceInput {
+                            kind: StudySourceKind::Transcript,
+                            reference_id: Some(transcript),
+                            locator: None,
+                            manual_text: None,
+                            source_revision: None,
+                            uncertainty: None,
+                        },
+                    )
+                    .unwrap();
+                attached.push(source.id);
+                origin_ids.push(transcript);
+            }
+        }
+        let proposed = services
+            .start_study_research(project, study, attached)
+            .unwrap();
+        assert_eq!(proposed.state, RunState::AwaitingApproval);
+        let completed = services
+            .decide_study_research(project, study, &proposed.plan.id, "approve")
+            .unwrap();
+        assert_eq!(completed.state, RunState::Completed);
+        let artifact =
+            Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+
+        drop(services);
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let bridge = reopened
+            .research_writing_context(project, study, artifact)
+            .unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert_eq!(bridge.attributed_source_count, 3);
+        assert!(bridge.meets_three_source_evidence_floor);
+        assert!(bridge.source_text_is_untrusted_data);
+        assert!(bridge.findings.iter().all(|finding| {
+            finding.kind == FindingKind::CreativePattern
+        }));
+        assert!(bridge.evidence.iter().all(|item| {
+            item.kind == EvidenceKind::SocialTranscript
+                && item.status != EvidenceStatus::Corroborated
+        }));
+
+        // This merely constructs a zero-cost structured writing request. It
+        // does not dispatch AI, verify any factual claim or save a draft.
+        let input = WritingInput {
+            brief: CreativeBrief {
+                goal: "Produce an original tutorial script".into(),
+                audience: "New learners".into(),
+                platform: "YouTube".into(),
+                language: "English".into(),
+                region: None,
+                dialect: None,
+                tone: None,
+                duration_seconds: 45,
+                objective: "Compare three original angles".into(),
+                desired_cta: None,
+                constraints: vec!["Do not infer unseen frames or retention".into()],
+                style_guide: None,
+            },
+            evidence: bridge.evidence,
+            findings: bridge.findings,
+            task: WritingTask::ProposeAngles { count: 3 },
+        };
+        let prompt = scriptotar_ai::writing::prepare_writing_request(&input)
+            .unwrap()
+            .prompt;
+        for id in origin_ids {
+            assert!(prompt.contains(&id.to_string()));
+        }
+        assert!(!prompt.is_empty());
     }
 
     #[test]
