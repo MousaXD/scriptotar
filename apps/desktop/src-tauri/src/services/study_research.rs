@@ -1573,6 +1573,7 @@ mod tests {
 
     #[test]
     fn three_exact_selected_sources_retain_provenance_and_invalidate_transcript_edits() {
+        use scriptotar_agent::RunState;
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
@@ -1674,6 +1675,30 @@ mod tests {
             attached_transcript.id,
             attached_research[0].id,
         ];
+        // Genuine approved v8 run with three real selected attachments,
+        // then close/reopen host services and consume the typed writing seam.
+        let awaiting = services
+            .start_study_research(project, study, selected.clone())
+            .unwrap();
+        assert_eq!(awaiting.state, RunState::AwaitingApproval);
+        let completed = services
+            .decide_study_research(project, study, &awaiting.plan.id, "approve")
+            .unwrap();
+        assert_eq!(completed.state, RunState::Completed);
+        let approved_artifact =
+            Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let approved_bridge = reopened
+            .research_writing_context(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(approved_bridge.sources.len(), 3);
+        assert!(!approved_bridge.evidence.is_empty());
+        assert!(approved_bridge.evidence.iter().all(|observation| {
+            observation.locator.source_id == transcript.to_string()
+        }));
+        assert!(reopened
+            .research_writing_context(Uuid::new_v4(), study, approved_artifact)
+            .is_err());
         let (revision, report) = inspect_selected(
             &services,
             project,
@@ -1747,8 +1772,11 @@ mod tests {
         )
         .unwrap();
         assert!(checked_report(&services, project, study, artifact).is_err());
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
         db.execute(
-            "UPDATE research_items SET view_count=0 WHERE id=?1",
+            "UPDATE research_items SET view_count=0 WHERE id=?1
             params![research_items[0].id.to_string()],
         )
         .unwrap();
