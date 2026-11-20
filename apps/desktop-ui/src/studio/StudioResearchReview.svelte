@@ -3,6 +3,7 @@
   import { locale } from '../i18n';
   import type { ScriptotarApi } from '../api/client';
   import type { StudyResearchReport, StudyResearchRun, StudyResearchSource } from './agent';
+  import { matchesResearchReportScope } from './researchReportGuard';
 
   export let api: ScriptotarApi;
   export let projectId: string;
@@ -18,7 +19,11 @@
       observations: 'creative observations · not independently fact-checked',
       limits: 'Limitations', unavailable: 'The saved report cannot be reopened because its source or authorization changed.',
       state: 'Saved run state', error: 'Research operation unavailable', choose: 'Choose at least one saved source.',
-      limit: 'At most eight sources per research run.'
+      limit: 'At most eight sources per research run.',
+      loading: 'Loading saved research…', transcript: 'Transcript', research: 'Research',
+      states: { planned: 'Planned', awaiting_approval: 'Awaiting approval', running: 'Running',
+        cancelling: 'Cancelling', paused: 'Paused', needs_input: 'Needs input',
+        blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
     },
     ar: {
       title: 'بحث الدراسة', privacy: 'تحليل محلي لمصادر الدراسة المحفوظة. دون طلب مدفوع أو اتصال بمزود الذكاء الاصطناعي.',
@@ -29,7 +34,11 @@
       observations: 'ملاحظات إبداعية · ليست حقائق متحققاً منها بشكل مستقل',
       limits: 'القيود', unavailable: 'تعذر فتح التقرير المحفوظ بسبب تغيّر المصدر أو الصلاحية.',
       state: 'حالة التشغيل المحفوظ', error: 'عملية البحث غير متاحة',
-      choose: 'اختر مصدراً محفوظاً واحداً على الأقل.', limit: 'الحد الأقصى ثمانية مصادر لكل تشغيل.'
+      choose: 'اختر مصدراً محفوظاً واحداً على الأقل.', limit: 'الحد الأقصى ثمانية مصادر لكل تشغيل.',
+      loading: 'جارٍ تحميل البحث المحفوظ…', transcript: 'نص مفرغ', research: 'بحث',
+      states: { planned: 'مخطط', awaiting_approval: 'بانتظار الموافقة', running: 'جارٍ التنفيذ',
+        cancelling: 'جارٍ الإلغاء', paused: 'متوقف مؤقتًا', needs_input: 'يتطلب إدخالًا',
+        blocked: 'محظور', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغى' }
     }
   } as const;
 
@@ -62,8 +71,7 @@
     try {
       const saved = await api.readStudyResearchReport(projectId, studyId, artifact);
       if (!alive || requestEpoch !== epoch) return;
-      if (saved.project_id !== projectId || saved.study_id !== studyId ||
-          !saved.source_text_is_untrusted_data) {
+      if (!matchesResearchReportScope(saved, run, sources, projectId, studyId)) {
         throw new Error(t.unavailable);
       }
       report = saved;
@@ -120,14 +128,19 @@
   async function prepare(): Promise<void> {
     if (busy || loading || activeRun?.state === 'awaiting_approval') return;
     if (!selectedIds.length) { errorText = t.choose; return; }
+    const requested = [...selectedIds];
     const requestEpoch = ++epoch;
     busy = true;
     report = null;
     errorText = '';
     try {
-      const run = await api.startStudyResearch(projectId, studyId, [...selectedIds]);
+      const run = await api.startStudyResearch(projectId, studyId, requested);
       if (!alive || requestEpoch !== epoch) return;
-      if (!scoped(run) || run.state !== 'awaiting_approval') throw new Error(t.error);
+      const returned = run.plan.steps[0]?.input.source_ids;
+      if (!scoped(run) || run.state !== 'awaiting_approval' ||
+          !Array.isArray(returned) || returned.length !== requested.length ||
+          new Set(returned).size !== requested.length ||
+          requested.some((id) => !returned.includes(id))) throw new Error(t.unavailable);
       activeRun = run;
     } catch (cause) {
       if (alive && requestEpoch === epoch) errorText = showError(cause);
@@ -142,10 +155,15 @@
     busy = true;
     errorText = '';
     const runId = activeRun.plan.id;
+    const approvedSources = [...activeRun.plan.steps[0].input.source_ids];
     try {
       const run = await api.decideStudyResearch(projectId, studyId, runId, action);
       if (!alive || requestEpoch !== epoch) return;
-      if (!scoped(run) || run.plan.id !== runId) throw new Error(t.error);
+      if (!scoped(run) || run.plan.id !== runId ||
+          run.plan.steps[0].input.source_ids.length !== approvedSources.length ||
+          approvedSources.some((id) => !run.plan.steps[0].input.source_ids.includes(id))) {
+        throw new Error(t.unavailable);
+      }
       activeRun = run;
       report = null;
       if (run.state === 'completed') await openReport(run, requestEpoch);
@@ -157,20 +175,26 @@
   }
 </script>
 
-<section class="panel study-research-review" aria-label={t.title}>
+<section class="panel study-research-review" aria-label={t.title} aria-busy={loading || busy}>
   <div class="review-heading">
     <h2>{t.title}</h2>
     <button type="button" class="text-button" disabled={busy || loading}
       on:click={() => void refresh()}>{t.refresh}</button>
   </div>
   <p class="muted">{t.privacy}</p>
+  {#if loading}
+    <div class="research-loading" role="status" aria-label={t.loading}>
+      <span class="research-loading-line"></span><span class="research-loading-line short"></span>
+      <span class="sr-only">{t.loading}</span>
+    </div>
+  {/if}
   {#if sources.length}
     <div class="research-attachments" role="group" aria-label={t.title}>
       {#each sources as source (source.id)}
         <button type="button" class="research-source" class:selected={selectedIds.includes(source.id)}
           aria-pressed={selectedIds.includes(source.id)} disabled={!source.available || busy || loading || activeRun?.state === 'awaiting_approval'}
           on:click={() => toggle(source.id)} dir="auto">
-          <span>{source.kind === 'transcript' ? 'Transcript' : 'Research'} · {source.locator}</span>
+          <span>{source.kind === 'transcript' ? t.transcript : t.research} · {source.locator}</span>
           <small>{selectedIds.includes(source.id) ? t.selected : source.available ? '' : t.unavailable}</small>
         </button>
       {/each}
@@ -181,7 +205,7 @@
   <button type="button" class="button secondary" disabled={busy || loading || !selectedIds.length || activeRun?.state === 'awaiting_approval'}
     on:click={() => void prepare()}>{t.prepare}</button>
   {#if activeRun}
-    <p class="muted" role="status">{t.state}: {activeRun.state}</p>
+    <p class="muted" role="status">{t.state}: {t.states[activeRun.state]}</p>
     <div class="review-actions">
       {#if activeRun.state === 'awaiting_approval'}
         <button type="button" class="button primary" disabled={busy}
@@ -254,6 +278,9 @@
   h2 { margin: 0; font-size: var(--text-md); }
   .review-heading, .review-actions { display: flex; gap: 8px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
   .muted { font-size: var(--text-xs); color: var(--color-text-muted); line-height: 1.5; }
+  .research-loading { display: grid; gap: 9px; padding-block: 12px; }
+  .research-loading-line { display: block; width: 100%; height: 12px; border-radius: 6px; background: var(--color-surface-raised); }
+  .research-loading-line.short { width: 65%; }
   .research-attachments { display: grid; gap: 6px; margin-block: 10px; }
   .research-source { display: flex; flex-direction: column; gap: 3px; align-items: start; text-align: start;
     border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: transparent;
