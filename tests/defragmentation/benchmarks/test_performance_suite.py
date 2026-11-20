@@ -16,6 +16,7 @@ from .native_memory import parse_smaps_rollup, descendants, aggregate_samples, m
 from . import native_attach as native_attach_module
 from .native_attach import attach, process_image, same_image, process_instance_id, process_cpu_time_ns
 from .test_attached_memory_gate import AttachedMemoryGateTests  # run with current P2 CI suite
+from .test_native_tree_cpu import ProcessTreeCPUFormatTests  # same exact-head both-OS P2 unit test entrypoint
 
 SHA = "3" * 40
 HASH = "a" * 64
