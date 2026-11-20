@@ -11,6 +11,9 @@ use std::{
 };
 
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
+use scriptotar_ai::writing::{
+    EvidenceKind, EvidenceLocator, EvidenceRef, EvidenceStatus, FindingKind, ResearchFinding,
+};
 use sha2::{Digest, Sha256};
 use scriptotar_agent::{
     Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate, ProbeResult,
@@ -1031,6 +1034,135 @@ pub struct StudyResearchSource {
     pub collected_at: String,
 }
 
+/// Read-only handoff for Agent 05's typed WritingInput. All text originates
+/// from a verified, approved and replay-checked canonical research report.
+/// A source without transcript evidence does not receive a fabricated citation.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ResearchWritingSource {
+    pub study_source_id: Uuid,
+    pub origin_id: Uuid,
+    pub source_sha256: String,
+    pub attachment_fingerprint: String,
+    pub attachment_revision: Option<String>,
+    pub collected_at: String,
+    pub access: StudyResearchAccess,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ResearchWritingContext {
+    pub project_id: Uuid,
+    pub study_id: Uuid,
+    pub sources: Vec<ResearchWritingSource>,
+    pub evidence: Vec<EvidenceRef>,
+    pub findings: Vec<ResearchFinding>,
+    pub limitations: Vec<String>,
+    pub source_text_is_untrusted_data: bool,
+}
+
+fn research_writing_from_report(
+    artifact: Uuid,
+    report: &StudyResearchReport,
+) -> RepositoryResult<ResearchWritingContext> {
+    if !report.source_text_is_untrusted_data {
+        return Err(not_found());
+    }
+    let mut sources = Vec::new();
+    let mut evidence = Vec::new();
+    let mut findings = Vec::new();
+    let mut limitations = report.limitations.clone();
+    let mut truncated = false;
+    for source in &report.sources {
+        let content_hash = source.origin_sha256.clone().ok_or_else(not_found)?;
+        let fingerprint = source
+            .attachment_fingerprint
+            .clone()
+            .ok_or_else(not_found)?;
+        if !matches!(
+            source.access,
+            StudyResearchAccess::Available | StudyResearchAccess::Partial
+        ) {
+            return Err(not_found());
+        }
+        sources.push(ResearchWritingSource {
+            study_source_id: source.study_source_id,
+            origin_id: source.reference_id,
+            source_sha256: content_hash,
+            attachment_fingerprint: fingerprint,
+            attachment_revision: source.attachment_revision.clone(),
+            collected_at: source.collected_at.clone(),
+            access: source.access,
+        });
+        limitations.extend(source.limitations.iter().map(|reason| {
+            format!("Source {}: {reason}", source.study_source_id)
+        }));
+        for (index, observation) in source.observations.iter().enumerate() {
+            if evidence.len() >= 40 || findings.len() >= 30 {
+                truncated = true;
+                break;
+            }
+            let anchor = &observation.evidence;
+            if anchor.study_source_id != source.study_source_id
+                || anchor.reference_id != source.reference_id
+                || anchor.transcript_id != source.reference_id
+                || anchor.locator != source.locator
+                || Some(anchor.transcript_revision.as_str()) != source.origin_revision.as_deref()
+                || anchor.excerpt.chars().count() > 160
+            {
+                return Err(not_found());
+            }
+            let id = format!("research:{artifact}:{}:{index}", source.study_source_id);
+            let is_literal = observation.beat.is_some();
+            evidence.push(EvidenceRef {
+                id: id.clone(),
+                locator: EvidenceLocator {
+                    source_id: source.reference_id.to_string(),
+                    canonical_url: None,
+                    timestamp_seconds: anchor
+                        .start_ms
+                        .and_then(|ms| u32::try_from(ms / 1_000).ok()),
+                    document_section: anchor.segment_id.clone(),
+                    collected_at: Some(source.collected_at.clone()),
+                },
+                excerpt: anchor.excerpt.clone(),
+                kind: EvidenceKind::SocialTranscript,
+                status: if is_literal {
+                    EvidenceStatus::Attributed
+                } else {
+                    EvidenceStatus::Unverified
+                },
+            });
+            findings.push(ResearchFinding {
+                id: format!("research-finding:{artifact}:{}:{index}", source.study_source_id),
+                kind: FindingKind::CreativePattern,
+                statement: observation.statement.clone(),
+                evidence_ids: vec![id],
+                limitations: Some(format!(
+                    "Transcript-only {}; no independent factual verification. {}",
+                    if is_literal { "observation" } else { "hypothesis" },
+                    observation.limitations.join(" ")
+                )),
+            });
+        }
+    }
+    if truncated {
+        limitations.push("Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into());
+    }
+    limitations.push(
+        "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research.".into(),
+    );
+    Ok(ResearchWritingContext {
+        project_id: report.project_id,
+        study_id: report.study_id,
+        sources,
+        evidence,
+        findings,
+        limitations,
+        source_text_is_untrusted_data: true,
+    })
+}
+
 fn research_run_error(error: RuntimeError) -> RepositoryError {
     match error {
         RuntimeError::Store(scriptotar_agent::StoreError::NotFound) | RuntimeError::NotFound => {
@@ -1223,6 +1355,20 @@ impl AppServices {
         artifact: Uuid,
     ) -> RepositoryResult<StudyResearchReport> {
         read_study_research_artifact(self, project, study, artifact)
+    }
+
+    /// Agent 05 calls this after fresh source/receipt verification, not with
+    /// caller-constructed DTO text. It is not a provider request or proof that
+    /// the three-source writing evidence quota has been satisfied.
+    #[allow(dead_code)]
+    pub(super) fn research_writing_context(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        artifact: Uuid,
+    ) -> RepositoryResult<ResearchWritingContext> {
+        let report = read_study_research_artifact(self, project, study, artifact)?;
+        research_writing_from_report(artifact, &report)
     }
 }
 
@@ -1568,6 +1714,20 @@ mod tests {
         assert_eq!(second.metrics.as_ref().unwrap().views, None);
 
         let artifact = Uuid::new_v4();
+        let bridge = research_writing_from_report(artifact, &report).unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert!(!bridge.evidence.is_empty());
+        assert!(bridge
+            .evidence
+            .iter()
+            .all(|item| item.locator.source_id == transcript.to_string()));
+        assert!(bridge.findings.iter().all(|item| {
+            item.kind == FindingKind::CreativePattern && item.evidence_ids.len() == 1
+        }));
+        assert!(bridge.evidence.iter().any(|item| {
+            item.status == EvidenceStatus::Unverified
+        }));
+        assert!(bridge.source_text_is_untrusted_data);
         let envelope = ReportEnvelope {
             project_id: project,
             study_id: study,
