@@ -262,3 +262,51 @@ describe('Library workspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Artifact offline');
   });
 });
+
+
+describe('Arabic mixed-direction isolation in data-heavy views', () => {
+  it('isolates Library titles and metadata while keeping ISO dates and pagination in LTR order', async () => {
+    setLocale('ar');
+    const rows = libraryItems(76);
+    rows[0] = {
+      ...rows[0],
+      title: 'مراجعة 2026 / One',
+      subtitle: 'مشروع A-17',
+      metric: '1,200 views',
+      date: '2026-11-21'
+    };
+    render(LibraryView, { props: { items: rows, onOpen: vi.fn() } });
+    const first = document.querySelector('.library-item')!;
+    expect(first.querySelector('.library-copy strong')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.library-subtitle')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.metric-copy')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.library-date')).toHaveAttribute('dir', 'ltr');
+    expect(first.querySelector('.library-date')).toHaveTextContent('2026-11-21');
+    expect(document.querySelector('.page-controls bdi')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'البحث في المكتبة' })).toHaveAttribute('dir', 'auto');
+  });
+
+  it('isolates Research creator names, duration, source dates and diagnostic timestamps', () => {
+    setLocale('ar');
+    const source = researchItems(1);
+    source[0].title = 'فيديو 2026 / Creator';
+    source[0].creator = 'صانع A-17';
+    source[0].durationSeconds = 125;
+    mountResearch(source, { watchlistStatuses: [{
+      watchlistId: 'w-rtl', projectId: 'project-a', label: 'قناة A-17',
+      state: 'retry_scheduled', lastError: 'Timeout: stream #42',
+      nextRetryAt: '2026-11-21T12:30:00Z'
+    }] });
+    const item = screen.getByTestId('research-r-0');
+    expect(item.querySelector('.media-copy strong')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.creator-name')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.metric-date bdi')).toHaveAttribute('dir', 'ltr');
+    expect(item.querySelector('.metric-duration bdi')).toHaveAttribute('dir', 'ltr');
+    expect(item.querySelector('.metric-duration bdi')).toHaveTextContent('2:05');
+    const diagnostics = screen.getByTestId('watchlist-status-w-rtl');
+    expect(diagnostics.querySelector('.watch-health-title-row strong')).toHaveAttribute('dir', 'auto');
+    expect(diagnostics.querySelector('.watch-error')).toHaveAttribute('dir', 'auto');
+    expect(diagnostics.querySelector('time')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'تصفية البحث' })).toHaveAttribute('dir', 'auto');
+  });
+});
