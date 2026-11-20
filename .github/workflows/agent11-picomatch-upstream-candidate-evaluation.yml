@@ -88,6 +88,9 @@ jobs:
         shell: bash
         working-directory: apps/desktop-ui
         run: node scripts/probe-picomatch-redos.mjs --report --extended
+      - name: Verify original published 4.0.7 positive/negative matcher behavior BEFORE candidate
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs baseline
       - name: Apply source-exact experimental upstream parser files to disposable node_modules only
         shell: bash
         run: |
@@ -101,6 +104,9 @@ jobs:
         shell: bash
         working-directory: apps/desktop-ui
         run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
+      - name: Verify original upstream positive matcher behavior is UNCHANGED AFTER 19-case assertion
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
       - name: Check Svelte and TS compatibility if and only if original 19-case is green
         shell: bash
         working-directory: apps/desktop-ui
