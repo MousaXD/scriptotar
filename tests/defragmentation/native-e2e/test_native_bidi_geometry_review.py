@@ -66,6 +66,22 @@ class NativeBidiGeometryReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Incomplete native Arabic"):
                 review(path, SHA)
 
+    def test_reject_unproven_native_locale_before_reading_geometry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            set_layout(path, source_layout(False, 400, 10))
+            with zipfile.ZipFile(path) as z:
+                entries = {name: z.read(name) for name in z.namelist()}
+            report = json.loads(entries["result.json"])
+            report["cases"]["arabic_locale_control"]["status"] = "NOT TESTED"
+            entries["result.json"] = json.dumps(report).encode()
+            with zipfile.ZipFile(path, "w") as z:
+                for name, payload in entries.items():
+                    z.writestr(name, payload)
+            with self.assertRaisesRegex(ValueError, "prerequisites are not PASS"):
+                review(path, SHA)
+
     def test_reject_offscreen_or_unnamed_nav(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "linux.zip"
