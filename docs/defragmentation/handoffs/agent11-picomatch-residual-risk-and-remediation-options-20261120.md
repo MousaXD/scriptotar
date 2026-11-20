@@ -17,10 +17,12 @@ Source-exact official package metadata, not merely npm-audit metadata:
 | Package | Exact source commit/blob | Relevant dependencies |
 |---|---|---|
 | `vite@7.3.7` | `vitejs/vite` tag `v7.3.7`, `packages/vite/package.json` blob `df79dd206238d151e4f4f792973b7c3b57f2461c` | Direct `picomatch:^4.0.3`; `tinyglobby:^0.2.15`; `fdir:^6.5.0` |
-| `tinyglobby@0.2.17` | `SuperchupuDev/tinyglobby` `main/package.json` blob `4a28470b86ce772d4106d0c7fe6183217bc298ee` | Direct `picomatch:^4.0.7`, `fdir:^6.5.0` |
+| `tinyglobby@0.2.17` | Actual Scriptotar **npm lock snapshot** at blob `eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa` | **Locked metadata:** `picomatch:^4.0.4`, `fdir:^6.5.0`; both resolve to picomatch `4.0.7` and fdir `6.5.0` in this lock. A later `SuperchupuDev/tinyglobby` `main/package.json` blob `4a28470b86ce772d4106d0c7fe6183217bc298ee` instead declares `picomatch:^4.0.7`: do not confuse mutable repository HEAD with the published lock snapshot. |
 | `vite@8.3.1` | `vitejs/vite` tag `v8.3.1`, `packages/vite/package.json` blob `a4a112d4554b5d2273267654e1776ce8138d478d` | STILL direct `picomatch:^4.0.7`; `tinyglobby:^0.2.17` |
 
 **Therefore upgrading from Vite 7.3.7 to Vite 8.3.1 does not remove picomatch or prove its safety.** It would also be a breaking tooling change requiring its own full build/QA review. Do not make it a vulnerability-only bump.
+
+**Exact npm lock dependency facts:** `apps/desktop-ui/package-lock.json` contains **177 package records**; root `dependencies` is empty and the 9 root packages are all in `devDependencies`. The locked `node_modules/picomatch` has `dev:true`, version `4.0.7` and its original npm SHA512 integrity. Its three direct inbound package importers are `vite@7.3.7` (`^4.0.3`), `vitest@5.1.0` (`^4.0.7`) and `tinyglobby@0.2.17` (`^4.0.4`); all three are `dev:true`. This is static package reachability, **not** proof of absence from browser bundle artifacts or safety of build-tool execution.
 
 Official upstream `micromatch/picomatch` latest verified GitHub release as of 20 Nov 2026: **4.0.7** (published 2026-08-24). Upstream issue `micromatch/picomatch#247` remains OPEN, with maintainer/community disagreement about whether user-supplied globs are a library vulnerability. GHSA-fc5q-39xc-vjpf was withdrawn on 18 Nov. That changed `npm audit` to 0 high findings on the *identical vulnerable* lock, not the observed catastrophic backtracking behavior.
 
