@@ -748,8 +748,10 @@ pub(super) fn read_study_research_artifact(
         || run.state != scriptotar_agent::RunState::Completed
         || !run.steps[0].approved
         || saved.report.analyzed_at.nanosecond >= 1_000_000_000
-        || !matches!((dispatched_ms, analyzed_ms), (Some(dispatched), Some(analyzed))
-            if dispatched.abs_diff(analyzed) <= 10_000)
+        || !matches!(
+            (dispatched_ms, analyzed_ms),
+            (Some(dispatched), Some(analyzed)) if dispatched.abs_diff(analyzed) <= 10_000
+        )
         || approved_ids.as_deref() != Some(report_ids.as_slice())
         || run.steps.first().is_none_or(|step| {
             step.idempotency_key != saved.idempotency_key
