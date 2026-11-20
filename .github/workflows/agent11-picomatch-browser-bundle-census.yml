@@ -49,6 +49,11 @@ jobs:
           test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
           test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Attest original development-only picomatch dependency boundary before npm
+        shell: bash
+        run: |
+          node --check tests/defragmentation/security/agent11_desktop_npm_scope_attestation.mjs
+          node tests/defragmentation/security/agent11_desktop_npm_scope_attestation.mjs
       - name: Install original locked Vite toolchain (no experimental source patch)
         shell: bash
         run: npm ci --prefix apps/desktop-ui
