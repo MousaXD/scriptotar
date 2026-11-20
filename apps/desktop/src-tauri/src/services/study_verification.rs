@@ -265,8 +265,10 @@ fn typed_revision_matches(
         .iter()
         .map(|line| line.source_id)
         .collect();
+    // Historical draft links can outlive a targeted revision that drops an
+    // old source. New claim citations still require a current lineage entry.
     if candidate_sources.len() != candidate.lineage.len()
-        || candidate_sources != *linked_sources
+        || !candidate_sources.is_subset(linked_sources)
     {
         return false;
     }
