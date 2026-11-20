@@ -137,7 +137,7 @@ def inspect(source: str) -> list[str]:
         ('git fetch --no-tags --depth=1 origin "$reviewed"', "immutable baseline not fetched"),
         ('git cat-file -t "$reviewed"', "reviewed baseline commit type not checked"),
         ('git diff --quiet "$reviewed" HEAD -- .', "complete tracked source comparison missing"),
-        ('":(exclude)"' if False else ":(exclude)" + ALLOWED[0], "Windows workflow allowlist missing"),
+        (":(exclude)" + ALLOWED[0], "Windows workflow allowlist missing"),
         (":(exclude)" + ALLOWED[1], "installed native workflow allowlist missing"),
         (":(exclude)" + ALLOWED[2], "Linux workflow allowlist missing"),
         ("sidecars/transcription/", "Python sidecar source not checked"),
