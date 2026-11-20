@@ -1,9 +1,11 @@
 """Synthetic-only rejection tests; never substitute for installed native proof."""
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 from pathlib import Path
 
@@ -46,6 +48,22 @@ def set_layout(path, layouts):
 
 
 class NativeBidiGeometryReviewTests(unittest.TestCase):
+    def test_archive_digest_is_from_the_only_parsed_byte_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            set_layout(path, source_layout(False, 400, 10))
+            expected = hashlib.sha256(path.read_bytes()).hexdigest()
+            # Old behavior parsed ZipFile(path) and then re-opened the
+            # mutable path for its checksum. That made archive identity
+            # vulnerable to a path-swap race; the reviewer must not do it.
+            with patch.object(Path, "read_bytes", side_effect=AssertionError(
+                    "Evidence path must not be reopened for the final digest")):
+                proof = review(path, SHA)
+            self.assertEqual(proof["archive_sha256"], expected)
+            self.assertTrue(proof["right_to_left_navigation_rail_observed"])
+            self.assertEqual(proof["arabic_rtl_certification"], "NOT TESTED")
+
     def test_mirrored_rail_is_only_a_noncertifying_observation(self):
         with tempfile.TemporaryDirectory() as tmp:
             for platform in ("linux", "windows"):

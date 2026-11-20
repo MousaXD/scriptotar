@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -51,9 +52,15 @@ def _nav(layout: dict, name: str, *, linux: bool) -> dict:
 def review(archive: Path, exact_sha: str) -> dict:
     if not SHA.fullmatch(exact_sha):
         raise ValueError("Expected exact source SHA")
-    if not archive.is_file() or archive.is_symlink() or archive.stat().st_size > MAX_ARCHIVE_BYTES:
+    if not archive.is_file() or archive.is_symlink():
         raise ValueError("Evidence ZIP must be a bounded regular file")
-    with zipfile.ZipFile(archive) as z:
+    # Parse AND hash the same capped snapshot, never re-open a mutable path for
+    # the archive checksum after inspecting its contents.
+    with archive.open("rb") as stream:
+        snapshot = stream.read(MAX_ARCHIVE_BYTES + 1)
+    if len(snapshot) > MAX_ARCHIVE_BYTES:
+        raise ValueError("Evidence ZIP exceeds bounded input size")
+    with zipfile.ZipFile(io.BytesIO(snapshot)) as z:
         infos = z.infolist()
         names = [info.filename for info in infos]
         if len(names) > MAX_MEMBERS or len(names) != len(set(names)) or "result.json" not in names:
@@ -151,7 +158,7 @@ def review(archive: Path, exact_sha: str) -> dict:
             "source_sha": exact_sha,
             "run_url": r["run_url"],
             "platform": "linux" if linux else "windows",
-            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "archive_sha256": hashlib.sha256(snapshot).hexdigest(),
             "package_sha256": r["package_sha256"],
             "executable_sha256": r["executable_sha256"],
             "screenshot_sha256": {name: hashlib.sha256(data).hexdigest()
