@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use chrono::DateTime;
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
 use scriptotar_ai::writing::{
     self,
     verification::{
@@ -14,7 +16,10 @@ use scriptotar_core::{EvidenceCertainty, RepositoryError, RepositoryResult, Stud
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::AppServices;
+use super::{
+    study_writing::{export_candidate, GeneratedCandidate},
+    AppServices,
+};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 struct HostSourceBinding {
@@ -200,6 +205,52 @@ fn from_study_evidence(
     }
 }
 
+/// The version ID is part of this local, domain-separated snapshot digest.
+/// It proves equality of saved bytes, not independent factual correctness.
+fn saved_version_digest(
+    project_id: Uuid,
+    study_id: Uuid,
+    version: &scriptotar_core::DraftVersion,
+) -> String {
+    verification::canonical_source_sha256(&[
+        b"scriptotar/saved-draft-version/v1",
+        project_id.as_bytes(),
+        study_id.as_bytes(),
+        version.draft_id.as_bytes(),
+        version.id.as_bytes(),
+        &version.version.to_be_bytes(),
+        version.title.as_bytes(),
+        version.body.as_bytes(),
+    ])
+}
+
+/// Match the entire typed manifest against a host-persisted structured
+/// revision, then require its rendered body to be byte-identical to the
+/// canonical immutable saved version. A model-selected UUID is not authority.
+fn typed_revision_matches(
+    structured_json: &str,
+    version: &scriptotar_core::DraftVersion,
+    supplied: &writing::ScriptDraft,
+) -> bool {
+    let Ok(candidate) = serde_json::from_str::<GeneratedCandidate>(structured_json) else {
+        return false;
+    };
+    if candidate.draft.title != version.title || export_candidate(&candidate) != version.body {
+        return false;
+    }
+    let mut canonical = candidate.draft;
+    canonical.id = version.draft_id.to_string();
+    canonical == *supplied
+}
+
+/// No part of this read-only result constitutes permission to publish.
+#[derive(Debug, Clone, Serialize)]
+pub struct SavedDraftVerification {
+    pub draft_version_id: String,
+    pub draft_version_sha256: String,
+    pub report: VerificationReport,
+}
+
 impl AppServices {
     /// Report uncertainty for an already scoped Study and candidate script.
     ///
@@ -216,6 +267,23 @@ impl AppServices {
         draft_revision: u64,
         draft: &writing::ScriptDraft,
     ) -> RepositoryResult<VerificationReport> {
+        self.verify_studio_claims_with_version_read_only(
+            project_id, study_id, expected_study_revision, draft_revision, draft,
+        )
+        .map(|snapshot| snapshot.report)
+    }
+
+    /// Structured claims must come from the canonical revision's trusted
+    /// candidate payload. A manual draft revision requires fresh review.
+    #[allow(dead_code)]
+    pub fn verify_studio_claims_with_version_read_only(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        expected_study_revision: i64,
+        draft_revision: u64,
+        draft: &writing::ScriptDraft,
+    ) -> RepositoryResult<SavedDraftVerification> {
         if draft_revision == 0 {
             return Err(RepositoryError::Validation("invalid draft revision".into()));
         }
@@ -239,6 +307,44 @@ impl AppServices {
         {
             return Err(RepositoryError::Conflict(
                 "draft Study membership or revision changed".into(),
+            ));
+        }
+        let versions = self.store.list_draft_versions(project_id, draft_id)?;
+        let saved_version = versions
+            .iter()
+            .find(|version| version.version == saved_draft.revision)
+            .filter(|version| {
+                version.title == saved_draft.title && version.body == saved_draft.body
+            })
+            .cloned()
+            .ok_or_else(|| RepositoryError::Conflict(
+                "current draft does not match an immutable DraftVersion".into(),
+            ))?;
+        let db = Connection::open(self.store.path())
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let structured: Option<String> = db.query_row(
+            "SELECT sr.structured_json
+               FROM study_writing_revisions sr
+               JOIN creative_drafts d ON d.id=sr.draft_id
+              WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3
+                AND d.revision=?4 AND d.archived_at IS NULL
+                AND sr.version=d.revision",
+            params![
+                draft_id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                saved_draft.revision,
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let structured = structured.ok_or_else(|| RepositoryError::Conflict(
+            "saved version has no trusted structured claims; manual review required".into(),
+        ))?;
+        if !typed_revision_matches(&structured, &saved_version, draft) {
+            return Err(RepositoryError::Conflict(
+                "submitted claims differ from the exact saved DraftVersion".into(),
             ));
         }
         let study = self.store.get_study(project_id, study_id)?;
@@ -274,6 +380,17 @@ impl AppServices {
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
         let fresh_references = self.store.list_evidence_references(project_id, study_id)?;
         let final_draft = self.store.get_draft(project_id, draft_id)?;
+        let final_version = self.store.list_draft_versions(project_id, draft_id)?
+            .into_iter()
+            .find(|version| version.version == saved_draft.revision);
+        let final_structured: Option<String> = db.query_row(
+            "SELECT structured_json FROM study_writing_revisions
+              WHERE draft_id=?1 AND version=?2",
+            params![draft_id.to_string(), saved_draft.revision],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let mut fresh_bindings = HashMap::new();
         for source in &fresh_sources {
             fresh_bindings.insert(
@@ -283,6 +400,8 @@ impl AppServices {
         }
         if fresh_study.revision != expected_study_revision
             || final_draft != saved_draft
+            || final_version.as_ref() != Some(&saved_version)
+            || final_structured.as_deref() != Some(structured.as_str())
             || fresh_sources != sources
             || fresh_references != references
             || fresh_bindings != source_bindings
@@ -301,10 +420,9 @@ impl AppServices {
             evidence: resolved,
             // No authenticated independent review table exists in v9.
             human_reviews: Vec::new(),
-            // The saved CreativeDraft body is currently free-form text, not
-            // an immutable typed ScriptDraft/claim manifest. Matching only a
-            // valid draft ID/revision must NEVER enable a Verified result.
-            draft_content_bound: false,
+            // Bound to persisted typed metadata and exact immutable body,
+            // not to independent reviews (which remain unavailable).
+            draft_content_bound: true,
         };
         // Resolve only declared FactualClaim IDs against real Study evidence.
         // Unknown IDs are deliberately retained as invalid citations so the
@@ -346,7 +464,11 @@ impl AppServices {
                 })
                 .collect();
         }
-        Ok(verification::verify_claims(&ctx, &claims))
+        Ok(SavedDraftVerification {
+            draft_version_id: saved_version.id.to_string(),
+            draft_version_sha256: saved_version_digest(project_id, study_id, &saved_version),
+            report: verification::verify_claims(&ctx, &claims),
+        })
     }
 }
 
