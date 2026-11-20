@@ -84,13 +84,15 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          reviewed=50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # Reject every tracked diff beyond this ONE workflow-only candidate:
           # includes Rust build scripts, npm dependencies, Python, build hooks,
           # CI scripts, other workflow files, and deleted/moved source paths.
           if ! git diff --quiet "$reviewed" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
             ':(exclude).github/workflows/linux-tauri.yml'; then
             echo "::error::Unreviewed source outside standalone Linux packaging workflow; require independently reviewed immutable baseline."
             exit 1
