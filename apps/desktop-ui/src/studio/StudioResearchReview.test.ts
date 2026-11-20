@@ -140,6 +140,37 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.getAllByText('Collected at').length).toBeGreaterThan(0);
   });
 
+  it('shows only genuinely present observed counts and selected-source transcript feature support', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const canonical = api.readStudyResearchReport.bind(api);
+    api.readStudyResearchReport = async (project, study, artifact) => {
+      const report = await canonical(project, study, artifact);
+      report.feature_support = [{
+        feature: 'opening_promise', distinct_selected_sources: 2,
+        meaning: 'Transcript-only hypothesis; no claim of retention.'
+      }];
+      report.sources[0].metrics = {
+        views: 1250, likes: null, comments: 32,
+        observed_interactions_per_view: 0.025,
+        creator_comparison: { status: 'unavailable', reason: 'insufficient_peers', eligible_peers: 1 }
+      };
+      return report;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Approve local analysis' }));
+    await waitFor(() => expect(screen.getByText('Transcript features across selected sources')).toBeInTheDocument());
+    await fireEvent.click(screen.getByText('Transcript features across selected sources'));
+    expect(screen.getByText('Opening promise')).toBeInTheDocument();
+    await fireEvent.click(screen.getByText('Observed platform counters'));
+    expect(screen.getByText('1,250')).toBeInTheDocument();
+    expect(screen.getByText('32')).toBeInTheDocument();
+    expect(screen.getByText('2.50%')).toBeInTheDocument();
+    expect(screen.queryByText('Likes')).not.toBeInTheDocument();
+    expect(screen.getByText('No supported same-creator peer comparison')).toBeInTheDocument();
+  });
+
   it('does not show a saved report whose source has become revoked', async () => {
     const { api, projectId, studyId } = await fixture();
     const canonical = api.readStudyResearchReport.bind(api);
