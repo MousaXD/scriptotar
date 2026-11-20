@@ -42,11 +42,11 @@ jobs:
           sparse-checkout: |
             apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
           sparse-checkout-cone-mode: false
-      # A matching checkout HEAD does not authenticate modified worktree bytes.
-      # Verify the actual reviewed guard file BEFORE executing even its self-test.
-      - name: Authenticate immutable guard worktree before any guard execution
+      - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         shell: bash
+        working-directory: .
         run: |
+          # Authenticate the actual checkout file, not just git HEAD.
           set -euo pipefail
           trusted=.agent11-trusted-guard
           guard=apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
@@ -54,9 +54,6 @@ jobs:
           test "$(git -C "$trusted" rev-parse "HEAD:$guard")" = '5c746abd3caf414ba2c80be825d66983312236c6'
           test "$(git -C "$trusted" hash-object --path="$guard" "$guard")" = '5c746abd3caf414ba2c80be825d66983312236c6'
           git -C "$trusted" diff --quiet -- "$guard"
-      - name: Validate pinned prebuild guard and audited PR source before npm/Vite
-        working-directory: .
-        run: |
           node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='55ce3ac389b7e1fcab99b3a5acc84b526630af72')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
@@ -264,11 +261,11 @@ jobs:
           sparse-checkout: |
             apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
           sparse-checkout-cone-mode: false
-      # A matching checkout HEAD does not authenticate modified worktree bytes.
-      # Verify the actual reviewed guard file BEFORE executing even its self-test.
-      - name: Authenticate immutable guard worktree before any guard execution
+      - name: Validate pinned prebuild guard and audited PR source before npm/Vite
         shell: bash
+        working-directory: .
         run: |
+          # Authenticate the actual checkout file, not just git HEAD.
           set -euo pipefail
           trusted=.agent11-trusted-guard
           guard=apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
@@ -276,9 +273,6 @@ jobs:
           test "$(git -C "$trusted" rev-parse "HEAD:$guard")" = '5c746abd3caf414ba2c80be825d66983312236c6'
           test "$(git -C "$trusted" hash-object --path="$guard" "$guard")" = '5c746abd3caf414ba2c80be825d66983312236c6'
           git -C "$trusted" diff --quiet -- "$guard"
-      - name: Validate pinned prebuild guard and audited PR source before npm/Vite
-        working-directory: .
-        run: |
           node -e "if(require('child_process').execFileSync('git',['-C','.agent11-trusted-guard','rev-parse','HEAD'],{encoding:'utf8'}).trim()!=='55ce3ac389b7e1fcab99b3a5acc84b526630af72')process.exit(1)"
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
           node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
