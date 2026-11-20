@@ -17,9 +17,13 @@ const expectedLockBlob = 'eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa';
 const expectedManifestBlob = '19edb804b2c442be96311e2f39f7788dfb286dda';
 const expectedIntegrity = 'sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==';
 const expectedImporters = new Map([
-  ['node_modules/vite', {version:'7.3.7', range:'^4.0.3'}],
-  ['node_modules/vitest', {version:'5.1.0', range:'^4.0.7'}],
-  ['node_modules/tinyglobby', {version:'0.2.17', range:'^4.0.4'}]
+  ['node_modules/vite', {version:'7.3.7', range:'^4.0.3', kind:'dependency'}],
+  ['node_modules/vitest', {version:'5.1.0', range:'^4.0.7', kind:'dependency'}],
+  ['node_modules/tinyglobby', {version:'0.2.17', range:'^4.0.4', kind:'dependency'}],
+  // Fdir 6.5.0 declares picomatch as an OPTIONAL peer. It is part of the
+  // original locked development-only graph and must not be misclassified as
+  // a new runtime importer. A mandatory peer or any drift fails closed.
+  ['node_modules/fdir', {version:'6.5.0', range:'^3 || ^4', kind:'optional-peer'}]
 ]);
 
 function verifySnapshot(lock, manifest) {
@@ -60,9 +64,21 @@ function verifySnapshot(lock, manifest) {
     const optional = p?.optionalDependencies?.picomatch;
     const peer = p?.peerDependencies?.picomatch;
     if (name !== '' && (range || optional || peer)) {
-      assert.ok(range && !optional && !peer, 'Unexpected optional or peer edge: ' + name);
       assert.equal(p.dev, true, 'production importer can reach picomatch: ' + name);
-      found.set(name, { version: p.version, range });
+      assert.equal(Boolean(optional), false, 'Unexpected optional dependency edge: ' + name);
+      assert.equal(Boolean(range && peer), false, 'Mixed dependency/peer edge: ' + name);
+      let kind;
+      let effectiveRange;
+      if (range) {
+        kind = 'dependency';
+        effectiveRange = range;
+      } else {
+        assert.equal(p.peerDependenciesMeta?.picomatch?.optional, true,
+          'Nonoptional picomatch peer dependency requires independent review: ' + name);
+        kind = 'optional-peer';
+        effectiveRange = peer;
+      }
+      found.set(name, { version: p.version, range: effectiveRange, kind });
     }
   }
   assert.equal(found.size, expectedImporters.size, 'Unexpected direct picomatch importer');
@@ -78,7 +94,7 @@ function verifySnapshot(lock, manifest) {
     picomatch_version: pkg.version,
     picomatch_dev_only: true,
     direct_dev_importers: [...found].map(([name, meta]) => ({name,...meta})),
-    conclusion: 'STATIC reviewed npm-tree exposure only; browser bundle/CI build-time separately unverified',
+    conclusion: 'STATIC reviewed npm-tree exposure only; real browser-bundle evidence is a separate exact-SHA Vite build; CI build-time remains unsafe',
     parser_remediation: 'NO',
     release_authorization: 'NO-GO'
   };
@@ -123,5 +139,19 @@ expectFailure(lock,manifest,'new direct importer',(l) => {
     ...(l.packages['node_modules/jsdom'].dependencies||{}),
     picomatch: '^4.0.7'
   };
+});
+expectFailure(lock,manifest,'optional peer becomes mandatory',(l) => {
+  l.packages['node_modules/fdir'].peerDependenciesMeta.picomatch.optional = false;
+});
+expectFailure(lock,manifest,'optional peer becomes direct dependency',(l) => {
+  delete l.packages['node_modules/fdir'].peerDependencies.picomatch;
+  delete l.packages['node_modules/fdir'].peerDependenciesMeta.picomatch;
+  l.packages['node_modules/fdir'].dependencies = {picomatch:'^3 || ^4'};
+});
+expectFailure(lock,manifest,'optional peer range changes',(l) => {
+  l.packages['node_modules/fdir'].peerDependencies.picomatch = '^4.1.0';
+});
+expectFailure(lock,manifest,'optional peer runtime flag stripped',(l) => {
+  l.packages['node_modules/fdir'].dev = false;
 });
 console.log('SOURCE-EXACT NPM SCOPE ATTESTATION: '+JSON.stringify(result));
