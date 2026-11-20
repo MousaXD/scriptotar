@@ -247,6 +247,9 @@ async function checkKeyboard(page, label) {
   if (!focus.present || !focus.visible) recordFailure(label + '/focus', JSON.stringify(focus));
 }
 async function runWorkspace(browser, width, locale, theme) {
+  // A separate System/Dark OS case verifies the media-query branch without
+  // saving an unrecognized preference in the application's local settings.
+  const appearance = theme === 'system-dark' ? 'system' : theme;
   const label = [width, locale, theme].join('-');
   const context = await browser.newContext({
     viewport: { width, height: width === 760 ? 820 : 900 },
@@ -258,7 +261,7 @@ async function runWorkspace(browser, width, locale, theme) {
   await context.addInitScript(({ language, appearance }) => {
     localStorage.setItem('scriptotar.uiLanguage', language);
     localStorage.setItem('scriptotar.appearance', appearance);
-  }, { language: locale, appearance: theme });
+  }, { language: locale, appearance });
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
@@ -277,7 +280,7 @@ async function runWorkspace(browser, width, locale, theme) {
       recordFailure(label + '/rtl', 'Body direction differs from selected locale: ' + computedDirection);
     }
     const activeTheme = await page.locator('html').getAttribute('data-theme');
-    if (activeTheme !== theme) recordFailure(label, 'Theme mismatch: ' + activeTheme);
+    if (activeTheme !== appearance) recordFailure(label, 'Theme mismatch: ' + activeTheme);
     const samples = [];
     for (const view of views) {
       const navigationMs = await routeTo(page, view);
@@ -394,6 +397,10 @@ try {
   for (const width of widths) for (const locale of locales) for (const theme of themes) {
     await runWorkspace(browser, width, locale, theme);
   }
+  // System also needs the OS Dark branch; one desktop width in both locales
+  // is sufficient to catch a dark-preference regression without duplicating
+  // the entire visual matrix across all three viewport widths.
+  for (const locale of locales) await runWorkspace(browser, 1100, locale, 'system-dark');
   for (const locale of locales) for (const theme of themes) {
     for (const state of ['loading', 'error']) await runBootState(browser, locale, theme, state);
   }
@@ -407,7 +414,8 @@ try {
 // (Research empty, Transcript no matches, Library empty and MCP Settings).
 // Each locale/appearance pair also renders loading and error boot states.
 const expectedScreenshotCount = widths.length * locales.length * themes.length *
-  (views.length + 4) + locales.length * themes.length * 2;
+  (views.length + 4) + locales.length * themes.length * 2 +
+  locales.length * (views.length + 4); // additional System + OS Dark desktop samples
 const report = {
   generatedAt: new Date().toISOString(),
   sha: process.env.QA_TESTED_SHA || process.env.GITHUB_SHA || 'local-unpinned',
