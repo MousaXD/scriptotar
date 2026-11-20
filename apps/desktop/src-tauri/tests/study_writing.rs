@@ -1127,7 +1127,7 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     ));
     assert!(matches!(
         sink.commit_three(&missing),
-        Err(WritingWorkflowError::InvalidContext(_))
+        Err(WritingWorkflowError::InvalidResponse(_))
     ));
     assert!(db
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
@@ -1223,7 +1223,7 @@ fn canonical_store_rejects_duplicate_script_prose_without_partial_writes() {
     };
     assert!(matches!(
         sink.commit_three(&batch),
-        Err(WritingWorkflowError::InvalidContext(_))
+        Err(WritingWorkflowError::DuplicateOrSimilar)
     ));
     assert!(db
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
