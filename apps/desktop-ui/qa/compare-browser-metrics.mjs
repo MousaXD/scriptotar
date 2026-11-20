@@ -17,8 +17,8 @@ function verify(report, name) {
     throw new Error(name + ' is not labeled as browser-only evidence');
   }
   if (!Array.isArray(report.failures) || report.failures.length ||
-      !Array.isArray(report.results) || report.results.length !== 12 ||
-      report.screenshotCount !== 140) {
+      !Array.isArray(report.results) || report.results.length !== 20 ||
+      report.screenshotCount !== 232) {
     throw new Error(name + ' has missing, incomplete, or failed screenshot/interaction evidence');
   }
   const labels = new Set();
