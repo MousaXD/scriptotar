@@ -42,6 +42,16 @@ A fourth adversarial test, `late_receipt_sqlite_fault_rolls_back_identity_charge
 
 This is a deterministic, no-network host/SQLite regression suite. Existing v10–v12 tests separately cover simultaneous claims, cross-run/cross-project identity, historical upgrade rollback, forged/duplicate provider IDs, retry attempt tombstones and corrupted checkpoints. Their existing passing evidence does **not** certify this new head.
 
+## Archive-safe accounting without archive-safe dispatch
+
+The original `verified_scope` and `may_execute` checks require an active, unarchived Study/project for every new reservation and dispatch. This is correct for authorization but was also being reused by `get_external_effect`, receipt acknowledgement and final reconciliation. If a user archived the source while a provider request was already in flight, those APIs could refuse the only trustworthy late receipt and lose the local charge record.
+
+The new `verified_settlement_scope` validates that the persisted `agent_runs` row, run plan, project, Study and checkpoint structure all agree, without requiring that the historical owner remain unarchived. It is used only for looking up and resolving **existing** effects. The pre-send `may_execute` path still uses the original active-scope check. No new migrations, provider calls or replay permits are introduced.
+
+Host/SQLite regressions now prove that a completed original attempt remains reconcilable after both its Study and project are archived; a merely reserved effect cannot obtain a dispatch CAS after archival; and guessed foreign project/Study identifiers cannot read the archived effect. The historical v8 public effect lookup remains active-scope-only.
+
+**Remaining host integration caveat:** `AppServices::reconcile_external_with_provider` currently requires an active project before probing provider status. The restricted in-flight `SqlitePaidEffectFence::settle` path can now account for the authenticated late response after archival, but an operator-driven *post-restart* archived-project provider probe still needs Agent 00's explicitly scoped UI/authorization design. A read-only probe must never become a new billable dispatch.
+
 ## Remaining blockers / Agent 00 and 10 handoff
 
 - **Agent 00:** run Rustfmt, Clippy and host/DB suites on this exact branch SHA, then integrate the narrowly reviewed host changes into #114. Ensure the actual shipped provider command still returns the hard-disabled error; do not enable paid egress.
