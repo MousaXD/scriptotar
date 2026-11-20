@@ -111,7 +111,7 @@ native certification remains BLOCKED.
 ## Subsequent Agent08 hostile-input boundary and independent staging results
 
 The subsequent Agent08 draft `native_ui_trace.py` source-only validator also
-caps an untrusted external JSONL input at **8 MiB raw bytes**, **4096
+caps an untrusted external JSONL input at **16 MiB raw bytes**, **4096
 characters per line**, and **10000 parsed events** before accepting a new
 row; it now reads at most `MAX_TRACE_BYTES + 1` from disk, refuses oversized
 files and lines or invalid UTF-8 rather than blindly loading an arbitrary
