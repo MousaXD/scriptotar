@@ -237,6 +237,20 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         if !writing::compare_angles(&proposed_angles).is_empty() {
             return Err(denied("duplicate or similar script angles"));
         }
+        // All model outputs pass through these strict parsers on the normal
+        // generation path. Reuse them for direct sink admission as well.
+        let angles_json = serde_json::to_string(&writing::AngleResponse {
+            angles: proposed_angles.clone(),
+        })
+        .map_err(|_| denied("invalid angle serialization"))?;
+        let angle_input = writing::WritingInput {
+            brief: batch.context.brief.clone(),
+            evidence: batch.context.evidence.clone(),
+            findings: batch.context.findings.clone(),
+            task: writing::WritingTask::ProposeAngles { count: 3 },
+        };
+        writing::parse_angles(&angles_json, &angle_input)
+            .map_err(|_| denied("invalid proposed angle structure"))?;
         let mut angles = HashSet::new();
         let mut scripts = HashSet::new();
         let mut normalized_prose = HashSet::new();
@@ -332,8 +346,22 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                     }
                 }
             }
-            for finding in &mut candidate.review_findings {
-                finding.needs_human_review = true;
+            if !candidate.review_findings.is_empty() {
+                let review_json = serde_json::to_string(&writing::ReviewResponse {
+                    findings: candidate.review_findings.clone(),
+                })
+                .map_err(|_| denied("invalid review serialization"))?;
+                let review_input = writing::WritingInput {
+                    brief: batch.context.brief.clone(),
+                    evidence: batch.context.evidence.clone(),
+                    findings: batch.context.findings.clone(),
+                    task: writing::WritingTask::Review {
+                        draft: candidate.draft.clone(),
+                    },
+                };
+                candidate.review_findings = writing::parse_review(&review_json, &review_input)
+                    .map_err(|_| denied("invalid generated review finding"))?
+                    .findings;
             }
         }
         // Exact persisted original inputs (incl. original angles, source
