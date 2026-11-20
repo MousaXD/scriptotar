@@ -1,0 +1,83 @@
+# Agent11 no production change: compile+exec VM deadline wrapper vs exact
+# original 4.0.7 public API across 180 pattern-option x 84 short inputs.
+name: Agent11 compile-plus-exec VM 180-case matcher/capture parity (research NO-GO)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-vm-compiler-matcher-180-parity.yml'
+      - 'tests/defragmentation/security/agent11_vm_compile_guard_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_vm_compile_guard_preload.cjs'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-public-api-vm:
+    name: Original 4.0.7 original-match/capture vs combined VM (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 17
+    steps:
+      - name: Checkout source at exact test-only SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Original Node22 toolchain
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Immutable reviewed first-party source guard checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify source before locked package installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node --check tests/defragmentation/security/agent11_vm_compile_guard_candidate.cjs
+          node --check tests/defragmentation/security/agent11_vm_compile_guard_preload.cjs
+          node --check tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install original pinned npm package graph
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Generate exact original 4.0.7 finite reference before any VM hook
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs baseline
+      - name: Compare finite matcher/capture behavior with combined experimental compile+exec VM hook
+        shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/tests/defragmentation/security/agent11_vm_compile_guard_preload.cjs
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
+          echo 'Finite matched semantics only; original strict 19 and 12 bool safety suites still RED on typed errors'
+      - name: Verify npm lock/manifest untouched
+        shell: bash
+        run: git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
