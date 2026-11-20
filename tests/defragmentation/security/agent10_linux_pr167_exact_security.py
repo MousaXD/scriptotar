@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Agent10 exact-SHA Linux standalone combined PR168 trust-boundary regression.
+"""Independent Agent10 exact-SHA Linux standalone final PR174 trust-boundary regression.
 
 Source inspection and disposable committed Git negative controls ONLY.
 Never executes code from the candidate, starts a paid effect, publishes releases,
@@ -13,8 +13,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-BASE = "0f8e33f0e2abef003440ef27ef76b7cb448d2b32"
-CANDIDATE = "a521b706feb278f101fe77fd9fae4445fddd9e0b"
+BASE = "e48bfc6848000a4c2b49cf26b8d68da504172df0"
+CANDIDATE = "95d9c8da1966a5f0579731f774ff7d24dd98f4d9"
 GUARD_COMMIT = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
 GUARD_BLOB = "5c746abd3caf414ba2c80be825d66983312236c6"
 WORKFLOW = ".github/workflows/linux-tauri.yml"
@@ -188,7 +188,7 @@ def original_source_check(root: Path) -> None:
     original = (root / WORKFLOW).read_text(encoding="utf-8")
     findings = inspect(original)
     assert not findings, ("Source trust boundary defects:", findings)
-    print("PASS: exact combined PR168 source has only reviewed three-YAML diff, source and guard checks intact")
+    print("PASS: exact final PR174 source has only reviewed three-YAML diff, source and guard checks intact")
 
 
 def mutants(source: str) -> None:
