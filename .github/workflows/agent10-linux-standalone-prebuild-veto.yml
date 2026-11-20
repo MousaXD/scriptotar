@@ -1,0 +1,49 @@
+# Agent 10 security regression — deliberately RED on current integration Linux package.
+# Never executes the target Linux workflow source; reads exact tracked YAML as data.
+name: Agent10 independent Linux standalone package pre-guard veto
+
+on:
+  push:
+    branches: [agent-10/p0-pre-guard-execution-regression-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trusted-linux-prebuild:
+    name: Exact integration Linux package source-order/guard integrity (strict RED)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout Agent10 independent immutable test source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert audit test source identity
+        shell: bash
+        env:
+          EXACT_HEAD: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXACT_HEAD"
+      - name: Read exact merged integration workflow as DATA only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+          path: .agent10-reviewed-integration
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/linux-tauri.yml
+          sparse-checkout-cone-mode: false
+      - name: Pin exact Linux source workflow SHA and file bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .agent10-reviewed-integration rev-parse HEAD)" = 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+          test "$(git -C .agent10-reviewed-integration hash-object .github/workflows/linux-tauri.yml)" = 0bd2bc3a066af0dc9142595adbdc9e9803c7ea7a
+          git -C .agent10-reviewed-integration diff --quiet -- .github/workflows/linux-tauri.yml
+      - name: Positive and seven adversarial fixture controls
+        run: python3 tests/defragmentation/security/agent10_linux_standalone_prebuild_execution.py --self-test
+      - name: Strict original Linux package source check — expected RED until Agent00 repairs
+        run: python3 tests/defragmentation/security/agent10_linux_standalone_prebuild_execution.py --source .agent10-reviewed-integration/.github/workflows/linux-tauri.yml
