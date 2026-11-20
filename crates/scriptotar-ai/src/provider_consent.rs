@@ -431,12 +431,9 @@ impl ConsentBoundary {
             max_output_tokens: intent.max_output_tokens,
             max_total_tokens: total,
             worst_case_cost_microusd,
-            trusted_pricing_revision: ceiling
-                .as_ref()
-                .and_then(|price| {
-                    (!price.catalog_revision.is_empty())
-                        .then(|| price.catalog_revision.clone())
-                }),
+            trusted_pricing_revision: ceiling.as_ref().and_then(|price| {
+                (!price.catalog_revision.is_empty()).then(|| price.catalog_revision.clone())
+            }),
             limits: intent.limits,
             expires_at_ms: now_ms
                 .saturating_add(intent.limits.max_elapsed_ms.min(CONSENT_TTL_MS)),
