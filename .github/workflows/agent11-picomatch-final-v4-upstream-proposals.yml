@@ -113,12 +113,15 @@ jobs:
           extended12_exit=$?
           node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
           differential_exit=$?
+          node tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs
+          native_escape_exit=$?
           set -e
           echo "ORIGINAL 10-case matcher contract exit: $matcher_exit"
           echo "IMMUTABLE original 19-case security exit: $original19_exit"
           echo "Distinct expanded 12-case security exit: $extended12_exit"
           echo "Original 4.0.7 180x84 matcher/capture differential exit: $differential_exit"
-          if [ "$matcher_exit" -ne 0 ] || [ "$original19_exit" -ne 0 ] || [ "$extended12_exit" -ne 0 ] || [ "$differential_exit" -ne 0 ]; then
+          echo "Native makeRe/prototype/reconstructed RegExp contract exit: $native_escape_exit"
+          if [ "$matcher_exit" -ne 0 ] || [ "$original19_exit" -ne 0 ] || [ "$extended12_exit" -ne 0 ] || [ "$differential_exit" -ne 0 ] || [ "$native_escape_exit" -ne 0 ]; then
             echo "NO-GO: upstream candidate failed at least one hard contract; do not merge or package"
             exit 1
           fi
