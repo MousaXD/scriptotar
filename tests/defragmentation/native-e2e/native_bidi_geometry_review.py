@@ -28,6 +28,20 @@ MAX_JSON_BYTES = 1024 * 1024
 MAX_MEMBERS = 128
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Reject contradictory JSON member names at every nesting level.
+
+    json.loads defaults to last-key-wins, including Unicode escape aliases.
+    Review artifacts are untrusted evidence; never normalize ambiguity away.
+    """
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON member in original installed evidence")
+        result[key] = value
+    return result
+
+
 def _nav(layout: dict, name: str, *, linux: bool) -> dict:
     expected_role = "push button" if linux else "ControlType.Button"
     matches = [item for item in layout.get("matches", [])
@@ -77,7 +91,7 @@ def review(archive: Path, exact_sha: str) -> dict:
             raise ValueError("Excessive total decompressed evidence size")
         if z.getinfo("result.json").file_size > MAX_JSON_BYTES:
             raise ValueError("Oversized native result.json")
-        r = json.loads(z.read("result.json"))
+        r = json.loads(z.read("result.json"), object_pairs_hook=_unique_json_object)
         if (r.get("scope") != "native-installed" or
                 r.get("native_ui_probe") != "installed-webview-automation" or
                 r.get("source_sha") != exact_sha or

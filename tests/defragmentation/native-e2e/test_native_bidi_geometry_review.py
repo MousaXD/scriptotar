@@ -48,6 +48,31 @@ def set_layout(path, layouts):
 
 
 class NativeBidiGeometryReviewTests(unittest.TestCase):
+    def test_reject_duplicate_json_provenance_and_nested_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            for mutation in ("root", "escaped", "nested"):
+                fixture_zip(path)
+                set_layout(path, source_layout(False, 400, 10))
+                with zipfile.ZipFile(path) as z:
+                    entries = {name: z.read(name) for name in z.namelist()}
+                report = entries["result.json"].decode("utf-8")
+                if mutation == "root":
+                    report = report.replace('"source_sha":', '"source_sha": "forged", "source_sha":', 1)
+                elif mutation == "escaped":
+                    # The JSON escape decodes to exactly the existing key.
+                    report = report.replace('"source_sha":', '"source\\\\u005fsha": "forged", "source_sha":', 1)
+                else:
+                    report = report.replace('"status": "PASS"',
+                                            '"status": "NOT TESTED", "status": "PASS"', 1)
+                entries["result.json"] = report.encode("utf-8")
+                with zipfile.ZipFile(path, "w") as z:
+                    for name, payload in entries.items():
+                        z.writestr(name, payload)
+                with self.subTest(mutation=mutation):
+                    with self.assertRaisesRegex(ValueError, "Duplicate JSON member"):
+                        review(path, SHA)
+
     def test_archive_digest_is_from_the_only_parsed_byte_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "windows.zip"
