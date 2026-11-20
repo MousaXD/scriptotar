@@ -203,15 +203,11 @@ impl SqlitePaidEffectFence {
             || context.run_id.is_empty()
             || context.step_id.is_empty()
             || context.idempotency_key.is_empty()
-            || provider.is_empty()
-            || provider.len() > 64
-            // The durable v12 identity namespace must not be fragmentable
-            // by case aliases (for example, openai vs OpenAI). Only the host's
-            // canonical lowercase provider ID may reach the SQLite fence.
-            || provider.bytes().any(|c| c.is_ascii_uppercase())
-            || !provider
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.'))
+            // Receipt IDs are unique per provider, NEVER per model. The
+            // only certified sealed transport in this host is OpenAI.
+            // Reject case aliases, model suffixes and unreviewed vendors so
+            // they cannot split the v12 provider identity/tombstone namespace.
+            || provider != "openai"
             || limits.tokens == 0
             || limits.cost_microusd == 0
         {
