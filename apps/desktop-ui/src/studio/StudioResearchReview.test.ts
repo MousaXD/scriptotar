@@ -119,6 +119,43 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
   });
 
+  it('discloses the immutable origin, saved revision, collection timestamp and partial transcripts', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const canonical = api.readStudyResearchReport.bind(api);
+    api.readStudyResearchReport = async (project, study, artifact) => {
+      const report = await canonical(project, study, artifact);
+      report.sources[0].access = 'partial';
+      return report;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Approve local analysis' }));
+    expect(await screen.findByText(/Partial transcript/)).toBeInTheDocument();
+    const details = await screen.findAllByText('Source provenance');
+    await fireEvent.click(details[0]);
+    expect(screen.getAllByText('Study source ID').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Origin ID').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Snapshot revision').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Collected at').length).toBeGreaterThan(0);
+  });
+
+  it('does not show a saved report whose source has become revoked', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const canonical = api.readStudyResearchReport.bind(api);
+    api.readStudyResearchReport = async (project, study, artifact) => {
+      const report = await canonical(project, study, artifact);
+      report.sources[0].access = 'revoked';
+      return report;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Prepare research' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Approve local analysis' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.queryByText('Source provenance')).not.toBeInTheDocument();
+  });
+
   it('rejects a prepare response whose canonical source selection was changed', async () => {
     const { api, projectId, studyId } = await fixture();
     const original = api.startStudyResearch.bind(api);
