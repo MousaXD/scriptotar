@@ -100,18 +100,52 @@ def test_module(candidate_file: Path) -> None:
                     data, SOURCE_SHA, PACKAGE_SHA, EXECUTABLE_SHA,
                     min_trials=10,
                 )
-            except ValueError:
-                print(f"PASS: duplicate {field} was rejected", flush=True)
+            except ValueError as exc:
+                if "duplicate JSON member" not in str(exc):
+                    failed.append(f"{field}: wrong rejection ({exc})")
+                    print(f"FAIL: duplicate {field} not rejected as duplicate", flush=True)
+                else:
+                    print(f"PASS: duplicate {field} was rejected", flush=True)
             else:
                 failed.append(field)
                 print(f"FAIL OPEN: contradictory duplicate {field} accepted", flush=True)
+
+        # A repeated IDENTICAL value must not be accepted either. A second
+        # declaration is ambiguous even when the two current values agree.
+        same = normal_lines[0][:-1] + ',"source_sha":' + json.dumps(SOURCE_SHA) + "}"
+        # Escaped member spelling must be treated as the same decoded key.
+        escaped_name = '"source_' + chr(92) + 'u0073ha"'
+        escaped = normal_lines[0][:-1] + "," + escaped_name + ":" + json.dumps(SOURCE_SHA) + "}"
+        # A duplicate inside a nested object must be trapped before the
+        # top-level key-allowlist error masks it.
+        nested = normal_lines[0][:-1] + ',"extra":{"k":1,"k":2}}'
+        for label, malicious in (
+            ("duplicate same source", same),
+            ("duplicate escaped-equivalent source", escaped),
+            ("duplicate nested JSON member", nested),
+        ):
+            data.write_text(malicious + "\n", encoding="utf-8")
+            try:
+                module.summarize_ui_trace(
+                    data, SOURCE_SHA, PACKAGE_SHA, EXECUTABLE_SHA,
+                    min_trials=10,
+                )
+            except ValueError as exc:
+                if "duplicate JSON member" not in str(exc):
+                    failed.append(f"{label}: wrong rejection ({exc})")
+                    print(f"FAIL: {label} rejected for a weaker reason", flush=True)
+                else:
+                    print(f"PASS: {label} failed closed as duplicate", flush=True)
+            else:
+                failed.append(label)
+                print(f"FAIL OPEN: {label} accepted", flush=True)
 
         if failed:
             raise AssertionError(
                 "RELEASE VETO: native JSONL verifier accepted contradictory "
                 f"duplicate evidence fields: {', '.join(failed)}"
             )
-        print("PASS: all duplicate provenance field attacks denied", flush=True)
+        print("PASS: all 8 duplicate evidence member attacks denied", flush=True)
 
 
 def main() -> int:
