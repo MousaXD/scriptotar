@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
   import Select from '../components/ui/Select.svelte';
   import { locale } from '../i18n';
@@ -15,6 +16,7 @@
   let sort: 'newest' | 'title' | 'type' = 'newest';
   let page = 1;
   let actionError = '';
+  let actionErrorElement: HTMLParagraphElement | undefined;
 
   $: isArabic = $locale === 'ar';
   $: normalizedQuery = query.trim().toLocaleLowerCase();
@@ -76,6 +78,8 @@
       await onOpen(item);
     } catch (cause) {
       actionError = cause instanceof Error ? cause.message : $translator('library.openFailed');
+      await tick();
+      actionErrorElement?.focus();
     }
   }
 </script>
@@ -112,6 +116,8 @@
   <div class="library-result-bar">
     <span aria-live="polite">{$translator(visible.length === 1 ? 'library.oneResult' : 'library.manyResults', { count: visible.length })}</span>
   </div>
+
+  {#if actionError}<p class="status-copy library-error" role="alert" tabindex="-1" dir="auto" bind:this={actionErrorElement} data-i18n-ignore>{actionError}</p>{/if}
 
   {#if visible.length === 0}
     <div class="library-empty">
@@ -157,8 +163,6 @@
   {/if}
 </section>
 
-{#if actionError}<p class="status-copy library-error" role="alert" dir="auto" data-i18n-ignore>{actionError}</p>{/if}
-
 <style>
   .library-empty .clear-filters { margin-block-start: var(--space-3); }
   .library-head { display: flex; flex-direction: row; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
@@ -195,7 +199,7 @@
   .library-empty { padding: 34px 22px; }
   .library-empty strong { font-size: 14px; }
   .library-empty p { margin: 6px 0 0; color: var(--color-text-muted); }
-  .library-error { margin-top: 12px; font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .library-error { margin: 8px 14px; font-size: var(--text-sm); overflow-wrap: anywhere; }
   .page-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--text-sm); }
   .page-controls > div { display: flex; gap: 8px; }
   .page-controls button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-raised); }
