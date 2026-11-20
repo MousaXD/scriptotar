@@ -19,8 +19,8 @@ concurrency:
 
 jobs:
   proposed-parser-evaluation:
-    name: Original unchanged security and matcher contracts (upstream #${{ matrix.pr }})
-    runs-on: ubuntu-22.04
+    name: Original unchanged security, matcher and native RegExp contracts (${{ matrix.os }}, upstream #${{ matrix.pr }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -28,13 +28,23 @@ jobs:
         include:
           # Prior #237/#238/#254 results remain immutable in #44788415580.
           # New unassessed v4 candidate, evaluated only against original installed 4.0.7.
-          - { pr: '257', sha: '4e4892e0ac6c374ec3d9e4dc430101da9a20a37b' }
+          - { pr: '257', sha: '4e4892e0ac6c374ec3d9e4dc430101da9a20a37b', os: 'ubuntu-22.04' }
+          - { pr: '257', sha: '4e4892e0ac6c374ec3d9e4dc430101da9a20a37b', os: 'windows-2022' }
     steps:
       - name: Checkout exact Scriptotar research SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set up pinned Node 22 on both hosts
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check independent native RegExp test source identity and syntax
+        shell: bash
+        run: |
+          test "$(git hash-object tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs)" = "3c1d9b7fa860a8247f73566d7dfc0f5135a3a0c8"
+          node --check tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs
       - name: Checkout pinned original untouched 19-case parser exploit corpus
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
