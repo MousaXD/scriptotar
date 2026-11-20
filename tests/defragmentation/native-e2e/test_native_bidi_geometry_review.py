@@ -72,6 +72,19 @@ class NativeBidiGeometryReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Incomplete native Arabic"):
                 review(path, SHA)
 
+    def test_mirroring_requires_all_three_buttons_on_every_arabic_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "windows.zip"
+            fixture_zip(path)
+            layout = source_layout(False, 400, 10)
+            layout["arabic_queue"]["matches"][1]["bounds"]["x"] = 10
+            set_layout(path, layout)
+            result = review(path, SHA)
+            self.assertFalse(result["right_to_left_navigation_rail_observed"])
+            self.assertEqual(result["arabic_navigation_centers_by_page"]["arabic_queue"]["الطابور"],
+                             round(30 / result["display_dimensions"][0], 4))
+            self.assertEqual(result["arabic_rtl_certification"], "NOT TESTED")
+
     def test_reject_offscreen_queue_nav_and_replayed_arabic_page(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "windows.zip"

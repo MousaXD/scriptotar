@@ -141,9 +141,11 @@ def review(archive: Path, exact_sha: str) -> dict:
             raise ValueError("English native control lies outside screenshot display bounds")
         right = page_centers["arabic_settings"]["الإعدادات"]
         left = (english["x"] + english["width"] / 2) / width
+        # All three buttons form the right-side rail on every Arabic page.
+        # A single mirrored Settings button does not prove the whole rail.
         mirrored = bool(left < .25 and all(
-            centers["الإعدادات"] > .75 and centers["الإعدادات"] - left > .5
-            for centers in page_centers.values()))
+            value > .75 and value - left > .5
+            for centers in page_centers.values() for value in centers.values()))
         return {
             "schema": "native_arabic_rail_geometry_noncertifying_v1",
             "source_sha": exact_sha,
