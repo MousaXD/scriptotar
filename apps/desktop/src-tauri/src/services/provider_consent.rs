@@ -204,7 +204,7 @@ impl SqlitePaidEffectFence {
             || context.step_id.is_empty()
             || context.idempotency_key.is_empty()
             // Receipt IDs are unique per provider, NEVER per model. The
-            // only certified sealed transport in this host is OpenAI.
+            // only sealed wire candidate in this host is OpenAI; paid egress is OFF.
             // Reject case aliases, model suffixes and unreviewed vendors so
             // they cannot split the v12 provider identity/tombstone namespace.
             || provider != "openai"
