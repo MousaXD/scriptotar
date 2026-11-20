@@ -313,6 +313,19 @@ describe('Arabic mixed-direction isolation in data-heavy views', () => {
 });
 
 describe('Research page checkbox accessibility', () => {
+  it('updates mixed selection across page changes without showing stale native state', async () => {
+    mountResearch(researchItems(62));
+    const selectPage = screen.getByRole('checkbox', { name: 'Select page' }) as HTMLInputElement;
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Video 1' }));
+    expect(selectPage.indeterminate).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(selectPage.indeterminate).toBe(false);
+    expect(selectPage).toHaveAttribute('aria-checked', 'false');
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(selectPage.indeterminate).toBe(true);
+    expect(selectPage).toHaveAttribute('aria-checked', 'mixed');
+  });
+
   it('announces mixed state for a partially selected page and selects remaining rows', async () => {
     mountResearch(researchItems(3));
     const selectPage = screen.getByRole('checkbox', { name: 'Select page' });
