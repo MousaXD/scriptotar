@@ -672,7 +672,7 @@
   }
 
   async function addEvidence() {
-    if (!gateway?.addStudyEvidence || !record || !selectedSource || evidenceBusy ||
+    if (!gateway?.addStudyEvidence || !record || !selectedSource || evidenceBusy || loading || busy ||
         !evidenceClaim.trim() || !evidenceLocator.trim()) return;
     const forStudy = studyId;
     const epoch = ++evidenceEpoch;
@@ -721,7 +721,7 @@
   }
 
   async function reviewEvidence(item: StudyEvidence) {
-    if (!gateway?.reviewStudyEvidence || !record || reviewBusy || evidenceBusy ||
+    if (!gateway?.reviewStudyEvidence || !record || reviewBusy || evidenceBusy || loading || busy ||
         reviewingEvidenceId !== item.id || !reviewReason.trim() ||
         !['unverified', 'disputed'].includes(item.certainty)) return;
     const expected = item.certainty === 'disputed' ? 'disputed' : 'unverified';
@@ -759,7 +759,7 @@
   }
 
   async function revokeSelectedStudySource() {
-    if (!record || !gateway?.revokeStudySourceAccess || !revokeConfirmation || revocationBusy) return;
+    if (!record || !gateway?.revokeStudySourceAccess || !revokeConfirmation || revocationBusy || loading || busy) return;
     const ownerProject = projectId;
     const ownerStudy = studyId;
     const source = { ...revokeConfirmation };
@@ -824,6 +824,7 @@
   }
 
   async function showSource(ref: StudySourceRef) {
+    if (loading || busy) return;
     revokeConfirmation = null;
     const epoch = ++sourceRequest;
     selectedSource = ref;
@@ -864,7 +865,7 @@
   }
 
   async function startInspection() {
-    if (!gateway?.startLocalInspection || inspectionBusy || !record || !selectedTranscript) return;
+    if (!gateway?.startLocalInspection || inspectionBusy || !record || !selectedTranscript || loading || busy) return;
     const selectedId = selectedTranscript.id;
     const ownerStudy = studyId;
     inspectionBusy = true;
@@ -1145,7 +1146,7 @@
     const artifactId = artifact?.id;
     const importedText = artifact?.result;
     const ownerStudy = studyId;
-    if (!artifactId || !importedText?.trim() || !record || !gateway || busy || saving || importingSavedResult) return;
+    if (!artifactId || !importedText?.trim() || !record || !gateway || busy || saving || loading || importingSavedResult) return;
     importingSavedResult = true;
     busy = true;
     error = '';
@@ -1311,9 +1312,9 @@
           {#each refs as ref (ref.kind + ':' + ref.id)}
             <li>
               <button class:selected={selectedSource?.id === ref.id && selectedSource?.kind === ref.kind}
-                type="button" on:click={() => void showSource(ref)} dir="auto">{sourceLabel(ref, research, transcripts)}</button>
+                type="button" disabled={loading || busy} on:click={() => void showSource(ref)} dir="auto">{sourceLabel(ref, research, transcripts)}</button>
               <button type="button" class="remove" aria-label={t.removeSource + ': ' + sourceLabel(ref, research, transcripts)}
-                on:click={() => toggleSource(ref)}>×</button>
+                disabled={loading || busy || saving} on:click={() => toggleSource(ref)}>×</button>
             </li>
           {/each}
         </ul>
@@ -1440,13 +1441,13 @@
           {#if confirmSavedImport}
             <p class="muted">{t.importAiWarning}</p>
             <div class="draft-actions">
-              <button type="button" class="button primary" disabled={busy || importingSavedResult}
+              <button type="button" class="button primary" disabled={busy || loading || importingSavedResult}
                 on:click={() => void importSavedAiResult()}>{t.confirmAiImport}</button>
               <button type="button" class="button secondary" disabled={importingSavedResult}
                 on:click={() => confirmSavedImport = false}>{t.cancelAiImport}</button>
             </div>
           {:else}
-            <button type="button" class="button secondary" disabled={busy || saving}
+            <button type="button" class="button secondary" disabled={busy || saving || loading}
               on:click={() => confirmSavedImport = true}>{t.importAiResult}</button>
           {/if}
         {/if}
@@ -1690,7 +1691,7 @@
     </section>
   </div>
 
-  <aside id="studio-evidence" class="panel studio-evidence">
+  <aside id="studio-evidence" class="panel studio-evidence" aria-busy={loading}>
     <h2>{t.evidence}</h2>
     {#if selectedResearch}
       <h3 dir="auto">{selectedResearch.title}</h3>
