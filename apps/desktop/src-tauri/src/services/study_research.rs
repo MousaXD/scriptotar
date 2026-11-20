@@ -699,6 +699,40 @@ pub(super) fn read_study_research_artifact(
     artifact: Uuid,
 ) -> RepositoryResult<StudyResearchReport> {
     let saved = checked_report(services, project, study, artifact)?;
+    // An Applied effect by itself does not prove the *selected sources*
+    // authorized by the human: verify the persisted run plan, its exact
+    // approved step and its output, not just a mutable report artifact.
+    let engine = build_study_research_engine(services, project, study)?;
+    let run = engine.get(&saved.run_id).map_err(research_run_error)?;
+    let report_ids: Vec<Uuid> = saved
+        .report
+        .sources
+        .iter()
+        .map(|source| source.study_source_id)
+        .collect();
+    let approved_ids = run
+        .plan
+        .steps
+        .first()
+        .and_then(|step| selected_ids(&step.input).ok());
+    if !valid_research_run(&run, project, study)
+        || run.state != scriptotar_agent::RunState::Completed
+        || approved_ids.as_deref() != Some(report_ids.as_slice())
+        || run
+            .steps
+            .first()
+            .is_none_or(|step| {
+                step.idempotency_key != saved.idempotency_key
+                    || step
+                        .output
+                        .as_ref()
+                        .is_none_or(|output| output.artifact_id != artifact.to_string())
+            })
+        || run.plan.steps[0].id != saved.step_id
+    {
+        return Err(not_found());
+    }
+
     // A file on disk is not itself an approved, completed agent action.
     // The user-facing read requires the *committed* ledger receipt. The
     // internal probe path can still inspect a reserved file to reconcile a
@@ -1699,6 +1733,32 @@ mod tests {
         assert!(reopened
             .research_writing_context(Uuid::new_v4(), study, approved_artifact)
             .is_err());
+
+        // Even when all replacement observations are factually derived from
+        // canonical sources, an artifact cannot silently narrow/change the
+        // three sources for which the user approved this exact run.
+        let approved_path = artifact_path(&services, approved_artifact).unwrap();
+        let original_approved_bytes = fs::read(&approved_path).unwrap();
+        let mut swapped: ReportEnvelope =
+            serde_json::from_slice(&original_approved_bytes).unwrap();
+        let (_, unapproved_report) = inspect_selected(
+            &services,
+            project,
+            study,
+            &selected[..2],
+            ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        swapped.report = unapproved_report;
+        fs::write(&approved_path, serde_json::to_vec(&swapped).unwrap()).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
+        fs::write(&approved_path, original_approved_bytes).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_ok());
+
         let (revision, report) = inspect_selected(
             &services,
             project,
