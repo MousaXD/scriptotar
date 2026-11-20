@@ -58,6 +58,47 @@ function mount(gateway?: StudioGateway, extra: Record<string, unknown> = {}) {
 }
 
 describe('Content Study Studio', () => {
+  it('freezes the outgoing draft while the next Study is loading and preserves its saved data', async () => {
+    const { gateway, get } = studyFixture();
+    const projectId = 'p-creator-lab';
+    const outgoing = await gateway.createStudy(projectId, { ...emptyBrief(), title: 'Outgoing study' });
+    await gateway.saveStudy(projectId, outgoing.id, outgoing.revision, {
+      draft: 'Keep the outgoing script', sources: [{ kind: 'transcript', id: 't-en' }]
+    });
+    const incoming = await gateway.createStudy(projectId, { ...emptyBrief(), title: 'Incoming study' });
+    const original = gateway.getStudy.bind(gateway);
+    let resolveIncoming!: (record: ContentStudy) => void;
+    const pending = new Promise<ContentStudy>((resolve) => { resolveIncoming = resolve; });
+    gateway.getStudy = async (project, id, draftId, requestId) =>
+      id === incoming.id ? pending : original(project, id, draftId, requestId);
+
+    mount(gateway);
+    const choose = async (title: string) => {
+      const picker = await screen.findByRole('combobox', { name: 'Open study' });
+      await waitFor(() => expect(picker).toBeEnabled());
+      await fireEvent.click(picker);
+      await fireEvent.click(await screen.findByRole('option', { name: title }));
+    };
+    await choose('Outgoing study');
+    const editor = await screen.findByRole('textbox', { name: 'Script draft' });
+    await waitFor(() => expect(editor).toHaveValue('Keep the outgoing script'));
+    await choose('Incoming study');
+
+    expect(await screen.findByRole('status', { name: 'Loading Study…' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Study name' })).toBeDisabled();
+    expect(editor).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Export TXT' })).toBeDisabled();
+
+    await act(async () => { resolveIncoming(await original(projectId, incoming.id)); await pending; });
+    await waitFor(() => expect(editor).toHaveValue(''));
+    expect(screen.getByRole('textbox', { name: 'Study name' })).toBeEnabled();
+    expect(get().find((item) => item.id === outgoing.id)?.draft).toBe('Keep the outgoing script');
+    expect(get().find((item) => item.id === outgoing.id)?.sources).toEqual([
+      { kind: 'transcript', id: 't-en' }
+    ]);
+  });
+
+
   it('uses a genuine project-scoped gateway read for a foreign Study reference and rejects it visibly', async () => {
     const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
