@@ -1,10 +1,10 @@
 # Independent negative evidence only. PR170 source checkout is immutable and authenticated.
-# Expected RED until native_ui_trace rejects duplicate JSON object member names.
+# Expected GREEN only if exact native_ui_trace rejects duplicate JSON object member names.
 name: Agent10 native JSONL duplicate-key adversarial veto
 
 on:
   push:
-    branches: [agent-10/p0-native-trace-duplicate-json-veto-20261120]
+    branches: [agent-10/p0-native-json-fix-independent-retest-20261120]
   workflow_dispatch:
 
 permissions:
@@ -34,7 +34,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           repository: MousaXD/scriptotar
-          ref: 79805457302e3360b76562cdd73aeb94cee1cf8f
+          ref: dc169a9bf4aa4029abcb4018d33ec16d3bf208da
           path: .agent10-pr170-data
           persist-credentials: false
           sparse-checkout: |
@@ -46,14 +46,14 @@ jobs:
           set -euo pipefail
           data=.agent10-pr170-data
           path=tests/defragmentation/benchmarks/native_ui_trace.py
-          test "$(git -C "$data" rev-parse HEAD)" = 79805457302e3360b76562cdd73aeb94cee1cf8f
-          test "$(git -C "$data" rev-parse "HEAD:$path")" = bbb276b7e31cab357c8b5bb982a974485bd9cd5b
-          test "$(git -C "$data" hash-object "$path")" = bbb276b7e31cab357c8b5bb982a974485bd9cd5b
+          test "$(git -C "$data" rev-parse HEAD)" = dc169a9bf4aa4029abcb4018d33ec16d3bf208da
+          test "$(git -C "$data" rev-parse "HEAD:$path")" = 285fd92051c3202f56ee0e67aeb185610377e2bf
+          test "$(git -C "$data" hash-object "$path")" = 285fd92051c3202f56ee0e67aeb185610377e2bf
           git -C "$data" diff --quiet -- "$path"
       - name: Set reproducible Python interpreter
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.12'
-      - name: Independent 5 contradictory provenance-key negatives (RED is source veto)
+      - name: Independent 5 contradictory provenance-key negatives (must be GREEN)
         shell: bash
         run: python tests/defragmentation/security/agent10_native_trace_duplicate_json.py --candidate .agent10-pr170-data
