@@ -52,6 +52,12 @@ Host/SQLite regressions now prove that a completed original attempt remains reco
 
 **Remaining host integration caveat:** `AppServices::reconcile_external_with_provider` currently requires an active project before probing provider status. The restricted in-flight `SqlitePaidEffectFence::settle` path can now account for the authenticated late response after archival, but an operator-driven *post-restart* archived-project provider probe still needs Agent 00's explicitly scoped UI/authorization design. A read-only probe must never become a new billable dispatch.
 
+## Canonical sealed provider identity
+
+The current production OpenAI wire candidate always identifies its provider as `openai`. The private `SqlitePaidEffectFence::from_approved_context` now rejects any other provider string, including `OpenAI`, `openai:model-alias` and arbitrary vendor labels, because the v12 provider receipt-identity registry is partitioned by **provider** rather than model. A model suffix could otherwise allow the same OpenAI-issued request/receipt ID to be claimed in a separate namespace. The existing regression fixtures use the canonical provider key and assert that model-suffixed aliases are denied.
+
+This is deliberately narrow. Future independently reviewed provider adapters need a typed, provider-account-aware stable namespace with Agent 00/01/10 sign-off; the more general `ExternalEffectProvider` trait still accepts free-form labels and is NOT a certified production egress path. No schema migration or unapproved provider transport was enabled.
+
 ## Remaining blockers / Agent 00 and 10 handoff
 
 - **Agent 00:** run Rustfmt, Clippy and host/DB suites on this exact branch SHA, then integrate the narrowly reviewed host changes into #114. Ensure the actual shipped provider command still returns the hard-disabled error; do not enable paid egress.
