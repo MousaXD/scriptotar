@@ -63,10 +63,19 @@ def sample_png_rgb(png: bytes, x: int = SAMPLE_X, y: int = SAMPLE_Y) -> tuple[tu
     if not ended or width is None or not compressed:
         raise ValueError("Incomplete PNG")
     stride = width * channels
+    # Do not call inflater.flush() on untrusted IDAT: it ignores the output
+    # bound passed to decompress() and can allocate vastly more bytes than
+    # IHDR promises before the later length check rejects the image.
+    expected_scan = (stride + 1) * height
     inflater = zlib.decompressobj()
-    scan = inflater.decompress(bytes(compressed), (stride+1)*(y+1)+1)
-    scan += inflater.flush()
-    if len(scan) != (stride+1)*height:
+    try:
+        # One overflow-detection byte is sufficient; max_length limits the
+        # actual output allocation even for tiny, extreme-ratio IDAT streams.
+        scan = inflater.decompress(bytes(compressed), expected_scan + 1)
+    except zlib.error as exc:
+        raise ValueError("Corrupt PNG compressed scanlines") from exc
+    if (len(scan) != expected_scan or not inflater.eof or
+            inflater.unconsumed_tail or inflater.unused_data):
         raise ValueError("PNG scanline length mismatch")
     last = bytearray(stride)
     for row in range(y+1):
