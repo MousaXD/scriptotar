@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Independent Agent10 Git-tree allowlist adversarial probe for combined PR168.
+"""Independent Agent10 Git-tree allowlist adversarial probe for final PR174.
 
-Check exact real combined PR168-vs-integration tree diff, then independently exercise
+Check exact real final PR174-vs-integration tree diff, then independently exercise
 the *actual git diff/pathspec command semantics* against disposable commits.
-Never run code from combined PR168, alter tracked product files, or write into main.
+Never run code from final PR174, alter tracked product files, or write into main.
 """
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-BASE = "0f8e33f0e2abef003440ef27ef76b7cb448d2b32"
-TARGET = "a521b706feb278f101fe77fd9fae4445fddd9e0b"
+BASE = "e48bfc6848000a4c2b49cf26b8d68da504172df0"
+TARGET = "95d9c8da1966a5f0579731f774ff7d24dd98f4d9"
 ALLOWED = (
     ".github/workflows/installed-webview-acceptance.yml",
     ".github/workflows/windows-tauri.yml",
@@ -51,17 +51,17 @@ def scoped_diff(repo: Path, old: str, new: str) -> int:
 def verify_real_source(repo: Path) -> None:
     actual = git(repo, "rev-parse", "HEAD").stdout.strip()
     if actual != TARGET:
-        raise AssertionError(f"Exact combined PR168 target drift: {actual}")
+        raise AssertionError(f"Exact final PR174 target drift: {actual}")
     # The immutable integration SHA may need an explicit shallow fetch.
     if git(repo, "cat-file", "-e", BASE + "^{commit}", check=False).returncode:
         git(repo, "fetch", "--no-tags", "--depth=1", "origin", BASE)
     assert git(repo, "cat-file", "-t", BASE).stdout.strip() == "commit"
     names = git(repo, "diff", "--name-only", BASE, TARGET).stdout.splitlines()
     assert sorted(names) == sorted(ALLOWED), (
-        f"Unexpected real combined PR168 changed source paths: {names}"
+        f"Unexpected real final PR174 changed source paths: {names}"
     )
     assert scoped_diff(repo, BASE, TARGET) == 0, (
-        "Real combined PR168 tree changed a forbidden path"
+        "Real final PR174 tree changed a forbidden path"
     )
     print(f"PASS: exact source {TARGET} changes ONLY the three expected workflow paths")
 
