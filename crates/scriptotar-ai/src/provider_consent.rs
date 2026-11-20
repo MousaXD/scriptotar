@@ -527,6 +527,10 @@ impl ConsentBoundary {
         if record.preview.worst_case_cost_microusd.is_none() {
             return Err(ConsentError::UnknownPricing);
         }
+        // No priced approval may authorize a body that was never sealed.
+        if record.sealed_wire_sha256.is_none() {
+            return Err(ConsentError::ChangedContext);
+        }
         record.decision = Decision::Approved;
         Ok(())
     }
@@ -599,20 +603,23 @@ impl ConsentBoundary {
         if record.intent != *intent {
             return Err(ConsentError::ChangedContext);
         }
-        if let Some(expected_wire) = record.sealed_wire_sha256.as_deref() {
-            if runner
-                .prepared_request_sha256(
-                    &intent.provider,
-                    &AiRequest {
-                        prompt: intent.prompt.clone(),
-                    },
-                    intent.max_output_tokens,
-                )
-                .as_deref()
-                != Some(expected_wire)
-            {
-                return Err(ConsentError::ChangedContext);
-            }
+        // A direct policy caller cannot bypass exact outbound-byte approval.
+        let expected_wire = record
+            .sealed_wire_sha256
+            .as_deref()
+            .ok_or(ConsentError::ChangedContext)?;
+        if runner
+            .prepared_request_sha256(
+                &intent.provider,
+                &AiRequest {
+                    prompt: intent.prompt.clone(),
+                },
+                intent.max_output_tokens,
+            )
+            .as_deref()
+            != Some(expected_wire)
+        {
+            return Err(ConsentError::ChangedContext);
         }
         validate_context(&record.intent.scope, authority)?;
         let trusted_price = pricing
@@ -846,6 +853,45 @@ mod tests {
 
     use super::*;
 
+    // Test-only deterministic request bytes; production seals the actual HTTP payload.
+    fn mock_wire_sha(
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> String {
+        sha256_hex(
+            format!(
+                "{:?}\0{}\0{}\0{}\0{}",
+                config.provider,
+                config.model,
+                config.base_url.as_deref().unwrap_or(""),
+                request.prompt,
+                max_output_tokens
+            )
+            .as_bytes(),
+        )
+    }
+
+    fn seal_test_preview(
+        boundary: &ConsentBoundary,
+        intent: &ProviderIntent,
+        preview: &ConsentPreview,
+    ) -> ConsentPreview {
+        boundary
+            .bind_exact_wire_request(
+                &intent.run_id,
+                &preview.fingerprint,
+                &mock_wire_sha(
+                    &intent.provider,
+                    &AiRequest {
+                        prompt: intent.prompt.clone(),
+                    },
+                    intent.max_output_tokens,
+                ),
+            )
+            .expect("test request must be sealed")
+    }
+
     // Static authority is immutable by construction; no writer can race the
     // returned guard. Mutable authorities below use a real exclusive mutex.
     struct FrozenGuard<'a>(&'a StudyScope);
@@ -942,6 +988,15 @@ mod tests {
         over_budget: bool,
     }
     impl BoundedProvider for Runner {
+        fn prepared_request_sha256(
+            &self,
+            config: &ProviderConfig,
+            request: &AiRequest,
+            max_output_tokens: u64,
+        ) -> Option<String> {
+            Some(mock_wire_sha(config, request, max_output_tokens))
+        }
+
         fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
             true
         }
@@ -1014,10 +1069,67 @@ mod tests {
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
         assert!(preview.egress_disclosure.contains("api.openai.com"));
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
         (boundary, intent, authority)
+    }
+
+    #[test]
+    fn priced_unsealed_approval_cannot_dispatch() {
+        let (intent, authority) = fixture();
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        let provider = Runner::default();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.decide(&intent.run_id, &preview.fingerprint, true, &authority, 101),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 102),
+            Err(ConsentError::NoApproval)
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert!(fence.claims.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mismatched_sealed_wire_digest_never_claims_effect() {
+        struct WrongWire;
+        impl BoundedProvider for WrongWire {
+            fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
+                true
+            }
+            fn prepared_request_sha256(
+                &self,
+                _: &ProviderConfig,
+                _: &AiRequest,
+                _: u64,
+            ) -> Option<String> {
+                Some("0".repeat(64))
+            }
+            fn generate_once(
+                &self,
+                _: &ProviderConfig,
+                _: &str,
+                _: &AiRequest,
+                _: u64,
+                _: u64,
+            ) -> Result<MeteredReply, ConsentError> {
+                panic!("unapproved bytes reached the provider");
+            }
+        }
+        let (boundary, intent, authority) = approved();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &WrongWire, "key", 102),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert!(fence.claims.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1335,6 +1447,15 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for ReceiptProvider {
+        fn prepared_request_sha256(
+            &self,
+            config: &ProviderConfig,
+            request: &AiRequest,
+            max_output_tokens: u64,
+        ) -> Option<String> {
+            Some(mock_wire_sha(config, request, max_output_tokens))
+        }
+
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
             }
@@ -1457,6 +1578,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1497,6 +1619,15 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for PausedProvider {
+        fn prepared_request_sha256(
+            &self,
+            config: &ProviderConfig,
+            request: &AiRequest,
+            max_output_tokens: u64,
+        ) -> Option<String> {
+            Some(mock_wire_sha(config, request, max_output_tokens))
+        }
+
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
             }
@@ -1534,6 +1665,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1596,6 +1728,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1736,6 +1869,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1830,6 +1964,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();

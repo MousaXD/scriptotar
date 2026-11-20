@@ -12,6 +12,25 @@ use scriptotar_ai::provider_consent::{
     TrustedPricing,
 };
 
+// Mock-only request hashing. Production uses SHA-256 over the actual HTTP bytes.
+fn mock_wire_sha(
+    config: &ProviderConfig,
+    request: &AiRequest,
+    max_output_tokens: u64,
+) -> String {
+    sha256_hex(
+        format!(
+            "{:?}\0{}\0{}\0{}\0{}",
+            config.provider,
+            config.model,
+            config.base_url.as_deref().unwrap_or(""),
+            request.prompt,
+            max_output_tokens
+        )
+        .as_bytes(),
+    )
+}
+
 struct MutableAuthority(Mutex<StudyScope>);
 impl ScopeAuthority for MutableAuthority {
     fn current_scope(&self, project: &str, study: &str) -> Result<StudyScope, ConsentError> {
@@ -38,6 +57,15 @@ impl TrustedPricing for Catalog {
 #[derive(Default)]
 struct CountingProvider(AtomicUsize);
 impl BoundedProvider for CountingProvider {
+    fn prepared_request_sha256(
+        &self,
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> Option<String> {
+        Some(mock_wire_sha(config, request, max_output_tokens))
+    }
+
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
     fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
         reply.provider_request_id == "fixture-request-id"
@@ -108,6 +136,19 @@ fn approval() -> (ConsentBoundary, ProviderIntent, MutableAuthority) {
     };
     let boundary = ConsentBoundary::default();
     let preview = boundary.prepare(intent.clone(), &authority, &Catalog, 100).unwrap();
+    let preview = boundary
+        .bind_exact_wire_request(
+            &intent.run_id,
+            &preview.fingerprint,
+            &mock_wire_sha(
+                &intent.provider,
+                &AiRequest {
+                    prompt: intent.prompt.clone(),
+                },
+                intent.max_output_tokens,
+            ),
+        )
+        .unwrap();
     boundary.decide(&intent.run_id, &preview.fingerprint, true, &authority, 101).unwrap();
     (boundary, intent, authority)
 }
@@ -254,6 +295,15 @@ struct PausedProvider<'a> {
     sent: &'a AtomicUsize,
 }
 impl BoundedProvider for PausedProvider<'_> {
+    fn prepared_request_sha256(
+        &self,
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> Option<String> {
+        Some(mock_wire_sha(config, request, max_output_tokens))
+    }
+
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
     fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
         reply.provider_request_id == "fixture-request-id"
@@ -326,6 +376,15 @@ fn missing_shared_authority_guard_fails_closed_even_with_valid_fence() {
 #[derive(Default)]
 struct UnverifiedReceiptProvider(AtomicUsize);
 impl BoundedProvider for UnverifiedReceiptProvider {
+    fn prepared_request_sha256(
+        &self,
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> Option<String> {
+        Some(mock_wire_sha(config, request, max_output_tokens))
+    }
+
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
     // Deliberately do NOT override verified_usage_receipt: an arbitrary
     // model/server-supplied string cannot authenticate a paid receipt.
@@ -372,6 +431,15 @@ fn unauthenticated_paid_receipt_is_uncertain_and_never_replayed() {
 #[derive(Default)]
 struct CaptureApprovedRequest(Mutex<Vec<(ProviderConfig, String, u64, u64)>>);
 impl BoundedProvider for CaptureApprovedRequest {
+    fn prepared_request_sha256(
+        &self,
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> Option<String> {
+        Some(mock_wire_sha(config, request, max_output_tokens))
+    }
+
     fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool { true }
     fn verified_usage_receipt(&self, _: &ProviderConfig, reply: &MeteredReply) -> bool {
         reply.provider_request_id == "fixture-request-id"
