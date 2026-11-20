@@ -1,0 +1,122 @@
+# Agent11: source-only feasibility of published-looking community fork.
+# Strictly NOT npm tarball authenticity proof, not an override, not a fix,
+# not production code. Never run outside trusted isolated GitHub runner.
+name: Agent11 community fork source-exact parser evaluation (NO-GO until approved)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-community-picomatch-fork-evaluation.yml'
+      - 'tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-locked-picomatch-vs-community-fork:
+    name: Independent 19+12 security, 10 legacy, 180-bounded parity (Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 18
+    steps:
+      - name: Checkout exact Agent11 test source with no credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Configure Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch immutable reviewed original source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Fetch immutable original 19-case hard parser safety probe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 292e408087d8b48bc012e52d1f3e7ab0c8b89650
+          path: .agent11-original-exploit
+          sparse-checkout: |
+            apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Fetch exact alternate fork source, with no build/script execution
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ryotsu-kankichi/secured-picomatch
+          ref: 3ab5a7627d480259e3d9ca67fbc14c125d374f0e
+          path: .agent11-fork-source
+          persist-credentials: false
+      - name: Verify all tree+blob+source-trust guards BEFORE npm or fork execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git -C .agent11-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
+          test "$(git -C .agent11-fork-source rev-parse HEAD)" = "3ab5a7627d480259e3d9ca67fbc14c125d374f0e"
+          test "$(git -C .agent11-fork-source hash-object lib/parse.js)" = "ad31028701bbaf5a4b31b11f70651bcee8aceec2"
+          test "$(git -C .agent11-fork-source hash-object lib/constants.js)" = "a13c4830e13242e00d71e71de7554f6c95d47f44"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node --check tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install original locked npm dependencies, never install community fork
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Establish original public matcher/capture baseline before any patch
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs baseline
+      - name: Establish existing original 4.0.7 ten-case control
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs baseline
+      - name: Copy only two source-exact changed fork files into disposable node_modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          cp .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          test "$(node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version")" = "4.0.7"
+          cp .agent11-fork-source/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          cp .agent11-fork-source/lib/constants.js apps/desktop-ui/node_modules/picomatch/lib/constants.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/constants.js
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo "SOURCE-ONLY DISPOSABLE FORK, not an independently verified npm tarball; NO PRODUCTION OVERRIDE"
+      - name: Evaluate four independent hard contracts without masking any failure
+        shell: bash
+        run: |
+          set +e
+          (cd apps/desktop-ui && node scripts/probe-picomatch-redos.mjs --assert-patched --extended)
+          security19=$?
+          node tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs
+          security12=$?
+          node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
+          match10=$?
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
+          match180=$?
+          set -e
+          echo "FORK HARD GATES: original19=$security19; expanded12=$security12; legacy10=$match10; bounded180=$match180"
+          if [ "$security19" -ne 0 ] || [ "$security12" -ne 0 ] || [ "$match10" -ne 0 ] || [ "$match180" -ne 0 ]; then
+            echo "SOURCE FORK REJECTED: cannot preserve original parser safety AND public API semantics"
+            exit 1
+          fi
+          echo "Four finite contracts PASS; still NOT reviewed npm tarball, provenance, full compatibility or release certification"
+      - name: Only after all four gates check real frontend compatibility
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm run check && npm test && npm run build
