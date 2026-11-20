@@ -1855,3 +1855,105 @@ fn direct_sqlite_acceptance_refuses_forged_generated_review_locators() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn short_near_duplicate_prose_rejected_before_provider_batch_commit_and_retry() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let first = "A neighbor finds the map and explains three easy ways to reach school.";
+    let second = "A neighbor finds the map and explains three simple ways to reach school.";
+    let updated = |index: usize, narration: &str| {
+        let mut draft: serde_json::Value = serde_json::from_str(&draft_json(index)).unwrap();
+        draft["beats"][0]["narration"] = json!(narration);
+        draft.to_string()
+    };
+    provider.responses = [
+        angles_json(),
+        updated(1, first),
+        updated(2, second),
+        draft_json(3),
+    ]
+    .into();
+    let mut sink = SqlFixtureSink::open(&temp.path().join("short-angles.sqlite"), current.0.clone());
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(sink.count(), 0);
+    // Four durable successful mock responses can be read again, but must
+    // never cause another paid request or create an accepted bad batch.
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
+fn short_near_duplicate_english_and_arabic_are_rejected_by_canonical_sqlite_sink() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let english = (
+        "A neighbor finds the map and explains three easy ways to reach school.",
+        "A neighbor finds the map and explains three simple ways to reach school.",
+    );
+    let arabic = (
+        "في هذا الحي نراجع ثلاث خطوات بسيطة قبل زيارة المكتبة مع أصدقائنا اليوم",
+        "في هذا الحي نراجع ثلاث خطوات سهلة قبل زيارة المكتبة مع أصدقائنا اليوم",
+    );
+    for (first, second) in [english, arabic] {
+        let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+        batch.candidates[0].draft.beats[0].narration = first.into();
+        batch.candidates[1].draft.beats[0].narration = second.into();
+        assert!(matches!(
+            study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+            Err(WritingWorkflowError::DuplicateOrSimilar)
+        ));
+        let mut sink = CanonicalSqliteCandidateStore {
+            store: &db,
+            current: &current,
+        };
+        assert!(matches!(
+            sink.commit_three(&batch),
+            Err(WritingWorkflowError::DuplicateOrSimilar)
+        ));
+        assert!(db
+            .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.get_study(plan.context.project_id, plan.context.study_id)
+                .unwrap()
+                .revision,
+            1
+        );
+        let count: i64 = Connection::open(db.path())
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "rejected batch must not leave a receipt");
+    }
+}
+
+#[test]
+fn genuinely_different_short_scripts_can_share_a_common_cta() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, _plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].draft.beats[0].narration =
+        "A school volunteer shares a personal diary about making friends in the town.".into();
+    batch.candidates[1].draft.beats[0].narration =
+        "Compare ticket costs and write a practical checklist before taking the bus.".into();
+    batch.candidates[2].draft.beats[0].narration =
+        "Follow the old river bridge to discover a surprising community tradition.".into();
+    for candidate in &mut batch.candidates {
+        candidate.draft.beats[1].narration = "Share your opinion about this idea.".into();
+    }
+    study_writing::enforce_candidate_originality(&batch.context, &batch.candidates).unwrap();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert_eq!(sink.commit_three(&batch).unwrap().len(), 3);
+}
