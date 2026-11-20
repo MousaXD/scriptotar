@@ -49,8 +49,10 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         not SHA256.fullmatch(v) for v in (package_sha256, executable_sha256)
     ):
         raise ValueError("exact source and package/executable hashes required")
-    if not 3 <= min_trials <= 100:
-        raise ValueError("min_trials must be 3..100")
+    # Native benchmark acceptance requires >=10 independent observations
+    # per matching cohort. Never let a caller lower this floor for p50/p95.
+    if type(min_trials) is not int or not 10 <= min_trials <= 100:
+        raise ValueError("min_trials must be an integer in 10..100")
     if not path.is_file():
         raise ValueError("missing external native trace")
     groups: dict[tuple, list[dict]] = {}
