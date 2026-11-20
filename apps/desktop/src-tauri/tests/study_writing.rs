@@ -1461,3 +1461,90 @@ fn disputed_observation_cannot_enter_writing_plan_or_canonical_acceptance() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn rejects_extended_verbatim_source_passage_before_atomic_acceptance() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The recorded discussion begins with a careful introduction to the neighborhood, explores the ordinary choices people encounter every morning, and finishes with several specific questions for local residents";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.beats[0].narration = passage.into();
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1,
+        "a rejected result must not advance Study revision"
+    );
+    let receipts: i64 = Connection::open(db.path())
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(receipts, 0);
+}
+
+#[test]
+fn rejects_near_duplicate_prose_despite_different_angle_ids_and_titles() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let first = "Start with a small question about the town square, then introduce the three practical choices, explain why the first route is easy to follow, show the helpful neighborhood map, and invite residents to compare what they observed.";
+    let second = first.replace("helpful neighborhood map", "useful neighborhood map");
+    batch.candidates[0].draft.beats[0].narration = first.into();
+    batch.candidates[1].draft.beats[0].narration = second;
+    assert_ne!(
+        batch.candidates[0].draft.beats[0].narration,
+        batch.candidates[1].draft.beats[0].narration
+    );
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
+
+#[test]
+fn allows_distinct_scripts_that_share_short_common_phrases() {
+    let (_temp, _db, _plan, _current, mut batch) = canonical_batch_fixture();
+    // Shared calls to action are expected: the primary narrated mechanisms
+    // must remain distinct even when routine short phrases overlap.
+    batch.candidates[0].draft.beats[1].narration = "Share your opinion".into();
+    batch.candidates[1].draft.beats[1].narration = "Share your opinion".into();
+    batch.candidates[2].draft.beats[1].narration = "Share your opinion".into();
+    study_writing::enforce_candidate_originality(&batch.context, &batch.candidates).unwrap();
+}
