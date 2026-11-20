@@ -38,6 +38,8 @@ The pre-send CAS intentionally sacrifices availability in ambiguous windows in o
 
 Two additional no-network host/SQLite regressions verify cancellation ordering: (a) cancelling a mere reservation yields a terminal `Cancelled` and v8 `NotApplied` claim, and prevents both a dispatch CAS and a forged late receipt, including after reopen; (b) cancelling after the committed dispatch CAS records cancellation intent and retains a blocked uncertain claim, but a matching authenticated late receipt can correctly record a charge and advance v8 `Unknown -> Applied` without sending again.
 
+A fourth adversarial test, `late_receipt_sqlite_fault_rolls_back_identity_charge_and_legacy_effect`, injects a SQLite trigger that aborts the v8 `Applied` transition after the external receipt update has begun. It asserts the entire IMMEDIATE transaction rolls back: the v12 identity tombstone is absent, v10 remains `Uncertain`, v8 remains `Unknown`, token/cost totals stay zero and the revision is unchanged. After the injected fault is removed and SQLite reopened, one trusted late receipt can settle without dispatching another provider request.
+
 This is a deterministic, no-network host/SQLite regression suite. Existing v10–v12 tests separately cover simultaneous claims, cross-run/cross-project identity, historical upgrade rollback, forged/duplicate provider IDs, retry attempt tombstones and corrupted checkpoints. Their existing passing evidence does **not** certify this new head.
 
 ## Remaining blockers / Agent 00 and 10 handoff
