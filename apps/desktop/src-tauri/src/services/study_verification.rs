@@ -252,12 +252,69 @@ fn typed_revision_matches(
     let Ok(candidate) = serde_json::from_str::<GeneratedCandidate>(structured_json) else {
         return false;
     };
-    if candidate.draft.title.trim() != version.title || export_candidate(&candidate) != version.body {
+    if candidate.draft.title.trim() != version.title || export_candidate(&candidate) != version.body
+    {
         return false;
     }
     let mut canonical = candidate.draft;
     canonical.id = version.draft_id.to_string();
     canonical == *supplied
+}
+
+/// Load only the current immutable version. Loading a draft's entire
+/// historical version-body timeline would be an unbounded memory operation
+/// when a long-lived Studio script accumulates many edits.
+fn scoped_current_saved_version(
+    db: &Connection,
+    project_id: Uuid,
+    study_id: Uuid,
+    draft_id: Uuid,
+    revision: i64,
+) -> RepositoryResult<Option<scriptotar_core::DraftVersion>> {
+    let row: Option<(String, String, i64, String, String, String)> = db
+        .query_row(
+            "SELECT v.id,v.draft_id,v.version,v.title,v.body,v.saved_at
+               FROM draft_versions v
+               JOIN creative_drafts d ON d.id=v.draft_id
+               JOIN content_studies st ON st.id=d.study_id AND st.project_id=d.project_id
+               JOIN projects p ON p.id=d.project_id
+              WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3
+                AND d.revision=?4 AND v.version=?4
+                AND d.archived_at IS NULL AND st.archived_at IS NULL
+                AND p.archived_at IS NULL",
+            params![
+                draft_id.to_string(),
+                project_id.to_string(),
+                study_id.to_string(),
+                revision
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+    row.map(|(version_id, saved_draft_id, version, title, body, saved_at)| {
+        let parse_id = |value: &str| {
+            Uuid::parse_str(value).map_err(|error| RepositoryError::Storage(error.to_string()))
+        };
+        Ok(scriptotar_core::DraftVersion {
+            id: parse_id(&version_id)?,
+            draft_id: parse_id(&saved_draft_id)?,
+            version,
+            title,
+            body,
+            saved_at,
+        })
+    })
+    .transpose()
 }
 
 /// Source attribution is not independent fact checking. Use these values
@@ -369,19 +426,21 @@ impl AppServices {
                 "draft Study membership or revision changed".into(),
             ));
         }
-        let versions = self.store.list_draft_versions(project_id, draft_id)?;
-        let saved_version = versions
-            .iter()
-            .find(|version| version.version == saved_draft.revision)
-            .filter(|version| {
-                version.title == saved_draft.title && version.body == saved_draft.body
-            })
-            .cloned()
-            .ok_or_else(|| RepositoryError::Conflict(
-                "current draft does not match an immutable DraftVersion".into(),
-            ))?;
         let db = Connection::open(self.store.path())
             .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let saved_version = scoped_current_saved_version(
+            &db,
+            project_id,
+            study_id,
+            draft_id,
+            saved_draft.revision,
+        )?
+        .filter(|version| {
+            version.title == saved_draft.title && version.body == saved_draft.body
+        })
+        .ok_or_else(|| RepositoryError::Conflict(
+            "current draft does not match an immutable DraftVersion".into(),
+        ))?;
         let structured: Option<String> = db.query_row(
             "SELECT sr.structured_json
                FROM study_writing_revisions sr
@@ -440,9 +499,13 @@ impl AppServices {
         let fresh_sources = self.store.list_study_sources(project_id, study_id)?;
         let fresh_references = self.store.list_evidence_references(project_id, study_id)?;
         let final_draft = self.store.get_draft(project_id, draft_id)?;
-        let final_version = self.store.list_draft_versions(project_id, draft_id)?
-            .into_iter()
-            .find(|version| version.version == saved_draft.revision);
+        let final_version = scoped_current_saved_version(
+            &db,
+            project_id,
+            study_id,
+            draft_id,
+            saved_draft.revision,
+        )?;
         let final_structured: Option<String> = db.query_row(
             "SELECT structured_json FROM study_writing_revisions
               WHERE draft_id=?1 AND version=?2",
