@@ -494,6 +494,137 @@ mod recovery_driver_tests {
     }
 
     #[test]
+    fn cancelled_reservation_cannot_send_or_take_a_late_receipt() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "1".repeat(64);
+        let wire_sha256 = "2".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai:test-model",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        let cancelled = store.request_external_cancel(effect_key(&context).unwrap()).unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Cancelled);
+        assert!(cancelled.cancel_requested);
+
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "never-sent", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::NotApplied);
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        assert_eq!(
+            reopened
+                .get_external_effect(effect_key(&context).unwrap())
+                .unwrap()
+                .unwrap()
+                .status,
+            ExternalEffectStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn post_dispatch_cancellation_does_not_hide_a_verified_late_charge() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "3".repeat(64);
+        let wire_sha256 = "4".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai:test-model",
+            limits,
+        )
+        .unwrap();
+
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+        let cancelled = store.request_external_cancel(effect_key(&context).unwrap()).unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Dispatched);
+        assert!(cancelled.cancel_requested);
+        fence.mark_uncertain(&effect_id);
+        let pending = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.status, ExternalEffectStatus::Uncertain);
+        assert!(pending.cancel_requested);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+
+        // A local cancellation after the provider could have executed is
+        // NOT remote nonexecution evidence. An authenticated late charge wins.
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+        fence.settle(&effect_id, "charged-after-cancel", &usage).unwrap();
+        let completed = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert!(completed.cancel_requested);
+        assert_eq!(completed.receipt_id.as_deref(), Some("charged-after-cancel"));
+        assert_eq!(completed.actual_cost_microusd, 450);
+        assert!(store.request_external_cancel(effect_key(&context).unwrap()).is_err());
+
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Applied);
+    }
+
+    #[test]
     fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
         let (_directory, services, context) = approved_host();
         let double = LocalProviderDouble::default();
