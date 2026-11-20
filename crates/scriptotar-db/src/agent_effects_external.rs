@@ -2,7 +2,7 @@
 // Reserve and persist DISPATCHED before I/O; a DISPATCHED/UNCERTAIN request
 // is NEVER an invitation to resend it. Provider reconciliation is mandatory.
 use rusqlite::{params, OptionalExtension, Row, Transaction, TransactionBehavior};
-use scriptotar_agent::{valid_id, RunState, StepInput, StepState};
+use scriptotar_agent::{valid_id, RunSnapshot, RunState, StepInput, StepState};
 use scriptotar_core::{now_rfc3339, RepositoryError, RepositoryResult};
 use uuid::Uuid;
 use crate::{studies::{database, db_error}, SqliteStore};
@@ -329,9 +329,52 @@ fn scoped(
                 key.run_id, key.step_id], row,
     ).optional().map_err(db_error)
 }
-fn checked(db: &rusqlite::Connection, key: ExternalEffectKey<'_>)
-    -> RepositoryResult<ExternalEffect> {
-    verified_scope(db, key.project, key.study, key.run_id)?;
+/// Reconciliation is not a new dispatch. Previously dispatched provider work
+/// may settle after the user archives a Study or project; otherwise the charge
+/// can exist remotely while local accounting becomes permanently inaccessible.
+/// Preserve the same exact run/Study ownership and checkpoint integrity checks,
+/// but never require active/unarchived state just to read a billable receipt.
+fn verified_settlement_scope(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+) -> RepositoryResult<()> {
+    let raw: String = db
+        .query_row(
+            "SELECT r.snapshot_json FROM agent_runs r
+             JOIN content_studies s ON s.id=r.study_id AND s.project_id=r.project_id
+             JOIN projects p ON p.id=r.project_id
+             WHERE r.id=?1 AND r.project_id=?2 AND r.study_id=?3",
+            params![
+                key.run_id,
+                key.project.to_string(),
+                key.study.to_string()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?
+        .ok_or_else(|| RepositoryError::NotFound("scoped agent run".into()))?;
+    let run: RunSnapshot = serde_json::from_str(&raw)
+        .map_err(|_| RepositoryError::Storage("agent checkpoint is corrupt".into()))?;
+    if run.plan.id != key.run_id
+        || run.plan.project_id != key.project.to_string()
+        || run.plan.study_id != key.study.to_string()
+        || !run.plan.validate()
+        || run.current_step > run.plan.steps.len()
+        || run.steps.len() != run.plan.steps.len()
+    {
+        return Err(RepositoryError::Storage(
+            "agent checkpoint identity is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn checked(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+) -> RepositoryResult<ExternalEffect> {
+    verified_settlement_scope(db, key)?;
     scoped(db, key)?.ok_or_else(|| RepositoryError::NotFound("scoped external effect".into()))
 }
 fn may_execute(db: &rusqlite::Connection, key: ExternalEffectKey<'_>)
@@ -412,7 +455,9 @@ impl SqliteStore {
     pub fn get_external_effect(&self, key: ExternalEffectKey<'_>)
         -> RepositoryResult<Option<ExternalEffect>> {
         let db = database(self)?;
-        verified_scope(&db,key.project,key.study,key.run_id)?;
+        verified_settlement_scope(&db, key)?;
+        // An archived owner cannot create new work, but an already-dispatched
+        // effect still needs trustworthy receipt reconciliation.
         // A missing v10 table is corruption, not an empty ledger.
         scoped(&db,key)
     }
