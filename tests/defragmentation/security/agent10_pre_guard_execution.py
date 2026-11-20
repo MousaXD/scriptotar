@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent10 independent read-only command-order and credential audit for combined PR168.
+"""Agent10 independent read-only command-order and credential audit for final PR174.
 
 Reads source workflow YAML as text from an exact-SHA checkout; never executes
 untrusted checkout code or claims the Vite guard covers Python/third parties.
@@ -12,7 +12,7 @@ from pathlib import Path
 
 PIN = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
 GUARD_BLOB = "5c746abd3caf414ba2c80be825d66983312236c6"
-PYTHON_BASELINE = "0f8e33f0e2abef003440ef27ef76b7cb448d2b32"
+PYTHON_BASELINE = "e48bfc6848000a4c2b49cf26b8d68da504172df0"
 TARGETS = (
     (".github/workflows/windows-tauri.yml", "build-windows-installer"),
     (".github/workflows/installed-webview-acceptance.yml", "linux-webkit"),
@@ -232,7 +232,7 @@ jobs:
       - name: Verify reviewed Python/runtime/QA inputs before script execution
         run: |
           set -euo pipefail
-          reviewed=0f8e33f0e2abef003440ef27ef76b7cb448d2b32
+          reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           if ! git diff --quiet "$reviewed" HEAD -- . \
