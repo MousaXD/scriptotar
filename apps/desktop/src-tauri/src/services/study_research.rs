@@ -1804,7 +1804,7 @@ mod tests {
         assert!(services
             .read_study_research_report(project, study, approved_artifact)
             .is_err());
-        fs::write(&approved_path, original_approved_bytes).unwrap();
+        fs::write(&approved_path, &original_approved_bytes).unwrap();
         assert!(services
             .read_study_research_report(project, study, approved_artifact)
             .is_ok());
@@ -1825,7 +1825,7 @@ mod tests {
         assert!(services
             .read_study_research_report(project, study, approved_artifact)
             .is_err());
-        fs::write(&approved_path, original_approved_bytes).unwrap();
+        fs::write(&approved_path, &original_approved_bytes).unwrap();
         assert!(services
             .read_study_research_report(project, study, approved_artifact)
             .is_ok());
