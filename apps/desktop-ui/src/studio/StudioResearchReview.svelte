@@ -68,6 +68,12 @@
       run.plan.steps[0].estimate?.cost_microusd === 0;
   }
 
+  function hasSelectedSources(): boolean {
+    return selectedIds.length >= 1 && selectedIds.length <= 8 &&
+      new Set(selectedIds).size === selectedIds.length &&
+      selectedIds.every((id) => sources.some((source) => source.id === id && source.available));
+  }
+
   function hasCurrentRunSources(run: StudyResearchRun): boolean {
     const ids = run.plan.steps[0]?.input.source_ids;
     return Array.isArray(ids) && ids.length >= 1 && ids.length <= 8 &&
@@ -144,7 +150,7 @@
 
   async function prepare(): Promise<void> {
     if (busy || loading || activeRun?.state === 'awaiting_approval') return;
-    if (!selectedIds.length) { errorText = t.choose; return; }
+    if (!hasSelectedSources()) { errorText = t.choose; return; }
     const requested = [...selectedIds];
     const requestEpoch = ++epoch;
     busy = true;
@@ -220,7 +226,7 @@
   {:else if !loading}
     <p class="muted">{t.noSources}</p>
   {/if}
-  <button type="button" class="button secondary" disabled={busy || loading || !selectedIds.length || activeRun?.state === 'awaiting_approval'}
+  <button type="button" class="button secondary" disabled={busy || loading || !hasSelectedSources() || activeRun?.state === 'awaiting_approval'}
     on:click={() => void prepare()}>{t.prepare}</button>
   {#if activeRun}
     <p class="muted" role="status">{t.state}: {t.states[activeRun.state]}</p>
