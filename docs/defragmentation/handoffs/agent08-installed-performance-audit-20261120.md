@@ -59,6 +59,82 @@ recovery of the external Agent07 concurrent live-runner requirement. Agent07
 must still coordinate optional inside-driver capture on both OSes and Agent08
 must review original exact-source artifacts.
 
+## 20 November follow-up: installed post-PR158 integration and ten-trial floor
+
+Agent00 merged P0 [PR158](https://github.com/MousaXD/scriptotar/pull/158)
+as two-parent integration `50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6`,
+**after** the original `514ec3...` report above. Its newly source-exact
+[installed Linux/Windows #44736655696](https://github.com/MousaXD/scriptotar/actions/runs/44736655696)
+was **FAIL** on both platforms (installed GUI test steps failed closed).
+Original native runner logs show the unchanged five functional cases
+`wrong_project_ipc_denial`, `multi_source_transcript`, `source_revocation`,
+`arabic_rtl` and `light_dark_visual` as NOT TESTED on Linux; Windows
+`result.json` also has `verdict=NOT TESTED`. The Linux separate
+two-source attempt remains INCOMPLETE without a lawfully sourced, authenticated
+offline real-media bundle. No concurrent Agent08 root/child process sampler,
+ten-trial native latency JSONL or genuine installed Study-scale dataset
+measurements were reported in the native job logs. Do not carry prior
+source-package hashes forward to this new SHA.
+
+New original GitHub Actions review ZIP metadata, **provider-reported upload
+digests (NOT independently rehashed local ZIP bytes)**:
+- Linux `native-webkit-review` artifact `14629767447`,
+  SHA-256 `3b94d161d3b27352ea043d60eb11d25527b1ccc0738af1c91a6a7d6c438b3553`.
+- Windows `native-webview2-review` artifact `14628883692`,
+  SHA-256 `3dd8edda9210727ba1b31a4d005959bdb84b29ea45f77fba1cf8252d2cea0164`.
+- Complete Linux bundle artifact `14629438135`,
+  SHA-256 `f27c73684d6484b0096da89a391c6900bba4dcb5ee78327d58f662176b5dea6f`.
+- Complete Windows bundle artifact `14628774023`,
+  SHA-256 `c3b6b9ceee5ac9acaeaa5522aa9e1f7ad5b346a0dc14ebee7c1f60d788b34fa6`.
+
+P2 source-only trace parser `native_ui_trace.py` previously accepted
+`--min-trials 3`, even though the native performance requirement is at
+least **ten independent trials per exact source/platform/host/cache/workload
+bucket**. The Agent08 draft now rejects any `min_trials` below 10,
+non-integer or above 100, preventing underpowered p50/p95 output even if
+a caller overrides the CLI flag. Source-only negative tests cover low
+thresholds and 3-vs-10 observations. This is a format-policy guard
+**only**, not proof that any installed driver actually generated ten
+genuine event pairs. Do not infer that earlier 3-trial synthetic test
+fixtures were performance measurements; they never were.
+
+The P0 PR158 source guard remains pinned to the original `514ec3...`
+reviewed tree with a two-YAML-only diff allowance. The new Agent08
+Python modifications are therefore **not yet mergeable into owner
+integration without an explicit independently reviewed source-baseline
+rollforward**. Do not weaken this prebuild guard or merge PR159
+speculatively. The latest draft PR source CI must be evaluated at its
+exact head and re-reviewed by Agent00/Agent10 where security policy
+requires. Original root performance trials remain `n=0` both OS;
+native certification remains BLOCKED.
+
+## Subsequent Agent08 hostile-input boundary and independent staging results
+
+The subsequent Agent08 draft `native_ui_trace.py` source-only validator also
+caps an untrusted external JSONL input at **16 MiB raw bytes**, **4096
+characters per line**, and **10000 parsed events** before accepting a new
+row; it now reads at most `MAX_TRACE_BYTES + 1` from disk, refuses oversized
+files and lines or invalid UTF-8 rather than blindly loading an arbitrary
+full trace with `Path.read_text()`. The added deterministic negative source
+tests cover all three limits, malformed UTF-8 and a normal ten-event cohort.
+This is solely evidence-parser resource governance, not an installed
+performance observation, replay-proof provenance or an approval to ingest
+private transcript payloads. **The exact-head CI of these newest changes must
+pass independently before declaring the new code source-test ready.**
+
+The original independent Agent10 [PR166](https://github.com/MousaXD/scriptotar/pull/166)
+strict [#44741737474](https://github.com/MousaXD/scriptotar/actions/runs/44741737474)
+at reviewed baseline stage `c11eef988c9c2ee86fdd50c547ba4a1b3554cbd2`
+**completed SUCCESS**, including 14 adversarial static and nine committed
+Git-tree negative mutation controls; this is **not an approval of this newer
+Agent08 six-file source**. The original stage
+[Linux+Windows installed #44741358875](https://github.com/MousaXD/scriptotar/actions/runs/44741358875)
+**completed FAILURE** on both OS native GUI acceptance steps. Stage CI,
+Windows NSIS, two-platform P2 migrated synthetic smoke and other
+source-only checks succeeded. The stage remains DRAFT, with original
+installed native benchmark evidence `n=0`. Do not claim that source
+security checks, package builds or synthetic SQL make a native UI PASS.
+
 ## Original synthetic SQL artifacts (separate evidence class)
 
 Original P2 [workflow #44559483015](https://github.com/MousaXD/scriptotar/actions/runs/44559483015) at *older* exact source `f0daf2606dba09240c8a269b3110e135d570cf02` completed Linux/Windows migration and SQL-only runs with 11 query iterations for each of 100, 1k, 10k Study rows. Both original ZIPs were downloaded and their bytes independently hashed: [Linux 14546612494](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14546612494), `40c1ee3682032b01c377380af27df581efb5b4875ec02b98e03aaa14760650bf`; [Windows 14549115338](https://github.com/MousaXD/scriptotar/actions/runs/44559483015/artifacts/14549115338), `af238e5959f54dadab7c6276e699587214032d3d2a66e0d961bbc1c747509e41`. Read original `sql-100.json`, `sql-1000.json`, `sql-10000.json` and validated source and sample provenance. These are **Python SQLite/fetchall** latencies under a production-migrated schema, not current integration Rust IPC or native GUI timing.
