@@ -1140,6 +1140,17 @@ mod tests {
         assert!(services
             .verify_studio_claims_read_only(project, study_id, study.revision, 2, &actual)
             .is_err());
+        // Restoring exactly the old text creates a NEW immutable version, not
+        // a new independent source or review attestation. Old claim lineage
+        // must not silently become valid again under version 3.
+        let restored = services
+            .store
+            .update_draft(project, saved.id, 2, &saved.title, &body)
+            .unwrap();
+        assert_eq!(restored.revision, 3);
+        assert!(services
+            .verify_studio_claims_read_only(project, study_id, study.revision, 3, &actual)
+            .is_err());
 
         // A second source is legitimately attached to this same Study, but
         // its observation may not be smuggled under the first draft-linked
@@ -1206,7 +1217,7 @@ mod tests {
         drop(services);
         let reopened = AppServices::new(tmp.path()).unwrap();
         assert!(reopened
-            .verify_studio_claims_read_only(project, study_id, study.revision, 2, &actual)
+            .verify_studio_claims_read_only(project, study_id, study.revision, 3, &actual)
             .is_err());
     }
 
