@@ -282,7 +282,8 @@ pub struct ClaimSourceNavigation {
     pub study_source_id: String,
     pub source_content_sha256: Option<String>,
     pub locator: ExactLocator,
-    pub proposed_excerpt: String,
+    /// Display-only preview; exact bytes remain in host evidence storage.
+    pub excerpt_preview: String,
     pub attribution: SourceAttribution,
 }
 
@@ -537,7 +538,7 @@ impl AppServices {
                         study_source_id: evidence.source_id.clone(),
                         source_content_sha256: evidence.source_version.clone(),
                         locator: evidence.locator.clone(),
-                        proposed_excerpt: evidence.excerpt.clone(),
+                        excerpt_preview: evidence.excerpt.chars().take(480).collect(),
                         attribution: source_attribution(evidence.state),
                     })
                 })
@@ -768,6 +769,7 @@ mod tests {
             AngleOption, BeatRole, ClaimStatus, DraftAudit, DurationEstimate, FactualClaim,
             ScriptBeat, ScriptDraft,
         };
+        use scriptotar_core::{EvidenceInput, StudySourceInput};
         use tempfile::TempDir;
 
         let tmp = TempDir::new().unwrap();
@@ -788,6 +790,38 @@ mod tests {
             )
             .unwrap();
         let study_id = Uuid::parse_str(&study.id).unwrap();
+        let attached = services
+            .store
+            .add_study_source(
+                project,
+                study_id,
+                &StudySourceInput {
+                    kind: StudySourceKind::Manual,
+                    reference_id: None,
+                    locator: Some("source-section-a".into()),
+                    manual_text: Some(
+                        "An unsupported numerical assertion appears in this local note.".into(),
+                    ),
+                    source_revision: None,
+                    uncertainty: None,
+                },
+            )
+            .unwrap();
+        let cited = services
+            .store
+            .add_evidence_reference(
+                project,
+                study_id,
+                &EvidenceInput {
+                    study_source_id: attached.id,
+                    claim: "An unsupported numerical assertion".into(),
+                    locator: "source-section-a".into(),
+                    timestamp_seconds: None,
+                    certainty: EvidenceCertainty::Unverified,
+                    uncertainty_note: None,
+                },
+            )
+            .unwrap();
         let model_script = ScriptDraft {
             id: "untrusted-model-draft".into(),
             angle_id: "angle-a".into(),
@@ -809,7 +843,7 @@ mod tests {
                 beat_id: "hook".into(),
                 assertion: "An unsupported numerical assertion".into(),
                 status: ClaimStatus::Unverified,
-                evidence_ids: vec![],
+                evidence_ids: vec![cited.id.to_string()],
             }],
         };
         let candidate = GeneratedCandidate {
@@ -862,11 +896,60 @@ mod tests {
         );
         assert!(bound.draft_version_sha256.starts_with("sha256:"));
         assert!(bound.report.draft_content_bound);
+        assert_eq!(bound.claim_sources.len(), 1);
+        assert_eq!(bound.claim_sources[0].evidence_id, cited.id.to_string());
+        assert_eq!(bound.claim_sources[0].study_source_id, attached.id.to_string());
+        assert_eq!(bound.claim_sources[0].locator.locator, "source-section-a");
+        assert_eq!(
+            bound.claim_sources[0].attribution,
+            SourceAttribution::LiteralExcerptUnreviewed
+        );
+        assert_eq!(
+            bound.claim_sources[0].excerpt_preview,
+            "An unsupported numerical assertion"
+        );
         assert!(bound.report.publication_review_required);
         assert!(!bound.report.inventory_complete);
         assert!(bound.report.claims.iter().all(|claim| {
             claim.status != verification::VerificationStatus::Verified
         }));
+        // Human dispute flags invalidate the previous source attribution,
+        // but their presence cannot promote a factual assertion to Verified.
+        services
+            .store
+            .review_evidence_reference(
+                project,
+                study_id,
+                cited.id,
+                EvidenceCertainty::Unverified,
+                EvidenceCertainty::Disputed,
+                "This observation is not independently checked",
+            )
+            .unwrap();
+        let disputed = services
+            .verify_studio_claims_with_version_read_only(
+                project, study_id, study.revision, 1, &actual,
+            )
+            .unwrap();
+        assert_eq!(
+            disputed.claim_sources[0].attribution,
+            SourceAttribution::DisputedObservation
+        );
+        assert_ne!(
+            disputed.report.claims[0].status,
+            verification::VerificationStatus::Verified
+        );
+        services
+            .store
+            .review_evidence_reference(
+                project,
+                study_id,
+                cited.id,
+                EvidenceCertainty::Disputed,
+                EvidenceCertainty::Unverified,
+                "Return to unverified until independently assessed",
+            )
+            .unwrap();
 
         let mut forged = actual.clone();
         forged.claims[0].assertion = "AI-supplied replacement assertion".into();
