@@ -408,6 +408,92 @@ mod recovery_driver_tests {
     }
 
     #[test]
+    fn authenticated_late_receipt_recovers_uncertain_without_another_send() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "e".repeat(64);
+        let wire_sha256 = "f".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(), &context, &approval, &wire_sha256, "openai:test-model", limits,
+        ).unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+
+        // Simulate a lost response after the provider may already have charged.
+        fence.mark_uncertain(&effect_id);
+        let uncertain = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(uncertain.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+
+        // Even with the correct effect key, a fence with different outbound
+        // bytes must never be able to settle another approval's reservation.
+        let stale_wire_fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(), &context, &approval, &"a".repeat(64),
+            "openai:test-model", limits,
+        ).unwrap();
+        assert_eq!(
+            stale_wire_fence.settle(&effect_id, "verified-late-1", &usage),
+            Err(ConsentError::ChangedContext)
+        );
+        assert_eq!(
+            store.get_external_effect(effect_key(&context).unwrap()).unwrap().unwrap().revision,
+            uncertain.revision
+        );
+
+        // A delayed, trusted usage receipt completes the original attempt;
+        // neither this operation nor a duplicate callback sends any request.
+        assert_eq!(fence.settle(&effect_id, "verified-late-1", &usage), Ok(()));
+        let completed = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert_eq!(completed.attempt, 1);
+        assert_eq!(completed.actual_tokens, 50);
+        assert_eq!(completed.actual_cost_microusd, 450);
+        assert_eq!(completed.receipt_id.as_deref(), Some("verified-late-1"));
+
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        let after_restart = SqlitePaidEffectFence::from_approved_context(
+            reopened, &context, &approval, &wire_sha256, "openai:test-model", limits,
+        ).unwrap();
+        assert_eq!(
+            after_restart.settle(&effect_id, "verified-late-1", &usage),
+            Ok(())
+        );
+        assert_eq!(
+            after_restart.settle(&effect_id, "contradictory-receipt", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        assert_eq!(
+            after_restart.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let unchanged = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(unchanged.revision, completed.revision);
+        assert_eq!(unchanged.receipt_id, completed.receipt_id);
+    }
+
+    #[test]
     fn real_app_services_compiles_and_reconciles_without_replaying_provider() {
         let (_directory, services, context) = approved_host();
         let double = LocalProviderDouble::default();
