@@ -21,6 +21,8 @@
       state: 'Saved run state', error: 'Research operation unavailable', choose: 'Choose at least one saved source.',
       limit: 'At most eight sources per research run.',
       loading: 'Loading saved research…', transcript: 'Transcript', research: 'Research',
+      approvalScope: 'Approve these exact sources', sourceCount: 'sources',
+      missingScope: 'A selected source is no longer available. Deny this run and prepare a new one.',
       states: { planned: 'Planned', awaiting_approval: 'Awaiting approval', running: 'Running',
         cancelling: 'Cancelling', paused: 'Paused', needs_input: 'Needs input',
         blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
@@ -36,6 +38,8 @@
       state: 'حالة التشغيل المحفوظ', error: 'عملية البحث غير متاحة',
       choose: 'اختر مصدراً محفوظاً واحداً على الأقل.', limit: 'الحد الأقصى ثمانية مصادر لكل تشغيل.',
       loading: 'جارٍ تحميل البحث المحفوظ…', transcript: 'نص مفرغ', research: 'بحث',
+      approvalScope: 'الموافقة على هذه المصادر تحديدًا', sourceCount: 'مصادر',
+      missingScope: 'أحد المصادر المختارة لم يعد متاحًا. ارفض التشغيل وأعد تحضير طلب جديد.',
       states: { planned: 'مخطط', awaiting_approval: 'بانتظار الموافقة', running: 'جارٍ التنفيذ',
         cancelling: 'جارٍ الإلغاء', paused: 'متوقف مؤقتًا', needs_input: 'يتطلب إدخالًا',
         blocked: 'محظور', completed: 'مكتمل', failed: 'فشل', cancelled: 'ملغى' }
@@ -58,7 +62,10 @@
 
   function scoped(run: StudyResearchRun): boolean {
     return run.plan.project_id === projectId && run.plan.study_id === studyId &&
-      run.plan.steps.length === 1 && run.plan.steps[0].input.tool === 'analyze_evidence';
+      run.plan.steps.length === 1 && run.plan.steps[0].input.tool === 'analyze_evidence' &&
+      run.plan.steps[0].requires_approval === true &&
+      run.plan.steps[0].estimate?.tokens === 0 &&
+      run.plan.steps[0].estimate?.cost_microusd === 0;
   }
 
   function hasCurrentRunSources(run: StudyResearchRun): boolean {
@@ -219,6 +226,20 @@
     <p class="muted" role="status">{t.state}: {t.states[activeRun.state]}</p>
     <div class="review-actions">
       {#if activeRun.state === 'awaiting_approval'}
+        <details class="research-approval-scope">
+          <summary>{t.approvalScope} · {activeRun.plan.steps[0].input.source_ids.length} {t.sourceCount}</summary>
+          <ul>
+            {#each activeRun.plan.steps[0].input.source_ids as sourceId (sourceId)}
+              <li>
+                <span dir="auto">{sources.find((source) => source.id === sourceId)?.locator ?? sourceId}</span>
+                <code dir="ltr">{sourceId}</code>
+              </li>
+            {/each}
+          </ul>
+        </details>
+        {#if !hasCurrentRunSources(activeRun)}
+          <p class="studio-error" role="alert">{t.missingScope}</p>
+        {/if}
         <button type="button" class="button primary" disabled={busy || loading || !hasCurrentRunSources(activeRun)}
           on:click={() => void decide('approve')}>{t.approve}</button>
         <button type="button" class="button secondary" disabled={busy || loading}
@@ -301,6 +322,10 @@
   .research-source small, .result-source p { font-size: var(--text-xs); color: var(--color-text-muted); }
   .result-source { border-top: 1px solid var(--color-border); padding-block: 9px; overflow-wrap: anywhere; }
   .research-result { margin-block: 12px; }
+  .research-approval-scope { width: 100%; font-size: var(--text-xs); }
+  .research-approval-scope ul { margin: 8px 0; padding-inline-start: 20px; display: grid; gap: 6px; }
+  .research-approval-scope li { overflow-wrap: anywhere; display: grid; gap: 3px; }
+  .research-approval-scope code { font-size: var(--text-xs); color: var(--color-text-muted); overflow-wrap: anywhere; }
   .observations { display: grid; gap: 8px; padding-inline-start: 20px; }
   .observations blockquote { margin: 5px 0; padding-inline-start: 10px; border-inline-start: 2px solid var(--color-border-strong); white-space: pre-wrap; overflow-wrap: anywhere; }
   .observations li { font-size: var(--text-xs); }
