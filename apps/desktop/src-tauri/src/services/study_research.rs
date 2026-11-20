@@ -1182,6 +1182,19 @@ fn research_writing_from_report(
             {
                 return Err(not_found());
             }
+            let section = match (
+                anchor.segment_id.as_deref(),
+                anchor.start_ms,
+                anchor.end_ms,
+            ) {
+                (Some(segment), Some(start), Some(end)) if start < end => {
+                    format!("Transcript segment {segment} ({start}-{end} ms)")
+                }
+                (None, None, None) => {
+                    "Untimed transcript excerpt; no verified segment/timecode".into()
+                }
+                _ => return Err(not_found()),
+            };
             let id = format!("research:{artifact}:{}:{index}", source.study_source_id);
             let is_literal = observation.beat.is_some();
             evidence.push(EvidenceRef {
@@ -1192,7 +1205,7 @@ fn research_writing_from_report(
                     timestamp_seconds: anchor
                         .start_ms
                         .and_then(|ms| u32::try_from(ms / 1_000).ok()),
-                    document_section: anchor.segment_id.clone(),
+                    document_section: Some(section),
                     collected_at: Some(source.collected_at.clone()),
                 },
                 excerpt: anchor.excerpt.clone(),
@@ -1869,6 +1882,12 @@ mod tests {
         }));
         assert!(bridge.evidence.iter().any(|item| {
             item.status == EvidenceStatus::Unverified
+        }));
+        assert!(bridge.evidence.iter().any(|item| {
+            item.locator
+                .document_section
+                .as_deref()
+                .is_some_and(|section| section.contains("segment 0 (0-2000 ms)"))
         }));
         assert!(bridge.source_text_is_untrusted_data);
         let envelope = ReportEnvelope {
