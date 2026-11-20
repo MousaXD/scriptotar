@@ -1,0 +1,83 @@
+# Agent11 semantic parity research: ORIGINAL 4.0.7 180×84 baseline and
+# experimental VM regex wrapper. This is NOT a general API guarantee or a
+# substitute for the original immutable 19+12 parser security tests.
+name: Agent11 bounded VM regex 180-pattern-option parity (research ONLY)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-vm-bounded-regexp-180-parity.yml'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs'
+      - 'tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  original-407-vs-vm-wrapper:
+    name: Source-exact original 4.0.7 180x84 public match and capture behavior (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout exact test-only source, no token persisted
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Install Node22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout independently reviewed immutable source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Verify source identities and guard before npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node --check tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install original exact-lock official picomatch@4.0.7
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Create immutable fresh original-4.0.7 reference on this exact runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs baseline
+      - name: Compare NODE_OPTIONS VM-preloaded public match and capture to actual baseline
+        shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/tests/defragmentation/security/agent11_vm_regex_wrapper_preload.cjs
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
+          echo 'Source-locked 180-pattern-option x 84-input finite parity only; original 19+12 boolean security gates STILL FAIL on typed deadline'
+      - name: Ensure no production lock or manifest changes
+        shell: bash
+        run: git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
