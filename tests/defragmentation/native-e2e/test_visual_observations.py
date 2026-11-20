@@ -1,5 +1,8 @@
 """Pure-stdlib unit tests. Fixtures are synthetic PNGs, NEVER installed QA PASS."""
+import hashlib
 import json
+import os
+import stat
 import struct
 import tempfile
 import unittest
@@ -32,6 +35,7 @@ class GuardedInflater:
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
+import visual_observations
 from visual_observations import analyze, sample_png_rgb
 
 SHA = "a" * 40
@@ -166,6 +170,136 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
             fixture_zip(path, dark=(245, 247, 248))
             self.assertFalse(analyze(path, SHA)["light_dark_and_persisted_dark_observed"])
 
+
+    def test_visual_zip_rejects_oversized_compressed_members_before_inflation(self):
+        def rewrite(path, changes):
+            with zipfile.ZipFile(path) as source:
+                originals = [(info.filename, source.read(info)) for info in source.infolist()]
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+                for name, data in originals:
+                    target.writestr(name, changes.get(name, data))
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "oversized.zip"
+            fixture_zip(path)
+            rewrite(path, {"result.json": b" " * (1024 * 1024 + 1)})
+            self.assertLess(path.stat().st_size, 1024 * 1024)
+            with self.assertRaisesRegex(ValueError, "Oversized native result.json"):
+                analyze(path, SHA)
+
+            fixture_zip(path)
+            rewrite(path, {"windows-theme-dark.png": b"\x00" * (8 * 1024 * 1024 + 1)})
+            self.assertLess(path.stat().st_size, 1024 * 1024)
+            with self.assertRaisesRegex(ValueError, "Oversized native ZIP member"):
+                analyze(path, SHA)
+
+            # Sparse file checks the *archive* size without allocating RAM
+            # or writing 65MiB of incompressible test data.
+            with path.open("wb") as f:
+                f.seek(64 * 1024 * 1024)
+                f.write(b"x")
+            with self.assertRaisesRegex(ValueError, "input size limit"):
+                analyze(path, SHA)
+
+    def test_visual_zip_rejects_ambiguous_json_in_both_orders(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "duplicates.zip"
+            fixture_zip(path)
+            with zipfile.ZipFile(path) as source:
+                members = [(info.filename, source.read(info)) for info in source.infolist()]
+            canonical = next(data for name, data in members if name == "result.json")
+            doc = canonical.decode("utf-8")
+            old_sha = '"source_sha": "' + SHA + '"'
+            self.assertIn(old_sha, doc)
+            foreign = '"source_sha": "' + "f" * 40 + '"'
+            variants = [
+                doc.replace(old_sha, old_sha + ", " + foreign),
+                doc.replace(old_sha, foreign + ", " + old_sha),
+                doc.replace(old_sha, old_sha + ', "sourc\\u0065_sha": "' + "f" * 40 + '"'),
+                doc.replace('"cases": {', '"cases": {}, "cases": {'),
+                doc.replace('"cases": {', '"cases": {"installed_webview": {}, "installed_webview": {},'),
+                doc.replace('"verdict": "NOT TESTED"', '"verdict": NaN'),
+                doc.replace('"verdict": "NOT TESTED"', '"verdict": Infinity'),
+                doc.replace('"verdict": "NOT TESTED"', '"verdict": -Infinity'),
+                doc.replace('"verdict": "NOT TESTED"', '"verdict": 1e9999'),
+            ]
+            for index, altered in enumerate(variants):
+                with self.subTest(index=index):
+                    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as target:
+                        for name, payload in members:
+                            target.writestr(
+                                name, altered.encode("utf-8") if name == "result.json"
+                                else payload
+                            )
+                    with self.assertRaisesRegex(ValueError, "Duplicate JSON|Nonfinite"):
+                        analyze(path, SHA)
+
+    def test_visual_zip_rejects_unsafe_names_modes_and_excessive_members(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "unsafe.zip"
+            for name in ("../traversal", "/absolute", "nested//empty",
+                         r"C:\windows\unsafe", "folder/./dot", "folder/../parent"):
+                with self.subTest(name=name):
+                    fixture_zip(path)
+                    with zipfile.ZipFile(path, "a") as z:
+                        z.writestr(name, b"bad")
+                    with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                        analyze(path, SHA)
+
+            fixture_zip(path)
+            with zipfile.ZipFile(path, "a") as z:
+                z.writestr("result.json", b"{}")
+            with self.assertRaisesRegex(ValueError, "Duplicate evidence ZIP"):
+                analyze(path, SHA)
+
+            fixture_zip(path)
+            link = zipfile.ZipInfo("symlink-member")
+            link.create_system = 3
+            link.external_attr = (stat.S_IFLNK | 0o777) << 16
+            with zipfile.ZipFile(path, "a") as z:
+                z.writestr(link, b"another-file")
+            with self.assertRaisesRegex(ValueError, "Unsafe or oversized"):
+                analyze(path, SHA)
+
+            fixture_zip(path)
+            with zipfile.ZipFile(path, "a") as z:
+                for i in range(129):
+                    z.writestr(f"extra-{i}", b"x")
+            with self.assertRaisesRegex(ValueError, "excessive or missing"):
+                analyze(path, SHA)
+
+            if os.name != "nt":
+                fixture_zip(path)
+                symlink = Path(temp) / "alias.zip"
+                symlink.symlink_to(path)
+                with self.assertRaisesRegex(ValueError, "Symlinked"):
+                    analyze(symlink, SHA)
+
+    def test_visual_zip_digest_is_bound_to_parsed_snapshot_not_swapped_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "mutable.zip"
+            replacement = Path(temp) / "replacement.zip"
+            fixture_zip(path)
+            fixture_zip(replacement, source="f" * 40)
+            original_snapshot = path.read_bytes()
+            replacement_digest = hashlib.sha256(replacement.read_bytes()).hexdigest()
+            original_zipfile = zipfile.ZipFile
+            called = []
+
+            def swap_after_snapshot(file, *args, **kwargs):
+                if not called:
+                    called.append(True)
+                    os.replace(replacement, path)
+                return original_zipfile(file, *args, **kwargs)
+
+            with patch.object(visual_observations.zipfile, "ZipFile",
+                              side_effect=swap_after_snapshot):
+                result = analyze(path, SHA)
+            self.assertEqual(result["source_sha"], SHA)
+            self.assertEqual(result["archive_sha256"],
+                             hashlib.sha256(original_snapshot).hexdigest())
+            self.assertNotEqual(result["archive_sha256"], replacement_digest)
+            self.assertTrue(called)
 
 if __name__ == "__main__":
     unittest.main()
