@@ -134,6 +134,9 @@ pub struct ConsentPreview {
     pub max_total_tokens: u64,
     /// None means billing is unknown and paid approval is blocked.
     pub worst_case_cost_microusd: Option<u64>,
+    /// Reviewed host pricing revision used to calculate the maximum estimate.
+    /// None means that pricing is unknown and positive approval is disabled.
+    pub trusted_pricing_revision: Option<String>,
     pub limits: RunBudget,
     pub expires_at_ms: u64,
     pub egress_disclosure: String,
@@ -428,6 +431,12 @@ impl ConsentBoundary {
             max_output_tokens: intent.max_output_tokens,
             max_total_tokens: total,
             worst_case_cost_microusd,
+            trusted_pricing_revision: ceiling
+                .as_ref()
+                .and_then(|price| {
+                    (!price.catalog_revision.is_empty())
+                        .then(|| price.catalog_revision.clone())
+                }),
             limits: intent.limits,
             expires_at_ms: now_ms
                 .saturating_add(intent.limits.max_elapsed_ms.min(CONSENT_TTL_MS)),
@@ -524,7 +533,9 @@ impl ConsentBoundary {
             return Ok(());
         }
         validate_context(&record.intent.scope, authority)?;
-        if record.preview.worst_case_cost_microusd.is_none() {
+        if record.preview.worst_case_cost_microusd.is_none()
+            || record.preview.trusted_pricing_revision.is_none()
+        {
             return Err(ConsentError::UnknownPricing);
         }
         // No priced approval may authorize a body that was never sealed.
@@ -625,6 +636,11 @@ impl ConsentBoundary {
         let trusted_price = pricing
             .ceiling(&record.intent.provider)
             .ok_or(ConsentError::UnknownPricing)?;
+        if record.preview.trusted_pricing_revision.as_deref()
+            != Some(trusted_price.catalog_revision.as_str())
+        {
+            return Err(ConsentError::ChangedContext);
+        }
         let mut expected_fingerprint = hash_intent(&record.intent, &Some(trusted_price.clone()));
         if let Some(wire_sha256) = record.sealed_wire_sha256.as_deref() {
             expected_fingerprint =
@@ -1069,6 +1085,7 @@ mod tests {
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
         assert!(preview.egress_disclosure.contains("api.openai.com"));
+        assert_eq!(preview.trusted_pricing_revision.as_deref(), Some("fixture"));
         let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
@@ -1129,6 +1146,38 @@ mod tests {
             boundary.dispatch(&intent, &authority, &Prices, &fence, &WrongWire, "key", 102),
             Err(ConsentError::ChangedContext)
         ));
+        assert!(fence.claims.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn price_catalog_revision_changed_after_approval_blocks_send() {
+        struct SupersededPrices;
+        impl TrustedPricing for SupersededPrices {
+            fn ceiling(&self, _config: &ProviderConfig) -> Option<PriceCeiling> {
+                Some(PriceCeiling {
+                    input_microusd_per_million: 100_000,
+                    output_microusd_per_million: 200_000,
+                    catalog_revision: "fixture-superseded".into(),
+                })
+            }
+        }
+
+        let (boundary, intent, authority) = approved();
+        let runner = Runner::default();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.dispatch(
+                &intent,
+                &authority,
+                &SupersededPrices,
+                &fence,
+                &runner,
+                "key",
+                102
+            ),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
         assert!(fence.claims.lock().unwrap().is_empty());
     }
 
@@ -1248,6 +1297,7 @@ mod tests {
             .prepare(intent.clone(), &authority, &NoTrustedPricing, 10)
             .unwrap();
         assert_eq!(preview.worst_case_cost_microusd, None);
+        assert_eq!(preview.trusted_pricing_revision, None);
         assert!(matches!(
             boundary.decide(&intent.run_id, &preview.fingerprint, true, &authority, 11),
             Err(ConsentError::UnknownPricing)

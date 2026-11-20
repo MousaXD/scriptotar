@@ -60,6 +60,8 @@ export interface ProviderConsentPreview {
   max_output_tokens: number;
   max_total_tokens: number;
   worst_case_cost_microusd: number | null;
+  /** Host-reviewed pricing revision; null means that approval must fail closed. */
+  trusted_pricing_revision: string | null;
   limits: ProviderRunBudget;
   expires_at_ms: number;
   egress_disclosure: string;

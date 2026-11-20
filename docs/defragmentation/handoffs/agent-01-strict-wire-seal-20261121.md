@@ -29,3 +29,7 @@ cargo test --locked --workspace
 cargo test --manifest-path tests/defragmentation/security/Cargo.toml --locked
 ```
 GitHub Actions and original independent-race tests must be checked on the **final exact HEAD**, not a previous baseline.
+
+## 21 November follow-up — visible price revision and real Studio mutation test
+
+The consent preview now exposes `trusted_pricing_revision: Option<String>` (TypeScript `string | null`). A missing revision blocks approval, and changed revision at dispatch returns `ChangedContext` before durable reservation. This is disclosure/contract hardening only, not a live price catalog. Added a native host test proving that real Studio brief edits cannot commit while a provider scope guard is held; the guard release then permits the edit and invalidates the approved scope. No cross-process SQLite safety claim is made.
