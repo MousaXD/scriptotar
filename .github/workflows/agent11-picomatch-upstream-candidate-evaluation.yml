@@ -1,6 +1,7 @@
 # Agent11 exploratory only: NOT a patched npm package, dependency remediation, or release authorization.
-# Tests distinct generated-regex ambiguity detection candidate from CLOSED/UNMERGED upstream PR275.
-# Prior candidate results #260/#261/#262/#264/#267/#274 are preserved on earlier test commits.
+# Second-wave source-exact research: compare upstream #264/#258/#266/#269/#270/#273 with
+# original strict 19 security cases AND unchanged 4.0.7 positive matcher semantics.
+# Previous #275 analyzer's 19/19 security PASS but 2/10 legacy parity FAIL is preserved at SHA 6159019.
 name: Agent11 upstream picomatch candidate evaluation (test-only, release veto)
 
 on:
@@ -21,8 +22,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: "upstream-pr275-ambiguity", pr: "275", sha: "6ee538d12642f7865574f5b1c395053240657772", os: "ubuntu-22.04" }
-          - { label: "upstream-pr275-ambiguity", pr: "275", sha: "6ee538d12642f7865574f5b1c395053240657772", os: "windows-2022" }
+          - { label: "upstream-pr264", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "ubuntu-22.04" }
+          - { label: "upstream-pr264", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "windows-2022" }
+          - { label: "upstream-pr258", pr: "258", sha: "578a87fae0ffd1f2e5420ff4d52135eb9210d169", os: "ubuntu-22.04" }
+          - { label: "upstream-pr258", pr: "258", sha: "578a87fae0ffd1f2e5420ff4d52135eb9210d169", os: "windows-2022" }
+          - { label: "upstream-pr266", pr: "266", sha: "cad55d062b063e559913b6b0b368d7bb96c33f42", os: "ubuntu-22.04" }
+          - { label: "upstream-pr266", pr: "266", sha: "cad55d062b063e559913b6b0b368d7bb96c33f42", os: "windows-2022" }
+          - { label: "upstream-pr269", pr: "269", sha: "0a8fd459730fe42bcddc9cee69a56e19cc5f53de", os: "ubuntu-22.04" }
+          - { label: "upstream-pr269", pr: "269", sha: "0a8fd459730fe42bcddc9cee69a56e19cc5f53de", os: "windows-2022" }
+          - { label: "upstream-pr270", pr: "270", sha: "614ef37229ceea362ccbc729fb64e98a7e327dc8", os: "ubuntu-22.04" }
+          - { label: "upstream-pr270", pr: "270", sha: "614ef37229ceea362ccbc729fb64e98a7e327dc8", os: "windows-2022" }
+          - { label: "upstream-pr273", pr: "273", sha: "6e7b1f76acfea1978d9433158bb081310ed4476f", os: "ubuntu-22.04" }
+          - { label: "upstream-pr273", pr: "273", sha: "6e7b1f76acfea1978d9433158bb081310ed4476f", os: "windows-2022" }
     steps:
       - name: Checkout exact candidate test branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -95,18 +106,41 @@ jobs:
         shell: bash
         run: |
           cp .agent11-proposed-upstream/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
-          cp .agent11-proposed-upstream/lib/ambiguity.js apps/desktop-ui/node_modules/picomatch/lib/ambiguity.js
+          if [ "${{ matrix.pr }}" = "269" ]; then
+            cp .agent11-proposed-upstream/lib/picomatch.js apps/desktop-ui/node_modules/picomatch/lib/picomatch.js
+            node --check apps/desktop-ui/node_modules/picomatch/lib/picomatch.js
+          fi
           node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
-          node --check apps/desktop-ui/node_modules/picomatch/lib/ambiguity.js
           git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
           echo "EXPERIMENTAL NODE_MODULES MUTATION ONLY; NOT A PUBLISHED PATCHED PACKAGE"
-      - name: ORIGINAL unmodified strict 19-case --assert-patched --extended (mandatory)
+      - name: Preserve BOTH independent security and matching contracts as mandatory failures
         shell: bash
-        working-directory: apps/desktop-ui
-        run: node scripts/probe-picomatch-redos.mjs --assert-patched --extended
-      - name: Verify original upstream positive matcher behavior is UNCHANGED AFTER 19-case assertion
+        run: |
+          # Neither failure is a warning. Capture both independent verdicts
+          # before the aggregate hard failure (no job-level continue-on-error).
+          set +e
+          node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
+          matcher_exit=$?
+          (cd apps/desktop-ui && node scripts/probe-picomatch-redos.mjs --assert-patched --extended)
+          security_exit=$?
+          set -e
+          echo "Strict matcher behavior exit: $matcher_exit"
+          echo "Immutable 19-case security exit: $security_exit"
+          if [ "$matcher_exit" -ne 0 ] || [ "$security_exit" -ne 0 ]; then
+            echo "NO-GO: candidate must pass BOTH unchanged contracts"
+            exit 1
+          fi
+      - name: Record generated regex source for challenging bounded examples
         shell: bash
-        run: node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
+        run: |
+          node <<'NODE'
+          const pm = require('./apps/desktop-ui/node_modules/picomatch');
+          const examples = ['+([ab]|b)', '+(@(+([ab])))', '+(a|b|ab)', '+(*)c', '*(a*|b)', '*(!(foo))'];
+          for (const pattern of examples) {
+            try { console.log(JSON.stringify({pattern, source: pm.makeRe(pattern).source})); }
+            catch (error) { console.log(JSON.stringify({pattern, error: error.message})); }
+          }
+          NODE
       - name: Check Svelte and TS compatibility if and only if original 19-case is green
         shell: bash
         working-directory: apps/desktop-ui
