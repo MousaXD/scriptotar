@@ -1,6 +1,6 @@
 # Agent11 exploratory only: NOT a patched npm package, dependency remediation, or release authorization.
-# Tests additional immutable upstream proposals #262/#264/#267/#274 against the original strict 19-case corpus.
-# Historical PR260/PR261 results remain permanently attached to the previous immutable test commit.
+# Tests distinct generated-regex ambiguity detection candidate from CLOSED/UNMERGED upstream PR275.
+# Prior candidate results #260/#261/#262/#264/#267/#274 are preserved on earlier test commits.
 name: Agent11 upstream picomatch candidate evaluation (test-only, release veto)
 
 on:
@@ -21,14 +21,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: "upstream-pr262", pr: "262", sha: "3222059ac27492d9c0147fee5c65f751bbd851ab", os: "ubuntu-22.04" }
-          - { label: "upstream-pr262", pr: "262", sha: "3222059ac27492d9c0147fee5c65f751bbd851ab", os: "windows-2022" }
-          - { label: "upstream-pr264", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "ubuntu-22.04" }
-          - { label: "upstream-pr264", pr: "264", sha: "8144a1a22a8fa1766951411f220cc8c6228cb041", os: "windows-2022" }
-          - { label: "upstream-pr267", pr: "267", sha: "d9a3f12faf186860cfc86c2834c41f38701152f2", os: "ubuntu-22.04" }
-          - { label: "upstream-pr267", pr: "267", sha: "d9a3f12faf186860cfc86c2834c41f38701152f2", os: "windows-2022" }
-          - { label: "upstream-pr274", pr: "274", sha: "3975e4a0e6b4c4fb2c0119863b243ce04612c5e3", os: "ubuntu-22.04" }
-          - { label: "upstream-pr274", pr: "274", sha: "3975e4a0e6b4c4fb2c0119863b243ce04612c5e3", os: "windows-2022" }
+          - { label: "upstream-pr275-ambiguity", pr: "275", sha: "6ee538d12642f7865574f5b1c395053240657772", os: "ubuntu-22.04" }
+          - { label: "upstream-pr275-ambiguity", pr: "275", sha: "6ee538d12642f7865574f5b1c395053240657772", os: "windows-2022" }
     steps:
       - name: Checkout exact candidate test branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -98,7 +92,9 @@ jobs:
         shell: bash
         run: |
           cp .agent11-proposed-upstream/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          cp .agent11-proposed-upstream/lib/ambiguity.js apps/desktop-ui/node_modules/picomatch/lib/ambiguity.js
           node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/ambiguity.js
           git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
           echo "EXPERIMENTAL NODE_MODULES MUTATION ONLY; NOT A PUBLISHED PATCHED PACKAGE"
       - name: ORIGINAL unmodified strict 19-case --assert-patched --extended (mandatory)
