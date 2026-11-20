@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setLocale } from '../i18n';
 import { createMockClient } from '../api/mockClient';
 import StudioResearchReview from './StudioResearchReview.svelte';
