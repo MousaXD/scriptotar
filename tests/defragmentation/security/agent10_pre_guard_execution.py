@@ -150,6 +150,18 @@ def inspect(text: str, job: str) -> list[str]:
         for expected in source_checks:
             if expected not in reviewed:
                 problems.append(f"Missing required reviewed Python provenance element: {expected}")
+        exact_scope = [
+            'git diff --quiet "$reviewed" HEAD -- .',
+            ":(exclude).github/workflows/windows-tauri.yml",
+            ":(exclude).github/workflows/installed-webview-acceptance.yml",
+        ]
+        for required in exact_scope:
+            if required not in reviewed:
+                problems.append(f"Missing exact-two-workflow change restriction: {required}")
+        scope_start = reviewed.find('git diff --quiet "$reviewed" HEAD -- .')
+        py_start = reviewed.find('git diff --quiet "$reviewed" HEAD --')
+        if scope_start >= 0 and py_start >= 0 and scope_start != py_start:
+            problems.append("Exact two-workflow restriction not first source comparison")
         if not re.search(r"(?m)^\s+set -euo pipefail\s*$", reviewed):
             problems.append("Python provenance comparison is not fail-closed (bash -euo pipefail)")
         if audit is not None:
@@ -218,6 +230,11 @@ jobs:
           reviewed=514ec3ee571c4309e5b7473b8a65ab4fb73f497a
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
+          if ! git diff --quiet "$reviewed" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml'; then
+            exit 1
+          fi
           if ! git diff --quiet "$reviewed" HEAD -- \
             sidecars/transcription/ scripts/ tests/defragmentation/native-e2e/ \
             ':(glob)**/*.py' ':(glob)**/requirements*.txt' \
@@ -261,6 +278,14 @@ jobs:
                "reviewed Python provenance")
     expect_bad(fixture.replace("sidecars/transcription/ scripts/", "unrelated/ scripts/"),
                "reviewed Python provenance")
+    expect_bad(fixture.replace(
+        ":(exclude).github/workflows/windows-tauri.yml",
+        ":(exclude).github/workflows/can-edit-anything.yml"),
+        "exact-two-workflow change restriction")
+    expect_bad(fixture.replace(
+        'git diff --quiet "$reviewed" HEAD -- .',
+        'git diff --quiet "$reviewed" HEAD -- apps/desktop-ui/'),
+        "exact-two-workflow change restriction")
     expect_bad(fixture.replace("      - name: Verify reviewed Python/runtime/QA inputs before script execution",
                                "      - name: Poisoned after guard before Python baseline\n"
                                "        run: python scripts/prepare_mcp_tools.py\n"
@@ -273,7 +298,7 @@ jobs:
         'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"',
         'run: test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"; echo bad'),
         "assertion modified/extended")
-    print("PASS: positive fixture and 12 fail-closed adversarial mutations")
+    print("PASS: positive fixture and 14 fail-closed adversarial mutations")
 
 
 def main() -> int:
