@@ -257,7 +257,7 @@
             {/if}
             <div class="media-copy">
               <strong dir="auto" title={item.title}>{item.title}</strong>
-              <small><span class="creator-name" dir="auto">{item.creator}</span><span class="source-platform" dir="auto">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
+              <small><span class="creator-name" dir="auto">{item.creator}</span><span class="source-platform"><bdi dir="auto">{item.platform}</bdi></span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
               {#if onUseInStudio}<button type="button" class="text-action" on:click={() => onUseInStudio?.(item)}>{isArabic ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
               {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: <bdi dir="ltr">{rateLabel(item)}</bdi></small>{/if}
             </div>
