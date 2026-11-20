@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { locale, setLocale, type AppLocale } from '../i18n';
   import McpSetupWizard from '../components/McpSetupWizard.svelte';
   import Select from '../components/ui/Select.svelte';
@@ -18,6 +19,7 @@
   let draft = structuredClone(savedSnapshot);
   let status: '' | 'saved' | 'outputSelected' | 'outputReset' = '';
   let saveError = '';
+  let saveErrorElement: HTMLParagraphElement | undefined;
   let migrationBusy = false;
   let busy = false;
   $: dirty = JSON.stringify(draft) !== JSON.stringify(savedSnapshot);
@@ -69,6 +71,8 @@
       status = 'saved';
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : $translator('settings.saveFailed');
+      await tick();
+      saveErrorElement?.focus();
     } finally {
       busy = false;
     }
@@ -87,6 +91,8 @@
       }
     } catch (cause) {
       saveError = cause instanceof Error ? cause.message : $translator('settings.outputFailed');
+      await tick();
+      saveErrorElement?.focus();
     } finally {
       busy = false;
     }
@@ -135,6 +141,10 @@
   <div><h1>{$translator('settings.heading')}</h1></div>
   <div class="save-cluster">{#if dirty}<span class="dirty-indicator" role="status"><span></span>{$translator('settings.unsaved')}</span><button class="button secondary" disabled={busy} on:click={discardChanges}>{$translator('settings.discard')}</button>{/if}<button class="button primary settings-save" disabled={busy || !dirty} on:click={save}>{busy ? $translator('settings.saving') : $translator('settings.save')}</button></div>
 </section>
+
+<!-- Keep actionable results next to Save rather than below every settings section. -->
+{#if status}<p class="status-copy settings-status" role="status" data-i18n-ignore>{status === 'saved' ? $translator('settings.saved') : status === 'outputSelected' ? $translator('settings.outputSelected') : $translator('settings.outputReset')}</p>{/if}
+{#if saveError}<p class="status-copy settings-status" role="alert" tabindex="-1" dir="auto" bind:this={saveErrorElement} data-i18n-ignore>{saveError}</p>{/if}
 
 <div class="settings-layout" aria-busy={busy || migrationBusy}>
   <aside class="settings-nav panel" aria-label={$translator('settings.sections')} data-i18n-ignore>
@@ -257,9 +267,6 @@
   </div>
 </div>
 
-{#if status}<p class="status-copy settings-status" aria-live="polite" data-i18n-ignore>{status === 'saved' ? $translator('settings.saved') : status === 'outputSelected' ? $translator('settings.outputSelected') : $translator('settings.outputReset')}</p>{/if}
-{#if saveError}<p class="status-copy settings-status" role="alert" data-i18n-ignore>{saveError}</p>{/if}
-
 <style>
   .settings-head { align-items: center; gap: 10px; }
   .save-cluster { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -291,14 +298,13 @@
   .migration-status p { margin: 0; color: var(--muted); line-height: 1.5; }
   .migration-counts { color: var(--text) !important; }
   .migration-candidates { display: flex; flex-wrap: wrap; gap: 8px; }
-  .settings-status { margin-inline-start: 188px; }
+  .settings-status { margin: 0 0 12px; overflow-wrap: anywhere; }
 
   @media (max-width: 1000px) {
     .settings-layout { grid-template-columns: 1fr; }
     .settings-nav { position: static; display: flex; gap: 4px; overflow-x: auto; }
     .settings-nav-title { display: none; }
     .settings-nav a { flex: 0 0 auto; border: 1px solid var(--border); background: var(--surface); }
-    .settings-status { margin-inline-start: 0; }
   }
   @media (max-width: 760px) {
     .settings-head { align-items: flex-start; }
