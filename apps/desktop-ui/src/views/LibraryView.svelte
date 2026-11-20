@@ -89,7 +89,7 @@
   <div class="library-toolbar">
     <label class="search-field library-search">
       <span class="sr-only">{$translator('library.search')}</span>
-      <input aria-label={$translator('library.search')} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={$translator('library.searchPlaceholder')} />
+      <input dir="auto" aria-label={$translator('library.search')} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={$translator('library.searchPlaceholder')} />
     </label>
     <div class="sort-select">
       <Select label={$translator('library.sortControl')} value={sort}
@@ -135,19 +135,19 @@
         <button class="library-item" type="button" aria-label={$translator('library.openItem', { kind: kindLabel(item.kind), title: item.title })} on:click={() => open(item)}>
           <span class={'kind-icon kind-' + item.kind.toLowerCase().replaceAll(' ', '-')} aria-hidden="true">{item.kind.slice(0, 1)}</span>
           <span class="library-copy">
-            <strong title={item.title}>{item.title}</strong>
-            <small><span class="kind-label">{kindLabel(item.kind)}</span><span class="library-subtitle" title={item.subtitle}>{item.subtitle}</span></small>
+            <strong dir="auto" title={item.title}>{item.title}</strong>
+            <small><span class="kind-label">{kindLabel(item.kind)}</span><span class="library-subtitle" dir="auto" title={item.subtitle}>{item.subtitle}</span></small>
           </span>
-          <span class="library-meta">{platformLabel(item.platform)}</span>
-          <span class="library-meta metric-copy">{item.metric || '—'}</span>
-          <span class="library-date">{item.date}</span>
+          <span class="library-meta" dir="auto">{platformLabel(item.platform)}</span>
+          <span class="library-meta metric-copy" dir="auto">{item.metric || '—'}</span>
+          <span class="library-date" dir="ltr">{item.date}</span>
           <span class="open-arrow" aria-hidden="true">›</span>
         </button>
       {/each}
     </div>
     {#if totalPages > 1}
       <nav class="page-controls" aria-label={isArabic ? 'صفحات المكتبة' : 'Library pages'}>
-        <span>{isArabic ? 'الصفحة' : 'Page'} {currentPage} / {totalPages}</span>
+        <span>{isArabic ? 'الصفحة' : 'Page'} <bdi dir="ltr">{currentPage} / {totalPages}</bdi></span>
         <div>
           <button type="button" disabled={currentPage === 1} on:click={() => page = currentPage - 1}>{isArabic ? 'السابق' : 'Previous'}</button>
           <button type="button" disabled={currentPage === totalPages} on:click={() => page = currentPage + 1}>{isArabic ? 'التالي' : 'Next'}</button>
@@ -157,7 +157,7 @@
   {/if}
 </section>
 
-{#if actionError}<p class="status-copy library-error" role="alert" data-i18n-ignore>{actionError}</p>{/if}
+{#if actionError}<p class="status-copy library-error" role="alert" dir="auto" data-i18n-ignore>{actionError}</p>{/if}
 
 <style>
   .library-empty .clear-filters { margin-block-start: var(--space-3); }
