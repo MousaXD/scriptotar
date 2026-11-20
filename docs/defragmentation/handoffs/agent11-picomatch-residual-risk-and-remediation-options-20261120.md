@@ -52,6 +52,18 @@ Agent11 has added a separately executed *read-only* Rollup graph census:
 
 Never equate `npm audit --omit=dev` or absent browser bundle assets with safe execution of a dev tool on untrusted globs.
 
+## Source-verified Tauri bundle input scope (separate from actual installer contents)
+
+At integration SHA `50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6`, `apps/desktop/src-tauri/tauri.conf.json` exact blob `b28cc6a5057032479f94d5b94ed01f2ea23fa03e` declares `build.frontendDist: '../../desktop-ui/dist'` and `beforeBuildCommand: 'cd ../desktop-ui && npm ci && npm run build'`. Its checked-in `bundle.active` is false; packaging workflows generate platform-specific bundle configuration at build time. Thus the **executed npm build is in the installer pipeline even though the application frontend comes from dist**.
+
+The reviewed **Windows** workflow `.github/workflows/windows-tauri.yml` Git blob `86e9c7c808d7748690f8f1dfebffd61078f4cdf3` dynamically sets bundle resources only to `resources/transcription-runtime/` and `resources/mcp-tools/` (lines 141–146), then builds real frontend assets from `apps/desktop-ui` `npm ci` + `npm run build` (lines 162–166) and packages via `tauri bundle`. No `node_modules` resource mapping is declared in that source. This **supports** static source segregation of dev dependencies, but isn't an independent examination of the final NSIS installer bytes.
+
+The reviewed **Linux** workflow `.github/workflows/linux-tauri.yml` Git blob `0bd2bc3a066af0dc9142595adbdc9e9803c7ea7a` similarly sets bundle resources only to `transcription-runtime` and `mcp-tools` at lines 103–108; frontend build `npm ci` / `npm run build` at lines 140–144, `cargo tauri build --bundles deb -- --locked` at 149–150. Its real `DEB-CONTENTS.txt` listing is generated in CI (line 167), but not examined here for an actual `node_modules`/picomatch negative. **Do not claim that a generated Linux .deb or Windows NSIS has been independently verified free of picomatch** on this source review alone.
+
+A separate Agent10 finding already identifies the Linux packaging workflow's source-trust guard executes too late relative to pip/Python/Rust steps; that issue remains independently owned by Agents 00/10 and is NOT fixed by this parser research.
+
+**Release boundary:** an actual installed `.deb` file listing or extracted NSIS file inventory, tied to the exact final source SHA, must be reviewed before claiming packaged-file exclusion. Browser module-graph absence is only one part of the evidence.
+
 ## Decision tree for actual remediation
 
 1. **Preferred:** an officially maintained picomatch version whose exact npm tarball, integrity, MIT/license, compiler and source provenance can be independently verified, and which passes original 19 plus expanded adversarial corpus and ALL original upstream matcher semantics without changing positive expected outcomes. Lock exact version and run all security/normal-build/platform tests. Agent10 independently reviews final SHA. No such version verified.
