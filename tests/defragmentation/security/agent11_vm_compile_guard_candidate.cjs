@@ -70,6 +70,8 @@ function install(options={}) {
     facade[key]=bounded;
   }
   return {
+    // Expose only to test-only preload instrumentation, never to production.
+    GuardedRegExp:handle.GuardedRegExp,
     stats,
     compileTimeoutMs,
     execTimeoutMs:handle.timeoutMs,
