@@ -261,10 +261,16 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 {
                     return Err(denied("unknown claim evidence"));
                 }
-                if claim.status == ClaimStatus::Supported {
-                    claim.status = ClaimStatus::Unverified;
-                }
+                // A generated label (including "disputed" or "opinion")
+                // is not a human or independent fact-review decision.
+                // All model-inventoried factual claims start unverified.
+                claim.status = ClaimStatus::Unverified;
             }
+            candidate.audit = writing::audit_draft(
+                &candidate.draft,
+                &batch.context.brief,
+                &batch.context.evidence,
+            );
             for beat in &candidate.draft.beats {
                 if !beat
                     .evidence_ids
