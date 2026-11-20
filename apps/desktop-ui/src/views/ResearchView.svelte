@@ -186,7 +186,7 @@
 </section>
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
-  <label class="url-field"><span>{isArabic ? 'رابط المنشئ / الملف الشخصي' : 'Creator / profile URL'}</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label={isArabic ? 'رابط ملف المنشئ' : 'Creator profile URL'} spellcheck="false" /></label>
+  <label class="url-field"><span>{isArabic ? 'رابط المنشئ / الملف الشخصي' : 'Creator / profile URL'}</span><input type="text" inputmode="url" dir="ltr" bind:value={profileUrl} placeholder="https://…" aria-label={isArabic ? 'رابط ملف المنشئ' : 'Creator profile URL'} spellcheck="false" /></label>
   <div class="small-field">
     <Select label={isArabic ? 'حد الفحص' : 'Scan limit'} value={String(limit)}
       options={[10, 25, 50, 100].map((value) => ({ value: String(value), label: String(value) }))}
@@ -200,7 +200,7 @@
 
 <section class="panel research-panel" aria-label={isArabic ? 'نتائج البحث' : 'Research results'}>
   <div class="filter-bar">
-    <label class="search-field research-search"><span class="sr-only">{isArabic ? 'تصفية البحث' : 'Filter research'}</span><input aria-label={isArabic ? 'تصفية البحث' : 'Filter research'} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={isArabic ? 'تصفية العنوان أو المنشئ…' : 'Filter title or creator…'} /></label>
+    <label class="search-field research-search"><span class="sr-only">{isArabic ? 'تصفية البحث' : 'Filter research'}</span><input dir="auto" aria-label={isArabic ? 'تصفية البحث' : 'Filter research'} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={isArabic ? 'تصفية العنوان أو المنشئ…' : 'Filter title or creator…'} /></label>
     <Select label={isArabic ? 'مرشح المنصة' : 'Platform filter'} value={platform}
       options={[{ value: 'All', label: isArabic ? 'الكل' : 'All' }, ...platforms.map((option) => ({ value: option, label: option }))]}
       onChange={updatePlatform} />
@@ -255,23 +255,23 @@
               <div class="thumbnail-placeholder" aria-hidden="true">{item.platform.slice(0, 1)}</div>
             {/if}
             <div class="media-copy">
-              <strong title={item.title}>{item.title}</strong>
-              <small><span class="creator-name">{item.creator}</span><span class="source-platform">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
+              <strong dir="auto" title={item.title}>{item.title}</strong>
+              <small><span class="creator-name" dir="auto">{item.creator}</span><span class="source-platform" dir="auto">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
               {#if onUseInStudio}<button type="button" class="text-action" on:click={() => onUseInStudio?.(item)}>{isArabic ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
-              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
+              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: <bdi dir="ltr">{rateLabel(item)}</bdi></small>{/if}
             </div>
           </div>
           <div class="metric metric-views" role="cell"><span class="mobile-metric-label">{isArabic ? 'المشاهدات' : 'Views'}</span><strong>{metric(item.views)}</strong></div>
           <span class="metric metric-likes" role="cell"><span class="mobile-metric-label">{isArabic ? 'الإعجابات' : 'Likes'}</span>{metric(item.likes)}</span>
           <span class="metric metric-comments" role="cell"><span class="mobile-metric-label">{isArabic ? 'التعليقات' : 'Comments'}</span>{metric(item.comments)}</span>
-          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">{isArabic ? 'التاريخ' : 'Date'}</span>{item.publishedAt || '—'}</span>
-          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">{isArabic ? 'المدة' : 'Duration'}</span>{duration(item.durationSeconds)}</span>
+          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">{isArabic ? 'التاريخ' : 'Date'}</span><bdi dir="ltr">{item.publishedAt || '—'}</bdi></span>
+          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">{isArabic ? 'المدة' : 'Duration'}</span><bdi dir="ltr">{duration(item.durationSeconds)}</bdi></span>
         </div>
       {/each}
     </div>
     {#if totalPages > 1}
       <nav class="page-controls" aria-label={isArabic ? 'صفحات البحث' : 'Research pages'}>
-        <span>{isArabic ? 'الصفحة' : 'Page'} {currentPage} / {totalPages}</span>
+        <span>{isArabic ? 'الصفحة' : 'Page'} <bdi dir="ltr">{currentPage} / {totalPages}</bdi></span>
         <div>
           <button type="button" disabled={currentPage === 1} on:click={() => page = currentPage - 1}>{isArabic ? 'السابق' : 'Previous'}</button>
           <button type="button" disabled={currentPage === totalPages} on:click={() => page = currentPage + 1}>{isArabic ? 'التالي' : 'Next'}</button>
@@ -293,18 +293,18 @@
       {#each watchlistStatuses as watchlist (watchlist.watchlistId)}
         <article class={'watch-health-card state-' + watchlist.state} data-testid={'watchlist-status-' + watchlist.watchlistId}>
           <div class="watch-health-title-row">
-            <strong>{watchlist.label}</strong>
+            <strong dir="auto">{watchlist.label}</strong>
             <span class="watch-state">{isArabic ? arabicStateLabel[watchlist.state] : stateLabel[watchlist.state]}</span>
           </div>
-          {#if watchlist.lastError}<p class="watch-error" role="status">{watchlist.lastError}</p>{/if}
+          {#if watchlist.lastError}<p class="watch-error" role="status" dir="auto">{watchlist.lastError}</p>{/if}
           {#if watchlist.nextRetryAt}
-            <p class="retry-time"><span>{isArabic ? 'المحاولة التالية' : 'Next retry'}</span> <time>{displayTime(watchlist.nextRetryAt)}</time></p>
+            <p class="retry-time"><span>{isArabic ? 'المحاولة التالية' : 'Next retry'}</span> <time dir="ltr">{displayTime(watchlist.nextRetryAt)}</time></p>
           {/if}
           <details class="watch-diagnostics">
             <summary>{isArabic ? 'تفاصيل التحديث' : 'Refresh details'}</summary>
             <dl>
-              <div><dt>{isArabic ? 'آخر محاولة' : 'Last attempt'}</dt><dd>{displayTime(watchlist.lastAttemptAt)}</dd></div>
-              <div><dt>{isArabic ? 'آخر نجاح' : 'Last success'}</dt><dd>{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر محاولة' : 'Last attempt'}</dt><dd dir="ltr">{displayTime(watchlist.lastAttemptAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر نجاح' : 'Last success'}</dt><dd dir="ltr">{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
             </dl>
           </details>
         </article>
