@@ -372,7 +372,8 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
 
 
-from .native_ui_trace import summarize_ui_trace, UI_KIND
+from .native_ui_trace import (summarize_ui_trace, UI_KIND, MAX_TRACE_BYTES,
+                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS)
 
 
 class NativeUiTraceContractTests(unittest.TestCase):
@@ -414,6 +415,100 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertEqual(report["scope"], "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY")
             self.assertIsNone(report["ipc_latency_ms"])
 
+    def test_native_latency_threshold_is_always_at_least_ten(self):
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "external-three-synthetic.jsonl"
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(3)))
+            for invalid in (3, 9, 10.5, True, 101, None):
+                with self.subTest(min_trials=invalid):
+                    with self.assertRaisesRegex(ValueError, "integer in 10..100"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=invalid)
+            # Three observations remain insufficient even with an explicit
+            # valid threshold; no p50/p95 may leak through this parser.
+            report = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
+            self.assertEqual(report["groups"][0]["status"], "INSUFFICIENT_TRIALS")
+            self.assertIsNone(report["groups"][0]["p50_ms"])
+            self.assertIsNone(report["groups"][0]["p95_ms_nearest_rank"])
+
+    def test_untrusted_native_jsonl_is_bounded_before_decoding_or_parsing(self):
+        # All input below is synthetic source-only material, never real UI.
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "malicious-external.jsonl"
+            trace.write_bytes(b" " * (MAX_TRACE_BYTES + 1))
+            with self.assertRaisesRegex(ValueError, "bounded byte limit"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            valid_json = json.dumps(self.event(0))
+            trace.write_text(valid_json + " " * MAX_TRACE_LINE_CHARS)
+            with self.assertRaisesRegex(ValueError, "oversized native observation"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            trace.write_bytes(b"\xff")
+            with self.assertRaisesRegex(ValueError, "must be UTF-8"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # More valid records than the explicit input cap must fail;
+            # their IDs/timestamps remain distinct to exercise the cap
+            # rather than the existing replay or malformed JSON controls.
+            trace.write_text("\n".join(
+                json.dumps(self.event(i)) for i in range(MAX_TRACE_EVENTS + 1)
+            ))
+            with self.assertRaisesRegex(ValueError, "bounded event count"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # The new size limits do not affect normal ten-trial batches,
+            # which remain unverified until independent native QA.
+            trace.write_text("\n".join(
+                json.dumps(self.event(i)) for i in range(10)
+            ))
+            record = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(record["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            self.assertEqual(record["event_count"], 10)
+            self.assertEqual(record["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
+    def test_duplicate_native_json_members_cannot_hide_contradictory_provenance(self):
+        # Construct RAW JSON, not a Python dict: json.dumps(dict) alone cannot
+        # express repeated keys and json.loads normally discards the first.
+        conflicts = {
+            "source_sha": "f" * 40,
+            "fixture_sha256": "f" * 64,
+            "native_provider": "windows-webview2-uia",
+            "cache_state": "cold-rebooted",
+            "action": "candidate_save",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "contradictory-native.jsonl"
+            baseline = json.dumps(self.event(0))
+            for key, contradictory in conflicts.items():
+                extra = json.dumps(key) + ": " + json.dumps(contradictory)
+                last_value_wins = baseline[:-1] + ", " + extra + "}"
+                # Demonstrate that the standard JSON parser would discard
+                # the original field and retain the attacker-controlled one.
+                self.assertEqual(json.loads(last_value_wins)[key], contradictory)
+                with self.subTest(field=key, ordering="last-conflict"):
+                    trace.write_text(last_value_wins, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+                first_value_wins = "{" + extra + ", " + baseline[1:]
+                with self.subTest(field=key, ordering="first-conflict"):
+                    trace.write_text(first_value_wins, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # Even repeated identical values are ambiguous raw audit input.
+            duplicate_same = baseline[:-1] + ', "source_sha": ' + json.dumps(SHA) + "}"
+            trace.write_text(duplicate_same, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # The fix must not turn ten ordinary source-format observations
+            # into an independently certified installed-app performance result.
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(10)), encoding="utf-8")
+            clean = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(clean["event_count"], 10)
+            self.assertEqual(clean["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            self.assertEqual(clean["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
     def test_untrusted_trace_rejects_duplicate_clock_and_payload_leaks(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
@@ -438,7 +533,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 with self.subTest(expected=message):
                     trace.write_text("\n".join(json.dumps(x) for x in events))
                     with self.assertRaisesRegex(ValueError, message):
-                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                        summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
     def test_replayed_accessibility_evidence_cannot_inflate_native_trial_count(self):
         # The parser does not prove host authenticity, but a single recorded
@@ -456,14 +551,14 @@ class NativeUiTraceContractTests(unittest.TestCase):
             }
             trace.write_text("\n".join(json.dumps(x) for x in [baseline, copied]))
             with self.assertRaisesRegex(ValueError, "duplicate native evidence ID"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # A supposedly completed action cannot use the same observation
             # for both its start and completion, even for one reported trial.
             same_id = {**baseline, "completion_evidence_id": baseline["start_evidence_id"]}
             trace.write_text(json.dumps(same_id))
             with self.assertRaisesRegex(ValueError, "start/completion reuse"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # IDs from separate independently recorded sessions have a local
             # namespace. Those are still operator-supplied, not QA-certified.
@@ -471,7 +566,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                         "start_evidence_id": baseline["start_evidence_id"],
                         "completion_evidence_id": baseline["completion_evidence_id"]}
             trace.write_text("\n".join(json.dumps(x) for x in [baseline, separate]))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
 
@@ -494,13 +589,13 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertNotEqual(first["completion_evidence_id"], relabeled["completion_evidence_id"])
             trace.write_text("\n".join(json.dumps(e) for e in (first, relabeled)))
             with self.assertRaisesRegex(ValueError, "duplicate native monotonic time pair"):
-                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+                summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
 
             # Ordinary subsequent actions from the same session are valid
             # when their true observed time intervals differ.
             distinct = {**self.event(1), "session_id": first["session_id"]}
             trace.write_text("\n".join(json.dumps(e) for e in (first, distinct)))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["groups"][0]["status"], "INSUFFICIENT_TRIALS")
 
@@ -512,7 +607,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 "completion_monotonic_ns": first["completion_monotonic_ns"],
             }
             trace.write_text("\n".join(json.dumps(e) for e in (first, another_session)))
-            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=3)
+            result = summarize_ui_trace(trace, SHA, HASH, HASH, min_trials=10)
             self.assertEqual(result["event_count"], 2)
             self.assertEqual(result["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
 

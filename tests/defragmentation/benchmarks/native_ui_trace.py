@@ -32,6 +32,26 @@ ALLOWED_KEYS = frozenset({
 })
 PROVIDERS = frozenset({"linux-webkitgtk-atspi", "windows-webview2-uia"})
 CACHE = frozenset({"cold-rebooted", "cold-cache-dropped", "warm-cache", "unknown"})
+# Native-driver JSONL is an untrusted input. Keep decode, parsing, and bucket
+# accumulation bounded even for malformed or unexpectedly huge evidence files.
+MAX_TRACE_BYTES = 16 * 1024 * 1024
+MAX_TRACE_LINE_CHARS = 4096
+MAX_TRACE_EVENTS = 10_000
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Reject repeated member names before JSON overwrites contradictory evidence.
+
+    json.loads normally silently keeps the last duplicate. External native
+    trace headers are audit labels, not cryptographic proof; even conflicting
+    operator assertions must be refused rather than normalized away.
+    """
+    result: dict = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate JSON member name in native observation")
+        result[name] = value
+    return result
 
 
 def _percentiles(values: list[float]) -> dict:
@@ -49,8 +69,10 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         not SHA256.fullmatch(v) for v in (package_sha256, executable_sha256)
     ):
         raise ValueError("exact source and package/executable hashes required")
-    if not 3 <= min_trials <= 100:
-        raise ValueError("min_trials must be 3..100")
+    # Native benchmark acceptance requires >=10 independent observations
+    # per matching cohort. Never let a caller lower this floor for p50/p95.
+    if type(min_trials) is not int or not 10 <= min_trials <= 100:
+        raise ValueError("min_trials must be an integer in 10..100")
     if not path.is_file():
         raise ValueError("missing external native trace")
     groups: dict[tuple, list[dict]] = {}
@@ -62,12 +84,27 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
     # purported trial. A single accessibility observation cannot prove ten
     # independent trials merely by relabeling the trial_id field.
     used_evidence: set[tuple[str, str]] = set()
+    # Never read the whole unbounded file: the additional byte detects an
+    # oversize trace without admitting its content to JSON parsing. A file
+    # that grows while being read is bounded by the same hard cap.
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_TRACE_BYTES + 1)
+    if len(raw) > MAX_TRACE_BYTES:
+        raise ValueError("external native trace exceeds bounded byte limit")
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except UnicodeDecodeError as exc:
+        raise ValueError("external native trace must be UTF-8") from exc
     count = 0
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(lines, 1):
+        if len(line) > MAX_TRACE_LINE_CHARS:
+            raise ValueError(f"line {number}: oversized native observation")
         if not line.strip():
             continue
+        if count >= MAX_TRACE_EVENTS:
+            raise ValueError("external native trace exceeds bounded event count")
         try:
-            event = json.loads(line)
+            event = json.loads(line, object_pairs_hook=_unique_json_object)
         except json.JSONDecodeError as exc:
             raise ValueError(f"line {number}: malformed JSON") from exc
         if not isinstance(event, dict) or set(event) != ALLOWED_KEYS:
@@ -166,7 +203,7 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
         "required_trials_per_bucket": min_trials, "event_count": count,
         "groups": buckets,
         "ipc_latency_ms": None,
-        "limitations": "Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
+        "limitations": "Untrusted JSONL is bounded by 16 MiB, 4096 characters per line and 10000 events; repeated JSON member names are rejected, including contradictory source labels. Monotonic clocks must be from the same process per event pair. Exact duplicate intervals within a session are rejected, but time-label checks do not authenticate native events. Cold/warm state, installed UI control completion, exact fixture, package and source must be externally attested. Insufficient samples are NOT TESTED; all values require native QA before publication.",
     }
 
 
