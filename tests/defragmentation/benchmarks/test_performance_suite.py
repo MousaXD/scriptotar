@@ -466,6 +466,49 @@ class NativeUiTraceContractTests(unittest.TestCase):
             self.assertEqual(record["event_count"], 10)
             self.assertEqual(record["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
 
+    def test_duplicate_native_json_members_cannot_hide_contradictory_provenance(self):
+        # Construct RAW JSON, not a Python dict: json.dumps(dict) alone cannot
+        # express repeated keys and json.loads normally discards the first.
+        conflicts = {
+            "source_sha": "f" * 40,
+            "fixture_sha256": "f" * 64,
+            "native_provider": "windows-webview2-uia",
+            "cache_state": "cold-rebooted",
+            "action": "candidate_save",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "contradictory-native.jsonl"
+            baseline = json.dumps(self.event(0))
+            for key, contradictory in conflicts.items():
+                extra = json.dumps(key) + ": " + json.dumps(contradictory)
+                last_value_wins = baseline[:-1] + ", " + extra + "}"
+                # Demonstrate that the standard JSON parser would discard
+                # the original field and retain the attacker-controlled one.
+                self.assertEqual(json.loads(last_value_wins)[key], contradictory)
+                with self.subTest(field=key, ordering="last-conflict"):
+                    trace.write_text(last_value_wins, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+                first_value_wins = "{" + extra + ", " + baseline[1:]
+                with self.subTest(field=key, ordering="first-conflict"):
+                    trace.write_text(first_value_wins, encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # Even repeated identical values are ambiguous raw audit input.
+            duplicate_same = baseline[:-1] + ', "source_sha": ' + json.dumps(SHA) + "}"
+            trace.write_text(duplicate_same, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON member"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+            # The fix must not turn ten ordinary source-format observations
+            # into an independently certified installed-app performance result.
+            trace.write_text("\n".join(json.dumps(self.event(i)) for i in range(10)), encoding="utf-8")
+            clean = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(clean["event_count"], 10)
+            self.assertEqual(clean["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            self.assertEqual(clean["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
     def test_untrusted_trace_rejects_duplicate_clock_and_payload_leaks(self):
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "external.jsonl"
