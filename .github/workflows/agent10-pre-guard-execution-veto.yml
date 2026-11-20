@@ -1,0 +1,63 @@
+# Test-only Agent10 independent review of exact final PR174 candidate.
+# Deliberately RED until pre-guard execution/credentials are repaired.
+# Does not execute any script from the untrusted source checkout.
+name: Agent10 independent pre-guard execution veto
+
+on:
+  push:
+    branches: [agent-10/p0-pr174-final-repin-adversarial-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-pr158-order:
+    name: Original final PR174 command-order and credential denial (strict)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify test source identity
+        shell: bash
+        env:
+          AGENT10_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AGENT10_SHA"
+      - name: Checkout exact untrusted final PR174 candidate as DATA only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 95d9c8da1966a5f0579731f774ff7d24dd98f4d9
+          path: .agent10-pr158-target
+          persist-credentials: false
+          sparse-checkout: |
+            .github/workflows/windows-tauri.yml
+            .github/workflows/installed-webview-acceptance.yml
+            .github/workflows/linux-tauri.yml
+          sparse-checkout-cone-mode: false
+      - name: Assert reviewed final PR174 SHA
+        shell: bash
+        run: test "$(git -C .agent10-pr158-target rev-parse HEAD)" = '95d9c8da1966a5f0579731f774ff7d24dd98f4d9'
+      - name: Checkout immutable reviewed guard for benign worktree tamper control
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent10-immutable-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Benign control — Git HEAD alone does not attest guard worktree bytes
+        run: python3 tests/defragmentation/security/agent10_guard_worktree_integrity.py --checkout .agent10-immutable-guard
+      - name: Independent negative-mutation self-test
+        run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --self-test
+      - name: Strict original final PR174 pre-guard audit (RED is release veto)
+        run: python3 tests/defragmentation/security/agent10_pre_guard_execution.py --target .agent10-pr158-target
+      - name: Real Git-tree exact three-workflow scope negative controls
+        run: python3 tests/defragmentation/security/agent10_two_workflow_git_tree_scope.py --target .agent10-pr158-target
+      - name: Standalone Linux package source and 18 mutation + 11 Git denial tests
+        run: python3 tests/defragmentation/security/agent10_linux_pr167_exact_security.py --target .agent10-pr158-target
