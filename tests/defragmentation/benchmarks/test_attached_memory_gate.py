@@ -141,6 +141,9 @@ class AttachedMemoryGateTests(unittest.TestCase):
         valid = copy.deepcopy(self.report)
         for i, row in enumerate(valid["raw_samples"]):
             row["main_cpu_time_ns"] = 1_000_000_000 + i * 100_000_000
+            row["main_cpu_time_observed_monotonic_ns"] = (
+                row["sample_started_monotonic_ns"] + 50_000_000
+            )
         cpu = self.check(valid)["root_process_cpu_evidence"]
         self.assertEqual(cpu["status"], "ROOT_ONLY_UNCERTIFIED")
         self.assertEqual(cpu["cpu_time_delta_ns"], 200_000_000)
@@ -164,6 +167,17 @@ class AttachedMemoryGateTests(unittest.TestCase):
         decrease["raw_samples"][2]["main_cpu_time_ns"] = 1_099_999_999
         with self.assertRaisesRegex(ValueError, "CPU time decreased"):
             self.check(decrease)
+
+        for offset in (-1, 100_000_001, None, True):
+            invalid_clock = copy.deepcopy(valid)
+            invalid_clock["raw_samples"][1]["main_cpu_time_observed_monotonic_ns"] = (
+                invalid_clock["raw_samples"][1]["sample_started_monotonic_ns"] + offset
+                if type(offset) is int else offset
+            )
+            with self.subTest(cpu_clock_offset=offset), self.assertRaisesRegex(
+                ValueError, "missing or unbounded root CPU observation clock"
+            ):
+                self.check(invalid_clock)
 
     def test_windows_private_memory_is_not_linux_pss(self):
         bad = copy.deepcopy(self.report)
