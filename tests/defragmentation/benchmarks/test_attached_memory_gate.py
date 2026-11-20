@@ -120,6 +120,13 @@ class AttachedMemoryGateTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "nonfinite JSON constant"):
                     load_attached_report(trace)
 
+        # This remains syntactically valid JSON: Python float parsing can
+        # overflow an exponent to infinity without invoking parse_constant.
+        trace.write_text(baseline[:-1] + ', "untrusted_extra": 1e9999}',
+                         encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "nonfinite JSON number"):
+            load_attached_report(trace)
+
         too_many = copy.deepcopy(self.report)
         too_many["raw_samples"] = too_many["raw_samples"][:1] * (MAX_ATTACHED_SAMPLES + 1)
         too_many["sample_count"] = MAX_ATTACHED_SAMPLES + 1
