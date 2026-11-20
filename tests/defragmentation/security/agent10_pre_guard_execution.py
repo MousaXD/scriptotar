@@ -261,11 +261,6 @@ jobs:
                "reviewed Python provenance")
     expect_bad(fixture.replace("sidecars/transcription/ scripts/", "unrelated/ scripts/"),
                "reviewed Python provenance")
-    expect_bad(fixture.replace("      - name: Install pinned Tauri CLI",
-                                "      - name: Poisoned before baseline\n"
-                                "        run: python scripts/prepare_mcp_tools.py\n"
-                                "      - name: Install pinned Tauri CLI"),
-               "Global npm Tauri CLI differs" if False else "reviewed Python") if False else None
     expect_bad(fixture.replace("      - name: Verify reviewed Python/runtime/QA inputs before script execution",
                                "      - name: Poisoned after guard before Python baseline\n"
                                "        run: python scripts/prepare_mcp_tools.py\n"
