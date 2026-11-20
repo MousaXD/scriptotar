@@ -2057,7 +2057,7 @@ mod tests {
                     "How can we make original tutorial {index}? First describe one method. Follow for more."
                 );
                 let segments = serde_json::json!([
-                    {"index":0,"start":0.0,"end":2.0,"text":spoken},
+                    {"index":0,"start":0.0,"end":2.0,"text":spoken.clone()},
                     {"index":1,"start":2.0,"end":4.0,"text":"A real timed explanation."},
                     {"index":2,"start":4.0,"end":6.0,"text":"Return to the central question."}
                 ]);
@@ -2100,6 +2100,8 @@ mod tests {
             .decide_study_research(project, study, &proposed.plan.id, "approve")
             .unwrap();
         assert_eq!(completed.state, RunState::Completed);
+        assert_eq!(completed.usage.cost_microusd, 0);
+        assert_eq!(completed.usage.tokens, 0);
         let artifact =
             Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
 
