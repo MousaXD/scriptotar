@@ -58,14 +58,18 @@ def main() -> int:
 
     failures = 0
     # Control: legal extglob matches and the normalizer is safe in its default mode.
-    for options, label in (({}, "default"), ({"capture": True}, "capture=true")):
+    for options, label in (({}, "default"), ({"capture": True}, "capture=true"),
+                           ({"maxExtglobRecursion": False}, "maxExtglobRecursion=false"),
+                           ({"capture": True, "maxExtglobRecursion": False}, "capture+disabled-recursion")):
         status, info = probe(root, "+(a|b)", "abab", options, True)
         print(f"CONTROL {label}: {status} {info}", flush=True)
         if status != "PASS":
             failures += 1
 
     for label, pattern, source in CASES:
-        for options, option_label in (({}, "default"), ({"capture": True}, "capture=true")):
+        for options, option_label in (({}, "default"), ({"capture": True}, "capture=true"),
+                           ({"maxExtglobRecursion": False}, "maxExtglobRecursion=false"),
+                           ({"capture": True, "maxExtglobRecursion": False}, "capture+disabled-recursion")):
             status, info = probe(root, pattern, source, options, False)
             print(f"{label} {option_label}: {status} {info}", flush=True)
             if status != "PASS":
