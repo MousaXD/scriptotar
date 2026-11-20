@@ -1,0 +1,46 @@
+# Independent Agent10 exact-SHA adversarial certification for one Linux workflow.
+# This workflow executes its own test script, never the PR167 candidate scripts.
+name: Agent10 independent Linux PR167 exact-SHA source veto
+
+on:
+  push:
+    branches: [agent-10/p0-linux-package-pr167-exact-security-20261120]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-security:
+    name: Independent source, guard bytes, 18 mutants and 11 Git commits
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout independent Agent10 tests, no persisted credential
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Confirm exact independent test source SHA
+        shell: bash
+        env:
+          AUDIT_SHA: ${{ github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$AUDIT_SHA"
+      - name: Checkout exact PR167 as untrusted DATA ONLY
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 7056934cf2d8782ee2922ae46baf492630591691
+          path: .agent10-pr167-data
+          persist-credentials: false
+      - name: Verify actual PR167 source blob, not just Git HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=.agent10-pr167-data
+          test "$(git -C "$root" rev-parse HEAD)" = 7056934cf2d8782ee2922ae46baf492630591691
+          test "$(git -C "$root" rev-parse HEAD:.github/workflows/linux-tauri.yml)" = 4331e17568129e309bf0d195af79ef0138b8bbbe
+          test "$(git -C "$root" hash-object .github/workflows/linux-tauri.yml)" = 4331e17568129e309bf0d195af79ef0138b8bbbe
+          git -C "$root" diff --quiet -- .github/workflows/linux-tauri.yml
+      - name: Independent positive source check and adversarial negative controls
+        run: python3 tests/defragmentation/security/agent10_linux_pr167_exact_security.py --target .agent10-pr167-data
