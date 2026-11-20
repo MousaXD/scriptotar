@@ -94,6 +94,28 @@ pub(super) fn verify_committed_versions(
                 "writing receipt does not match immutable initial draft".into(),
             ));
         }
+        // Original cited links are durable provenance, not replaceable
+        // editor metadata. New links may be added by the user later, so
+        // require a superset rather than forbidding those human additions.
+        for source in &candidate.lineage {
+            let linked: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM draft_source_links
+                     WHERE project_id=?1 AND draft_id=?2 AND study_source_id=?3",
+                    params![
+                        batch.context.project_id.to_string(),
+                        id.to_string(),
+                        source.source_id.to_string()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(error)?;
+            if linked != 1 {
+                return Err(WritingWorkflowError::PersistFailed(
+                    "writing receipt is missing an original source link".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }
