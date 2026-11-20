@@ -34,7 +34,25 @@ jobs:
           sparse-checkout: |
             .github/workflows/linux-tauri.yml
           sparse-checkout-cone-mode: false
-      - name: Verify exact integration source identity
-        run: test "$(git -C .agent10-merged-integration rev-parse HEAD)" = 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
-      - name: Strict Linux source trust audit and adversarial self-test
-        run: python3 tests/defragmentation/security/agent10_linux_package_pre_guard.py --target .agent10-merged-integration
+      - name: Verify exact integration source identity and actual file bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C .agent10-merged-integration rev-parse HEAD)" = 50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6
+          test "$(git -C .agent10-merged-integration hash-object .github/workflows/linux-tauri.yml)" = 0bd2bc3a066af0dc9142595adbdc9e9803c7ea7a
+          git -C .agent10-merged-integration diff --quiet -- .github/workflows/linux-tauri.yml
+      - name: Expanded positive fixture and seven independent negative mutations
+        run: python3 tests/defragmentation/security/agent10_linux_standalone_prebuild_execution.py --self-test
+      - name: Both strict source-order and guard-byte audits (RED is required release veto)
+        shell: bash
+        run: |
+          set +e
+          python3 tests/defragmentation/security/agent10_linux_package_pre_guard.py --target .agent10-merged-integration
+          ordering=$?
+          python3 tests/defragmentation/security/agent10_linux_standalone_prebuild_execution.py --source .agent10-merged-integration/.github/workflows/linux-tauri.yml
+          guard_bytes=$?
+          set -e
+          if [ "$ordering" -ne 0 ] || [ "$guard_bytes" -ne 0 ]; then
+            echo "::error::Unsafe exact-integration standalone Linux prebuild source. Ordering=$ordering bytes=$guard_bytes"
+            exit 1
+          fi
