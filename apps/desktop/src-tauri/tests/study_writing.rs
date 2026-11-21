@@ -671,6 +671,44 @@ fn optional_model_review_is_advisory_not_a_verification_verdict() {
 }
 
 #[test]
+fn model_review_cannot_return_a_copied_source_excerpt() {
+    let (temp, _old_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The original speaker described how residents planned the gathering and compared the walkways before asking their neighborhood group to review all possible crossing locations together at the community center";
+    let mut context = current.0.borrow().clone();
+    context.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("review-copy", context.clone()).unwrap();
+    current.0.replace(context);
+    let mut sink = SqlFixtureSink::open(&temp.path().join("review-copy.sqlite"), current.0.clone());
+    let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
+    let original = sink.get(ids[0]).candidates[0].clone();
+    provider.responses.push_back(
+        json!({
+            "findings":[{
+                "beat_id":"hook",
+                "concern":passage,
+                "recommendation":"Ask for independent verification",
+                "evidence_ids":["e1"],
+                "needs_human_review":false
+            }]
+        })
+        .to_string(),
+    );
+    assert!(matches!(
+        study_writing::review_candidate(
+            &plan,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            &original,
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 5);
+    assert!(sink.get(ids[0]).candidates[0].review_findings.is_empty());
+}
+
+#[test]
 fn arabic_output_and_locator_remain_intact() {
     let (temp, _plan, current, mut gate, mut provider, stop) = setup();
     let mut c = current.0.borrow_mut();
