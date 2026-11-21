@@ -24,10 +24,20 @@ export function matchesResearchReportScope(
   const steps = plan?.steps;
   const step = Array.isArray(steps) ? steps[0] : undefined;
   const requested = step?.input?.source_ids;
+  const savedStep = Array.isArray(run?.steps) ? run.steps[0] : undefined;
   if (!run || !plan || !Array.isArray(steps) ||
       run.state !== 'completed' || plan.project_id !== projectId ||
-      plan.study_id !== studyId || steps.length !== 1 ||
+      plan.study_id !== studyId || typeof plan.id !== 'string' || !plan.id ||
+      steps.length !== 1 || !Array.isArray(run.steps) || run.steps.length !== 1 ||
+      typeof step?.id !== 'string' || !step.id || savedStep?.id !== step.id ||
       step?.input.tool !== 'analyze_evidence' ||
+      // UI report admission requires the approved, completed local step,
+      // never just a caller-supplied report with matching source labels.
+      step.requires_approval !== true ||
+      step.estimate?.tokens !== 0 || step.estimate?.cost_microusd !== 0 ||
+      savedStep.approved !== true || savedStep.output === null ||
+      typeof savedStep.output?.artifact_id !== 'string' ||
+      !savedStep.output.artifact_id ||
       !Array.isArray(requested) || requested.length < 1 || requested.length > 8 ||
       requested.some((id) => typeof id !== 'string' || !id) ||
       new Set(requested).size !== requested.length ||
@@ -118,7 +128,12 @@ export function matchesResearchReportScope(
               !evidence.transcript_revision.trim() ||
               (finding.origin_revision !== null &&
                 evidence.transcript_revision !== finding.origin_revision))) ||
-          typeof evidence.locator !== 'string' || !evidence.locator ||
+          // The canonical extractor emits the exact stored StudySource
+          // locator. A forged observation cannot redirect provenance to a
+          // similarly named URL or invented segment-specific locator.
+          evidence.locator !== finding.locator ||
+          (evidence.segment_id !== null &&
+            (typeof evidence.segment_id !== 'string' || !evidence.segment_id)) ||
           typeof evidence.excerpt !== 'string' || !evidence.excerpt.trim() ||
           Array.from(evidence.excerpt).length > MAX_DISPLAY_EXCERPT_CODEPOINTS ||
           typeof observation.statement !== 'string' || !observation.statement.trim() ||
@@ -128,7 +143,7 @@ export function matchesResearchReportScope(
       const start = evidence.start_ms;
       const end = evidence.end_ms;
       if ((start === null) !== (end === null) ||
-          (start !== null && (!Number.isFinite(start) || !Number.isFinite(end) ||
+          (start !== null && (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) ||
             start < 0 || end! < start))) return false;
     }
   }
