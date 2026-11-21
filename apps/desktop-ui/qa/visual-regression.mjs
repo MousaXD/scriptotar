@@ -292,6 +292,25 @@ async function runWorkspace(browser, width, locale, theme) {
       await checkSwitchesAndPopovers(page, label + '/' + view.name);
       await checkCustomSelectKeyboard(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
+      if (view.name === 'settings' && width === 760) {
+        // Every section anchor must be discoverable without horizontal scrolling
+        // in both document directions, not just present in the DOM.
+        const navVisibility = await page.locator('.settings-nav').evaluate((nav) => {
+          const bounds = nav.getBoundingClientRect();
+          const links = [...nav.querySelectorAll('a')];
+          return {
+            clipped: links.filter((link) => {
+              const item = link.getBoundingClientRect();
+              return item.left < bounds.left - 1 || item.right > bounds.right + 1 ||
+                item.width === 0 || item.height === 0;
+            }).map((link) => link.textContent?.trim()),
+            scrollOverflow: nav.scrollWidth > nav.clientWidth + 1
+          };
+        });
+        if (navVisibility.scrollOverflow || navVisibility.clipped.length) {
+          recordFailure(label + '/settings-nav-visibility', JSON.stringify(navVisibility));
+        }
+      }
       if (view.name === 'research') {
         // The narrower EN/AR capture form must not compress "Save watchlist"
         // into individual word fragments. Browser-only geometry assertion.
