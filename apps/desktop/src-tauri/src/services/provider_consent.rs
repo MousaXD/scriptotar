@@ -1408,9 +1408,10 @@ mod tests {
         // The provider transport is never constructed or called.
         let path = services.store.path().to_path_buf();
         let transcript = transcript_id.to_string();
+        let (completed_tx, completed_rx) = std::sync::mpsc::channel();
         let writer = thread::spawn(move || {
             let external = rusqlite::Connection::open(path).unwrap();
-            external
+            let changed = external
                 .execute(
                     "UPDATE transcripts SET text=?1,updated_at=?2 WHERE id=?3",
                     rusqlite::params![
@@ -1419,17 +1420,21 @@ mod tests {
                         transcript
                     ],
                 )
-                .unwrap()
+                .unwrap();
+            completed_tx.send(changed).unwrap();
         });
-        assert_eq!(
-            writer.join().unwrap(),
-            1,
-            "independent SQLite write must commit before the held guard releases"
-        );
-        // Guard is an immutable snapshot; it cannot notice this committed
-        // canonical source change while the application mutex remains held.
+        // A repaired cross-process gate would block this writer. The timeout
+        // bounds the negative test; always release the guard before joining.
+        let committed_while_guard_held =
+            completed_rx.recv_timeout(std::time::Duration::from_secs(3));
         assert_eq!(held_guard.scope(), &previously_authorized);
         drop(held_guard);
+        writer.join().unwrap();
+        assert_eq!(
+            committed_while_guard_held.expect("independent writer could not commit under guard"),
+            1,
+            "the independent SQLite mutation must commit before guard release"
+        );
         assert!(matches!(
             services.lock_dispatch_scope(&previously_authorized),
             Err(ConsentError::ChangedContext)
