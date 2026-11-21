@@ -537,8 +537,14 @@ fn original_source_excerpt(item: &EvidenceRef) -> bool {
         && matches!(
             (item.kind, item.status),
             (EvidenceKind::SocialTranscript, EvidenceStatus::Attributed)
-                | (EvidenceKind::IndependentDocument, EvidenceStatus::Attributed)
-                | (EvidenceKind::IndependentDocument, EvidenceStatus::Corroborated)
+                | (
+                    EvidenceKind::IndependentDocument,
+                    EvidenceStatus::Attributed
+                )
+                | (
+                    EvidenceKind::IndependentDocument,
+                    EvidenceStatus::Corroborated
+                )
         )
 }
 
