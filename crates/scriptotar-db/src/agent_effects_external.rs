@@ -797,9 +797,61 @@ mod tests {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
         let reserved = reserve(&db, &snapshot, project, study);
+        let mut identity = crate::ProviderDispatchEffect {
+            run_id: key.run_id,
+            step_id: key.step_id,
+            idempotency_key: key.idempotency_key,
+            attempt: reserved.attempt,
+            provider: "openai",
+            wire_sha256: fp(),
+        };
+        // A forged or changed serialized payload cannot acquire this freeze
+        // even if the Study and all unrelated run fields are correct.
+        identity.wire_sha256 =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                identity,
+            )
+            .is_err());
+        identity.wire_sha256 = fp();
         let guard = db
-            .acquire_provider_dispatch_barrier(project, study, &"a".repeat(64))
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                identity,
+            )
             .unwrap();
+        // Prove the recovery record is joined to this exact reserved attempt.
+        let inspect = rusqlite::Connection::open(db.path()).unwrap();
+        let recorded: (String, String, String, i64, String, String) = inspect
+            .query_row(
+                "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
+                        effect_attempt,effect_provider,effect_wire_sha256
+                 FROM provider_dispatch_barrier WHERE singleton=1",
+                [],
+                |row| Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                )),
+            )
+            .unwrap();
+        assert_eq!(recorded, (
+            key.run_id.to_owned(),
+            key.step_id.to_owned(),
+            key.idempotency_key.to_owned(),
+            reserved.attempt,
+            "openai".to_owned(),
+            fp().to_owned(),
+        ));
         // Effect CAS must commit before the network send even with the
         // committed cross-connection canonical-scope barrier in place.
         let dispatched = db
