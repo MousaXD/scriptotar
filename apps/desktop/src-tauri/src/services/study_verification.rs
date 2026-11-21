@@ -1,9 +1,10 @@
 //! Read-only, scoped bridge from canonical Study evidence into the verification
 //! engine. No schema, DTO, provider or publication side effects are added.
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use chrono::DateTime;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use scriptotar_ai::writing::{
     self,
@@ -514,6 +515,18 @@ impl AppServices {
         // a current canonical saved draft belonging to the exact Study.
         let draft_id = Uuid::parse_str(&draft.id)
             .map_err(|_| RepositoryError::Validation("draft ID is not canonical".into()))?;
+        // Hold the single SQLite writer reservation before reading any draft,
+        // structured manifest, Study, evidence or transcript. Every other
+        // connection used by the existing scoped store now observes one
+        // coherent committed state; concurrent writers cannot interleave.
+        // Verification is read-only despite the IMMEDIATE reservation.
+        let mut db = Connection::open(self.store.path())
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        db.busy_timeout(Duration::from_secs(5))
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        let snapshot = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let saved_draft = self.store.get_draft(project_id, draft_id)?;
         if saved_draft.study_id != study_id
             || saved_draft.archived_at.is_some()
@@ -523,10 +536,8 @@ impl AppServices {
                 "draft Study membership or revision changed".into(),
             ));
         }
-        let db = Connection::open(self.store.path())
-            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
         let saved_version = scoped_current_saved_version(
-            &db,
+            &snapshot,
             project_id,
             study_id,
             draft_id,
@@ -538,7 +549,7 @@ impl AppServices {
         .ok_or_else(|| RepositoryError::Conflict(
             "current draft does not match an immutable DraftVersion".into(),
         ))?;
-        let structured: Option<String> = db.query_row(
+        let structured: Option<String> = snapshot.query_row(
             "SELECT sr.structured_json
                FROM study_writing_revisions sr
                JOIN creative_drafts d ON d.id=sr.draft_id
@@ -699,13 +710,13 @@ impl AppServices {
             .into_iter()
             .collect();
         let final_version = scoped_current_saved_version(
-            &db,
+            &snapshot,
             project_id,
             study_id,
             draft_id,
             saved_draft.revision,
         )?;
-        let final_structured: Option<String> = db.query_row(
+        let final_structured: Option<String> = snapshot.query_row(
             "SELECT structured_json FROM study_writing_revisions
               WHERE draft_id=?1 AND version=?2",
             params![draft_id.to_string(), saved_draft.revision],
@@ -807,12 +818,16 @@ impl AppServices {
                 })
             })
             .collect();
-        Ok(SavedDraftVerification {
+        let result = SavedDraftVerification {
             draft_version_id: saved_version.id.to_string(),
             draft_version_sha256: saved_version_digest(project_id, study_id, &saved_version),
             claim_sources,
             report: verification::verify_claims(&ctx, &claims),
-        })
+        };
+        snapshot
+            .commit()
+            .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+        Ok(result)
     }
 }
 
