@@ -232,6 +232,28 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
   });
 
+  it('quarantines malformed saved run indexes without rendering approval', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const original = api.listStudyResearchRuns.bind(api);
+    api.listStudyResearchRuns = async (project, study) => {
+      const runs = await original(project, study);
+      return [...runs, null as never];
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Prepare research' })).toBeDisabled();
+  });
+
+  it('discards incomplete source indexes instead of exposing a partial approval scope', async () => {
+    const { api, projectId, studyId } = await fixture();
+    api.listStudyResearchSources = async () => [null as never];
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.getByRole('button', { name: 'Prepare research' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+  });
+
   it('removes stale approval controls if a source refresh fails', async () => {
     const { api, projectId, studyId } = await fixture();
     render(StudioResearchReview, { props: { api, projectId, studyId } });
