@@ -1159,20 +1159,13 @@ mod tests {
             "UPDATE agent_runs SET snapshot_json='{}' WHERE id=?1",
             params![snap.plan.id],
         ).unwrap();
-        assert!(reopened_inspection_denied(&db,project,study,&snap.plan.id));
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
         let raw_status:String=conn.query_row(
             "SELECT status FROM agent_external_effects WHERE idempotency_key=?1",
             params![key.idempotency_key],|r|r.get(0),
         ).unwrap();
         assert_eq!(raw_status,"reserved");
         assert_eq!(reserved.status,ExternalEffectStatus::Reserved);
-    }
-
-    #[cfg(test)]
-    fn reopened_inspection_denied(
-        db:&SqliteStore,project:Uuid,study:Uuid,run_id:&str
-    )->bool {
-        db.inspect_external_effects_for_run(project,study,run_id).is_err()
     }
 
     #[test]
