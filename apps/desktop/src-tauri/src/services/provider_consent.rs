@@ -15,8 +15,8 @@ use scriptotar_ai::{
 };
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
-    ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation,
-    ExternalResolution, SqliteStore,
+    AuthenticatedChargedResponse, ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus,
+    ExternalReservation, ExternalResolution, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -203,15 +203,11 @@ impl SqlitePaidEffectFence {
             || context.run_id.is_empty()
             || context.step_id.is_empty()
             || context.idempotency_key.is_empty()
-            || provider.is_empty()
-            || provider.len() > 64
-            // The durable v12 identity namespace must not be fragmentable
-            // by case aliases (for example, openai vs OpenAI). Only the host's
-            // canonical lowercase provider ID may reach the SQLite fence.
-            || provider.bytes().any(|c| c.is_ascii_uppercase())
-            || !provider
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.'))
+            // Receipt IDs are unique per provider, NEVER per model. The
+            // only sealed wire candidate in this host is OpenAI; paid egress is OFF.
+            // Reject case aliases, model suffixes and unreviewed vendors so
+            // they cannot split the v12 provider identity/tombstone namespace.
+            || provider != "openai"
             || limits.tokens == 0
             || limits.cost_microusd == 0
         {
@@ -295,6 +291,14 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         usage: &ActualUsage,
     ) -> Result<(), ConsentError> {
         self.check_effect_id(effect_id)?;
+        // Charged writing requires sealed bytes atomically with the receipt.
+        // The historical v10 receipt-only path cannot complete this outcome.
+        if matches!(
+            self.step_id.as_str(),
+            "angles" | "draft-1" | "draft-2" | "draft-3"
+        ) {
+            return Err(ConsentError::EffectFenceUnavailable);
+        }
         // BoundedProvider::verified_usage_receipt MUST authenticate this ID
         // before calling settle. The v10 ledger uses it as the receipt key
         // until the wire adapter exposes a distinct provider receipt ID.
@@ -316,7 +320,35 @@ impl PaidEffectFence for SqlitePaidEffectFence {
             .get_external_effect(self.key())
             .map_err(|_| ConsentError::UncertainEffect)?
             .ok_or(ConsentError::UncertainEffect)?;
-        if existing.status != ExternalEffectStatus::Dispatched || existing.attempt != 1 {
+        // Settlement must be bound to the same sealed outbound bytes, provider
+        // and approved ceilings, not just the caller-supplied effect key.
+        if existing.fingerprint != self.wire_sha256
+            || existing.provider != self.provider
+            || existing.token_limit != self.limits.tokens
+            || existing.cost_limit_microusd != self.limits.cost_microusd
+        {
+            return Err(ConsentError::ChangedContext);
+        }
+        // A request may have been charged before a timeout or lost ACK moved
+        // the durable claim to UNCERTAIN. A subsequently authenticated receipt
+        // can still settle that SAME attempt; it is never a replay permit.
+        let tokens = usage.input_tokens + usage.output_tokens;
+        if existing.status == ExternalEffectStatus::Completed
+            && existing.attempt == 1
+            && existing.provider_request_id.as_deref() == Some(provider_request_id)
+            && existing.receipt_id.as_deref() == Some(provider_request_id)
+            && existing.actual_tokens == tokens
+            && existing.actual_cost_microusd == usage.cost_microusd
+        {
+            // Exact duplicate delivery is idempotent after restart as well.
+            // Contradictory receipts remain rejected below.
+            return Ok(());
+        }
+        if !matches!(
+            existing.status,
+            ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+        ) || existing.attempt != 1
+        {
             return Err(ConsentError::UncertainEffect);
         }
         self.store
@@ -330,6 +362,40 @@ impl PaidEffectFence for SqlitePaidEffectFence {
                     cost_microusd: usage.cost_microusd,
                 },
             )
+            .map_err(|_| ConsentError::UncertainEffect)?;
+        Ok(())
+    }
+
+    fn settle_with_response(
+        &self,
+        effect_id: &str,
+        provider_request_id: &str,
+        usage: &ActualUsage,
+        response: &str,
+    ) -> Result<(), ConsentError> {
+        self.check_effect_id(effect_id)?;
+        if !matches!(
+            self.step_id.as_str(),
+            "angles" | "draft-1" | "draft-2" | "draft-3"
+        ) {
+            return self.settle(effect_id, provider_request_id, usage);
+        }
+        // This is reachable only after the consent policy authenticated the
+        // provider reply and computed its authoritative billed cost. A name
+        // or receipt supplied by model output / Studio is never sufficient.
+        self.store
+            .settle_authenticated_charged_response(AuthenticatedChargedResponse {
+                key: self.key(),
+                attempt: 1,
+                provider: &self.provider,
+                request_sha256: &self.wire_sha256,
+                provider_request_id,
+                receipt_id: provider_request_id,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cost_microusd: usage.cost_microusd,
+                response,
+            })
             .map_err(|_| ConsentError::UncertainEffect)?;
         Ok(())
     }

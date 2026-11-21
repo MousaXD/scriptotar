@@ -188,6 +188,20 @@ pub trait PaidEffectFence: Send + Sync {
         provider_request_id: &str,
         usage: &ActualUsage,
     ) -> Result<(), ConsentError>;
+
+    /// A successful writing step must seal its original authenticated output
+    /// in the same transaction as the billable receipt. Existing non-writing
+    /// fences can retain receipt-only semantics; the production writing fence
+    /// overrides this and fails closed if v14 is not installed.
+    fn settle_with_response(
+        &self,
+        effect_id: &str,
+        provider_request_id: &str,
+        usage: &ActualUsage,
+        _original_response: &str,
+    ) -> Result<(), ConsentError> {
+        self.settle(effect_id, provider_request_id, usage)
+    }
     fn mark_uncertain(&self, effect_id: &str);
 }
 
@@ -828,7 +842,12 @@ impl ConsentBoundary {
             return Err(ConsentError::UsageOverBudget);
         }
         if fence
-            .settle(&effect_id, &generated.provider_request_id, &usage)
+            .settle_with_response(
+                &effect_id,
+                &generated.provider_request_id,
+                &usage,
+                &generated.text,
+            )
             .is_err()
         {
             fence.mark_uncertain(&effect_id);
@@ -899,6 +918,7 @@ mod tests {
     struct Fence {
         claims: Mutex<Vec<String>>,
         receipts: Mutex<Vec<String>>,
+        original_responses: Mutex<Vec<String>>,
         settled: AtomicUsize,
         uncertain: AtomicUsize,
     }
@@ -927,6 +947,21 @@ mod tests {
                 .unwrap()
                 .push(provider_request_id.into());
             self.settled.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn settle_with_response(
+            &self,
+            effect_id: &str,
+            request_id: &str,
+            usage: &ActualUsage,
+            original_response: &str,
+        ) -> Result<(), ConsentError> {
+            self.settle(effect_id, request_id, usage)?;
+            self.original_responses
+                .lock()
+                .unwrap()
+                .push(original_response.to_owned());
             Ok(())
         }
 
@@ -1158,6 +1193,10 @@ mod tests {
             .dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103)
             .unwrap();
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fence.original_responses.lock().unwrap().as_slice(),
+            std::slice::from_ref(&intent.prompt)
+        );
         assert_eq!(
             fence.receipts.lock().unwrap().clone(),
             vec!["fixture-request-id".to_string()]

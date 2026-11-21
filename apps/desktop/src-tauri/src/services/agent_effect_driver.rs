@@ -43,9 +43,22 @@ impl ProviderEvidence {
 /// The actual approved provider adapter owns network I/O. A timeout, 5xx,
 /// lost acknowledgement, or eventually consistent absence is UNCERTAIN.
 pub trait ExternalEffectProvider: Send + Sync {
+    /// Stable, reviewed provider-identity namespace: never a model or alias.
+    /// The provider adapter must authenticate any receipt returned by probe.
+    fn provider_namespace(&self) -> &'static str;
     fn dispatch_once(&self,ctx:&ExecutionContext,fingerprint:&str,attempt:i64,
                      limits:ExternalEffectLimits)->ProviderEvidence;
     fn probe(&self,effect:&ExternalEffect)->ProviderEvidence;
+}
+
+fn canonical_provider(provider_name: &str, provider: &dyn ExternalEffectProvider)
+    -> RepositoryResult<()> {
+    // The only reviewed wire provider here is OpenAI; a model-suffixed or
+    // alias provider would split the immutable v12 receipt tombstone scope.
+    if provider_name != "openai" || provider.provider_namespace() != provider_name {
+        return Err(RepositoryError::Conflict("unreviewed external provider namespace".into()));
+    }
+    Ok(())
 }
 
 fn effect_key(ctx:&ExecutionContext)->RepositoryResult<ExternalEffectKey<'_>> {
@@ -65,6 +78,7 @@ impl AppServices {
         limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
         provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
+        canonical_provider(provider_name,provider)?;
         let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
         policy.authorize(ctx,provider_name,fingerprint,limits)?;
@@ -85,6 +99,7 @@ impl AppServices {
         limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
         provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
+        canonical_provider(provider_name,provider)?;
         let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
         policy.authorize(ctx,provider_name,fingerprint,limits)?;
@@ -139,13 +154,15 @@ impl AppServices {
     }
 
     /// Query the real provider; never repeat a request as a way of probing.
+    /// Existing effects may settle after archival, but this does not authorize
+    /// new work or dispatch, and the adapter must be a trusted read-only probe.
     pub fn reconcile_external_with_provider(
         &self,ctx:&ExecutionContext,provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
         let key=effect_key(ctx)?;
-        self.require_active_project(key.project)?;
         let old=self.store.get_external_effect(key)?
             .ok_or_else(||RepositoryError::NotFound("external effect".into()))?;
+        canonical_provider(&old.provider,provider)?;
         if !matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain) {
             return Err(RepositoryError::Conflict("effect is not awaiting reconciliation".into()));
         }
@@ -214,6 +231,7 @@ mod recovery_driver_tests {
         probes: AtomicUsize,
     }
     impl ExternalEffectProvider for LocalProviderDouble {
+        fn provider_namespace(&self) -> &'static str { "openai" }
         fn dispatch_once(
             &self, _ctx: &ExecutionContext, _fingerprint: &str,
             _attempt: i64, _limits: ExternalEffectLimits,
@@ -306,12 +324,26 @@ mod recovery_driver_tests {
             tokens: 500,
             cost_microusd: 2500,
         };
+        // Model suffixes must never make separate v12 provider receipt
+        // namespaces for the same underlying OpenAI account.
+        assert_eq!(
+            SqlitePaidEffectFence::from_approved_context(
+                services.operational_store(),
+                &context,
+                &approval,
+                &wire_sha256,
+                "openai:model-alias",
+                limits,
+            )
+            .err(),
+            Some(ConsentError::InvalidRequest)
+        );
         let fence = SqlitePaidEffectFence::from_approved_context(
             services.operational_store(),
             &context,
             &approval,
             &wire_sha256,
-            "openai:test-model",
+            "openai",
             limits,
         )
         .unwrap();
@@ -375,7 +407,7 @@ mod recovery_driver_tests {
             &context,
             &approval,
             &"d".repeat(64),
-            "openai:test-model",
+            "openai",
             ExternalEffectLimits {
                 tokens: 500,
                 cost_microusd: 2500,
@@ -405,6 +437,508 @@ mod recovery_driver_tests {
             fence.mark_dispatched_once(&effect_id),
             Err(ConsentError::UncertainEffect)
         );
+    }
+
+    #[test]
+    fn authenticated_late_receipt_recovers_uncertain_without_another_send() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "e".repeat(64);
+        let wire_sha256 = "f".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(), &context, &approval, &wire_sha256, "openai", limits,
+        ).unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+
+        // Simulate a lost response after the provider may already have charged.
+        fence.mark_uncertain(&effect_id);
+        let uncertain = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(uncertain.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+
+        // Even with the correct effect key, a fence with different outbound
+        // bytes must never be able to settle another approval's reservation.
+        let stale_wire_fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(), &context, &approval, &"a".repeat(64),
+            "openai", limits,
+        ).unwrap();
+        assert_eq!(
+            stale_wire_fence.settle(&effect_id, "verified-late-1", &usage),
+            Err(ConsentError::ChangedContext)
+        );
+        assert_eq!(
+            store.get_external_effect(effect_key(&context).unwrap()).unwrap().unwrap().revision,
+            uncertain.revision
+        );
+
+        // A delayed, trusted usage receipt completes the original attempt;
+        // neither this operation nor a duplicate callback sends any request.
+        assert_eq!(fence.settle(&effect_id, "verified-late-1", &usage), Ok(()));
+        let completed = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert_eq!(completed.attempt, 1);
+        assert_eq!(completed.actual_tokens, 50);
+        assert_eq!(completed.actual_cost_microusd, 450);
+        assert_eq!(completed.receipt_id.as_deref(), Some("verified-late-1"));
+
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        let after_restart = SqlitePaidEffectFence::from_approved_context(
+            reopened, &context, &approval, &wire_sha256, "openai", limits,
+        ).unwrap();
+        assert_eq!(
+            after_restart.settle(&effect_id, "verified-late-1", &usage),
+            Ok(())
+        );
+        assert_eq!(
+            after_restart.settle(&effect_id, "contradictory-receipt", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        assert_eq!(
+            after_restart.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let unchanged = store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().unwrap();
+        assert_eq!(unchanged.revision, completed.revision);
+        assert_eq!(unchanged.receipt_id, completed.receipt_id);
+    }
+
+    #[test]
+    fn cancelled_reservation_cannot_send_or_take_a_late_receipt() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "1".repeat(64);
+        let wire_sha256 = "2".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        let cancelled = store.request_external_cancel(effect_key(&context).unwrap()).unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Cancelled);
+        assert!(cancelled.cancel_requested);
+
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "never-sent", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::NotApplied);
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        assert_eq!(
+            reopened
+                .get_external_effect(effect_key(&context).unwrap())
+                .unwrap()
+                .unwrap()
+                .status,
+            ExternalEffectStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn post_dispatch_cancellation_does_not_hide_a_verified_late_charge() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "3".repeat(64);
+        let wire_sha256 = "4".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+        let cancelled = store.request_external_cancel(effect_key(&context).unwrap()).unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Dispatched);
+        assert!(cancelled.cancel_requested);
+        fence.mark_uncertain(&effect_id);
+        let pending = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.status, ExternalEffectStatus::Uncertain);
+        assert!(pending.cancel_requested);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+
+        // A local cancellation after the provider could have executed is
+        // NOT remote nonexecution evidence. An authenticated late charge wins.
+        let usage = ActualUsage {
+            input_tokens: 35,
+            output_tokens: 15,
+            tool_calls: 1,
+            elapsed_ms: 200,
+            cost_microusd: 450,
+        };
+        fence.settle(&effect_id, "charged-after-cancel", &usage).unwrap();
+        let completed = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert!(completed.cancel_requested);
+        assert_eq!(completed.receipt_id.as_deref(), Some("charged-after-cancel"));
+        assert_eq!(completed.actual_cost_microusd, 450);
+        assert!(store.request_external_cancel(effect_key(&context).unwrap()).is_err());
+
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Applied);
+    }
+
+    #[test]
+    fn late_receipt_sqlite_fault_rolls_back_identity_charge_and_legacy_effect() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+        use rusqlite::Connection;
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let approval = "5".repeat(64);
+        let wire_sha256 = "6".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+        fence.mark_uncertain(&effect_id);
+        let before = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.status, ExternalEffectStatus::Uncertain);
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+
+        // Crash/fault after v12's external receipt update but before v8's
+        // same-transaction Applied transition. The provider identity registry
+        // and all accounting must roll back together.
+        let conn = Connection::open(store.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER inject_v8_receipt_failure
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NEW.status='applied'
+             BEGIN SELECT RAISE(ABORT,'injected v8 receipt failure'); END;",
+        )
+        .unwrap();
+        let usage = ActualUsage {
+            input_tokens: 15,
+            output_tokens: 25,
+            tool_calls: 1,
+            elapsed_ms: 100,
+            cost_microusd: 200,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "late-faulted-receipt", &usage),
+            Err(ConsentError::UncertainEffect)
+        );
+        let after = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.provider_request_id, None);
+        assert_eq!(after.receipt_id, None);
+        assert_eq!(after.actual_tokens, 0);
+        assert_eq!(after.actual_cost_microusd, 0);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Unknown);
+        let consumed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_external_provider_identities
+                 WHERE provider='openai' AND identity='late-faulted-receipt'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(consumed, 0);
+
+        conn.execute_batch("DROP TRIGGER inject_v8_receipt_failure;")
+            .unwrap();
+        drop(conn);
+        let reopened = scriptotar_db::SqliteStore::open(store.path()).unwrap();
+        let recovery_fence = SqlitePaidEffectFence::from_approved_context(
+            reopened,
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        assert_eq!(
+            recovery_fence.settle(&effect_id, "late-faulted-receipt", &usage),
+            Ok(())
+        );
+        let completed = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.status, ExternalEffectStatus::Completed);
+        assert_eq!(completed.actual_tokens, 40);
+        assert_eq!(completed.actual_cost_microusd, 200);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(v8.status, scriptotar_db::EffectStatus::Applied);
+    }
+
+    #[test]
+    fn archived_study_and_project_can_record_prior_charge_without_redispatch() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ActualUsage, ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let approval = "7".repeat(64);
+        let wire_sha256 = "8".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        fence.mark_dispatched_once(&effect_id).unwrap();
+
+        // Archive is a legitimate user action AFTER irreversible provider I/O.
+        // Neither a withdrawn Study nor an archived project may erase a charge.
+        store.archive_study(project, study).unwrap();
+        store.archive_project(project).unwrap();
+        fence.mark_uncertain(&effect_id);
+        let uncertain = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(uncertain.status, ExternalEffectStatus::Uncertain);
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let usage = ActualUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            tool_calls: 1,
+            elapsed_ms: 10,
+            cost_microusd: 300,
+        };
+        assert_eq!(
+            fence.settle(&effect_id, "archived-charge-1", &usage),
+            Ok(())
+        );
+        let record = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.status, ExternalEffectStatus::Completed);
+        assert_eq!(record.receipt_id.as_deref(), Some("archived-charge-1"));
+        assert_eq!(record.actual_cost_microusd, 300);
+        // Allow archived owner's reconciliation, never cross-tenant disclosure.
+        let foreign_project = ExternalEffectKey {
+            project: Uuid::new_v4(),
+            study,
+            run_id: &context.run_id,
+            step_id: &context.step_id,
+            idempotency_key: &context.idempotency_key,
+        };
+        assert!(store.get_external_effect(foreign_project).is_err());
+        let foreign_study = ExternalEffectKey {
+            project,
+            study: Uuid::new_v4(),
+            run_id: &context.run_id,
+            step_id: &context.step_id,
+            idempotency_key: &context.idempotency_key,
+        };
+        assert!(store.get_external_effect(foreign_study).is_err());
+    }
+
+    #[test]
+    fn archived_reserved_effect_cannot_gain_first_send_permit() {
+        use super::super::provider_consent::SqlitePaidEffectFence;
+        use scriptotar_ai::provider_consent::{ConsentError, PaidEffectFence};
+
+        let (_directory, services, context) = approved_host();
+        let store = services.operational_store();
+        let project = Uuid::parse_str(&context.project_id).unwrap();
+        let study = Uuid::parse_str(&context.study_id).unwrap();
+        let approval = "9".repeat(64);
+        let wire_sha256 = "a".repeat(64);
+        let limits = ExternalEffectLimits {
+            tokens: 500,
+            cost_microusd: 2500,
+        };
+        let effect_id = format!("provider:{}:{}", context.run_id, approval);
+        let fence = SqlitePaidEffectFence::from_approved_context(
+            store.clone(),
+            &context,
+            &approval,
+            &wire_sha256,
+            "openai",
+            limits,
+        )
+        .unwrap();
+        fence.reserve_once(&effect_id).unwrap();
+        store.archive_study(project, study).unwrap();
+        assert_eq!(
+            fence.mark_dispatched_once(&effect_id),
+            Err(ConsentError::UncertainEffect)
+        );
+        let cancelled = store
+            .request_external_cancel(effect_key(&context).unwrap())
+            .unwrap();
+        assert_eq!(cancelled.status, ExternalEffectStatus::Cancelled);
+        let v8 = store
+            .get_agent_effect(project, study, &context.run_id, &context.idempotency_key);
+        // The historical v8 read API intentionally refuses archived scopes.
+        assert!(v8.is_err());
+        let stored = store
+            .get_external_effect(effect_key(&context).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.status, ExternalEffectStatus::Cancelled);
+        assert_eq!(stored.actual_cost_microusd, 0);
+    }
+
+    #[test]
+    fn archived_owner_restart_reconciliation_uses_read_only_probe_not_dispatch() {
+        let (_directory, services, context)=approved_host();
+        let provider=LocalProviderDouble::default();
+        let policy=ExplicitlyApprovedMock;
+        let limits=ExternalEffectLimits { tokens:500,cost_microusd:2500 };
+        let wire="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first=services.dispatch_authorized_external_effect(
+            &context,"openai",wire,limits,&policy,&provider,
+        ).unwrap();
+        assert_eq!(first.status,ExternalEffectStatus::Dispatched);
+        let project=Uuid::parse_str(&context.project_id).unwrap();
+        let study=Uuid::parse_str(&context.study_id).unwrap();
+        services.store.archive_study(project,study).unwrap();
+        services.store.archive_project(project).unwrap();
+        assert_eq!(
+            services.store.recover_external_effects(project,study,&context.run_id).unwrap(),1
+        );
+        let settled=services.reconcile_external_with_provider(&context,&provider).unwrap();
+        assert_eq!(settled.status,ExternalEffectStatus::Completed);
+        assert_eq!(settled.actual_cost_microusd,450);
+        assert_eq!(provider.calls.load(Ordering::SeqCst),1);
+        assert_eq!(provider.probes.load(Ordering::SeqCst),1);
+        assert!(services.dispatch_authorized_external_effect(
+            &context,"openai",wire,limits,&policy,&provider,
+        ).is_err());
+        assert_eq!(provider.calls.load(Ordering::SeqCst),1);
+    }
+
+    #[test]
+    fn model_aliases_cannot_split_provider_receipt_namespace() {
+        let (_directory,services,context)=approved_host();
+        let provider=LocalProviderDouble::default();
+        let policy=ExplicitlyApprovedMock;
+        let wire="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let limits=ExternalEffectLimits {tokens:500,cost_microusd:2500};
+        for wrong in ["OpenAI","openai:gpt-model","other-provider"] {
+            assert!(services.dispatch_authorized_external_effect(
+                &context,wrong,wire,limits,&policy,&provider,
+            ).is_err());
+        }
+        assert_eq!(provider.calls.load(Ordering::SeqCst),0);
+        assert!(services.store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().is_none());
     }
 
     #[test]

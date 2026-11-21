@@ -2,7 +2,7 @@
 // Reserve and persist DISPATCHED before I/O; a DISPATCHED/UNCERTAIN request
 // is NEVER an invitation to resend it. Provider reconciliation is mandatory.
 use rusqlite::{params, OptionalExtension, Row, Transaction, TransactionBehavior};
-use scriptotar_agent::{valid_id, RunState, StepInput, StepState};
+use scriptotar_agent::{valid_id, RunSnapshot, RunState, StepInput, StepState};
 use scriptotar_core::{now_rfc3339, RepositoryError, RepositoryResult};
 use uuid::Uuid;
 use crate::{studies::{database, db_error}, SqliteStore};
@@ -329,9 +329,143 @@ fn scoped(
                 key.run_id, key.step_id], row,
     ).optional().map_err(db_error)
 }
-fn checked(db: &rusqlite::Connection, key: ExternalEffectKey<'_>)
-    -> RepositoryResult<ExternalEffect> {
-    verified_scope(db, key.project, key.study, key.run_id)?;
+/// Reconciliation is not a new dispatch. Previously dispatched provider work
+/// may settle after the user archives a Study or project; otherwise the charge
+/// can exist remotely while local accounting becomes permanently inaccessible.
+/// Preserve the same exact run/Study ownership and checkpoint integrity checks,
+/// but never require active/unarchived state just to read a billable receipt.
+/// Check persisted scope without requiring the owner to remain unarchived.
+/// This read-only check is shared by late receipt reconciliation and restart
+/// recovery; it never grants permission to issue a new provider request.
+fn verified_run_settlement_scope(
+    db: &rusqlite::Connection,
+    project: Uuid,
+    study: Uuid,
+    run_id: &str,
+) -> RepositoryResult<RunSnapshot> {
+    let raw: String = db
+        .query_row(
+            "SELECT r.snapshot_json FROM agent_runs r
+             JOIN content_studies s ON s.id=r.study_id AND s.project_id=r.project_id
+             JOIN projects p ON p.id=r.project_id
+             WHERE r.id=?1 AND r.project_id=?2 AND r.study_id=?3",
+            params![
+                run_id,
+                project.to_string(),
+                study.to_string()
+            ],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(db_error)?
+        .ok_or_else(|| RepositoryError::NotFound("scoped agent run".into()))?;
+    let run: RunSnapshot = serde_json::from_str(&raw)
+        .map_err(|_| RepositoryError::Storage("agent checkpoint is corrupt".into()))?;
+    if run.schema_version != 1
+        || run.plan.id != run_id
+        || run.plan.project_id != project.to_string()
+        || run.plan.study_id != study.to_string()
+        || !run.plan.validate()
+        || run.current_step > run.plan.steps.len()
+        || run.steps.len() != run.plan.steps.len()
+        || run.steps.iter().zip(&run.plan.steps).enumerate().any(|(index, (record, plan))| {
+            record.id != plan.id
+                || record.idempotency_key != format!("{}:{}:{}", run_id, index, record.id)
+        })
+    {
+        return Err(RepositoryError::Storage(
+            "agent checkpoint identity is invalid".into(),
+        ));
+    }
+    Ok(run)
+}
+
+fn verified_settlement_scope(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+) -> RepositoryResult<()> {
+    let run = verified_run_settlement_scope(db, key.project, key.study, key.run_id)?;
+    if !run.steps.iter().any(|record| {
+        record.id == key.step_id && record.idempotency_key == key.idempotency_key
+    }) {
+        return Err(RepositoryError::Storage(
+            "external effect identity does not match persisted run step".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Validate *every* external row against the historical canonical step map
+/// before any multi-row restart classification. This runs on the SAME SQLite
+/// connection/transaction as the subsequent UPDATE, never on a stale snapshot.
+fn scoped_recovery_effects(
+    db: &rusqlite::Connection,
+    project: Uuid,
+    study: Uuid,
+    run_id: &str,
+    checkpoint: &RunSnapshot,
+) -> RepositoryResult<Vec<ExternalEffect>> {
+    const MAX_VISIBLE_EFFECTS: usize = 128;
+    let query = format!(
+        "{SELECT} WHERE project_id=?1 AND study_id=?2 AND run_id=?3
+         ORDER BY step_id, idempotency_key LIMIT 129"
+    );
+    let mut statement = db.prepare(&query).map_err(db_error)?;
+    let rows = statement
+        .query_map(params![project.to_string(), study.to_string(), run_id], row)
+        .map_err(db_error)?;
+    let mut effects = Vec::new();
+    for next in rows {
+        if effects.len() >= MAX_VISIBLE_EFFECTS {
+            return Err(RepositoryError::Storage(
+                "external effect recovery exceeds bounded run size".into(),
+            ));
+        }
+        let effect = next.map_err(db_error)?;
+        if !checkpoint.steps.iter().any(|record| {
+            record.id == effect.step_id && record.idempotency_key == effect.idempotency_key
+        }) {
+            return Err(RepositoryError::Storage(
+                "external effect recovery found an unowned run step".into(),
+            ));
+        }
+        // A raw SQL writer can corrupt the historical v8 fence without
+        // violating the v10 external-effect table's immutable identity guard.
+        // Do not turn such a mismatched effect into a plausible UNCERTAIN
+        // provider charge. The paired legacy fence is the only path from a
+        // reserved attempt to an actually applied billing receipt.
+        let legacy: (String, String, String, String, String) = db.query_row(
+            "SELECT project_id,study_id,run_id,step_id,status FROM agent_effects
+             WHERE idempotency_key=?1",
+            params![effect.idempotency_key],
+            |record| Ok((
+                record.get(0)?, record.get(1)?, record.get(2)?,
+                record.get(3)?, record.get(4)?,
+            )),
+        ).map_err(db_error)?;
+        if legacy.0 != project.to_string()
+            || legacy.1 != study.to_string()
+            || legacy.2 != run_id
+            || legacy.3 != effect.step_id
+            || (matches!(
+                effect.status,
+                ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+            ) && !matches!(legacy.4.as_str(), "reserved" | "unknown"))
+        {
+            return Err(RepositoryError::Storage(
+                "external effect and legacy dispatch fence disagree".into(),
+            ));
+        }
+        effects.push(effect);
+    }
+    Ok(effects)
+}
+
+fn checked(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+) -> RepositoryResult<ExternalEffect> {
+    verified_settlement_scope(db, key)?;
     scoped(db, key)?.ok_or_else(|| RepositoryError::NotFound("scoped external effect".into()))
 }
 fn may_execute(db: &rusqlite::Connection, key: ExternalEffectKey<'_>)
@@ -409,10 +543,24 @@ impl SqliteStore {
         Ok(ExternalReservation::Fresh(fresh))
     }
 
+    /// Read-only recovery inspection. A trusted host can enumerate a single
+    /// persisted run, including archived owners, without dispatching, probing,
+    /// changing checkpoint state or claiming another provider attempt.
+    /// This is NOT a recovery lease and does not prove remote nonexecution.
+    pub fn inspect_external_effects_for_run(
+        &self, project: Uuid, study: Uuid, run_id: &str,
+    ) -> RepositoryResult<Vec<ExternalEffect>> {
+        let db = database(self)?;
+        let checkpoint = verified_run_settlement_scope(&db, project, study, run_id)?;
+        scoped_recovery_effects(&db, project, study, run_id, &checkpoint)
+    }
+
     pub fn get_external_effect(&self, key: ExternalEffectKey<'_>)
         -> RepositoryResult<Option<ExternalEffect>> {
         let db = database(self)?;
-        verified_scope(&db,key.project,key.study,key.run_id)?;
+        verified_settlement_scope(&db, key)?;
+        // An archived owner cannot create new work, but an already-dispatched
+        // effect still needs trustworthy receipt reconciliation.
         // A missing v10 table is corruption, not an empty ledger.
         scoped(&db,key)
     }
@@ -641,7 +789,14 @@ impl SqliteStore {
         -> RepositoryResult<usize> {
         let mut db=database(self)?;
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
-        verified_scope(&tx,project,study,run_id)?;
+        // Do not lose track of an already-dispatched charge merely because
+        // its owner was archived. This is a one-way accounting transition,
+        // never an ownership lease or permission to send another request.
+        let checkpoint=verified_run_settlement_scope(&tx,project,study,run_id)?;
+        // The run snapshot alone does not prove every persisted effect belongs
+        // to a canonical step. Refuse the WHOLE restart transaction if an
+        // orphan/forged external effect appears in this run.
+        scoped_recovery_effects(&tx,project,study,run_id,&checkpoint)?;
         let changed=tx.execute(
             "UPDATE agent_external_effects SET status='uncertain',revision=revision+1,
              updated_at=?1 WHERE project_id=?2 AND study_id=?3 AND run_id=?4 AND status='dispatched'",
@@ -796,6 +951,419 @@ mod tests {
         assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,ExternalEffectStatus::Completed);
         assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
         assert!(db.mark_external_dispatched(key,success.revision,1).is_err());
+    }
+
+
+    #[test]
+    fn archived_restart_recovery_blocks_replay_and_still_settles_late_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.archive_study(project,study).unwrap();
+        db.archive_project(project).unwrap();
+        drop(db); // Process exited after the network-send permit committed.
+
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let pending=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(pending.status,ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(key,pending.revision,1).is_err());
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
+        let recorded=db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("archived_restart_request"),
+            receipt_id:"archived_restart_receipt",tokens:90,cost_microusd:400,
+        }).unwrap();
+        assert_eq!(recorded.status,ExternalEffectStatus::Completed);
+        assert_eq!(recorded.actual_cost_microusd,400);
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),recorded);
+        assert!(db.mark_external_dispatched(key,recorded.revision,1).is_err());
+    }
+
+    #[test]
+    fn second_sqlite_process_recovery_racing_with_late_receipt_never_loses_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let barrier=Arc::new(Barrier::new(3));
+
+        let recovery=thread::spawn({
+            let path=path.clone();
+            let run_id=snap.plan.id.clone();
+            let barrier=barrier.clone();
+            move || {
+                let other_process=SqliteStore::open(path).unwrap();
+                barrier.wait();
+                other_process.recover_external_effects(project,study,&run_id).unwrap()
+            }
+        });
+        let receipt=thread::spawn({
+            let path=path.clone();
+            let snap=snap.clone();
+            let barrier=barrier.clone();
+            move || {
+                let other_process=SqliteStore::open(path).unwrap();
+                barrier.wait();
+                other_process.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("raced_request"),
+                        receipt_id:"raced_receipt",tokens:55,cost_microusd:275,
+                    },
+                ).unwrap()
+            }
+        });
+        barrier.wait();
+        let recovered=recovery.join().unwrap();
+        assert!(recovered<=1);
+        let completed=receipt.join().unwrap();
+        assert_eq!(completed.status,ExternalEffectStatus::Completed);
+        let persisted=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(persisted,completed);
+        assert_eq!(persisted.actual_cost_microusd,275);
+        assert!(db.mark_external_dispatched(key,persisted.revision,1).is_err());
+        assert!(db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("raced_request"),
+            receipt_id:"raced_receipt",tokens:55,cost_microusd:275,
+        }).is_ok());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),persisted);
+    }
+
+    #[test]
+    fn two_independent_connections_same_late_receipt_settle_once() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        assert_eq!(
+            db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1
+        );
+        let path=dir.path().join("external.sqlite3");
+        let gate=Arc::new(Barrier::new(3));
+        let threads=(0..2).map(|_| {
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("same_request_race"),
+                        receipt_id:"same_receipt_race",
+                        tokens:71,cost_microusd:225,
+                    },
+                ).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        gate.wait();
+        let results=threads.into_iter().map(|t|t.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(results[0],results[1]);
+        assert_eq!(results[0].status,ExternalEffectStatus::Completed);
+        assert_eq!(results[0].actual_cost_microusd,225);
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),results[0]);
+        let conn=rusqlite::Connection::open(path).unwrap();
+        let claims:i64=conn.query_row(
+            "SELECT COUNT(*) FROM agent_external_provider_identities
+             WHERE provider='openai' AND identity IN ('same_request_race','same_receipt_race')",
+            [],|row|row.get(0),
+        ).unwrap();
+        assert_eq!(claims,2,"only the original request and receipt may own identities");
+        assert!(db.mark_external_dispatched(key,results[0].revision,1).is_err());
+    }
+
+    #[test]
+    fn cancellation_racing_late_receipt_never_hides_verified_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.record_external_ack(key,1,"cancel_race_request").unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let gate=Arc::new(Barrier::new(3));
+
+        let cancelled={
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.request_external_cancel(identity(&snap,project,study))
+            })
+        };
+        let receipt={
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("cancel_race_request"),
+                        receipt_id:"cancel_race_receipt",
+                        tokens:42,cost_microusd:125,
+                    },
+                ).unwrap()
+            })
+        };
+        gate.wait();
+        let cancel_outcome=cancelled.join().unwrap();
+        let completed=receipt.join().unwrap();
+        // A cancellation before receipt is only an intent; after a final
+        // receipt it must be rejected, never erase the recorded charge.
+        match cancel_outcome {
+            Ok(requested) => {
+                assert!(requested.cancel_requested);
+                assert!(matches!(
+                    requested.status,
+                    ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+                ));
+            }
+            // The verified terminal receipt won the write race.
+            Err(RepositoryError::Conflict(_)) => {}
+            Err(other) => panic!("unexpected cancellation failure: {other:?}"),
+        }
+        assert_eq!(completed.status,ExternalEffectStatus::Completed);
+        assert_eq!(completed.actual_cost_microusd,125);
+        let persisted=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(persisted,completed);
+        assert_eq!(persisted.receipt_id.as_deref(),Some("cancel_race_receipt"));
+        assert!(db.mark_external_dispatched(key,persisted.revision,1).is_err());
+        let v8=db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(v8.status,super::super::EffectStatus::Applied);
+    }
+
+    #[test]
+    fn charged_receipt_without_three_script_batch_remains_blocked_after_restart() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        // Provider has billed and authenticated usage, but the host crashes
+        // before Agent 05 can durably save its three-script v11 batch.
+        let charged=db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("charged_no_batch_request"),
+            receipt_id:"charged_no_batch_receipt",
+            tokens:135,cost_microusd:800,
+        }).unwrap();
+        drop(db);
+        let path=dir.path().join("external.sqlite3");
+        let reopened=SqliteStore::open(&path).unwrap();
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        let batches:i64=conn.query_row(
+            "SELECT COUNT(*) FROM study_writing_batches WHERE run_id=?1",
+            params![snap.plan.id],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(batches,0,"paid output is absent and must not be invented");
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),0
+        );
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),charged);
+        assert!(matches!(
+            reopened.reserve_external_effect(key,fp(),"openai",limits()).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        assert!(reopened.mark_external_dispatched(key,charged.revision,1).is_err());
+        assert!(reopened.prepare_external_retry(key,charged.revision).is_err());
+        // The v10/v12 receipt is immutable and the only safe next step is
+        // manual reconciliation or recovery of the ORIGINAL sealed output.
+        assert!(reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("charged_no_batch_request"),
+            receipt_id:"charged_no_batch_receipt",
+            tokens:135,cost_microusd:800,
+        }).is_ok());
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),charged);
+    }
+
+    #[test]
+    fn read_only_recovery_inspection_preserves_archived_effect_and_denies_foreign_scope() {
+        let (dir, db, project, study, snap) = setup();
+        let key=identity(&snap,project,study);
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id)
+            .unwrap().is_empty());
+        let fresh=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.archive_study(project,study).unwrap();
+        db.archive_project(project).unwrap();
+        drop(db);
+
+        let reopened=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        let before=reopened.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(before,dispatched);
+        let listed=reopened.inspect_external_effects_for_run(
+            project,study,&snap.plan.id
+        ).unwrap();
+        assert_eq!(listed,vec![dispatched.clone()]);
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),before,
+            "inspection must not classify DISPATCHED as UNCERTAIN or mark it charged");
+        assert!(reopened.inspect_external_effects_for_run(
+            Uuid::new_v4(),study,&snap.plan.id
+        ).is_err());
+        assert!(reopened.inspect_external_effects_for_run(
+            project,Uuid::new_v4(),&snap.plan.id
+        ).is_err());
+        assert!(reopened.inspect_external_effects_for_run(
+            project,study,&Uuid::new_v4().to_string()
+        ).is_err());
+        assert!(reopened.mark_external_dispatched(key,dispatched.revision,1).is_err());
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),before);
+    }
+
+    #[test]
+    fn recovery_inspection_refuses_corrupt_run_without_changing_effect() {
+        let (dir, db, project, study, snap)=setup();
+        let key=identity(&snap,project,study);
+        let reserved=reserve(&db,&snap,project,study);
+        let conn=rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        conn.execute(
+            "UPDATE agent_runs SET snapshot_json='{}' WHERE id=?1",
+            params![snap.plan.id],
+        ).unwrap();
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
+        let raw_status:String=conn.query_row(
+            "SELECT status FROM agent_external_effects WHERE idempotency_key=?1",
+            params![key.idempotency_key],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(raw_status,"reserved");
+        assert_eq!(reserved.status,ExternalEffectStatus::Reserved);
+    }
+
+    #[test]
+    fn recovery_rejects_valid_json_checkpoint_with_forged_step_identity() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let claimed=reserve(&db,&snap,project,study);
+        assert_eq!(claimed.status,ExternalEffectStatus::Reserved);
+        let conn=rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        let mut forged=snap.clone();
+        forged.steps[0].idempotency_key="forged-step-key".to_owned();
+        let json=serde_json::to_string(&forged).unwrap();
+        conn.execute("UPDATE agent_runs SET snapshot_json=?1 WHERE id=?2",
+            params![json,snap.plan.id]).unwrap();
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
+        assert!(db.get_external_effect(key).is_err());
+        let stored:String=conn.query_row(
+            "SELECT status FROM agent_external_effects WHERE idempotency_key=?1",
+            params![key.idempotency_key],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(stored,"reserved","failed inspection never rewrites provider state");
+    }
+
+    #[test]
+    fn recovery_refuses_orphan_effect_without_mutating_valid_dispatch() {
+        let (dir,db,project,study,snap)=setup();
+        let original=identity(&snap,project,study);
+        let first=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(original,first.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None,"foreign_keys",true).unwrap();
+        let bogus_key=format!("{}:0:forged-draft",snap.plan.id);
+        let bogus_wire="f".repeat(64);
+        conn.execute(
+            "INSERT INTO agent_effects(
+                idempotency_key,run_id,project_id,study_id,step_id,tool_kind,
+                status,revision,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,'draft','DraftScript','reserved',1,'2026-11-21','2026-11-21')",
+            params![bogus_key,snap.plan.id,project.to_string(),study.to_string()],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agent_external_effects(
+                idempotency_key,project_id,study_id,run_id,step_id,fingerprint,
+                provider,status,token_limit,cost_limit_microusd,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,'draft',?5,'openai','reserved',500,2500,'2026-11-21','2026-11-21')",
+            params![bogus_key,project.to_string(),study.to_string(),snap.plan.id,bogus_wire],
+        ).unwrap();
+
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err(),
+            "a forged effect must reject restart classification as a whole");
+        assert_eq!(db.get_external_effect(original).unwrap().unwrap(),dispatched,
+            "authentic effect must remain DISPATCHED with unchanged revision");
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
+
+        // Restore a legitimate DB (not a production recovery override) and
+        // prove the exact original attempt can be classified once.
+        conn.execute("DELETE FROM agent_effects WHERE idempotency_key=?1",
+            params![bogus_key]).unwrap();
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let uncertain=db.get_external_effect(original).unwrap().unwrap();
+        assert_eq!(uncertain.status,ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(original,uncertain.revision,1).is_err());
+    }
+
+    #[test]
+    fn recovery_v8_fault_rolls_back_v10_uncertain_transition_atomically() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_restart_v8_unknown
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NEW.status='unknown'
+             BEGIN SELECT RAISE(ABORT, 'injected restart recovery v8 failure'); END;"
+        ).unwrap();
+
+        // The v10 UPDATE runs first. The following v8 state update fails.
+        // Neither changed status nor a new revision may escape that transaction.
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),dispatched);
+        let before=db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(before.status,super::super::EffectStatus::Reserved);
+
+        conn.execute_batch("DROP TRIGGER fail_restart_v8_unknown;").unwrap();
+        drop(conn);
+        drop(db);
+        let reopened=SqliteStore::open(path).unwrap();
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),1
+        );
+        let pending=reopened.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(pending.status,ExternalEffectStatus::Uncertain);
+        let v8=reopened.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(v8.status,super::super::EffectStatus::Unknown);
+        assert!(reopened.mark_external_dispatched(key,pending.revision,1).is_err());
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),0
+        );
+    }
+
+    #[test]
+    fn recovery_refuses_corrupt_legacy_terminal_fence_for_dispatched_effect() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+
+        // Direct SQL can force an impossible v8 terminal write even though
+        // the provider still has only a DISPATCHED v10 record. The old v8
+        // transition trigger permits reserved -> applied; this is corruption,
+        // not authoritative evidence of payment.
+        conn.execute(
+            "UPDATE agent_effects SET status='applied',artifact_id='forged_receipt'
+             WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+        ).unwrap();
+
+        assert!(db.inspect_external_effects_for_run(
+            project,study,&snap.plan.id
+        ).is_err());
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err(),
+            "v8 Applied must never be accepted as a dispatched/uncertain pair");
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),dispatched,
+            "a rejected recovery must not mutate the genuine v10 dispatch");
+        assert!(db.mark_external_dispatched(key,dispatched.revision,1).is_err());
     }
 
     #[test]
@@ -1578,3 +2146,6 @@ mod tests {
     }
 
 }
+
+// Stage post-v13 charged-response checkpoint without changing v8/v10-v12.
+include!("agent_charged_responses.rs");
