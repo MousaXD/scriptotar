@@ -522,9 +522,9 @@ pub struct ClaimSourceNavigation {
 
 /// An evidence ID must have one and only one authoritative resolved record.
 /// Collisions never silently pick the last source for navigation/citations.
-fn unique_resolved_evidence<'a>(
-    resolved: &'a [ResolvedEvidence],
-) -> HashMap<&'a str, Option<&'a ResolvedEvidence>> {
+fn unique_resolved_evidence(
+    resolved: &[ResolvedEvidence],
+) -> HashMap<&str, Option<&ResolvedEvidence>> {
     let mut by_id = HashMap::new();
     for evidence in resolved {
         if by_id
@@ -2082,7 +2082,7 @@ mod authenticity_tests {
         assert!(unique_resolved_evidence(&evidence)
             .get(first.evidence_id.as_str())
             .is_some_and(Option::is_none));
-        assert!(unique_resolved_evidence(&[first.clone()])
+        assert!(unique_resolved_evidence(std::slice::from_ref(&first))
             .get(first.evidence_id.as_str())
             .is_some_and(Option::is_some));
     }
