@@ -300,7 +300,7 @@ pub trait CurrentStudy {
     /// generation and invoke the canonical SQLite sink directly. Offline
     /// contract fixtures have no paid provider and remain explicitly separate.
     fn require_approved_research_for_acceptance(&self) -> bool {
-        false
+        true
     }
 
     /// This must authenticate a completed, user-approved AnalyzeEvidence run,
@@ -333,6 +333,11 @@ pub(super) fn reload_context<C: CurrentStudy>(
 
 pub struct FixedStudy<'a>(pub &'a StudyWritingContext);
 impl CurrentStudy for FixedStudy<'_> {
+    #[cfg(test)]
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        false
+    }
+
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext> {
         if self.0.project_id != project_id || self.0.study_id != study_id {
             return Err(WritingWorkflowError::InvalidContext(
