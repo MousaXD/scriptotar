@@ -292,6 +292,73 @@ impl SqliteStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
+        let owner: Option<(
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        )> = tx
+            .query_row(
+                "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
+                        effect_attempt,effect_provider,effect_wire_sha256
+                 FROM provider_dispatch_barrier WHERE singleton=1 AND token=?1",
+                params![token],
+                |row| Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                )),
+            )
+            .optional()
+            .map_err(storage_error)?;
+        let (run, step, key, attempt, provider, wire) = owner.ok_or_else(|| {
+            RepositoryError::Conflict("provider dispatch barrier token is not current".into())
+        })?;
+        if let (Some(run), Some(step), Some(key), Some(attempt), Some(provider), Some(wire)) =
+            (run, step, key, attempt, provider, wire)
+        {
+            let outcome: Option<(String, Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT status,receipt_id,reconciliation_id
+                     FROM agent_external_effects
+                     WHERE idempotency_key=?1 AND run_id=?2 AND step_id=?3
+                       AND attempt=?4 AND provider=?5 AND fingerprint=?6",
+                    params![key, run, step, attempt, provider, wire],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .optional()
+                .map_err(storage_error)?;
+            let safe = match outcome {
+                // No successful DISPATCHED CAS: this bound attempt cannot
+                // have made a provider request through the certified path.
+                Some((status, _, _)) if status == "reserved" => true,
+                // A terminal charge has a durable provider receipt; a
+                // certified nonexecution/cancellation has provider evidence.
+                Some((status, receipt, _))
+                    if matches!(status.as_str(), "completed" | "failed") =>
+                {
+                    receipt.is_some()
+                }
+                Some((status, _, evidence))
+                    if matches!(status.as_str(), "not_executed" | "cancelled") =>
+                {
+                    evidence.is_some()
+                }
+                // DISPATCHED/UNCERTAIN, changed attempts or missing owner
+                // remain globally frozen for independently audited recovery.
+                _ => false,
+            };
+            if !safe {
+                return Err(RepositoryError::Conflict(
+                    "unresolved or unauthenticated provider attempt retains scope freeze".into(),
+                ));
+            }
+        }
         let released = tx
             .execute(
                 "DELETE FROM provider_dispatch_barrier WHERE singleton=1 AND token=?1",
