@@ -8,13 +8,13 @@ const manifestFile = resolve(process.cwd(), 'qa', 'baselines', 'manifest.json');
 const execution = JSON.parse(await readFile(resolve(evidence, 'report.json'), 'utf8'));
 if (!/^[a-f0-9]{40}$/.test(execution.sha || '') ||
     (process.env.QA_TESTED_SHA && execution.sha !== process.env.QA_TESTED_SHA) ||
-    execution.screenshotCount !== 232 || execution.results?.length !== 20 ||
+    execution.screenshotCount !== 252 || execution.results?.length !== 20 ||
     !Array.isArray(execution.failures) || execution.failures.length > 0) {
-  throw new Error('Cannot certify screenshots without successful, exact-SHA, 232-screenshot / 20-workspace browser evidence.');
+  throw new Error('Cannot certify screenshots without successful, exact-SHA, 252-screenshot / 20-workspace browser evidence.');
 }
 const images = (await readdir(evidence)).filter((name) => name.endsWith('.png')).sort();
-if (images.length !== 232) {
-  throw new Error('Screenshot evidence missing or duplicated: expected 232 real PNG files, got ' + images.length);
+if (images.length !== 252) {
+  throw new Error('Screenshot evidence missing or duplicated: expected 252 real PNG files, got ' + images.length);
 }
 let manifest;
 try {
