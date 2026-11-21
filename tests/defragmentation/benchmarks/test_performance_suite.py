@@ -403,7 +403,7 @@ class NativeUiTraceContractTests(unittest.TestCase):
         # separately measured Study/source/research/version journeys.
         required = (
             "study_create", "source_select", "research_navigation",
-            "draft_open", "draft_version_restore",
+            "draft_open", "draft_version_restore", "draft_export",
         )
         with tempfile.TemporaryDirectory() as folder:
             trace = Path(folder) / "offline-actions-not-installed.jsonl"
