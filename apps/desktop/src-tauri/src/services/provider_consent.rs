@@ -52,8 +52,12 @@ fn consent_error(error: ConsentError) -> RepositoryError {
 /// mutations of protected source/Study inputs until the send guard is dropped.
 /// This is not protection against an attacker executing arbitrary DDL on the DB.
 struct HostScopeDispatchGuard<'a> {
-    _project_lock: MutexGuard<'a, Uuid>,
+    // Rust drops fields in declaration order. Release the committed SQLite
+    // freeze while STILL holding active_project, then release the mutex.
+    // The reverse order exposes a window where waiting Studio writers
+    // acquire the mutex but are rejected by the not-yet-released DB trigger.
     db_barrier: ProviderDispatchBarrier,
+    _project_lock: MutexGuard<'a, Uuid>,
     scope: StudyScope,
 }
 
@@ -203,8 +207,8 @@ impl AppServices {
             return Err(ConsentError::ChangedContext);
         }
         Ok(Box::new(HostScopeDispatchGuard {
-            _project_lock: project_lock,
             db_barrier,
+            _project_lock: project_lock,
             scope: fresh,
         }))
     }
