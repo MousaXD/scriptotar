@@ -228,6 +228,38 @@ impl StudyWritingContext {
 /// own SQLite IMMEDIATE transaction, not rely only on this preflight.
 pub trait CurrentStudy {
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext>;
+
+    /// The canonical host overrides this for research-backed writing. Every
+    /// pre/post-dispatch check and the final SQLite sink reload the *same*
+    /// approved Applied research artifact, not the legacy Copy Prompt slice.
+    fn load_for_context(&self, expected: &StudyWritingContext) -> WriteResult<StudyWritingContext> {
+        self.load(expected.project_id, expected.study_id)
+    }
+}
+
+/// A research-backed writing context carries its artifact UUID through every
+/// deterministic evidence ID and thus through the sealed request and v11 batch.
+/// Mixed, malformed or cross-artifact evidence is never silently downgraded to
+/// legacy, unapproved transcript input.
+pub(super) fn research_artifact_id(evidence: &[EvidenceRef]) -> WriteResult<Option<Uuid>> {
+    if !evidence.iter().any(|item| item.id.starts_with("research:")) {
+        return Ok(None);
+    }
+    let mut artifact = None;
+    for item in evidence {
+        let pieces = item.id.split(':').collect::<Vec<_>>();
+        if pieces.len() != 4 || pieces[0] != "research" {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let id = Uuid::parse_str(pieces[1]).map_err(|_| WritingWorkflowError::StaleContext)?;
+        let source = Uuid::parse_str(pieces[2]).map_err(|_| WritingWorkflowError::StaleContext)?;
+        let index = pieces[3].parse::<usize>().map_err(|_| WritingWorkflowError::StaleContext)?;
+        if id.is_nil() || source.is_nil() || index >= 40 || artifact.is_some_and(|old| old != id) {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        artifact = Some(id);
+    }
+    Ok(artifact)
 }
 
 pub struct FixedStudy<'a>(pub &'a StudyWritingContext);
@@ -374,7 +406,7 @@ fn check_current<C: CurrentStudy>(loader: &C, plan: &GenerationPlan) -> WriteRes
     if plan.angles_prompt != expected {
         return Err(WritingWorkflowError::StaleContext);
     }
-    let latest = loader.load(plan.context.project_id, plan.context.study_id)?;
+    let latest = loader.load_for_context(&plan.context)?;
     latest.validate()?;
     if latest != plan.context {
         return Err(WritingWorkflowError::StaleContext);
@@ -1107,4 +1139,42 @@ pub fn needs_human_fact_review(candidate: &GeneratedCandidate) -> bool {
         .claims
         .iter()
         .any(|claim| claim.status != ClaimStatus::Opinion)
+}
+
+
+#[cfg(test)]
+mod approved_research_binding_tests {
+    use super::*;
+
+    fn cited(id: &str) -> EvidenceRef {
+        EvidenceRef {
+            id: id.into(),
+            locator: writing::EvidenceLocator {
+                source_id: Uuid::new_v4().to_string(),
+                canonical_url: None,
+                timestamp_seconds: None,
+                document_section: None,
+                collected_at: None,
+            },
+            excerpt: "Exact attributable excerpt".into(),
+            kind: EvidenceKind::SocialTranscript,
+            status: EvidenceStatus::Attributed,
+        }
+    }
+
+    #[test]
+    fn research_artifact_ids_fail_closed_on_mixed_or_cross_artifact_claims() {
+        let artifact = Uuid::new_v4();
+        let source = Uuid::new_v4();
+        let exact = cited(&format!("research:{artifact}:{source}:0"));
+        assert_eq!(research_artifact_id(&[exact.clone()]).unwrap(), Some(artifact));
+        assert_eq!(research_artifact_id(&[cited("transcript:source:0")]).unwrap(), None);
+        assert!(research_artifact_id(&[exact.clone(), cited("transcript:other:0")]).is_err());
+        assert!(research_artifact_id(&[
+            exact.clone(),
+            cited(&format!("research:{}:{source}:1", Uuid::new_v4())),
+        ]).is_err());
+        assert!(research_artifact_id(&[cited("research:bad:source:0")]).is_err());
+        assert!(research_artifact_id(&[cited(&format!("research:{artifact}:{source}:999"))]).is_err());
+    }
 }
