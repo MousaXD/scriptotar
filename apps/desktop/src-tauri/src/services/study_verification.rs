@@ -1367,6 +1367,35 @@ mod tests {
             },
             review_findings: vec![],
         };
+        // Exercise the exact production gateway observation representation,
+        // the compatible historical raw UUID, and a same-ID fake section.
+        let mut gateway_observation = candidate.lineage[0].evidence[0].clone();
+        gateway_observation.excerpt =
+            format!("Unverified user observation: {}", cited.input.claim);
+        gateway_observation.locator.collected_at = Some(cited.created_at.clone());
+        gateway_observation.kind = EvidenceKind::CreativeObservation;
+        assert!(exact_observation_lineage(
+            &gateway_observation,
+            &cited,
+            &attached
+        ));
+        let mut forged_section = gateway_observation.clone();
+        forged_section.locator.document_section = Some("invented-section".into());
+        assert!(!exact_observation_lineage(
+            &forged_section,
+            &cited,
+            &attached
+        ));
+        let mut old_direct_uuid = gateway_observation.clone();
+        old_direct_uuid.id = cited.id.to_string();
+        old_direct_uuid.kind = EvidenceKind::SocialTranscript;
+        old_direct_uuid.status = EvidenceStatus::Attributed;
+        assert!(exact_observation_lineage(
+            &old_direct_uuid,
+            &cited,
+            &attached
+        ));
+
         let body = export_candidate(&candidate);
         let saved = services
             .store
