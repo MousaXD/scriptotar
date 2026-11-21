@@ -624,14 +624,19 @@ impl SqliteStore {
                 ).map_err(db_error)?;
                 if settled!=1 { return Err(conflict("legacy effect fence changed before cancellation")); }
             } else {
-                let fence:String=tx.query_row(
-                    "SELECT status FROM agent_effects WHERE idempotency_key=?1
-                     AND project_id=?2 AND study_id=?3 AND run_id=?4",
-                    params![key.idempotency_key,key.project.to_string(),
-                        key.study.to_string(),key.run_id],
-                    |r|r.get(0),
+                // A proven-nonexecution retry temporarily reacquires the exact
+                // v8 RESERVED fence. Cancelling before this new attempt sends
+                // restores UNKNOWN, retaining all prior dispatched history.
+                let restored=tx.execute(
+                    "UPDATE agent_effects SET status='unknown',revision=revision+1,
+                     updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+                     AND study_id=?4 AND run_id=?5 AND step_id=?6 AND status='reserved'",
+                    params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                        key.study.to_string(),key.run_id,key.step_id],
                 ).map_err(db_error)?;
-                if fence!="unknown" { return Err(conflict("retry cancellation requires blocked v8 fence")); }
+                if restored!=1 {
+                    return Err(conflict("retry cancellation requires exact reserved v8 claim"));
+                }
             }
         } else if matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain)
             && !old.cancel_requested {
@@ -699,6 +704,30 @@ impl SqliteStore {
         }
         let evidence=old.reconciliation_id.as_deref()
             .ok_or_else(|| conflict("missing provider nonexecution proof"))?;
+        // v13 requires RESERVED in BOTH v8 and v10 at the dispatch
+        // admission boundary. The previous attempt correctly left v8
+        // UNKNOWN. Only an exact, current, provider-proven NotExecuted
+        // resolution may re-arm that original claim for a bounded new
+        // attempt, in the SAME transaction as the v10 attempt increment.
+        // A generic UNKNOWN/UNCERTAIN or a stale revision cannot be reset.
+        let rearmed=tx.execute(
+            "UPDATE agent_effects SET status='reserved',revision=revision+1,
+             updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+             AND study_id=?4 AND run_id=?5 AND step_id=?6 AND status='unknown'
+             AND EXISTS (
+                 SELECT 1 FROM agent_external_effects e
+                 WHERE e.idempotency_key=?2 AND e.project_id=?3
+                   AND e.study_id=?4 AND e.run_id=?5 AND e.step_id=?6
+                   AND e.status='not_executed' AND e.revision=?7
+                   AND e.attempt=?8 AND e.reconciliation_id=?9
+             )",
+            params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                key.study.to_string(),key.run_id,key.step_id,
+                expected_revision,old.attempt,evidence],
+        ).map_err(db_error)?;
+        if rearmed!=1 {
+            return Err(conflict("retry requires exact blocked v8 claim and provider proof"));
+        }
         tx.execute(
             "INSERT INTO agent_external_attempt_history(idempotency_key,attempt,evidence_id,settled_at)
              VALUES(?1,?2,?3,?4)",
@@ -791,8 +820,25 @@ mod tests {
             assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
             conn.execute_batch(&format!("DROP TRIGGER {name};")).unwrap();
         }
+        // Reconstruct the original v8 transition trigger for a genuine
+        // pre-v12/pre-v13/pre-v14 database. A legacy upgrade fixture must
+        // not retain modern DDL while claiming an older migration ledger.
         conn.execute_batch(
-            "DROP TABLE provider_dispatch_barrier;
+            "DROP TRIGGER agent_effect_transition_guard;
+             CREATE TRIGGER agent_effect_transition_guard
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NOT (
+                 (OLD.status='reserved' AND NEW.status IN
+                     ('accepted','applied','not_applied','unknown'))
+                 OR (OLD.status='accepted' AND NEW.status IN
+                     ('applied','not_applied','unknown'))
+                 OR (OLD.status='unknown' AND NEW.status IN
+                     ('applied','not_applied'))
+             )
+             BEGIN SELECT RAISE(ABORT,
+                 'agent effect transition requires external evidence'); END;
+             DELETE FROM schema_migrations WHERE version = 14;
+             DROP TABLE provider_dispatch_barrier;
              DELETE FROM schema_migrations WHERE version = 13;",
         )
         .unwrap();
@@ -1427,6 +1473,106 @@ mod tests {
             provider_request_id:Some("late_old"),receipt_id:"old",
             tokens:1,cost_microusd:1
         }).is_err());
+    }
+
+    #[test]
+    fn v13_proven_retry_rearms_exact_v8_claim_and_abort_restores_unknown() {
+        let (_dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        db.record_external_ack(key, 1, "nonexecution_first_ack").unwrap();
+        let proof = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "authenticated_nonexecution_first",
+            },
+        ).unwrap();
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Unknown
+        );
+        let retry = db.prepare_external_retry(key, proof.revision).unwrap();
+        assert_eq!(retry.attempt, 2);
+        assert_eq!(retry.status, ExternalEffectStatus::Reserved);
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Reserved
+        );
+        let guard = db.acquire_provider_dispatch_barrier_for_effect(
+            project, study, &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id, step_id: key.step_id,
+                idempotency_key: key.idempotency_key, attempt: 2,
+                provider: "openai", wire_sha256: fp(),
+            },
+        ).unwrap();
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        assert!(other.execute(
+            "UPDATE agent_effects SET status='unknown'
+             WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+        ).is_err());
+        // This attempt never reached its DISPATCHED CAS, so the exact owner
+        // may close it. Its prior attempt must remain permanently fenced.
+        drop(guard);
+        let aborted = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(aborted.status, ExternalEffectStatus::Cancelled);
+        assert!(aborted.cancel_requested);
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Unknown
+        );
+        let history: i64 = other.query_row(
+            "SELECT COUNT(*) FROM agent_external_attempt_history
+             WHERE idempotency_key=?1 AND attempt=1
+               AND evidence_id='authenticated_nonexecution_first'",
+            params![key.idempotency_key], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(history, 1);
+        let barriers: i64 = other.query_row(
+            "SELECT COUNT(*) FROM provider_dispatch_barrier",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(barriers, 0);
+        assert!(db.mark_external_dispatched(key, aborted.revision, 2).is_err());
+        assert!(db.prepare_external_retry(key, aborted.revision).is_err());
+    }
+
+    #[test]
+    fn v13_retry_rejects_uncertain_or_corrupted_v8_claim_without_rearming() {
+        let (_dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        let unresolved = db.reconcile_external_effect(
+            key, 1, ExternalResolution::Uncertain,
+        ).unwrap();
+        assert!(db.prepare_external_retry(key, unresolved.revision).is_err());
+        let proven = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "authenticated_no_send_proof",
+            },
+        ).unwrap();
+        // A changed legacy claim is NOT authorized by the v10 receipt alone.
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        other.execute(
+            "UPDATE agent_effects SET status='not_applied',
+             revision=revision+1 WHERE idempotency_key=?1 AND status='unknown'",
+            params![key.idempotency_key],
+        ).unwrap();
+        assert!(db.prepare_external_retry(key, proven.revision).is_err());
+        let unchanged = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(unchanged.status, ExternalEffectStatus::NotExecuted);
+        assert_eq!(unchanged.attempt, 1);
+        let history: i64 = other.query_row(
+            "SELECT COUNT(*) FROM agent_external_attempt_history
+             WHERE idempotency_key=?1", params![key.idempotency_key],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(history, 0);
     }
 
     #[test]

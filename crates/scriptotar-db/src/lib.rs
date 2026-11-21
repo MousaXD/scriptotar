@@ -17,7 +17,7 @@ use uuid::Uuid;
 mod provider_dispatch_barrier;
 pub use provider_dispatch_barrier::{ProviderDispatchBarrier, ProviderDispatchEffect};
 
-pub const LATEST_SCHEMA_VERSION: u32 = 13;
+pub const LATEST_SCHEMA_VERSION: u32 = 14;
 
 /// Per-project job counts and lexicographically latest persisted update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,6 +322,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 13,
         name: "provider_cross_connection_dispatch_barrier",
         apply: provider_dispatch_barrier::migration_13,
+    },
+    Migration {
+        version: 14,
+        name: "provider_proven_nonexecution_retry_transition",
+        apply: provider_dispatch_barrier::migration_14,
     },
 ];
 
