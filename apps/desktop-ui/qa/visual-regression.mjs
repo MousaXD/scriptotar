@@ -21,7 +21,10 @@ const views = [
   { name: 'transcript', key: 't', index: 3 },
   { name: 'ai-studio', key: 'a', index: 4 },
   { name: 'library', key: 'l', index: 5 },
-  { name: 'settings', key: ',', index: null }
+  { name: 'settings', key: ',', index: null },
+  // Content Study Studio uses S; legacy Copy Prompt AI tools use A.
+  // Capture both real production routes, not merely the shared Studio nav highlight.
+  { name: 'studio', key: 's', index: 4 }
 ];
 const failures = [];
 const results = [];
@@ -65,6 +68,19 @@ async function routeTo(page, view) {
     const viewId = view.name === 'ai-studio' ? 'studio' : view.name;
     await page.locator(`.primary-nav button[data-view-id="${viewId}"][aria-current="page"]`)
       .waitFor({ timeout: 5000 });
+  }
+  if (view.name === 'ai-studio') {
+    // The A shortcut opens legacy Copy Prompt, not Content Study Studio.
+    await page.locator('#workspace-main .ai-head h1').waitFor({ state: 'visible', timeout: 5000 });
+  }
+  if (view.name === 'studio') {
+    // Keyboard S must reach the canonical project-local Studio workspace.
+    // A selected rail icon alone is not evidence the new Studio rendered.
+    await page.locator('#workspace-main .studio-host:not([hidden]) .studio-workspace')
+      .waitFor({ state: 'visible', timeout: 10000 });
+    if (await page.locator('#workspace-main .ai-head').count()) {
+      recordFailure('studio-route', 'Legacy AI tools rendered instead of Content Study Studio');
+    }
   }
   return performance.now() - start;
 }
@@ -438,7 +454,7 @@ try {
   if (browser) await browser.close();
   try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill(); }
 }
-// Each workspace renders all seven views and four purposeful variants
+// Each workspace renders all eight views (including canonical Studio and legacy AI tools) and four purposeful variants
 // (Research empty, Transcript no matches, Library empty and MCP Settings).
 // Each locale/appearance pair also renders loading and error boot states.
 const expectedScreenshotCount = widths.length * locales.length * themes.length *
