@@ -182,6 +182,25 @@ fn exact_written_transcript_segment(
     Some((id.to_owned(), (segment.start * 1000.0) as u64))
 }
 
+/// Bound the amount of project-owned content a single verification may load.
+/// These caps are larger than the three-script writer's 8 selected sources
+/// and 40 evidence records. Excess input fails closed before origin hydration.
+fn scoped_verification_size_admitted(
+    source_count: usize,
+    evidence_count: usize,
+    link_count: usize,
+    structured_bytes: usize,
+    lineage_count: usize,
+    lineage_evidence_count: usize,
+) -> bool {
+    source_count <= 32
+        && evidence_count <= 256
+        && link_count <= 32
+        && structured_bytes <= 4_000_000
+        && lineage_count <= 8
+        && lineage_evidence_count <= 256
+}
+
 fn collected_epoch(value: &str) -> Option<u64> {
     DateTime::parse_from_rfc3339(value)
         .ok()
@@ -756,6 +775,11 @@ impl AppServices {
             .list_draft_source_ids(project_id, draft_id)?
             .into_iter()
             .collect();
+        if structured.len() > 4_000_000 || linked_sources.len() > 32 {
+            return Err(RepositoryError::Validation(
+                "saved claim manifest or linked source count exceeds verification bounds".into(),
+            ));
+        }
         if !typed_revision_matches(&structured, &saved_version, draft, &linked_sources) {
             return Err(RepositoryError::Conflict(
                 "submitted claims differ from the exact saved DraftVersion".into(),
@@ -772,6 +796,11 @@ impl AppServices {
         }
         let sources = self.store.list_study_sources(project_id, study_id)?;
         let references = self.store.list_evidence_references(project_id, study_id)?;
+        if sources.len() > 32 || references.len() > 256 {
+            return Err(RepositoryError::Validation(
+                "Study source or evidence count exceeds bounded claim verification".into(),
+            ));
+        }
         let source_map: HashMap<Uuid, _> = sources.iter().map(|src| (src.id, src)).collect();
         let evidence_source_map: HashMap<Uuid, Uuid> = references
             .iter()
@@ -786,6 +815,18 @@ impl AppServices {
         // cannot cite Study source B under an unrelated draft-linked source A.
         let stored_candidate: GeneratedCandidate = serde_json::from_str(&structured)
             .map_err(|_| RepositoryError::Storage("corrupt structured claim revision".into()))?;
+        if !scoped_verification_size_admitted(
+            sources.len(),
+            references.len(),
+            linked_sources.len(),
+            structured.len(),
+            stored_candidate.lineage.len(),
+            stored_candidate.lineage.iter().map(|line| line.evidence.len()).sum(),
+        ) {
+            return Err(RepositoryError::Validation(
+                "saved lineage exceeds bounded claim verification".into(),
+            ));
+        }
         for line in &stored_candidate.lineage {
             let source = source_map.get(&line.source_id).ok_or_else(|| {
                 RepositoryError::Conflict("draft lineage source is no longer attached".into())
@@ -2102,6 +2143,17 @@ mod authenticity_tests {
         assert!(unique_resolved_evidence(std::slice::from_ref(&first))
             .get(first.evidence_id.as_str())
             .is_some_and(Option::is_some));
+    }
+
+    #[test]
+    fn claim_verification_resource_limits_deny_oversized_studies_before_hydration() {
+        assert!(scoped_verification_size_admitted(8, 40, 8, 200_000, 8, 40));
+        assert!(!scoped_verification_size_admitted(33, 40, 8, 200_000, 8, 40));
+        assert!(!scoped_verification_size_admitted(8, 257, 8, 200_000, 8, 40));
+        assert!(!scoped_verification_size_admitted(8, 40, 33, 200_000, 8, 40));
+        assert!(!scoped_verification_size_admitted(8, 40, 8, 4_000_001, 8, 40));
+        assert!(!scoped_verification_size_admitted(8, 40, 8, 200_000, 9, 40));
+        assert!(!scoped_verification_size_admitted(8, 40, 8, 200_000, 8, 257));
     }
 
     #[test]
