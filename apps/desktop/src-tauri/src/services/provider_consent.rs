@@ -9,14 +9,15 @@ use scriptotar_ai::{
     provider_consent::{
         sha256_hex, ActualUsage, ConsentBoundary, ConsentError, ConsentPreview,
         DisabledPaidEffectFence, ExistingAiServiceAdapter, NoTrustedPricing, PaidEffectFence,
-        ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard, StudyScope,
+        ProviderDispatchAttempt, ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard,
+        StudyScope,
     },
     ProviderConfig,
 };
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
     ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation,
-    ExternalResolution, ProviderDispatchBarrier, SqliteStore,
+    ExternalResolution, ProviderDispatchBarrier, ProviderDispatchEffect, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -143,6 +144,27 @@ impl ScopeAuthority for AppServices {
         &self,
         scope: &StudyScope,
     ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        // Legacy unbound guard is retained only for offline scope/race tests.
+        // ConsentBoundary uses lock_effect_dispatch_scope for every send.
+        self.lock_scope_barrier(scope, None)
+    }
+
+    fn lock_effect_dispatch_scope(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        let attempt = attempt.ok_or(ConsentError::EffectFenceUnavailable)?;
+        self.lock_scope_barrier(scope, Some(attempt))
+    }
+}
+
+impl AppServices {
+    fn lock_scope_barrier(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
         let project =
             Uuid::parse_str(&scope.project_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
         let study =
@@ -155,13 +177,26 @@ impl ScopeAuthority for AppServices {
             return Err(ConsentError::WrongProjectOrStudy);
         }
         // Commit an exclusive DB-wide freeze after acquiring the host mutex.
-        // SQLite IMMEDIATE admission waits for earlier writers, and v13
-        // triggers reject subsequent cross-connection changes. Re-read only
-        // AFTER the freeze commits, not before it.
-        let db_barrier = self
-            .store
-            .acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
-            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
+        // A paid call additionally binds the exact reserved v10/v12 effect
+        // in that same IMMEDIATE transaction, before fresh scope reread.
+        let db_barrier = if let Some(effect) = attempt {
+            self.store.acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &scope.material_digest,
+                ProviderDispatchEffect {
+                    run_id: &effect.run_id,
+                    step_id: &effect.step_id,
+                    idempotency_key: &effect.idempotency_key,
+                    attempt: effect.attempt,
+                    provider: &effect.provider,
+                    wire_sha256: &effect.wire_sha256,
+                },
+            )
+        } else {
+            self.store.acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
+        }
+        .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         let fresh = self.consent_scope_locked(project, study)?;
         if fresh != *scope {
             return Err(ConsentError::ChangedContext);
@@ -275,6 +310,36 @@ impl PaidEffectFence for SqlitePaidEffectFence {
             // second authorization even if its status is still RESERVED.
             ExternalReservation::Existing(_) => Err(ConsentError::UncertainEffect),
         }
+    }
+
+    fn dispatch_attempt(
+        &self,
+        effect_id: &str,
+    ) -> Result<Option<ProviderDispatchAttempt>, ConsentError> {
+        self.check_effect_id(effect_id)?;
+        let existing = self
+            .store
+            .get_external_effect(self.key())
+            .map_err(|_| ConsentError::UncertainEffect)?
+            .ok_or(ConsentError::UncertainEffect)?;
+        if existing.status != ExternalEffectStatus::Reserved
+            || existing.attempt != 1
+            || existing.cancel_requested
+            || existing.fingerprint != self.wire_sha256
+            || existing.provider != self.provider
+            || existing.token_limit != self.limits.tokens
+            || existing.cost_limit_microusd != self.limits.cost_microusd
+        {
+            return Err(ConsentError::UncertainEffect);
+        }
+        Ok(Some(ProviderDispatchAttempt {
+            run_id: self.run_id.clone(),
+            step_id: self.step_id.clone(),
+            idempotency_key: self.idempotency_key.clone(),
+            attempt: existing.attempt,
+            provider: self.provider.clone(),
+            wire_sha256: self.wire_sha256.clone(),
+        }))
     }
 
     fn mark_dispatched_once(&self, effect_id: &str) -> Result<(), ConsentError> {
