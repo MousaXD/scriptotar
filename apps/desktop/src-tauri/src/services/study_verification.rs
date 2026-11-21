@@ -2252,8 +2252,14 @@ mod authenticity_tests {
     fn exact_claim_anchor_rejects_inside_word_or_number_in_english_and_arabic() {
         assert!(exact_visible_claim_span("Exactly 5 customers", "5"));
         assert!(!exact_visible_claim_span("Exactly 50 customers", "5"));
-        assert!(!exact_visible_claim_span("Evidence in classical wording", "class"));
-        assert!(exact_visible_claim_span("Evidence in classical wording", "classical"));
+        assert!(!exact_visible_claim_span(
+            "Evidence in classical wording",
+            "class"
+        ));
+        assert!(exact_visible_claim_span(
+            "Evidence in classical wording",
+            "classical"
+        ));
         assert!(!exact_visible_claim_span("المعدل جيد", "معدل"));
         assert!(exact_visible_claim_span("المعدل جيد", "المعدل"));
         assert!(!exact_visible_claim_span("عدد ١٠٠", "١"));
@@ -2262,7 +2268,10 @@ mod authenticity_tests {
         assert!(!exact_visible_claim_span("كَتاب", "كَ"));
         assert!(exact_visible_claim_span("كَتاب", "كَتاب"));
         assert!(!exact_visible_claim_span("cafe\u{0301} is here", "cafe"));
-        assert!(exact_visible_claim_span("cafe\u{0301} is here", "cafe\u{0301}"));
+        assert!(exact_visible_claim_span(
+            "cafe\u{0301} is here",
+            "cafe\u{0301}"
+        ));
         assert!(!exact_visible_claim_span("a pinned fact", "Pinned"));
         assert!(!exact_visible_claim_span("source", ""));
         assert!(!exact_visible_claim_span("A claim!", "!"));
