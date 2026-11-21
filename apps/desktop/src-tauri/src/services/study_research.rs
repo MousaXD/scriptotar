@@ -2418,10 +2418,45 @@ mod tests {
                 constraints: vec!["Do not infer unseen frames or retention".into()],
                 style_guide: None,
             },
-            evidence: bridge.evidence,
-            findings: bridge.findings,
+            evidence: bridge.evidence.clone(),
+            findings: bridge.findings.clone(),
             task: WritingTask::ProposeAngles { count: 3 },
         };
+        let current = super::super::study_writing::StudyWritingContext {
+            project_id: project,
+            study_id: study,
+            study_revision: 1,
+            sources: bridge
+                .sources
+                .iter()
+                .map(|source| super::super::study_writing::SelectedWritingSource {
+                    study_source_id: source.study_source_id,
+                    origin_id: source.origin_id,
+                    fingerprint: source.attachment_fingerprint.clone(),
+                    source_revision: source.attachment_revision.clone(),
+                    collected_at: source.collected_at.clone(),
+                })
+                .collect(),
+            brief: input.brief.clone(),
+            evidence: Vec::new(),
+            findings: Vec::new(),
+        };
+        let bound = bind_research_to_current(&current, &bridge).unwrap();
+        assert_eq!(bound.evidence, bridge.evidence);
+        assert_eq!(bound.findings, bridge.findings);
+        assert!(bound.validate().is_ok());
+        let mut replaced = current.clone();
+        replaced.sources[0].fingerprint = "substituted".into();
+        assert!(bind_research_to_current(&replaced, &bridge).is_err());
+        let mut reused = bridge.clone();
+        reused.sources[1].origin_id = reused.sources[0].origin_id;
+        assert!(bind_research_to_current(&current, &reused).is_err());
+        let mut omitted = bridge.clone();
+        omitted.sources.pop();
+        assert!(bind_research_to_current(&current, &omitted).is_err());
+        let mut foreign = bridge.clone();
+        foreign.project_id = Uuid::new_v4();
+        assert!(bind_research_to_current(&current, &foreign).is_err());
         let prompt = scriptotar_ai::writing::prepare_writing_request(&input)
             .unwrap()
             .prompt;
