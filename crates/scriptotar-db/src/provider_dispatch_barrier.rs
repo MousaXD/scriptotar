@@ -141,6 +141,17 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// The persisted identity may be entirely absent for old offline tests,
+/// but a partial paid-owner record is never valid authority to unlock.
+struct StoredBarrierOwner {
+    run: Option<String>,
+    step: Option<String>,
+    key: Option<String>,
+    attempt: Option<i64>,
+    provider: Option<String>,
+    wire: Option<String>,
+}
+
 /// Owns one globally exclusive, persisted authorization freeze.
 /// Drop only releases this object's token. An unsuccessful release leaves the
 /// barrier in place, rather than reauthorizing a stale paid request.
@@ -305,33 +316,33 @@ impl SqliteStore {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
-        let owner: Option<(
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<i64>,
-            Option<String>,
-            Option<String>,
-        )> = tx
+        let owner: Option<StoredBarrierOwner> = tx
             .query_row(
                 "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
                         effect_attempt,effect_provider,effect_wire_sha256
                  FROM provider_dispatch_barrier WHERE singleton=1 AND token=?1",
                 params![token],
                 |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                        row.get(5)?,
-                    ))
+                    Ok(StoredBarrierOwner {
+                        run: row.get(0)?,
+                        step: row.get(1)?,
+                        key: row.get(2)?,
+                        attempt: row.get(3)?,
+                        provider: row.get(4)?,
+                        wire: row.get(5)?,
+                    })
                 },
             )
             .optional()
             .map_err(storage_error)?;
-        let (run, step, key, attempt, provider, wire) = owner.ok_or_else(|| {
+        let StoredBarrierOwner {
+            run,
+            step,
+            key,
+            attempt,
+            provider,
+            wire,
+        } = owner.ok_or_else(|| {
             RepositoryError::Conflict("provider dispatch barrier token is not current".into())
         })?;
         // A normal host abort before the durable DISPATCHED CAS may safely
