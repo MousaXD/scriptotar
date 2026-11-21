@@ -63,6 +63,12 @@ describe('Study research report display scope', () => {
     expect(valid(report, run, [{ ...source, collectedAt: 'changed' }])).toBe(false);
   });
 
+  it('rejects duplicate or malformed attached source snapshots at the display boundary', () => {
+    expect(valid(report, run, [source, { ...source }])).toBe(false);
+    expect(valid(report, run, null as unknown as StudyResearchSource[])).toBe(false);
+    expect(valid(report, run, [null as never])).toBe(false);
+  });
+
   it('quarantines forged observation lineage and incoherent time ranges', () => {
     const changed = structuredClone(report);
     changed.sources[0].observations[0].evidence.reference_id = 'foreign-transcript';
