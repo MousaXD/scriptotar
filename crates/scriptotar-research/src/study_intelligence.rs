@@ -803,9 +803,12 @@ mod tests {
         // Two distinct Study attachments referring to the SAME original
         // transcript must not inflate observed cross-source feature counts.
         let mut aliased = sources;
-        aliased[1].reference_id = aliased[0].reference_id;
-        aliased[1].locator = aliased[0].locator.clone();
-        aliased[1].transcript = aliased[0].transcript.clone();
+        let original_origin = aliased[0].reference_id;
+        let original_locator = aliased[0].locator.clone();
+        let original_transcript = aliased[0].transcript.clone();
+        aliased[1].reference_id = original_origin;
+        aliased[1].locator = original_locator;
+        aliased[1].transcript = original_transcript;
         let repeated_origin = analyze_study_sources(p, st, when(), aliased).unwrap();
         assert_eq!(repeated_origin.sources.len(), 3);
         assert!(repeated_origin
