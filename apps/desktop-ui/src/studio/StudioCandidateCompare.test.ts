@@ -43,6 +43,68 @@ describe('Verified v11 candidate comparison', () => {
     expect(screen.queryByText('Saved manual')).not.toBeInTheDocument();
   });
 
+  it('invalidates receipt-linked comparison when a candidate beyond the first three changes', async () => {
+    const { study, gateway, ids, projectId } = fixture();
+    const view = render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    const compare = screen.getByRole('button', { name: /Compare script candidates/ });
+    await fireEvent.click(compare);
+    expect(await screen.findByText('Saved generated-c')).toBeInTheDocument();
+    expect(compare).toHaveAttribute('aria-expanded', 'true');
+
+    // Generated C is the fourth current summary because a manual draft
+    // precedes the receipt; the Study revision alone is not enough to notice.
+    const edited = { ...study, drafts: study.drafts?.map(candidate =>
+      candidate.id === ids[2] ? { ...candidate, revision: 2 } : candidate) };
+    await view.rerender({ study: edited, gateway, projectId });
+    expect(compare).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
+  });
+
+  it('hides saved candidates and blocks their actions when the visible Study becomes dirty', async () => {
+    const { study, gateway, projectId } = fixture();
+    const choose = vi.fn();
+    const view = render(StudioCandidateCompare, {
+      props: { study, gateway, projectId, pendingEdits: false, onChoose: choose }
+    });
+    const compare = screen.getByRole('button', { name: /Compare script candidates/ });
+    await fireEvent.click(compare);
+    expect(await screen.findByText('Saved generated-c')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit this candidate' })).toHaveLength(3);
+
+    await view.rerender({ study, gateway, projectId, pendingEdits: true, onChoose: choose });
+    expect(compare).toBeDisabled();
+    expect(compare).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+    expect(screen.getByText('Save Study changes before comparing saved script candidates.')).toBeInTheDocument();
+    await fireEvent.click(compare);
+    expect(choose).not.toHaveBeenCalled();
+
+    await view.rerender({ study, gateway, projectId, pendingEdits: false, onChoose: choose });
+    expect(compare).toBeEnabled();
+  });
+
+  it('drops an in-flight candidate read when unsaved edits invalidate its snapshot', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    let releaseReads: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    read.mockImplementation(async (_project, _study, draftId) => {
+      await gate;
+      return { ...study, draftId, draftRevision: 1, draft: 'Saved ' + draftId };
+    });
+    const view = render(StudioCandidateCompare, {
+      props: { study, gateway, projectId, pendingEdits: false }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    await view.rerender({ study, gateway, projectId, pendingEdits: true });
+    releaseReads?.();
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: /Compare script candidates/ })).toBeDisabled();
+    expect(screen.queryByText('Saved generated-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+  });
+
   it('refuses a foreign-project receipt before opening any candidate', async () => {
     const { study, gateway, read, batches, batch, projectId } = fixture();
     batches.mockResolvedValue([{ ...batch, projectId: 'foreign' }]);
@@ -51,4 +113,16 @@ describe('Verified v11 candidate comparison', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
     expect(read).not.toHaveBeenCalled();
   });
+  it('refuses saved bodies from a different Study revision, even for exact draft IDs', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    read.mockImplementation(async (_project, _study, draftId) =>
+      ({ ...study, revision: study.revision + 1, draftId,
+        draftRevision: 1, draft: 'Stale ' + draftId }));
+    render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
+    expect(screen.queryByText('Stale generated-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+  });
+
 });
