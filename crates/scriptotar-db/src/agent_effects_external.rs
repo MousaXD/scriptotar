@@ -1270,6 +1270,47 @@ mod tests {
     }
 
     #[test]
+    fn recovery_v8_fault_rolls_back_v10_uncertain_transition_atomically() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_restart_v8_unknown
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NEW.status='unknown'
+             BEGIN SELECT RAISE(ABORT, 'injected restart recovery v8 failure'); END;"
+        ).unwrap();
+
+        // The v10 UPDATE runs first. The following v8 state update fails.
+        // Neither changed status nor a new revision may escape that transaction.
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),dispatched);
+        let before=db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(before.status,super::super::EffectStatus::Reserved);
+
+        conn.execute_batch("DROP TRIGGER fail_restart_v8_unknown;").unwrap();
+        drop(conn);
+        drop(db);
+        let reopened=SqliteStore::open(path).unwrap();
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),1
+        );
+        let pending=reopened.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(pending.status,ExternalEffectStatus::Uncertain);
+        let v8=reopened.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(v8.status,super::super::EffectStatus::Unknown);
+        assert!(reopened.mark_external_dispatched(key,pending.revision,1).is_err());
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),0
+        );
+    }
+
+    #[test]
     fn concurrent_claimers_only_one_fresh_and_fingerprint_cannot_change() {
         let (_dir,db,project,study,snap)=setup();
         let barrier=Arc::new(Barrier::new(3));
