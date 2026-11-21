@@ -87,7 +87,10 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
                  AND effect_idempotency_key IS NULL AND effect_attempt IS NULL
                  AND effect_provider IS NULL AND effect_wire_sha256 IS NULL)
                 OR
-                (length(effect_run_id) BETWEEN 1 AND 128
+                (effect_run_id IS NOT NULL AND effect_step_id IS NOT NULL
+                 AND effect_idempotency_key IS NOT NULL AND effect_attempt IS NOT NULL
+                 AND effect_provider IS NOT NULL AND effect_wire_sha256 IS NOT NULL
+                 AND length(effect_run_id) BETWEEN 1 AND 128
                  AND length(effect_step_id) BETWEEN 1 AND 128
                  AND length(effect_idempotency_key) BETWEEN 1 AND 256
                  AND effect_attempt BETWEEN 1 AND 3
