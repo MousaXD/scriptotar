@@ -30,6 +30,7 @@ mod agent_effects_schema;
 pub use agent_checkpoints::ScopedAgentCheckpointStore;
 pub use agent_effects::external::{
     ExternalEffect, ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus,
-    ExternalReservation, ExternalResolution,
+    ExternalReservation, ExternalResolution, AuthenticatedChargedResponse,
+    SealedChargedResponse,
 };
 pub use agent_effects::{AgentEffect, EffectClaim, EffectStatus, EffectUpdate};
