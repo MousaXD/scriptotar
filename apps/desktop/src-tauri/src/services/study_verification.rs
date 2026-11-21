@@ -146,6 +146,15 @@ fn exact_written_transcript_segment(
     item: &writing::EvidenceRef,
     binding: &HostSourceBinding,
 ) -> Option<(String, u64)> {
+    // Transcript lineage is an attributed excerpt, never an independently
+    // corroborated document, model-reviewed fact, or injected URL. Require the
+    // host writer's precise evidence kind and explicit unreviewed status.
+    if item.kind != writing::EvidenceKind::SocialTranscript
+        || item.status != writing::EvidenceStatus::Attributed
+        || item.locator.canonical_url.is_some()
+    {
+        return None;
+    }
     let index = item.id.rsplit_once(':')?.1.parse::<usize>().ok()?;
     if !item.id.ends_with(&format!(":{index}")) {
         return None;
@@ -1995,6 +2004,15 @@ mod authenticity_tests {
         assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
         evidence.locator.document_section =
             Some("Transcript segment real-segment-7 (10.500-12.000s)".into());
+        evidence.status = writing::EvidenceStatus::Corroborated;
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.status = writing::EvidenceStatus::Attributed;
+        evidence.kind = writing::EvidenceKind::IndependentDocument;
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.kind = writing::EvidenceKind::SocialTranscript;
+        evidence.locator.canonical_url = Some("https://attacker.example/false-proof".into());
+        assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
+        evidence.locator.canonical_url = None;
         evidence.id = format!("transcript:{origin}:text");
         assert!(exact_written_transcript_segment(&evidence, &binding).is_none());
         evidence.id = format!("transcript:{origin}:44");
