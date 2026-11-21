@@ -265,8 +265,12 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
             with zipfile.ZipFile(path, "a") as z:
                 for i in range(129):
                     z.writestr(f"extra-{i}", b"x")
-            with self.assertRaisesRegex(ValueError, "excessive or missing"):
-                analyze(path, SHA)
+            # Reject the advertised count before ZipFile can allocate
+            # a central-directory index, not merely at member preflight.
+            with patch.object(visual_observations.zipfile, "ZipFile",
+                              side_effect=AssertionError("ZipFile constructor reached")):
+                with self.assertRaisesRegex(ValueError, "excessive native ZIP directory"):
+                    analyze(path, SHA)
 
             if os.name != "nt":
                 fixture_zip(path)
@@ -274,6 +278,42 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
                 symlink.symlink_to(path)
                 with self.assertRaisesRegex(ValueError, "Symlinked"):
                     analyze(symlink, SHA)
+
+    def test_zip_footer_rejects_malformed_metadata_before_indexing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "footer.zip"
+            fixture_zip(path)
+            original = path.read_bytes()
+            eocd = original.rfind(bytes.fromhex("504b0506"))
+            self.assertGreater(eocd, 0)
+            # Original ZIP footer is 22 bytes; counts/offsets are fixed-size
+            # little-endian metadata. Never generate large hostile archives.
+            cases = {
+                "too_many_entries": (eocd + 10, 129),
+                "zip64_marker": (eocd + 10, 65535),
+                "multidisk": (eocd + 4, 1),
+            }
+            for label, (offset, value) in cases.items():
+                with self.subTest(label=label):
+                    mutated = bytearray(original)
+                    struct.pack_into("<H", mutated, offset, value)
+                    path.write_bytes(mutated)
+                    with patch.object(visual_observations.zipfile, "ZipFile",
+                                      side_effect=AssertionError("ZipFile constructor reached")):
+                        with self.assertRaisesRegex(ValueError, "native ZIP directory"):
+                            analyze(path, SHA)
+            path.write_bytes(original + b"unauthorized-trailer")
+            with patch.object(visual_observations.zipfile, "ZipFile",
+                              side_effect=AssertionError("ZipFile constructor reached")):
+                with self.assertRaisesRegex(ValueError, "native ZIP directory"):
+                    analyze(path, SHA)
+
+    def test_zip_footer_allows_legitimate_native_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "valid.zip"
+            fixture_zip(path)
+            self.assertEqual(analyze(path, SHA)["source_sha"], SHA)
+
 
     def test_visual_zip_rejects_aggregate_inflated_size_and_unsupported_compression(self):
         with tempfile.TemporaryDirectory() as temp:
