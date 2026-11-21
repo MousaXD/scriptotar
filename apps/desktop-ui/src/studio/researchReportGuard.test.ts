@@ -40,6 +40,17 @@ describe('Study research report display scope', () => {
     expect(valid(report)).toBe(true);
   });
 
+  it('fails closed on malformed IPC report and run shapes instead of crashing the review', () => {
+    const missingRunPlan = { ...run, plan: null } as unknown as StudyResearchRun;
+    expect(valid(report, missingRunPlan)).toBe(false);
+    const missingSource = { ...report, sources: [null] } as unknown as StudyResearchReport;
+    expect(valid(missingSource)).toBe(false);
+    const malformedObservation = structuredClone(report);
+    malformedObservation.sources[0].observations = [null] as unknown as
+      typeof malformedObservation.sources[0]['observations'];
+    expect(valid(malformedObservation)).toBe(false);
+  });
+
   it('rejects unrelated reports, duplicate source rows and unrequested sources', () => {
     expect(valid({ ...report, project_id: 'foreign' })).toBe(false);
     expect(valid({ ...report, sources: [report.sources[0], report.sources[0]] })).toBe(false);
