@@ -614,7 +614,7 @@ impl ConsentBoundary {
         // A direct policy caller cannot bypass exact outbound-byte approval.
         let expected_wire = record
             .sealed_wire_sha256
-            .as_deref()
+            .clone()
             .ok_or(ConsentError::ChangedContext)?;
         if runner
             .prepared_request_sha256(
@@ -625,7 +625,7 @@ impl ConsentBoundary {
                 intent.max_output_tokens,
             )
             .as_deref()
-            != Some(expected_wire)
+            != Some(expected_wire.as_str())
         {
             return Err(ConsentError::ChangedContext);
         }
@@ -733,21 +733,17 @@ impl ConsentBoundary {
         record.decision = Decision::Uncertain;
         if scope_guard.scope() != &record.intent.scope
             || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
-            || record
-                .sealed_wire_sha256
+            || record.sealed_wire_sha256.as_deref() != Some(expected_wire.as_str())
+            || runner
+                .prepared_request_sha256(
+                    &intent.provider,
+                    &AiRequest {
+                        prompt: intent.prompt.clone(),
+                    },
+                    intent.max_output_tokens,
+                )
                 .as_deref()
-                .is_some_and(|expected| {
-                    runner
-                        .prepared_request_sha256(
-                            &intent.provider,
-                            &AiRequest {
-                                prompt: intent.prompt.clone(),
-                            },
-                            intent.max_output_tokens,
-                        )
-                        .as_deref()
-                        != Some(expected)
-                })
+                != Some(expected_wire.as_str())
         {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::ChangedContext);
@@ -1494,14 +1490,14 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for ReceiptProvider {
-        fn prepared_request_sha256(
-            &self,
-            config: &ProviderConfig,
-            request: &AiRequest,
-            max_output_tokens: u64,
-        ) -> Option<String> {
-            Some(mock_wire_sha(config, request, max_output_tokens))
-        }
+            fn prepared_request_sha256(
+                &self,
+                config: &ProviderConfig,
+                request: &AiRequest,
+                max_output_tokens: u64,
+            ) -> Option<String> {
+                Some(mock_wire_sha(config, request, max_output_tokens))
+            }
 
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
@@ -1666,14 +1662,14 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for PausedProvider {
-        fn prepared_request_sha256(
-            &self,
-            config: &ProviderConfig,
-            request: &AiRequest,
-            max_output_tokens: u64,
-        ) -> Option<String> {
-            Some(mock_wire_sha(config, request, max_output_tokens))
-        }
+            fn prepared_request_sha256(
+                &self,
+                config: &ProviderConfig,
+                request: &AiRequest,
+                max_output_tokens: u64,
+            ) -> Option<String> {
+                Some(mock_wire_sha(config, request, max_output_tokens))
+            }
 
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
