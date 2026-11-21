@@ -212,7 +212,7 @@ export const shellMessages = {
     'queue.queuedUrl': 'URL queued.',
     'queue.unsupportedUrl': 'Invalid media URL. Only HTTP and HTTPS URLs are supported.',
     'queue.nativeDropFailed': 'Native file drop could not be enabled.',
-    'queue.requestId': 'Request ID:'
+    'queue.requestId': 'Request ID:',
     'queue.dropTitle': 'Drop to select media or links',
     'queue.dropSafety': 'Files and links will still be validated by Scriptotar before queueing.',
     'queue.dropHint': 'Choose a video, drop video files, or drag web links anywhere into this window.',
@@ -621,7 +621,7 @@ export const shellMessages = {
     'queue.queuedUrl': 'تمت إضافة الرابط إلى الطابور.',
     'queue.unsupportedUrl': 'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط.',
     'queue.nativeDropFailed': 'تعذر تفعيل إفلات الملفات الأصلي.',
-    'queue.requestId': 'معرّف الطلب:'
+    'queue.requestId': 'معرّف الطلب:',
     'queue.dropTitle': 'أفلت لاختيار الوسائط أو الروابط',
     'queue.dropSafety': 'سيظل Scriptotar يتحقق من الملفات والروابط قبل إضافتها للطابور.',
     'queue.dropHint': 'اختر فيديو، أو أفلت ملفات فيديو، أو اسحب روابط الويب إلى أي مكان في هذه النافذة.',
