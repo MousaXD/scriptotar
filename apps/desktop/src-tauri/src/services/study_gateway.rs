@@ -355,7 +355,7 @@ impl AppServices {
         {
             let mut statement = snapshot
                 .prepare(
-                    "SELECT run_id,draft_ids_json,committed_at
+                    "SELECT run_id,draft_ids_json,committed_at,payload_json
                      FROM study_writing_batches
                      WHERE project_id=?1 AND study_id=?2
                      ORDER BY committed_at DESC,run_id DESC LIMIT 50",
@@ -374,24 +374,26 @@ impl AppServices {
                 if distinct.len() != 3 || run_id.is_empty() {
                     return Err(corrupt_receipt());
                 }
-                for id in &ids {
-                    Uuid::parse_str(id).map_err(|_| corrupt_receipt())?;
-                    let valid: i64 = snapshot
-                        .query_row(
-                            "SELECT COUNT(*) FROM creative_drafts d
-                             JOIN draft_versions v
-                               ON v.draft_id=d.id AND v.version=1
-                             JOIN study_writing_revisions sr
-                               ON sr.draft_id=d.id AND sr.version=1
-                             WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                            params![id, project_id.to_string(), study_id.to_string()],
-                            |row| row.get(0),
-                        )
-                        .map_err(|_| corrupt_receipt())?;
-                    if valid != 1 {
-                        return Err(corrupt_receipt());
-                    }
+                let payload: String = row.get(3).map_err(|_| corrupt_receipt())?;
+                let original: super::study_writing::GeneratedBatch =
+                    serde_json::from_str(&payload).map_err(|_| corrupt_receipt())?;
+                if original.run_id != run_id
+                    || original.context.project_id != project_id
+                    || original.context.study_id != study_id
+                {
+                    return Err(corrupt_receipt());
                 }
+                let canonical_ids = [
+                    Uuid::parse_str(&ids[0]).map_err(|_| corrupt_receipt())?,
+                    Uuid::parse_str(&ids[1]).map_err(|_| corrupt_receipt())?,
+                    Uuid::parse_str(&ids[2]).map_err(|_| corrupt_receipt())?,
+                ];
+                super::study_writing_persistence::verify_committed_versions(
+                    &snapshot,
+                    &original,
+                    &canonical_ids,
+                )
+                .map_err(|_| corrupt_receipt())?;
                 rows.push(crate::dto::UiStudioWritingBatch {
                     run_id,
                     project_id: project_id.to_string(),
