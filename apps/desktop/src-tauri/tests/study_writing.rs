@@ -654,9 +654,9 @@ fn revision_preview_rejects_source_copy_without_mutating_an_accepted_draft() {
         SqlFixtureSink::open(&temp.path().join("preview-copy.sqlite"), current.0.clone());
     let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
     let candidate = sink.get(ids[0]).candidates[0].clone();
-    provider.responses.push_back(
-        json!({"beat_id":"hook","replacement_narration":passage}).to_string(),
-    );
+    provider
+        .responses
+        .push_back(json!({"beat_id":"hook","replacement_narration":passage}).to_string());
     assert!(matches!(
         study_writing::propose_beat_revision(
             &plan,
