@@ -1261,6 +1261,109 @@ def capture_installed_layout(report: dict, ax: AxWebKit, key: str, labels: tuple
         )
 
 
+
+def capture_native_tab_order(report: dict, ax: AxWebKit, key: str, count: int = 12) -> None:
+    """Read only *real* X11 Tab -> installed-PID AT-SPI focus transitions.
+
+    This is review material, not RTL or visual acceptance. A screenshot or
+    source-level inferred tab order is not accepted as keyboard evidence.
+    """
+    observation = {
+        "kind": "installed-WebKitGTK-X11-Tab-AT-SPI",
+        "app_pid": ax.pid,
+        "events": [],
+        "certifies_rtl_or_visual": False,
+    }
+    try:
+        if not ax.web_document():
+            raise NativeUnavailable("Installed process has no AT-SPI web document")
+        # A desktop-wide Tab is unsafe unless the real installed window is
+        # the verified recipient. Never infer ownership from a web document
+        # alone, or type into a different application after focus changes.
+        visible = command("xdotool", "search", "--onlyvisible",
+                          "--pid", str(ax.pid), check=False)
+        titled = []
+        for xid in visible.stdout.split():
+            title = command("xdotool", "getwindowname", xid, check=False)
+            if title.returncode == 0 and "scriptotar" in title.stdout.lower():
+                titled.append(xid)
+        if len(titled) != 1:
+            raise NativeUnavailable(
+                f"Expected one visible installed Scriptotar X11 window "
+                f"for PID {ax.pid}, got {titled!r}"
+            )
+        target = titled[0]
+        observation["installed_x11_window"] = target
+        activated = command("xdotool", "windowactivate", target, check=False)
+        if activated.returncode != 0:
+            raise NativeUnavailable("Cannot activate installed X11 window for Tab audit")
+        focused = command("xdotool", "windowfocus", target, check=False)
+        if focused.returncode != 0:
+            raise NativeUnavailable("Cannot request installed X11 keyboard focus for Tab audit")
+
+        def owns_keyboard() -> bool:
+            # _NET_ACTIVE_WINDOW can remain on Scriptotar even if the actual
+            # X input focus belongs to another process. Require BOTH checks,
+            # never the weaker active-window OR keyboard-focus condition.
+            active = command("xdotool", "getactivewindow", check=False)
+            focused_window = command("xdotool", "getwindowfocus", check=False)
+            return (active.returncode == 0
+                    and active.stdout.strip() == target
+                    and focused_window.returncode == 0
+                    and focused_window.stdout.strip() == target)
+
+        deadline = time.monotonic() + 3
+        while not owns_keyboard() and time.monotonic() < deadline:
+            time.sleep(0.15)
+        if not owns_keyboard():
+            raise NativeUnavailable("Refusing Tab: installed X11 window lacks keyboard focus")
+
+        for tab_index in range(count):
+            if not owns_keyboard():
+                raise NativeUnavailable(
+                    f"Refusing Tab {tab_index + 1}: installed X11 window lost focus"
+                )
+            delivered = command("xdotool", "key", "--clearmodifiers", "Tab",
+                                check=False)
+            if delivered.returncode != 0:
+                raise NativeUnavailable(f"Native Tab {tab_index + 1} delivery failed")
+            time.sleep(0.18)
+            focused = []
+            for node in ax.nodes():
+                try:
+                    state = node.getState()
+                    if not state.contains(ax.atspi.STATE_FOCUSED):
+                        continue
+                    rect = node.queryComponent().getExtents(
+                        getattr(ax.atspi, "DESKTOP_COORDS", 0)
+                    )
+                    focused.append({
+                        "name": (node.name or "")[:120],
+                        "role": node.getRoleName()[:80],
+                        "focusable": bool(state.contains(ax.atspi.STATE_FOCUSABLE)),
+                        "bounds": {
+                            "x": int(rect.x), "y": int(rect.y),
+                            "width": int(rect.width), "height": int(rect.height),
+                        },
+                    })
+                except Exception:
+                    continue
+            observation["events"].append({
+                "tab_index": tab_index + 1,
+                "focused_count": len(focused),
+                "focused": focused[:4],
+            })
+        if not any(event["focused_count"] for event in observation["events"]):
+            raise NativeUnavailable(
+                "Installed AT-SPI did not expose focused controls after real Tab keys"
+            )
+    except Exception as exc:
+        report.setdefault("native_layout_observation_errors", {})[key] = (
+            f"{type(exc).__name__}: {exc}"
+        )
+    report.setdefault("native_layout_observations", {})[key] = observation
+
+
 class Session:
     def __init__(self, args, root: Path):
         self.args = args
@@ -1780,6 +1883,9 @@ def exercise(args, report: dict, root: Path):
                         "Arabic persisted-relaunch shell still exposes English Studio navigation"
                     )
                 session.screenshot("arabic-reopened")
+                # Preserve actual Arabic focus traversal for later independent
+                # a11y review. This cannot turn arabic_rtl into PASS.
+                capture_native_tab_order(report, a, "arabic_reopened_native_tab_order")
                 reached("arabic_heading_after_relaunch")
             except Exception as exc:
                 original_error = exc
