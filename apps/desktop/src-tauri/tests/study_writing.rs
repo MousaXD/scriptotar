@@ -253,6 +253,10 @@ impl DurablePermissionBoundary for FixtureBoundary {
 
 struct MutableStudy(Rc<RefCell<StudyWritingContext>>);
 impl CurrentStudy for MutableStudy {
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        false
+    }
+
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext> {
         let ctx = self.0.borrow().clone();
         if ctx.project_id != project_id || ctx.study_id != study_id {
