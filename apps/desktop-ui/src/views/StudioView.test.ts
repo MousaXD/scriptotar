@@ -90,6 +90,78 @@ describe('Content Study Studio', () => {
     }
   });
 
+  it('discards stale receipt-linked candidates after a saved Study revision changes', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['stale-draft-a', 'stale-draft-b', 'stale-draft-c'] as const;
+    let current: ContentStudy = {
+      id: 'revision-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Receipt revision case' },
+      sources: [], draft: 'Candidate body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Draft ' + (index + 1), revision: 1 }))
+    };
+    const history = vi.fn(async () => current.revision === 5
+      ? [{ projectId, studyId: current.id, runId: 'first-run',
+          draftIds: [...ids] as [string, string, string], committedAt: '2026-11-21T10:00:00Z' }]
+      : []);
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: current.id, projectId, brief: current.brief, revision: current.revision }],
+      createStudy: async () => structuredClone(current),
+      getStudy: async () => structuredClone(current),
+      saveStudy: async (_project, _study, expectedRevision, patch) => {
+        if (expectedRevision !== current.revision) throw new Error('Stale Study revision');
+        current = { ...current, ...patch, revision: current.revision + 1 };
+        return structuredClone(current);
+      },
+      listStudyWritingBatches: history
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Receipt revision case' }));
+    expect(await screen.findByText(ids[0])).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+      target: { value: 'Changed and saved source interpretation' }
+    });
+    await waitFor(() => expect(current.revision).toBe(6), { timeout: 4000 });
+    await waitFor(() => expect(history.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText(ids[0])).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Export 3 scripts' })).not.toBeInTheDocument();
+    expect(screen.getByText('No three-script batches have been committed for this Study.')).toBeInTheDocument();
+  });
+
+  it('quarantines duplicate run IDs rather than rendering duplicate keyed receipt rows', async () => {
+    const projectId = 'p-creator-lab';
+    const current: ContentStudy = {
+      id: 'duplicate-batch-study', projectId, revision: 2,
+      brief: { ...emptyBrief(), title: 'Duplicate receipt case' },
+      sources: [], draft: '', draftVersions: [],
+      drafts: [{ id: 'one', title: 'One', revision: 1 },
+        { id: 'two', title: 'Two', revision: 1 },
+        { id: 'three', title: 'Three', revision: 1 }]
+    };
+    const batch = { projectId, studyId: current.id, runId: 'duplicate-run',
+      draftIds: ['one', 'two', 'three'] as [string, string, string],
+      committedAt: '2026-11-21T10:00:00Z' };
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: current.id, projectId, brief: current.brief, revision: current.revision }],
+      createStudy: async () => current,
+      getStudy: async () => structuredClone(current),
+      saveStudy: async () => current,
+      listStudyWritingBatches: async () => [batch, { ...batch }]
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Duplicate receipt case' }));
+    const region = await screen.findByRole('region', { name: 'Saved three-script batches' });
+    expect(await within(region).findByRole('alert')).toHaveTextContent('This study belongs to a different project.');
+    expect(within(region).queryByRole('button', { name: 'Export 3 scripts' })).not.toBeInTheDocument();
+  });
+
   it('freezes the outgoing draft while the next Study is loading and preserves its saved data', async () => {
     const { gateway, get } = studyFixture();
     const projectId = 'p-creator-lab';
