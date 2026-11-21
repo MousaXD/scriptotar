@@ -1590,6 +1590,43 @@ fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
 }
 
 #[test]
+fn arabic_harakat_and_invisible_marks_cannot_bypass_duplicate_screen() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let plain = "في هذا الحي نراجع ثلاث خطوات بسيطة قبل زيارة المكتبة مع أصدقائنا اليوم";
+    let decorated = plain
+        .chars()
+        .map(|character| {
+            if character.is_alphabetic() {
+                format!("{character}\u{064E}\u{200D}")
+            } else {
+                character.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    batch.candidates[0].draft.beats[0].narration = plain.into();
+    batch.candidates[1].draft.beats[0].narration = decorated;
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn source_copy_hidden_in_caption_is_rejected_before_any_sqlite_write() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
