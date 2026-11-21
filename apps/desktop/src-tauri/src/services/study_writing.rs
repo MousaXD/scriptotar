@@ -521,6 +521,7 @@ pub(super) fn enforce_candidate_originality(
     candidates: &[GeneratedCandidate],
 ) -> WriteResult<()> {
     const SOURCE_WINDOW: usize = 12;
+    const SHORT_SHARED_CTA_WORDS: usize = 10;
     const LONG_SCRIPT_WINDOW: usize = 5;
     const SHORT_SCRIPT_WINDOW: usize = 3;
     const VERY_SHORT_SCRIPT_WINDOW: usize = 2;
@@ -580,26 +581,57 @@ pub(super) fn enforce_candidate_originality(
             .map(|beat| beat.narration.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let words = originality_words(&narration);
-        if words
-            .windows(SOURCE_WINDOW)
-            .any(|window| source_windows.contains(window))
-        {
+        // The source-copy check covers every user-visible generated text field.
+        // A model must not hide copied passages in an on-screen line, caption,
+        // CTA or shot suggestion instead of the main spoken narration.
+        let mut generated_text = vec![narration.as_str(), candidate.draft.title.as_str()];
+        if let Some(cta) = candidate.draft.cta.as_deref() {
+            generated_text.push(cta);
+        }
+        if let Some(caption) = candidate.draft.caption.as_deref() {
+            generated_text.push(caption);
+        }
+        for beat in &candidate.draft.beats {
+            if let Some(text) = beat.on_screen_text.as_deref() {
+                generated_text.push(text);
+            }
+            for shot in &beat.shots {
+                generated_text.push(shot.visual.as_str());
+                generated_text.push(shot.purpose.as_str());
+            }
+        }
+        if generated_text.iter().any(|text| {
+            originality_words(text)
+                .windows(SOURCE_WINDOW)
+                .any(|window| source_windows.contains(window))
+        }) {
             return Err(WritingWorkflowError::InvalidResponse(
                 "script reproduces an extended source passage".into(),
             ));
         }
-        // Compare the creative narration, not repeated closing CTAs.
-        // Especially on short-form videos, a shared three-word invitation
-        // must not make otherwise distinct scripts look like duplicates.
-        let creative_narration = candidate
+
+        // Only a genuinely short FINAL CTA beat may be excluded from
+        // diversity checks. A model cannot evade originality by labeling
+        // long or nonterminal story narration "cta", or by putting a long
+        // copied story into the separately exported CTA field.
+        let mut creative_parts = candidate
             .draft
             .beats
             .iter()
-            .filter(|beat| beat.role != scriptotar_ai::writing::BeatRole::Cta)
-            .map(|beat| beat.narration.as_str())
-            .collect::<Vec<_>>()
-            .join(" ");
+            .enumerate()
+            .filter(|(index, beat)| {
+                !(*index + 1 == candidate.draft.beats.len()
+                    && beat.role == scriptotar_ai::writing::BeatRole::Cta
+                    && originality_words(&beat.narration).len() <= SHORT_SHARED_CTA_WORDS)
+            })
+            .map(|(_, beat)| beat.narration.as_str())
+            .collect::<Vec<_>>();
+        if let Some(cta) = candidate.draft.cta.as_deref() {
+            if originality_words(cta).len() > SHORT_SHARED_CTA_WORDS {
+                creative_parts.push(cta);
+            }
+        }
+        let creative_narration = creative_parts.join(" ");
         let creative_words = originality_words(&creative_narration);
         if creative_words.is_empty() {
             return Err(WritingWorkflowError::InvalidResponse(
