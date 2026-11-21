@@ -1,7 +1,7 @@
 /** Agent 06-specific UX labels; all visible additions have English/Arabic parity. */
 export const workflowStrings = {
   en: {
-    workflow: 'Study workflow', prepared: 'Prompt ready', ready: 'Ready',
+    workflow: 'Study workflow', prepared: 'Prompt ready', ready: 'Ready', openingStudy: 'Loading Study…',
     runHeading: 'AI execution review',
     noStudy: 'Save a Study before preparing a provider request.',
     noPrompt: 'Prepare the three-angle prompt to inspect exactly what could leave this device.',
@@ -36,7 +36,7 @@ export const workflowStrings = {
     compare: 'Compare script candidates',
     comparisonLoading: 'Loading saved versions…',
     comparisonError: 'Cannot compare these candidates. Reopen the Study and retry.',
-    unsaved: 'Unsaved edits are not part of this saved comparison.',
+    unsaved: 'Save Study changes before comparing saved script candidates.',
     editCandidate: 'Edit this candidate',
     savedRevision: 'Saved revision',
     noCandidateText: 'No saved script text.',
@@ -48,7 +48,7 @@ export const workflowStrings = {
     researchStatus: 'Review source locators and uncertainty before writing.'
   },
   ar: {
-    workflow: 'مسار الدراسة', prepared: 'الطلب جاهز', ready: 'جاهز',
+    workflow: 'مسار الدراسة', prepared: 'الطلب جاهز', ready: 'جاهز', openingStudy: 'جارٍ فتح الدراسة…',
     runHeading: 'مراجعة تنفيذ الذكاء الاصطناعي',
     noStudy: 'احفظ الدراسة قبل إعداد طلب المزوّد.',
     noPrompt: 'جهّز طلب الزوايا الثلاث لمراجعة البيانات التي قد تُرسل خارج الجهاز.',
@@ -83,7 +83,7 @@ export const workflowStrings = {
     compare: 'مقارنة نسخ النصوص',
     comparisonLoading: 'جارٍ تحميل النسخ المحفوظة…',
     comparisonError: 'تعذرت مقارنة النسخ. أعد فتح الدراسة وحاول مرة أخرى.',
-    unsaved: 'التعديلات غير المحفوظة غير مشمولة في المقارنة.',
+    unsaved: 'احفظ تغييرات الدراسة قبل مقارنة النصوص المحفوظة.',
     editCandidate: 'تحرير هذا النص',
     savedRevision: 'مراجعة محفوظة',
     noCandidateText: 'لا يوجد نص محفوظ.',

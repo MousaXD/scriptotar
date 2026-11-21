@@ -61,7 +61,16 @@ export interface StudyResearchReport {
     collected_at: string;
     access: 'available' | 'partial' | 'unavailable' | 'deleted' | 'revoked' | 'access_denied' | 'unsupported';
     origin_revision: string | null;
-    metrics: Record<string, unknown> | null;
+    metrics: {
+      views: number | null;
+      likes: number | null;
+      comments: number | null;
+      observed_interactions_per_view: number | null;
+      creator_comparison:
+        | { status: 'observed'; peer_count: number; median_peer_views: number;
+            views_relative_to_peer_median: number; interpretation: string }
+        | { status: 'unavailable'; eligible_peers: number; reason: string };
+    } | null;
     observations: Array<{
       statement: string;
       beat: unknown;
@@ -82,7 +91,7 @@ export interface StudyResearchReport {
     }>;
     limitations: string[];
   }>;
-  feature_support: unknown[];
+  feature_support: Array<{ feature: string; distinct_selected_sources: number; meaning: string }>;
   limitations: string[];
   source_text_is_untrusted_data: boolean;
 }

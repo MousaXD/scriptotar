@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { locale } from '../i18n';
   import type { ContentStudy, DraftCandidate, StudioGateway } from './contract';
+  import { sameRefs } from './selection';
   import { workflowStrings } from './workflowStrings';
 
   export let study: ContentStudy | null = null;
@@ -18,8 +19,13 @@
   let epoch = 0;
   $: t = workflowStrings[$locale];
   $: candidates = (study?.drafts ?? []).slice(0, 3);
-  $: signature = JSON.stringify([projectId, study?.id, study?.revision,
-    candidates.map(item => [item.id, item.revision])]);
+  // A receipt may refer to candidates beyond the first three visible
+  // summaries (for example a manual candidate precedes the generated batch).
+  // Track ALL saved draft revisions so an unseen candidate edit invalidates
+  // an already-rendered three-script comparison.
+  $: signature = JSON.stringify([projectId, study?.id, study?.revision, pendingEdits, study?.sources,
+    (study?.drafts ?? []).map(item => [item.id, item.revision, item.title]),
+    (study?.archivedDrafts ?? []).map(item => [item.id, item.revision, item.title])]);
   $: if (signature !== observed) {
     observed = signature;
     epoch++;
@@ -33,7 +39,7 @@
 
   async function openComparison() {
     if (expanded) { expanded = false; return; }
-    if (!study || !gateway || candidates.length < 2 || loading) return;
+    if (!study || !gateway || candidates.length < 2 || loading || pendingEdits) return;
     expanded = true;
     loading = true;
     error = '';
@@ -64,9 +70,13 @@
       }
       const result = await Promise.all(selected.map(async candidate => {
         const item = await gateway.getStudy(projectId, current.id, candidate.id);
-        if (item.id !== current.id || item.projectId !== projectId ||
+        if (!item || item.id !== current.id || item.projectId !== projectId ||
+            item.revision !== current.revision ||
+            // A returned candidate body must use exactly the Study attachments
+            // whose saved revision the user chose, not a switched source set.
+            !Array.isArray(item.sources) || !sameRefs(item.sources, current.sources) ||
             item.draftId !== candidate.id || item.draftRevision !== candidate.revision ||
-            !item.drafts?.some(d => d.id === candidate.id)) {
+            !item.drafts?.some(d => d.id === candidate.id && d.revision === candidate.revision)) {
           throw new Error(t.comparisonError);
         }
         return { candidate, content: item.draft, revision: item.draftRevision };
@@ -84,9 +94,9 @@
 {#if study && gateway && candidates.length > 1}
   <section class="candidate-compare" aria-label={t.compare} dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
     <button type="button" class="button secondary" aria-expanded={expanded}
-      disabled={loading} on:click={() => void openComparison()}>{t.compare} ({candidates.length})</button>
+      disabled={loading || pendingEdits} on:click={() => void openComparison()}>{t.compare} ({candidates.length})</button>
+    {#if pendingEdits}<p class="compare-muted" role="status">{t.unsaved}</p>{/if}
     {#if expanded}
-      {#if pendingEdits}<p class="compare-muted" role="status">{t.unsaved}</p>{/if}
       {#if loading}<p class="compare-muted" role="status">{t.comparisonLoading}</p>{/if}
       {#if error}<p role="alert" class="compare-error">{error}</p>{/if}
       {#if previews.length}
@@ -97,7 +107,8 @@
               <span class="compare-muted">{t.savedRevision} {item.revision}</span>
               <pre dir="auto">{item.content || t.noCandidateText}</pre>
               <button type="button" class="button secondary"
-                on:click={() => onChoose(item.candidate.id)}>{t.editCandidate}</button>
+                disabled={pendingEdits || loading}
+                on:click={() => { if (!pendingEdits && !loading) void onChoose(item.candidate.id); }}>{t.editCandidate}</button>
             </article>
           {/each}
         </div>

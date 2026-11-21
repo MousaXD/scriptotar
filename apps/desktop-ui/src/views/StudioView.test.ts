@@ -58,6 +58,234 @@ function mount(gateway?: StudioGateway, extra: Record<string, unknown> = {}) {
 }
 
 describe('Content Study Studio', () => {
+  it('shows the exact three saved v11 receipt draft IDs rather than only their titles', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['canonical-draft-one', 'canonical-draft-two', 'canonical-draft-three'] as const;
+    const saved: ContentStudy = {
+      id: 'receipt-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Receipt-linked study' },
+      sources: [], draft: 'Saved candidate body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Candidate ' + (index + 1), revision: 1 }))
+    };
+    const history = vi.fn(async () => [{
+      projectId, studyId: saved.id, runId: 'canonical-run',
+      draftIds: [...ids] as [string, string, string], committedAt: '2026-11-21T10:00:00Z'
+    }]);
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: saved.id, projectId, brief: saved.brief, revision: saved.revision }],
+      createStudy: async () => saved,
+      getStudy: async () => structuredClone(saved),
+      saveStudy: async () => saved,
+      listStudyWritingBatches: history
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Receipt-linked study' }));
+    await waitFor(() => expect(history).toHaveBeenCalledWith(projectId, saved.id));
+    for (const draftId of ids) {
+      expect(await screen.findByText(draftId)).toBeInTheDocument();
+    }
+  });
+
+  it('discards stale receipt-linked candidates after a saved Study revision changes', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['stale-draft-a', 'stale-draft-b', 'stale-draft-c'] as const;
+    let current: ContentStudy = {
+      id: 'revision-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Receipt revision case' },
+      sources: [], draft: 'Candidate body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Draft ' + (index + 1), revision: 1 }))
+    };
+    const history = vi.fn(async () => current.revision === 5
+      ? [{ projectId, studyId: current.id, runId: 'first-run',
+          draftIds: [...ids] as [string, string, string], committedAt: '2026-11-21T10:00:00Z' }]
+      : []);
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: current.id, projectId, brief: current.brief, revision: current.revision }],
+      createStudy: async () => structuredClone(current),
+      getStudy: async () => structuredClone(current),
+      saveStudy: async (_project, _study, expectedRevision, patch) => {
+        if (expectedRevision !== current.revision) throw new Error('Stale Study revision');
+        current = { ...current, ...patch, revision: current.revision + 1 };
+        return structuredClone(current);
+      },
+      listStudyWritingBatches: history
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Receipt revision case' }));
+    expect(await screen.findByText(ids[0])).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+      target: { value: 'Changed and saved source interpretation' }
+    });
+    await waitFor(() => expect(current.revision).toBe(6), { timeout: 4000 });
+    await waitFor(() => expect(history.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByText(ids[0])).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Export 3 scripts' })).not.toBeInTheDocument();
+    expect(screen.getByText('No three-script batches have been committed for this Study.')).toBeInTheDocument();
+  });
+
+  it('does not export an in-flight batch after local unsaved edits invalidate the Study', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['export-a', 'export-b', 'export-c'] as const;
+    const saved: ContentStudy = {
+      id: 'export-race-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Export race study' },
+      sources: [], draft: 'Original body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Draft ' + (index + 1), revision: 1 }))
+    };
+    let releaseReads!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const read = vi.fn(async (_project: string, _study: string, draftId?: string) => {
+      if (draftId) await gate;
+      return { ...saved, draftId: draftId ?? saved.draftId,
+        draft: draftId ? 'Export ' + draftId : saved.draft };
+    });
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: saved.id, projectId, brief: saved.brief, revision: saved.revision }],
+      createStudy: async () => saved,
+      getStudy: read,
+      saveStudy: async () => { throw new Error('Do not save during pending export'); },
+      listStudyWritingBatches: async () => [{
+        projectId, studyId: saved.id, runId: 'export-run',
+        draftIds: [...ids], committedAt: '2026-11-21T10:00:00Z'
+      }]
+    };
+    const oldCreate = URL.createObjectURL;
+    const fakeCreate = vi.fn(() => 'blob:should-not-export');
+    URL.createObjectURL = fakeCreate;
+    const view = mount(gateway);
+    try {
+      const picker = await screen.findByRole('combobox', { name: 'Open study' });
+      await waitFor(() => expect(picker).toBeEnabled());
+      await fireEvent.click(picker);
+      await fireEvent.click(await screen.findByRole('option', { name: 'Export race study' }));
+      const exportButton = await screen.findByRole('button', { name: 'Export 3 scripts' });
+      await fireEvent.click(exportButton);
+      await waitFor(() => expect(read.mock.calls.filter(args => !!args[2])).toHaveLength(3));
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+        target: { value: 'Unsaved change after export began' }
+      });
+      expect(exportButton).toBeDisabled();
+      await act(async () => { releaseReads(); await gate; });
+      expect(fakeCreate).not.toHaveBeenCalled();
+    } finally {
+      releaseReads();
+      view.unmount();
+      URL.createObjectURL = oldCreate;
+    }
+  });
+
+  it('quarantines duplicate run IDs rather than rendering duplicate keyed receipt rows', async () => {
+    const projectId = 'p-creator-lab';
+    const current: ContentStudy = {
+      id: 'duplicate-batch-study', projectId, revision: 2,
+      brief: { ...emptyBrief(), title: 'Duplicate receipt case' },
+      sources: [], draft: '', draftVersions: [],
+      drafts: [{ id: 'one', title: 'One', revision: 1 },
+        { id: 'two', title: 'Two', revision: 1 },
+        { id: 'three', title: 'Three', revision: 1 }]
+    };
+    const batch = { projectId, studyId: current.id, runId: 'duplicate-run',
+      draftIds: ['one', 'two', 'three'] as [string, string, string],
+      committedAt: '2026-11-21T10:00:00Z' };
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: current.id, projectId, brief: current.brief, revision: current.revision }],
+      createStudy: async () => current,
+      getStudy: async () => structuredClone(current),
+      saveStudy: async () => current,
+      listStudyWritingBatches: async () => [batch, { ...batch }]
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Duplicate receipt case' }));
+    const region = await screen.findByRole('region', { name: 'Saved three-script batches' });
+    expect(await within(region).findByRole('alert')).toHaveTextContent('This study belongs to a different project.');
+    expect(within(region).queryByRole('button', { name: 'Export 3 scripts' })).not.toBeInTheDocument();
+  });
+
+  it('freezes the outgoing draft while the next Study is loading and preserves its saved data', async () => {
+    const { gateway, get } = studyFixture();
+    const projectId = 'p-creator-lab';
+    const outgoing = await gateway.createStudy(projectId, { ...emptyBrief(), title: 'Outgoing study' });
+    await gateway.saveStudy(projectId, outgoing.id, outgoing.revision, {
+      draft: 'Keep the outgoing script', sources: [{ kind: 'transcript', id: 't-en' }]
+    });
+    const incoming = await gateway.createStudy(projectId, { ...emptyBrief(), title: 'Incoming study' });
+    const original = gateway.getStudy.bind(gateway);
+    let resolveIncoming!: (record: ContentStudy) => void;
+    const pending = new Promise<ContentStudy>((resolve) => { resolveIncoming = resolve; });
+    gateway.getStudy = async (project, id, draftId, requestId) =>
+      id === incoming.id ? pending : original(project, id, draftId, requestId);
+
+    mount(gateway);
+    const choose = async (title: string) => {
+      const picker = await screen.findByRole('combobox', { name: 'Open study' });
+      await waitFor(() => expect(picker).toBeEnabled());
+      await fireEvent.click(picker);
+      await fireEvent.click(await screen.findByRole('option', { name: title }));
+    };
+    await choose('Outgoing study');
+    const editor = await screen.findByRole('textbox', { name: 'Script draft' });
+    await waitFor(() => expect(editor).toHaveValue('Keep the outgoing script'));
+    await choose('Incoming study');
+
+    expect(await screen.findByRole('status', { name: 'Loading Study…' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Study name' })).toBeDisabled();
+    expect(editor).toHaveAttribute('readonly');
+    expect(screen.getByRole('button', { name: 'Export TXT' })).toBeDisabled();
+
+    await act(async () => { resolveIncoming(await original(projectId, incoming.id)); await pending; });
+    await waitFor(() => expect(editor).toHaveValue(''));
+    expect(screen.getByRole('textbox', { name: 'Study name' })).toBeEnabled();
+    expect(get().find((item) => item.id === outgoing.id)?.draft).toBe('Keep the outgoing script');
+    expect(get().find((item) => item.id === outgoing.id)?.sources).toEqual([
+      { kind: 'transcript', id: 't-en' }
+    ]);
+  });
+
+
+  it('blocks local research approval immediately when the open Studio brief becomes dirty', async () => {
+    const api = createMockClient();
+    const projectId = 'p-creator-lab';
+    const study = await api.createStudy(projectId, { ...emptyBrief(),
+      title: 'Pending local approval', goal: 'Original source-grounded writing' });
+    await api.saveStudy(projectId, study.id, study.revision, {
+      sources: [{ kind: 'transcript', id: 't-ar' }]
+    });
+    const sources = await api.listStudyResearchSources(projectId, study.id);
+    const run = await api.startStudyResearch(projectId, study.id, [sources[0].id]);
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Pending local approval' }));
+
+    const approve = await screen.findByRole('button', { name: 'Approve local analysis' });
+    await waitFor(() => expect(approve).toBeEnabled());
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+      target: { value: 'Changed locally but not saved' }
+    });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText('Save Study changes before preparing or approving local research.')).toBeInTheDocument();
+    const persisted = await api.listStudyResearchRuns(projectId, study.id);
+    expect(persisted[0].plan.id).toBe(run.plan.id);
+    expect(persisted[0].steps[0].output).toBeNull();
+  });
+
   it('uses a genuine project-scoped gateway read for a foreign Study reference and rejects it visibly', async () => {
     const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -304,8 +532,13 @@ describe('Content Study Studio', () => {
 
     view.unmount();
     mount(gateway);
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Arabic launch' }));
+    // Opening the persisted picker is intentionally disabled while the
+    // asynchronous Study index is loading. Wait for the real ready state,
+    // rather than clicking a disabled combobox and assuming its listbox opened.
+    const reopenPicker = screen.getByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(reopenPicker).toBeEnabled());
+    await fireEvent.click(reopenPicker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Arabic launch' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' })).toHaveValue('مرحبا بكم في الإطلاق');
     expect(screen.getAllByText('Hook breakdown — Arabic sample').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Version 2' }));
@@ -345,8 +578,13 @@ describe('Content Study Studio', () => {
 
     view.unmount();
     mount(gateway);
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Revision history' }));
+    // Opening the persisted picker is intentionally disabled while the
+    // asynchronous Study index is loading. Wait for the real ready state,
+    // rather than clicking a disabled combobox and assuming its listbox opened.
+    const reopenPicker = screen.getByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(reopenPicker).toBeEnabled());
+    await fireEvent.click(reopenPicker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Revision history' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('First original script');
   });
@@ -407,18 +645,30 @@ describe('Content Study Studio', () => {
     });
     const original = await api.getStudy('p-creator-lab', study.id);
     expect(original.revision).toBe(attached.revision);
+    // A pending local approval must not retain a clickable stale source scope
+    // after native revocation increments this same Study's persisted revision.
+    const researchSources = await api.listStudyResearchSources('p-creator-lab', study.id);
+    expect(researchSources).toHaveLength(1);
+    const pendingResearch = await api.startStudyResearch('p-creator-lab', study.id, [researchSources[0].id]);
+    const sourceReads = vi.spyOn(api, 'listStudyResearchSources');
     const provider = vi.spyOn(api, 'runAi');
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
     await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Permission withdrawal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeEnabled());
+    const previousSourceReads = sourceReads.mock.calls.length;
     await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Revoke source access' }));
     expect(screen.getByText(/Linked evidence and draft history remain/)).toBeInTheDocument();
     expect((await api.getStudy('p-creator-lab', study.id)).revision).toBe(original.revision);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
     await screen.findByText('Study source access revoked. Historical evidence retained.');
+    await waitFor(() => expect(sourceReads.mock.calls.length).toBeGreaterThan(previousSourceReads));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeDisabled());
+    expect((await api.listStudyResearchRuns('p-creator-lab', study.id))[0].plan.id).toBe(pendingResearch.plan.id);
+    expect((await api.listStudyResearchRuns('p-creator-lab', study.id))[0].steps[0].output).toBeNull();
     const changed = await api.getStudy('p-creator-lab', study.id);
     expect(changed.sources).toEqual([]);
     expect(changed.revision).toBe(original.revision + 1);
