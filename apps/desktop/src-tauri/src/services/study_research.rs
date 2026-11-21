@@ -1743,9 +1743,15 @@ mod tests {
                 "exactly one different-byte publication may win"
             );
             let (winner, loser) = if left_result.is_ok() {
-                (b"left report bytes".as_slice(), b"right report bytes".as_slice())
+                (
+                    b"left report bytes".as_slice(),
+                    b"right report bytes".as_slice(),
+                )
             } else {
-                (b"right report bytes".as_slice(), b"left report bytes".as_slice())
+                (
+                    b"right report bytes".as_slice(),
+                    b"left report bytes".as_slice(),
+                )
             };
             let path = artifact_path(&services, artifact).unwrap();
             assert_eq!(fs::read(&path).unwrap(), winner);
@@ -1755,9 +1761,7 @@ mod tests {
             let pending = fs::read_dir(path.parent().unwrap())
                 .unwrap()
                 .filter_map(Result::ok)
-                .filter(|item| {
-                    item.path().extension().is_some_and(|ext| ext == "pending")
-                })
+                .filter(|item| item.path().extension().is_some_and(|ext| ext == "pending"))
                 .count();
             assert_eq!(pending, 0, "do not strand pending artifacts");
         }
