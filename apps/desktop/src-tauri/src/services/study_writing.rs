@@ -697,14 +697,8 @@ fn originality_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
     for character in text.chars() {
-        let is_format_mark = [
-            '\u{0640}',
-            '\u{200B}',
-            '\u{200C}',
-            '\u{200D}',
-            '\u{FEFF}',
-        ]
-        .contains(&character);
+        let is_format_mark =
+            ['\u{0640}', '\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'].contains(&character);
         let is_arabic_mark = ('\u{0610}'..='\u{061A}').contains(&character)
             || ('\u{064B}'..='\u{065F}').contains(&character)
             || character == '\u{0670}'
