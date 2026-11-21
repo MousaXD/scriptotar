@@ -1611,7 +1611,11 @@ mod tests {
             let db = Connection::open(services.store.path()).unwrap();
             db.execute(
                 "UPDATE research_items SET title=?1 WHERE id=?2 AND project_id=?3",
-                params!["x".repeat(32_768), research_id.to_string(), project.to_string()],
+                params![
+                    "x".repeat(32_768),
+                    research_id.to_string(),
+                    project.to_string()
+                ],
             )
             .unwrap();
             assert!(services
