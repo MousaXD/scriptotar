@@ -10,8 +10,11 @@ const source: StudyResearchSource = {
 };
 const run = {
   state: 'completed',
-  plan: { project_id: projectId, study_id: studyId,
-    steps: [{ input: { tool: 'analyze_evidence', source_ids: [source.id] } }] }
+  plan: { id: 'saved-run', project_id: projectId, study_id: studyId,
+    steps: [{ id: 'analyze_evidence', input: { tool: 'analyze_evidence', source_ids: [source.id] },
+      requires_approval: true, estimate: { tokens: 0, cost_microusd: 0 } }] },
+  steps: [{ id: 'analyze_evidence', state: 'completed', approved: true,
+    output: { artifact_id: 'saved-report', bytes: 100, tokens: 0, cost_microusd: 0 } }]
 } as StudyResearchRun;
 const report: StudyResearchReport = {
   project_id: projectId, study_id: studyId, analyzed_at: null,
@@ -24,7 +27,7 @@ const report: StudyResearchReport = {
       statement: 'Directly quoted observation', beat: null, feature: null,
       confidence: 'source_observation', limitations: [],
       evidence: { study_source_id: source.id, reference_id: source.originId,
-        locator: 'source://one#t=1-2', transcript_id: source.originId,
+        locator: source.locator, transcript_id: source.originId,
         transcript_revision: '1', segment_id: 's1',
         start_ms: 1000, end_ms: 2000, excerpt: 'Direct excerpt' }
     }]
@@ -36,7 +39,7 @@ const valid = (value: StudyResearchReport, selected = run,
   matchesResearchReportScope(value, selected, attached, projectId, studyId);
 
 describe('Study research report display scope', () => {
-  it('accepts canonical selected-source evidence with a segment-specific locator', () => {
+  it('accepts canonical selected-source evidence with its saved locator', () => {
     expect(valid(report)).toBe(true);
   });
 
@@ -95,6 +98,31 @@ describe('Study research report display scope', () => {
     const missingRevision = structuredClone(report);
     missingRevision.sources[0].observations[0].evidence.transcript_revision = '';
     expect(valid(missingRevision)).toBe(false);
+  });
+
+  it('requires a completed approved local step and its exact saved artifact identity', () => {
+    expect(valid(report, { ...run, steps: [{ ...run.steps[0], approved: false }] })).toBe(false);
+    expect(valid(report, { ...run, steps: [{ ...run.steps[0], output: null }] })).toBe(false);
+    expect(valid(report, { ...run, steps: [{ ...run.steps[0], id: 'foreign-step' }] })).toBe(false);
+    expect(valid(report, { ...run, plan: { ...run.plan,
+      steps: [{ ...run.plan.steps[0], estimate: { tokens: 100, cost_microusd: 0 } }] } })).toBe(false);
+    expect(valid(report, { ...run, plan: { ...run.plan,
+      steps: [{ ...run.plan.steps[0], requires_approval: false }] } })).toBe(false);
+  });
+
+  it('rejects substituted observation locators, malformed segments and fractional timestamps', () => {
+    const redirected = structuredClone(report);
+    redirected.sources[0].observations[0].evidence.locator = 'source://foreign';
+    expect(valid(redirected)).toBe(false);
+    const decorated = structuredClone(report);
+    decorated.sources[0].observations[0].evidence.locator += '#t=1-2';
+    expect(valid(decorated)).toBe(false);
+    const segment = structuredClone(report);
+    segment.sources[0].observations[0].evidence.segment_id = 5 as unknown as string;
+    expect(valid(segment)).toBe(false);
+    const fractional = structuredClone(report);
+    fractional.sources[0].observations[0].evidence.start_ms = 1000.5;
+    expect(valid(fractional)).toBe(false);
   });
 
   it('rejects fabricated creator-peer observations, invalid counters and feature bounds', () => {
