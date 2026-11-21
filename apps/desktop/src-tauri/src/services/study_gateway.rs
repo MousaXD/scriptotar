@@ -556,9 +556,7 @@ impl AppServices {
         // generate_three invokes the approved loader before each of its
         // four independently authorized provider steps. The canonical sink
         // invokes it once more under its IMMEDIATE v11 commit transaction.
-        super::study_writing::generate_three(
-            plan, &approved, boundary, provider, stop, &mut sink,
-        )
+        super::study_writing::generate_three(plan, &approved, boundary, provider, stop, &mut sink)
     }
 
     /// Test-only transcript-first compatibility path. No public Tauri entry.
@@ -1259,7 +1257,8 @@ impl super::study_writing::CurrentStudy for ApprovedResearchCurrentStudy<'_> {
         // This read validates the exact completed approved research run,
         // its v8 Applied receipt, current source origins/revisions/hashes,
         // and deterministic report bytes. A report file alone is not proof.
-        let approved = self.services
+        let approved = self
+            .services
             .research_writing_context(project, study, self.artifact)
             .map_err(|_| WritingWorkflowError::StaleContext)?;
         if approved.project_id != project
@@ -1276,17 +1275,20 @@ impl super::study_writing::CurrentStudy for ApprovedResearchCurrentStudy<'_> {
         // Do not permit an old report to represent a subset of subsequently
         // selected sources, even if those extra rows are truncated by the
         // legacy transcript-first copy-prompt bridge.
-        let attached = self.services.store
+        let attached = self
+            .services
+            .store
             .list_study_sources(project, study)
             .map_err(|_| WritingWorkflowError::StaleContext)?;
-        if attached.iter().filter(|source| source.available).count()
-            != approved.sources.len()
-        {
+        if attached.iter().filter(|source| source.available).count() != approved.sources.len() {
             return Err(WritingWorkflowError::StaleContext);
         }
         for source in &approved.sources {
             if source.source_sha256.len() != 64
-                || !source.source_sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || !source
+                    .source_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
                 || !initial.sources.iter().any(|selected| {
                     selected.study_source_id == source.study_source_id
                         && selected.origin_id == source.origin_id
@@ -1496,9 +1498,14 @@ mod tests {
                     .iter()
                     .any(|reference| reference.id == source.origin_id.to_string())
         }));
-        assert!(services.prepare_three_writing_plan(
-            project, study_id, Uuid::new_v4(), "missing-approved-report"
-        ).is_err());
+        assert!(services
+            .prepare_three_writing_plan(
+                project,
+                study_id,
+                Uuid::new_v4(),
+                "missing-approved-report"
+            )
+            .is_err());
         let plan = services
             .prepare_three_writing_offline_fixture(project, study_id, "canonical-study-1")
             .unwrap();
