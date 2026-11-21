@@ -18,7 +18,7 @@ function verify(report, name) {
   }
   if (!Array.isArray(report.failures) || report.failures.length ||
       !Array.isArray(report.results) || report.results.length !== 20 ||
-      report.screenshotCount !== 232) {
+      report.screenshotCount !== 252) {
     throw new Error(name + ' has missing, incomplete, or failed screenshot/interaction evidence');
   }
   const labels = new Set();
