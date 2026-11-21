@@ -487,11 +487,32 @@ impl AppServices {
         }
     }
 
-    /// Private production entrypoint: reconstruct canonical request material
-    /// directly from the active Study, never from a browser-supplied context.
-    /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    /// Production P1 preparation requires the exact artifact of a completed,
+    /// approved v8 Applied research run. A caller cannot substitute a browser
+    /// DTO, filename, or an unrelated source report. The approved report's
+    /// content fingerprints and source revisions are rechecked at every read.
+    /// This remains private/offline until paid provider certification.
     #[allow(dead_code)]
     pub(super) fn prepare_three_writing_plan(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        approved_research_artifact: Uuid,
+        run_id: &str,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let approved = ApprovedResearchCurrentStudy {
+            services: self,
+            artifact: approved_research_artifact,
+        };
+        let current = approved.load(project_id, study_id)?;
+        super::study_writing::prepare_three(run_id, current)
+    }
+
+    /// Legacy transcript-only offline fixture: never compiled into the
+    /// production host or offered as an alternative paid-dispatch admission.
+    #[cfg(test)]
+    fn prepare_three_writing_offline_fixture(
         &self,
         project_id: Uuid,
         study_id: Uuid,
@@ -512,6 +533,35 @@ impl AppServices {
     /// and complete four-step consent lifecycle are registered in Tauri.
     #[allow(dead_code)]
     pub(super) fn generate_three_writing_with_boundary<B, P, S>(
+        &self,
+        approved_research_artifact: Uuid,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
+        let approved = ApprovedResearchCurrentStudy {
+            services: self,
+            artifact: approved_research_artifact,
+        };
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: &approved,
+        };
+        // generate_three invokes the approved loader before each of its
+        // four independently authorized provider steps. The canonical sink
+        // invokes it once more under its IMMEDIATE v11 commit transaction.
+        super::study_writing::generate_three(plan, &approved, boundary, provider, stop, &mut sink)
+    }
+
+    /// Test-only transcript-first compatibility path. No public Tauri entry.
+    #[cfg(test)]
+    fn generate_three_writing_offline_fixture<B, P, S>(
         &self,
         plan: &super::study_writing::GenerationPlan,
         boundary: &mut B,
@@ -534,6 +584,7 @@ impl AppServices {
     /// canonical source links and one receipt in a single SQLite transaction.
     /// This MUST NOT be surfaced as a client-controlled direct-save command.
     /// A future caller must prove consent/effect/receipt identity first.
+    #[cfg(test)]
     #[allow(dead_code)]
     pub(super) fn persist_three_writing_candidates(
         &self,
@@ -1182,6 +1233,94 @@ impl AppServices {
     }
 }
 
+/// The approved-research loader is the single production bridge between
+/// Agent 03's v8 Applied report and Agent 05's four-step writing plan.
+struct ApprovedResearchCurrentStudy<'a> {
+    services: &'a AppServices,
+    artifact: Uuid,
+}
+
+impl super::study_writing::CurrentStudy for ApprovedResearchCurrentStudy<'_> {
+    fn load(
+        &self,
+        project: Uuid,
+        study: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+        use super::study_writing::{CurrentStudy, WritingWorkflowError};
+
+        if self.artifact.is_nil() {
+            return Err(WritingWorkflowError::InvalidContext(
+                "approved research artifact required",
+            ));
+        }
+        let initial = CurrentStudy::load(self.services, project, study)?;
+        // This read validates the exact completed approved research run,
+        // its v8 Applied receipt, current source origins/revisions/hashes,
+        // and deterministic report bytes. A report file alone is not proof.
+        let approved = self
+            .services
+            .research_writing_context(project, study, self.artifact)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if approved.project_id != project
+            || approved.study_id != study
+            || !approved.source_text_is_untrusted_data
+            || !approved.meets_three_source_evidence_floor
+            || approved.attributed_source_count < 3
+            || approved.sources.len() != initial.sources.len()
+        {
+            return Err(WritingWorkflowError::InvalidContext(
+                "approved research does not cover the exact Study sources",
+            ));
+        }
+        // Do not permit an old report to represent a subset of subsequently
+        // selected sources, even if those extra rows are truncated by the
+        // legacy transcript-first copy-prompt bridge.
+        let attached = self
+            .services
+            .store
+            .list_study_sources(project, study)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if attached.iter().filter(|source| source.available).count() != approved.sources.len() {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        for source in &approved.sources {
+            if source.source_sha256.len() != 64
+                || !source
+                    .source_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+                || !initial.sources.iter().any(|selected| {
+                    selected.study_source_id == source.study_source_id
+                        && selected.origin_id == source.origin_id
+                        && selected.fingerprint == source.attachment_fingerprint
+                        && selected.source_revision == source.attachment_revision
+                        && selected.collected_at == source.collected_at
+                })
+            {
+                return Err(WritingWorkflowError::StaleContext);
+            }
+        }
+        let prefix = format!("research:{}:", self.artifact);
+        if approved.evidence.is_empty()
+            || approved.evidence.iter().any(|e| !e.id.starts_with(&prefix))
+        {
+            return Err(WritingWorkflowError::InvalidContext(
+                "writing evidence is not bound to approved research",
+            ));
+        }
+        let mut context = initial.clone();
+        context.evidence = approved.evidence;
+        context.findings = approved.findings;
+        context.validate()?;
+        // Two snapshots bracket the artifact read. Every new provider step
+        // repeats this same check; the v11 sink repeats it under SQLite IMMEDIATE.
+        if CurrentStudy::load(self.services, project, study)? != initial {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        Ok(context)
+    }
+}
+
 /*
  * Production CurrentStudy loader. This intentionally reuses the same bounded,
  * Study-scoped writing bridge as Copy Prompt; no untrusted DTO, provider call,
@@ -1359,8 +1498,16 @@ mod tests {
                     .iter()
                     .any(|reference| reference.id == source.origin_id.to_string())
         }));
+        assert!(services
+            .prepare_three_writing_plan(
+                project,
+                study_id,
+                Uuid::new_v4(),
+                "missing-approved-report"
+            )
+            .is_err());
         let plan = services
-            .prepare_three_writing_plan(project, study_id, "canonical-study-1")
+            .prepare_three_writing_offline_fixture(project, study_id, "canonical-study-1")
             .unwrap();
         assert_eq!(plan.context, current);
         assert!(prepare_three("canonical-study-1", current.clone()).is_ok());
@@ -1536,7 +1683,7 @@ mod tests {
             )
             .unwrap();
         let plan: GenerationPlan = services
-            .prepare_three_writing_plan(project, study, "controlled-four-step")
+            .prepare_three_writing_offline_fixture(project, study, "controlled-four-step")
             .unwrap();
         let ids = plan
             .context
@@ -1614,7 +1761,7 @@ mod tests {
             steps: 0,
         };
         assert!(matches!(
-            services.generate_three_writing_with_boundary(
+            services.generate_three_writing_offline_fixture(
                 &plan,
                 &mut permit,
                 &mut provider,
@@ -1625,7 +1772,7 @@ mod tests {
         assert_eq!(provider.calls, 0);
         permit.approved = true;
         let stored = services
-            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .generate_three_writing_offline_fixture(&plan, &mut permit, &mut provider, &NeverStop)
             .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
@@ -1720,7 +1867,7 @@ mod tests {
             calls: 0,
         };
         let recovered = reopened
-            .generate_three_writing_with_boundary(
+            .generate_three_writing_offline_fixture(
                 &plan,
                 &mut no_approval,
                 &mut no_provider,

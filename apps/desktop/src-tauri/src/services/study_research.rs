@@ -2151,11 +2151,21 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let study = services
-            .store
-            .create_study(project, "Three recorded transcripts", "")
-            .unwrap()
-            .id;
+        let created = services
+            .create_studio_study(
+                project,
+                crate::dto::UiStudioBrief {
+                    title: "Three recorded transcripts".into(),
+                    goal: "Produce an original tutorial script".into(),
+                    audience: "New learners".into(),
+                    platform: "YouTube".into(),
+                    language: "English".into(),
+                    duration: "45".into(),
+                    style: "Grounded".into(),
+                },
+            )
+            .unwrap();
+        let study = Uuid::parse_str(&created.id).unwrap();
         let timestamp = "2026-11-15T12:30:00Z";
         let mut attached = Vec::new();
         let mut origin_ids = Vec::new();
@@ -2259,6 +2269,18 @@ mod tests {
                 && item.status != EvidenceStatus::Corroborated
         }));
 
+        // The production service must require the same approved, applied
+        // research artifact, not independently sampled transcript excerpts.
+        let plan = reopened
+            .prepare_three_writing_plan(project, study, artifact, "approved-research-three-source")
+            .unwrap();
+        assert_eq!(plan.context.evidence, bridge.evidence);
+        assert_eq!(plan.context.findings, bridge.findings);
+        assert_eq!(plan.context.sources.len(), 3);
+        assert!(reopened
+            .prepare_three_writing_plan(project, study, Uuid::new_v4(), "forged-research-artifact")
+            .is_err());
+
         // This merely constructs a zero-cost structured writing request. It
         // does not dispatch AI, verify any factual claim or save a draft.
         let input = WritingInput {
@@ -2283,10 +2305,23 @@ mod tests {
         let prompt = scriptotar_ai::writing::prepare_writing_request(&input)
             .unwrap()
             .prompt;
-        for id in origin_ids {
+        for id in &origin_ids {
             assert!(prompt.contains(&id.to_string()));
+            assert!(plan.angles_prompt.prompt.contains(&id.to_string()));
         }
         assert!(!prompt.is_empty());
+        // Editing a real origin without changing the selected attachment is
+        // still a stale research artifact. No new writing plan is admissible.
+        let conn = Connection::open(reopened.store.path()).unwrap();
+        conn.execute(
+            "UPDATE transcripts SET text='Changed after approval',
+             updated_at='2026-11-16T00:00:00Z' WHERE id=?1",
+            params![origin_ids[0].to_string()],
+        )
+        .unwrap();
+        assert!(reopened
+            .prepare_three_writing_plan(project, study, artifact, "stale-research-artifact")
+            .is_err());
     }
 
     #[test]
