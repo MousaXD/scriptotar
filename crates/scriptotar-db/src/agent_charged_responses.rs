@@ -714,6 +714,167 @@ mod charged_response_regressions {
     }
 
     #[test]
+    fn four_seals_validate_atomically_against_one_canonical_run_and_wire_set() {
+        let (_temp, db, project, study, prior) = fixture("angles");
+        let order = ["angles", "draft-1", "draft-2", "draft-3"];
+        let mut plan = prior.plan.clone();
+        plan.id = Uuid::new_v4().to_string();
+        plan.steps = order
+            .iter()
+            .map(|name| {
+                let mut original = prior.plan.steps[0].clone();
+                original.id = (*name).to_owned();
+                original
+            })
+            .collect();
+        plan.limits.max_tool_calls = 4;
+        plan.limits.max_tokens = 2000;
+        plan.limits.max_cost_microusd = 10000;
+        let steps = plan
+            .steps
+            .iter()
+            .enumerate()
+            .map(|(index, plan_step)| StepRecord {
+                id: plan_step.id.clone(),
+                state: StepState::Pending,
+                attempts: 0,
+                approved: false,
+                idempotency_key: format!("{}:{index}:{}", plan.id, plan_step.id),
+                pending_effect_id: None,
+                output: None,
+                failure_code: None,
+            })
+            .collect();
+        let mut run = RunSnapshot {
+            schema_version: 1,
+            plan,
+            revision: 0,
+            state: RunState::Planned,
+            current_step: 0,
+            steps,
+            usage: Usage::default(),
+            started_ms: 100,
+            cancel_requested: false,
+            pause_requested: false,
+            events: vec![],
+        };
+        run.event(100, AuditKind::Created);
+        let checkpoint = db.scoped_agent_checkpoints(project, study).unwrap();
+        checkpoint.create(run.clone()).unwrap();
+        run.revision = 1;
+        run.state = RunState::Running;
+        run.steps[0].state = StepState::Running;
+        run.steps[0].attempts = 1;
+        run.steps[0].approved = true;
+        run.usage.tool_calls = 1;
+        run.event(101, AuditKind::Dispatched);
+        checkpoint.compare_and_swap(0, run.clone()).unwrap();
+
+        let wires = (1..=4)
+            .map(|index| format!("{index:064x}"))
+            .collect::<Vec<_>>();
+        for (index, step) in order.iter().enumerate() {
+            if index > 0 {
+                let before = run.revision;
+                run.revision += 1;
+                run.steps[index - 1].state = StepState::Completed;
+                run.current_step = index;
+                run.steps[index].state = StepState::Running;
+                run.steps[index].attempts = 1;
+                run.steps[index].approved = true;
+                run.usage.tool_calls += 1;
+                run.event(102 + index as u64, AuditKind::Dispatched);
+                checkpoint.compare_and_swap(before, run.clone()).unwrap();
+            }
+            let key = ExternalEffectKey {
+                project,
+                study,
+                run_id: &run.plan.id,
+                step_id: step,
+                idempotency_key: &run.steps[index].idempotency_key,
+            };
+            let reserved = db
+                .reserve_external_effect(
+                    key,
+                    &wires[index],
+                    "openai",
+                    ExternalEffectLimits {
+                        tokens: 500,
+                        cost_microusd: 2500,
+                    },
+                )
+                .unwrap();
+            let ExternalReservation::Fresh(effect) = reserved else {
+                panic!("effect must be unique");
+            };
+            db.mark_external_dispatched(key, effect.revision, 1).unwrap();
+            let request_id = format!("request_{index}");
+            let receipt_id = format!("receipt_{index}");
+            let output = format!("exact original response for {step}");
+            db.settle_authenticated_charged_response(AuthenticatedChargedResponse {
+                key,
+                attempt: 1,
+                provider: "openai",
+                request_sha256: &wires[index],
+                provider_request_id: &request_id,
+                receipt_id: &receipt_id,
+                input_tokens: 11,
+                output_tokens: 18,
+                cost_microusd: 110,
+                response: &output,
+            })
+            .unwrap();
+        }
+
+        let expected: [ExpectedChargedWritingStep<'_>; 4] =
+            std::array::from_fn(|index| ExpectedChargedWritingStep {
+                step_id: order[index],
+                idempotency_key: &run.steps[index].idempotency_key,
+                request_sha256: &wires[index],
+            });
+        let mut conn = database(&db).unwrap();
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let mut forged = expected;
+        forged[2].request_sha256 = fp();
+        assert!(load_four_sealed_effect_outcomes(
+            &tx,
+            project,
+            study,
+            &run.plan.id,
+            &forged,
+        )
+        .is_err());
+        let saved = load_four_sealed_effect_outcomes(
+            &tx,
+            project,
+            study,
+            &run.plan.id,
+            &expected,
+        )
+        .unwrap();
+        assert_eq!(saved.len(), 4);
+        for (index, entry) in saved.iter().enumerate() {
+            assert_eq!(entry.step_id, order[index]);
+            assert_eq!(entry.request_sha256, wires[index]);
+            assert_eq!(
+                entry.response,
+                format!("exact original response for {}", order[index])
+            );
+        }
+        let written_batches: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM study_writing_batches WHERE run_id=?1",
+                params![run.plan.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(written_batches, 0, "four-output inspection must be read-only");
+        tx.commit().unwrap();
+    }
+
+    #[test]
     fn old_receipt_only_path_cannot_complete_any_four_step_writing_effect() {
         let (_temp, db, project, study, run) = fixture("draft-2");
         let k = key(&run, project, study);
