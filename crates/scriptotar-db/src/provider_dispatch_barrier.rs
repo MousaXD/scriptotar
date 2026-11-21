@@ -108,7 +108,20 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         CREATE TRIGGER provider_dispatch_barrier_effect_cancel
         BEFORE UPDATE OF cancel_requested ON agent_external_effects
         WHEN EXISTS (SELECT 1 FROM provider_dispatch_barrier)
-        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation is frozen'); END;",
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation is frozen'); END;
+        -- A separate connection must not bypass the cancellation gate by
+        -- changing status directly while leaving cancel_requested untouched.
+        -- Authenticated successful/failed/uncertain receipt transitions remain
+        -- writable; remote cancellation requires the reviewed recovery path.
+        CREATE TRIGGER provider_dispatch_barrier_effect_cancel_status
+        BEFORE UPDATE OF status ON agent_external_effects
+        WHEN EXISTS (
+            SELECT 1 FROM provider_dispatch_barrier b
+            WHERE b.effect_idempotency_key=OLD.idempotency_key
+              AND b.effect_attempt=OLD.attempt
+        )
+         AND NEW.status IN ('cancelled','not_executed')
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation status is frozen'); END;",
     )?;
     for table in FREEZE_TABLES {
         for (verb, suffix) in [
