@@ -1,6 +1,6 @@
 # Agent 11: independent unchanged source-probe check of remaining upstream v4 proposals.
 # TEST-ONLY; NEVER merge or distribute patched npm source; release NO-GO.
-name: Agent11 unassessed upstream v4 picomatch parser PR257 (strict hard gate)
+name: Agent11 unassessed upstream v4 picomatch parser PR277 (strict hard gate)
 
 on:
   push:
@@ -27,9 +27,9 @@ jobs:
       matrix:
         include:
           # Prior #237/#238/#254 results remain immutable in #44788415580.
-          # New unassessed v4 candidate, evaluated only against original installed 4.0.7.
-          - { pr: '257', sha: '4e4892e0ac6c374ec3d9e4dc430101da9a20a37b', os: 'ubuntu-22.04' }
-          - { pr: '257', sha: '4e4892e0ac6c374ec3d9e4dc430101da9a20a37b', os: 'windows-2022' }
+          # New upstream #277 candidate; disposable-node_modules evaluation only against official locked 4.0.7.
+          - { pr: '277', sha: 'a2ac5967ed7e5547cea5aa031e9f7e81b8972511', os: 'ubuntu-22.04' }
+          - { pr: '277', sha: 'a2ac5967ed7e5547cea5aa031e9f7e81b8972511', os: 'windows-2022' }
     steps:
       - name: Checkout exact Scriptotar research SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -83,6 +83,7 @@ jobs:
           test "$(git -C .agent11-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
           test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
           test "$(git -C .agent11-upstream-v4 rev-parse HEAD)" = "$EXPECT_UPSTREAM"
+          test "$(git -C .agent11-upstream-v4 hash-object lib/parse.js)" = "a59932ccf6210970bf73514e30b3336a2adf13fa"
           test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
           test "$(git hash-object .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs)" = "e1d4f227c9ee0d4069c823dbd8b5fec711d67228"
           test "$(git hash-object .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs)" = "5c746abd3caf414ba2c80be825d66983312236c6"
