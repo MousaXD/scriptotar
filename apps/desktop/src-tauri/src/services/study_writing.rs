@@ -707,6 +707,22 @@ pub(super) fn enforce_candidate_originality(
                 creative_parts.push(cta);
             }
         }
+        // Substantial captions/on-screen passages are often the actual script
+        // in text-led videos. Distinct six-word voiceovers must not disguise
+        // an otherwise cloned long story in these exported fields. Routine
+        // short labels and reusable closing prompts remain exempt.
+        if let Some(caption) = candidate.draft.caption.as_deref() {
+            if originality_words(caption).len() > SHORT_SHARED_CTA_WORDS {
+                creative_parts.push(caption);
+            }
+        }
+        for beat in &candidate.draft.beats {
+            if let Some(on_screen) = beat.on_screen_text.as_deref() {
+                if originality_words(on_screen).len() > SHORT_SHARED_CTA_WORDS {
+                    creative_parts.push(on_screen);
+                }
+            }
+        }
         let creative_narration = creative_parts.join(" ");
         let creative_words = originality_words(&creative_narration);
         // A one- or two-word hook plus a common CTA is not a meaningfully
