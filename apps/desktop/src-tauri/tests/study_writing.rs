@@ -573,7 +573,7 @@ fn external_provider_failure_is_uncertain_and_must_not_replay() {
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
     assert_eq!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
-        Err(WritingWorkflowError::ProviderFailed)
+        Err(WritingWorkflowError::UncertainEffect)
     );
     assert_eq!(sink.count(), 0);
     provider.fail_on = None;
@@ -1659,7 +1659,7 @@ fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
     assert_eq!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
-        Err(WritingWorkflowError::ProviderFailed)
+        Err(WritingWorkflowError::UncertainEffect)
     );
     assert_eq!(gate.step_response.len(), 3);
     assert_eq!(gate.uncertain.len(), 1);
