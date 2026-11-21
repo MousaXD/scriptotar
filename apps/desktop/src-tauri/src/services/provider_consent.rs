@@ -194,7 +194,8 @@ impl AppServices {
                 },
             )
         } else {
-            self.store.acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
+            self.store
+                .acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
         }
         .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         let fresh = self.consent_scope_locked(project, study)?;
