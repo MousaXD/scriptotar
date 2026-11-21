@@ -241,7 +241,7 @@ fn from_study_evidence(
             StudySourceKind::Manual => source.manual_text.as_deref().is_some_and(|text| {
                 evidence.input.locator == source.locator
                     && !evidence.input.claim.trim().is_empty()
-                    && text.contains(evidence.input.claim.as_str())
+                    && exact_visible_claim_span(text, evidence.input.claim.as_str())
             }),
             StudySourceKind::Transcript => verified_segment.is_some(),
             _ => false,
@@ -1252,6 +1252,17 @@ mod tests {
         forged.input.claim = "An invented quotation".into();
         assert_eq!(
             from_study_evidence(&forged, &source, &bound).state,
+            EvidenceState::Untrusted
+        );
+        let mut partial_number = reference.clone();
+        partial_number.input.claim = "facts".into();
+        assert_eq!(
+            from_study_evidence(&partial_number, &source, &bound).state,
+            EvidenceState::Unreviewed
+        );
+        partial_number.input.claim = "acts".into();
+        assert_eq!(
+            from_study_evidence(&partial_number, &source, &bound).state,
             EvidenceState::Untrusted
         );
         let mut fake_locator = reference.clone();
