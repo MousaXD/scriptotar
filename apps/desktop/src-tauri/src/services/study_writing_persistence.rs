@@ -301,6 +301,12 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 // All model-inventoried factual claims start unverified.
                 claim.status = ClaimStatus::Unverified;
             }
+            // The provider-facing parser clears model-supplied manual edit
+            // flags. Direct v11 sink callers must enforce the same rule:
+            // only a later authenticated human edit may claim protection.
+            if candidate.draft.beats.iter().any(|beat| beat.manually_edited) {
+                return Err(denied("generated drafts cannot claim human edits"));
+            }
             // The sink may be called independently of parse_draft. Validate
             // all beat IDs, claim-to-beat bindings, field limits and citations
             // again after unverified-claim normalization.
