@@ -1230,7 +1230,10 @@ mod tests {
             id: Uuid::new_v4(),
             ..saved
         };
-        assert_ne!(first, stored_claim_manifest_digest(&newer_version, original));
+        assert_ne!(
+            first,
+            stored_claim_manifest_digest(&newer_version, original)
+        );
     }
 
     #[test]
@@ -1258,11 +1261,15 @@ mod tests {
         for repeated_count in [2, 3, 4] {
             let records = vec![evidence.clone(); repeated_count];
             let matched = unique_resolved_evidence(&records);
-            assert!(matched.get("repeated-source-id").is_some_and(Option::is_none));
+            assert!(matched
+                .get("repeated-source-id")
+                .is_some_and(Option::is_none));
         }
         let once = [evidence];
         let matched = unique_resolved_evidence(&once);
-        assert!(matched.get("repeated-source-id").is_some_and(Option::is_some));
+        assert!(matched
+            .get("repeated-source-id")
+            .is_some_and(Option::is_some));
     }
 
     #[test]
