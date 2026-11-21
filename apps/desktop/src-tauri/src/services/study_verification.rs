@@ -821,7 +821,11 @@ impl AppServices {
             linked_sources.len(),
             structured.len(),
             stored_candidate.lineage.len(),
-            stored_candidate.lineage.iter().map(|line| line.evidence.len()).sum(),
+            stored_candidate
+                .lineage
+                .iter()
+                .map(|line| line.evidence.len())
+                .sum(),
         ) {
             return Err(RepositoryError::Validation(
                 "saved lineage exceeds bounded claim verification".into(),
@@ -2148,12 +2152,22 @@ mod authenticity_tests {
     #[test]
     fn claim_verification_resource_limits_deny_oversized_studies_before_hydration() {
         assert!(scoped_verification_size_admitted(8, 40, 8, 200_000, 8, 40));
-        assert!(!scoped_verification_size_admitted(33, 40, 8, 200_000, 8, 40));
-        assert!(!scoped_verification_size_admitted(8, 257, 8, 200_000, 8, 40));
-        assert!(!scoped_verification_size_admitted(8, 40, 33, 200_000, 8, 40));
-        assert!(!scoped_verification_size_admitted(8, 40, 8, 4_000_001, 8, 40));
+        assert!(!scoped_verification_size_admitted(
+            33, 40, 8, 200_000, 8, 40
+        ));
+        assert!(!scoped_verification_size_admitted(
+            8, 257, 8, 200_000, 8, 40
+        ));
+        assert!(!scoped_verification_size_admitted(
+            8, 40, 33, 200_000, 8, 40
+        ));
+        assert!(!scoped_verification_size_admitted(
+            8, 40, 8, 4_000_001, 8, 40
+        ));
         assert!(!scoped_verification_size_admitted(8, 40, 8, 200_000, 9, 40));
-        assert!(!scoped_verification_size_admitted(8, 40, 8, 200_000, 8, 257));
+        assert!(!scoped_verification_size_admitted(
+            8, 40, 8, 200_000, 8, 257
+        ));
     }
 
     #[test]
