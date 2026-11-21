@@ -661,6 +661,64 @@ mod charged_response_regressions {
         assert!(db.mark_external_dispatched(k, old.revision, 1).is_err());
     }
 
+
+    #[test]
+    fn two_connections_settle_same_response_once_without_second_charge() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let (temp, db, project, study, run) = fixture("draft-2");
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        let gate = Arc::new(Barrier::new(3));
+        let path = temp.path().join("charged.sqlite3");
+        let threads = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let run = run.clone();
+                let gate = gate.clone();
+                thread::spawn(move || {
+                    let connection = SqliteStore::open(path).unwrap();
+                    gate.wait();
+                    connection
+                        .settle_authenticated_charged_response(receipt(
+                            key(&run, project, study),
+                            "same original provider output",
+                        ))
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        gate.wait();
+        let mut results = Vec::new();
+        for handle in threads {
+            results.push(handle.join().unwrap());
+        }
+        assert_eq!(results[0], results[1]);
+        let effect = db.get_external_effect(k).unwrap().unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Completed);
+        assert_eq!(effect.actual_cost_microusd, 110);
+        let conn = database(&db).unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_charged_responses
+                 WHERE idempotency_key=?1",
+                params![k.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1);
+        let claimed: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_external_provider_identities
+                 WHERE idempotency_key=?1",
+                params![k.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(claimed, 2);
+    }
+
     #[test]
     fn forged_identity_usage_and_corrupted_bytes_fail_closed() {
         let (_temp, db, project, study, run) = fixture("angles");
