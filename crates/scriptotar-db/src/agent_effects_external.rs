@@ -793,6 +793,52 @@ mod tests {
     }
 
     #[test]
+    fn v13_dispatch_freeze_blocks_external_cancel_but_allows_v10_cas_and_receipt() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier(project, study, &"a".repeat(64))
+            .unwrap();
+        // Effect CAS must commit before the network send even with the
+        // committed cross-connection canonical-scope barrier in place.
+        let dispatched = db
+            .mark_external_dispatched(key, reserved.revision, 1)
+            .unwrap();
+        assert_eq!(dispatched.status, ExternalEffectStatus::Dispatched);
+        let external = rusqlite::Connection::open(db.path()).unwrap();
+        let cancelled = external
+            .execute(
+                "UPDATE agent_external_effects
+                 SET cancel_requested=1 WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            cancelled
+                .to_string()
+                .contains("provider dispatch cancellation is frozen"),
+            "external cancellation was rejected for unrelated reason: {cancelled}"
+        );
+        // v10/v12 receipt reconciliation is independent of protected
+        // canonical context writes and must remain operable.
+        let settled = db
+            .reconcile_external_effect(
+                key,
+                1,
+                ExternalResolution::Completed {
+                    provider_request_id: Some("request_under_gate_v13"),
+                    receipt_id: "receipt_under_gate_v13",
+                    tokens: 42,
+                    cost_microusd: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(settled.status, ExternalEffectStatus::Completed);
+        guard.verify().unwrap();
+    }
+
+    #[test]
     fn crash_intervals_restart_and_ambiguous_dispatch_never_replay() {
         let (dir,db,project,study,snap)=setup();
         let key=identity(&snap,project,study);
