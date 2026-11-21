@@ -1,5 +1,11 @@
 import type { StudyResearchReport, StudyResearchRun, StudyResearchSource } from './agent';
 
+// Keep the display boundary no more permissive than the canonical Rust
+// study_research.rs report admission (MAX_REPORT_BYTES = 96_000).
+const MAX_DISPLAY_REPORT_BYTES = 96_000;
+const MAX_DISPLAY_OBSERVATIONS_PER_SOURCE = 48;
+const MAX_DISPLAY_EXCERPT_CODEPOINTS = 160;
+
 /**
  * Defense in depth at the Studio display boundary. The Rust Study gateway is
  * authoritative for access and freshness; this check stops a stale, malformed
@@ -27,6 +33,18 @@ export function matchesResearchReportScope(
       !Array.isArray(report.sources) || report.sources.length !== requested.length ||
       !Array.isArray(report.feature_support) || report.feature_support.length > 8 ||
       !Array.isArray(report.limitations)) {
+    return false;
+  }
+
+  // A malformed IPC reply must never allocate an unbounded evidence DOM.
+  // Rust checks the serialized artifact on disk; this also limits replies
+  // supplied by a stale/mock/incorrect frontend adapter before rendering.
+  try {
+    const serialized = JSON.stringify(report);
+    if (!serialized || new TextEncoder().encode(serialized).byteLength > MAX_DISPLAY_REPORT_BYTES) {
+      return false;
+    }
+  } catch {
     return false;
   }
 
@@ -58,7 +76,8 @@ export function matchesResearchReportScope(
         // A partial transcript remains useful with its limitations; revoked,
         // deleted, unsupported or denied material never becomes usable evidence.
         !['available', 'partial'].includes(finding.access) ||
-        !Array.isArray(finding.observations) || finding.observations.length > 2000 ||
+        !Array.isArray(finding.observations) ||
+        finding.observations.length > MAX_DISPLAY_OBSERVATIONS_PER_SOURCE ||
         !Array.isArray(finding.limitations)) return false;
 
     const metrics = finding.metrics;
@@ -93,7 +112,7 @@ export function matchesResearchReportScope(
                 evidence.transcript_revision !== finding.origin_revision))) ||
           typeof evidence.locator !== 'string' || !evidence.locator ||
           typeof evidence.excerpt !== 'string' || !evidence.excerpt.trim() ||
-          evidence.excerpt.length > 100_000 ||
+          Array.from(evidence.excerpt).length > MAX_DISPLAY_EXCERPT_CODEPOINTS ||
           typeof observation.statement !== 'string' || !observation.statement.trim() ||
           !Array.isArray(observation.limitations)) return false;
       // Temporal spans may be absent for metadata-only sources; when present
