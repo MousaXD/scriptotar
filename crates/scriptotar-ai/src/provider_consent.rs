@@ -78,6 +78,21 @@ pub trait ScopeAuthority: Send + Sync {
     ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
         Err(ConsentError::EffectFenceUnavailable)
     }
+
+    /// A real paid attempt must bind the DB-wide freeze to its exact durable
+    /// reservation and wire digest. The default exists only for unbound
+    /// deterministic policy/negative fixtures. A production host MUST
+    /// override it, rejecting a missing or invalid effect identity.
+    fn lock_effect_dispatch_scope(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        if attempt.is_some() {
+            return Err(ConsentError::EffectFenceUnavailable);
+        }
+        self.lock_dispatch_scope(scope)
+    }
 }
 
 /// This is an explicit run intent; the server must prepare the prompt and confirm its scope.
@@ -168,11 +183,33 @@ pub struct ConsentBoundary {
     records: Mutex<HashMap<String, Arc<Mutex<SavedConsent>>>>,
 }
 
+/// Immutable join between one authorized provider send and the reserved
+/// v10/v12 effect attempt. Its wire digest is the pre-approved exact body SHA.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderDispatchAttempt {
+    pub run_id: String,
+    pub step_id: String,
+    pub idempotency_key: String,
+    pub attempt: i64,
+    pub provider: String,
+    pub wire_sha256: String,
+}
+
 /// The fence must atomically claim a never-before-dispatched provider effect in the
 /// durable ledger, then durably settle its receipt. Missing/ambiguous claim is NEVER
 /// permission to send a second paid request. Agent 02 must supply this implementation.
 pub trait PaidEffectFence: Send + Sync {
     fn reserve_once(&self, effect_id: &str) -> Result<(), ConsentError>;
+
+    /// Return the effect identity ONLY after the durable reservation is
+    /// committed and authenticated. Test fences have no production binding;
+    /// the host's sealed dispatch authority rejects missing identities.
+    fn dispatch_attempt(
+        &self,
+        _effect_id: &str,
+    ) -> Result<Option<ProviderDispatchAttempt>, ConsentError> {
+        Ok(None)
+    }
 
     /// Commit the one-winner pre-send DISPATCHED CAS in the durable effect
     /// ledger, after acquiring the authoritative scope/consent gate and before
@@ -701,9 +738,27 @@ impl ConsentBoundary {
             return Err(error);
         }
 
+        // Authenticate the reserved v10/v12 attempt before admission. The
+        // host atomically joins it to the committed SQLite scope freeze;
+        // policy-only fixtures keep the backward-compatible unbound guard.
+        let bound_attempt = match fence.dispatch_attempt(&effect_id) {
+            Ok(value) => value,
+            Err(_) => {
+                fence.mark_uncertain(&effect_id);
+                return Err(ConsentError::UncertainEffect);
+            }
+        };
+        if bound_attempt.as_ref().is_some_and(|attempt| {
+            attempt.run_id != intent.run_id || attempt.wire_sha256 != expected_wire
+        }) {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::ChangedContext);
+        }
+
         // All project/Study/source mutations and revocations must acquire this
         // SAME gate. Do not hold a SQLite write transaction during HTTP I/O.
-        let scope_guard = match authority.lock_dispatch_scope(&intent.scope) {
+        let scope_guard =
+            match authority.lock_effect_dispatch_scope(&intent.scope, bound_attempt.as_ref()) {
             Ok(guard) => guard,
             Err(_) => {
                 fence.mark_uncertain(&effect_id);
