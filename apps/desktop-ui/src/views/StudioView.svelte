@@ -1376,7 +1376,7 @@
     {#if record && !loading}
       {#key projectId + ':' + record.id + ':' + record.revision}
         <StudioResearchReview {api} {projectId} studyId={record.id}
-          pendingEdits={dirty || saving || importingSavedResult} />
+          pendingEdits={dirty || saving || importingSavedResult || busy} />
       {/key}
     {/if}
     <section class="panel studio-history">
@@ -1570,7 +1570,7 @@
       {/if}
       {#if !loading}
         <StudioCandidateCompare study={record} {gateway} {projectId}
-          pendingEdits={dirty || saving} onChoose={(id) => void openDraft(id)} />
+          pendingEdits={dirty || saving || importingSavedResult || busy} onChoose={(id) => void openDraft(id)} />
       {/if}
       {#if record && record.draftVersions.length}
         <div class="versions" role="group" aria-label={t.versions}>
