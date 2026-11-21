@@ -347,6 +347,22 @@ fn saved_version_digest(
     ])
 }
 
+/// A saved typed claim inventory is an independent dimension of the reviewed
+/// snapshot. The same rendered body can retain its bytes while its stored
+/// annotation, citation, or evidence mapping changes. Bind the full persisted
+/// manifest separately so future human-review ledger entries cannot be replayed
+/// against a different annotation with unchanged draft/source hashes.
+fn stored_claim_manifest_digest(
+    version: &scriptotar_core::DraftVersion,
+    structured_json: &str,
+) -> String {
+    verification::canonical_source_sha256(&[
+        b"scriptotar/stored-claim-manifest/v1",
+        version.id.as_bytes(),
+        structured_json.as_bytes(),
+    ])
+}
+
 /// Canonical writing IDs are NOT all UUIDs: host-generated transcript
 /// excerpts use transcript:<origin-id>:<index|text>, and observation entries
 /// use observation:<evidence-uuid>. Validate their real attached-source
@@ -731,6 +747,10 @@ fn unassessed_draft_portions(draft: &writing::ScriptDraft) -> (Vec<UnassessedDra
 pub struct SavedDraftVerification {
     pub draft_version_id: String,
     pub draft_version_sha256: String,
+    /// The complete persisted structured claims/lineage, independent of the
+    /// rendered saved-version body. Future qualified reviews must bind all
+    /// three digests: version, manifest, and evidence/access snapshot.
+    pub claim_manifest_sha256: String,
     /// The exact Study/evidence/source bytes and access-state snapshot used.
     pub evidence_snapshot_sha256: String,
     pub claim_sources: Vec<ClaimSourceNavigation>,
@@ -1170,6 +1190,7 @@ impl AppServices {
         let result = SavedDraftVerification {
             draft_version_id: saved_version.id.to_string(),
             draft_version_sha256: saved_version_digest(project_id, study_id, &saved_version),
+            claim_manifest_sha256: stored_claim_manifest_digest(&saved_version, &structured),
             evidence_snapshot_sha256,
             claim_sources,
             unassessed_portions,
@@ -1188,6 +1209,29 @@ mod tests {
     use super::*;
     use scriptotar_core::StudySourceKind;
     use scriptotar_core::{EvidenceInput, EvidenceReference, StudySource};
+
+    #[test]
+    fn claim_manifest_identity_changes_even_when_saved_draft_bytes_do_not() {
+        let draft_id = Uuid::new_v4();
+        let saved = scriptotar_core::DraftVersion {
+            id: Uuid::new_v4(),
+            draft_id,
+            version: 1,
+            title: "Same rendered title".into(),
+            body: "Same saved body".into(),
+            saved_at: "2026-11-21T00:00:00Z".into(),
+        };
+        let original = r#"{"draft":{"claims":[{"id":"one"}]}}"#;
+        let altered = r#"{"draft":{"claims":[{"id":"two"}]}}"#;
+        let first = stored_claim_manifest_digest(&saved, original);
+        assert_eq!(first, stored_claim_manifest_digest(&saved, original));
+        assert_ne!(first, stored_claim_manifest_digest(&saved, altered));
+        let newer_version = scriptotar_core::DraftVersion {
+            id: Uuid::new_v4(),
+            ..saved
+        };
+        assert_ne!(first, stored_claim_manifest_digest(&newer_version, original));
+    }
 
     #[test]
     fn repeated_evidence_identity_stays_ambiguous_after_three_or_more_occurrences() {
