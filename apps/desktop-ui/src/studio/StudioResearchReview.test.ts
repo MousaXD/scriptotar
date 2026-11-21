@@ -116,7 +116,10 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     render(StudioResearchReview, { props: { api, projectId, studyId } });
     expect(await screen.findByText('بحث الدراسة')).toBeInTheDocument();
     expect(screen.getByText(/دون طلب مدفوع/)).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'تحضير البحث' })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole('button', { name: 'تحضير البحث' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'الموافقة على التحليل المحلي' }));
+    const reportRegion = await screen.findByRole('region', { name: 'تقرير بحث الدراسة' });
+    expect(reportRegion).toHaveAttribute('dir', 'rtl');
   });
   it('quarantines a completed report with a mismatched observation source', async () => {
     const { api, projectId, studyId } = await fixture();
