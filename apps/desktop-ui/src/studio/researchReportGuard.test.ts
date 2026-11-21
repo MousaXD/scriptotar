@@ -105,6 +105,27 @@ describe('Study research report display scope', () => {
     expect(valid(fakeSupport)).toBe(false);
   });
 
+  it('enforces the native 96 KB report budget and 160-codepoint transcript excerpts', () => {
+    const oversized = structuredClone(report);
+    oversized.limitations = ['x'.repeat(96_001)];
+    expect(valid(oversized)).toBe(false);
+
+    const overlongExcerpt = structuredClone(report);
+    overlongExcerpt.sources[0].observations[0].evidence.excerpt = 'e'.repeat(161);
+    expect(valid(overlongExcerpt)).toBe(false);
+
+    // Rust bounds excerpts by Unicode scalar count, not UTF-16 code units;
+    // 160 Arabic or emoji characters should remain permitted.
+    const unicodeExcerpt = structuredClone(report);
+    unicodeExcerpt.sources[0].observations[0].evidence.excerpt = '😀'.repeat(160);
+    expect(valid(unicodeExcerpt)).toBe(true);
+
+    const tooManyObservations = structuredClone(report);
+    tooManyObservations.sources[0].observations = Array.from({ length: 49 },
+      () => structuredClone(report.sources[0].observations[0]));
+    expect(valid(tooManyObservations)).toBe(false);
+  });
+
   it('requires a completed authorized run with its exact saved selection', () => {
     expect(valid(report, { ...run, state: 'cancelled' })).toBe(false);
     expect(valid(report, { ...run, plan: { ...run.plan,
