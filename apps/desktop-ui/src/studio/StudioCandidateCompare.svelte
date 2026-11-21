@@ -18,8 +18,13 @@
   let epoch = 0;
   $: t = workflowStrings[$locale];
   $: candidates = (study?.drafts ?? []).slice(0, 3);
+  // A receipt may refer to candidates beyond the first three visible
+  // summaries (for example a manual candidate precedes the generated batch).
+  // Track ALL saved draft revisions so an unseen candidate edit invalidates
+  // an already-rendered three-script comparison.
   $: signature = JSON.stringify([projectId, study?.id, study?.revision,
-    candidates.map(item => [item.id, item.revision])]);
+    (study?.drafts ?? []).map(item => [item.id, item.revision]),
+    (study?.archivedDrafts ?? []).map(item => [item.id, item.revision])]);
   $: if (signature !== observed) {
     observed = signature;
     epoch++;
