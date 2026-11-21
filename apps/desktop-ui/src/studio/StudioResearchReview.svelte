@@ -267,7 +267,7 @@
   {:else if !loading}
     <p class="muted">{t.noSources}</p>
   {/if}
-  <button type="button" class="button secondary" disabled={busy || loading || !hasSelectedSources() || activeRun?.state === 'awaiting_approval'}
+  <button type="button" class="button secondary" disabled={busy || loading || pendingEdits || !hasSelectedSources() || activeRun?.state === 'awaiting_approval'}
     on:click={() => void prepare()}>{t.prepare}</button>
   {#if activeRun}
     <p class="muted" role="status">{t.state}: {t.states[activeRun.state]}</p>
@@ -287,7 +287,7 @@
         {#if !pendingEdits && !hasCurrentRunSources(activeRun)}
           <p class="studio-error" role="alert">{t.missingScope}</p>
         {/if}
-        <button type="button" class="button primary" disabled={busy || loading || !hasCurrentRunSources(activeRun)}
+        <button type="button" class="button primary" disabled={busy || loading || pendingEdits || !hasCurrentRunSources(activeRun)}
           on:click={() => void decide('approve')}>{t.approve}</button>
         <button type="button" class="button secondary" disabled={busy || loading}
           on:click={() => void decide('deny')}>{t.deny}</button>
