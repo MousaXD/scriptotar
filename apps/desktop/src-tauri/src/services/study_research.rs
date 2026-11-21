@@ -704,7 +704,7 @@ fn checked_report_envelope(
         project,
         study,
         &ids,
-        saved.report.analyzed_at.clone(),
+        saved.report.analyzed_at,
     )?;
     if rebuilt != saved.report {
         return Err(RepositoryError::Conflict(
@@ -1310,6 +1310,9 @@ fn valid_research_run(run: &RunSnapshot, project: Uuid, study: Uuid) -> bool {
     run.plan.project_id == project.to_string()
         && run.plan.study_id == study.to_string()
         && run.plan.steps.len() == 1
+        // Persisted checkpoint data is not trusted to have a complete step
+        // record; reject malformed runs before reading run.steps[0].
+        && run.steps.len() == 1
         && run.plan.steps[0].id == "analyze_evidence"
         && matches!(&run.plan.steps[0].input, StepInput::AnalyzeEvidence { .. })
         && run.plan.steps[0].requires_approval
@@ -1620,6 +1623,9 @@ mod tests {
                 .decide_study_research(project, study, &run_id, "approve")
                 .unwrap();
             assert_eq!(completed.state, RunState::Completed);
+            let mut malformed_checkpoint = completed.clone();
+            malformed_checkpoint.steps.clear();
+            assert!(!valid_research_run(&malformed_checkpoint, project, study));
             assert!(services
                 .decide_study_research(project, study, &run_id, "approve")
                 .is_err());
