@@ -464,6 +464,16 @@ where
     if !writing::compare_angles(&angles).is_empty() {
         return Err(WritingWorkflowError::DuplicateOrSimilar);
     }
+    // Reject a source-copying angle before reserving any of the three draft
+    // steps. The SQLite sink also enforces this against direct batch callers.
+    for angle in &angles {
+        for text in [&angle.hook, &angle.approach, &angle.promise] {
+            reject_extended_source_copy(&plan.context, text)?;
+        }
+        for beat in &angle.outline {
+            reject_extended_source_copy(&plan.context, &beat.intent)?;
+        }
+    }
     let mut candidates = Vec::with_capacity(3);
     let mut normalized_scripts = HashSet::new();
     for (index, angle) in angles.iter().enumerate() {
@@ -555,7 +565,7 @@ pub(super) fn reject_extended_source_copy(
             .any(|source| candidate_windows.contains(source))
         {
             return Err(WritingWorkflowError::InvalidResponse(
-                "revision reproduces an extended source passage".into(),
+                "generated text reproduces an extended source passage".into(),
             ));
         }
     }
