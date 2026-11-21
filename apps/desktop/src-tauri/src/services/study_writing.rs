@@ -54,12 +54,35 @@ pub struct SelectedWritingSource {
     pub collected_at: String,
 }
 
+/// Authenticated source content identities from one approved, Applied research run.
+/// An attachment fingerprint alone cannot attest the original transcript bytes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApprovedResearchSource {
+    pub study_source_id: Uuid,
+    pub origin_id: Uuid,
+    pub origin_sha256: String,
+    pub attachment_fingerprint: String,
+    pub attachment_revision: Option<String>,
+    pub collected_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ApprovedResearch {
+    pub artifact_id: Uuid,
+    pub run_id: String,
+    pub sources: Vec<ApprovedResearchSource>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct StudyWritingContext {
     pub project_id: Uuid,
     pub study_id: Uuid,
     pub study_revision: i64,
     pub sources: Vec<SelectedWritingSource>,
+    /// None is permitted for explicitly offline legacy fixtures, never for
+    /// the production AppServices paid-generation entrypoint.
+    #[serde(default)]
+    pub approved_research: Option<ApprovedResearch>,
     pub brief: CreativeBrief,
     pub evidence: Vec<EvidenceRef>,
     pub findings: Vec<ResearchFinding>,
@@ -110,6 +133,7 @@ impl StudyWritingContext {
             study_id,
             study_revision,
             sources,
+            approved_research: None,
             brief: input.brief,
             evidence: input.evidence,
             findings: input.findings,
@@ -148,6 +172,46 @@ impl StudyWritingContext {
             {
                 return Err(WritingWorkflowError::InvalidContext(
                     "duplicate or missing source",
+                ));
+            }
+        }
+        if let Some(approved) = &self.approved_research {
+            if approved.artifact_id.is_nil()
+                || approved.run_id.is_empty()
+                || approved.run_id.len() > 128
+                || approved.sources.len() != self.sources.len()
+            {
+                return Err(WritingWorkflowError::InvalidContext(
+                    "invalid approved research identity",
+                ));
+            }
+            let mut approved_ids = HashSet::new();
+            for sealed in &approved.sources {
+                if !approved_ids.insert(sealed.study_source_id)
+                    || sealed.origin_sha256.len() != 64
+                    || !sealed
+                        .origin_sha256
+                        .bytes()
+                        .all(|value| value.is_ascii_hexdigit())
+                    || !self.sources.iter().any(|selected| {
+                        selected.study_source_id == sealed.study_source_id
+                            && selected.origin_id == sealed.origin_id
+                            && selected.fingerprint == sealed.attachment_fingerprint
+                            && selected.source_revision == sealed.attachment_revision
+                            && selected.collected_at == sealed.collected_at
+                    })
+                {
+                    return Err(WritingWorkflowError::InvalidContext(
+                        "research source seal differs from selected Study",
+                    ));
+                }
+            }
+            let prefix = format!("research:{}:", approved.artifact_id);
+            if self.evidence.is_empty()
+                || self.evidence.iter().any(|item| !item.id.starts_with(&prefix))
+            {
+                return Err(WritingWorkflowError::InvalidContext(
+                    "writing evidence was not supplied by the approved research artifact",
                 ));
             }
         }
@@ -228,6 +292,35 @@ impl StudyWritingContext {
 /// own SQLite IMMEDIATE transaction, not rely only on this preflight.
 pub trait CurrentStudy {
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext>;
+
+    /// This must authenticate a completed, user-approved AnalyzeEvidence run,
+    /// its Applied effect and source-content digests on EVERY invocation. The
+    /// default fails closed: ordinary CurrentStudy cannot impersonate research.
+    fn load_for_research(
+        &self,
+        _project_id: Uuid,
+        _study_id: Uuid,
+        _artifact_id: Uuid,
+    ) -> WriteResult<StudyWritingContext> {
+        Err(WritingWorkflowError::Denied(
+            "authenticated research loader is unavailable".into(),
+        ))
+    }
+}
+
+/// Revalidate precisely the research artifact which shaped the original plan.
+pub(super) fn reload_context<C: CurrentStudy>(
+    loader: &C,
+    context: &StudyWritingContext,
+) -> WriteResult<StudyWritingContext> {
+    match &context.approved_research {
+        Some(approved) => loader.load_for_research(
+            context.project_id,
+            context.study_id,
+            approved.artifact_id,
+        ),
+        None => loader.load(context.project_id, context.study_id),
+    }
 }
 
 pub struct FixedStudy<'a>(pub &'a StudyWritingContext);
@@ -374,7 +467,7 @@ fn check_current<C: CurrentStudy>(loader: &C, plan: &GenerationPlan) -> WriteRes
     if plan.angles_prompt != expected {
         return Err(WritingWorkflowError::StaleContext);
     }
-    let latest = loader.load(plan.context.project_id, plan.context.study_id)?;
+    let latest = reload_context(loader, &plan.context)?;
     latest.validate()?;
     if latest != plan.context {
         return Err(WritingWorkflowError::StaleContext);
