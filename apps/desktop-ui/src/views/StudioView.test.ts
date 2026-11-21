@@ -132,6 +132,58 @@ describe('Content Study Studio', () => {
     expect(screen.getByText('No three-script batches have been committed for this Study.')).toBeInTheDocument();
   });
 
+  it('does not export an in-flight batch after local unsaved edits invalidate the Study', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['export-a', 'export-b', 'export-c'] as const;
+    const saved: ContentStudy = {
+      id: 'export-race-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Export race study' },
+      sources: [], draft: 'Original body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Draft ' + (index + 1), revision: 1 }))
+    };
+    let releaseReads!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const read = vi.fn(async (_project: string, _study: string, draftId?: string) => {
+      if (draftId) await gate;
+      return { ...saved, draftId: draftId ?? saved.draftId,
+        draft: draftId ? 'Export ' + draftId : saved.draft };
+    });
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: saved.id, projectId, brief: saved.brief, revision: saved.revision }],
+      createStudy: async () => saved,
+      getStudy: read,
+      saveStudy: async () => { throw new Error('Do not save during pending export'); },
+      listStudyWritingBatches: async () => [{
+        projectId, studyId: saved.id, runId: 'export-run',
+        draftIds: [...ids], committedAt: '2026-11-21T10:00:00Z'
+      }]
+    };
+    const oldCreate = URL.createObjectURL;
+    const fakeCreate = vi.fn(() => 'blob:should-not-export');
+    URL.createObjectURL = fakeCreate;
+    const view = mount(gateway);
+    try {
+      const picker = await screen.findByRole('combobox', { name: 'Open study' });
+      await waitFor(() => expect(picker).toBeEnabled());
+      await fireEvent.click(picker);
+      await fireEvent.click(await screen.findByRole('option', { name: 'Export race study' }));
+      const exportButton = await screen.findByRole('button', { name: 'Export 3 scripts' });
+      await fireEvent.click(exportButton);
+      await waitFor(() => expect(read.mock.calls.filter(args => !!args[2])).toHaveLength(3));
+      await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+        target: { value: 'Unsaved change after export began' }
+      });
+      expect(exportButton).toBeDisabled();
+      await act(async () => { releaseReads(); await gate; });
+      expect(fakeCreate).not.toHaveBeenCalled();
+    } finally {
+      releaseReads();
+      view.unmount();
+      URL.createObjectURL = oldCreate;
+    }
+  });
+
   it('quarantines duplicate run IDs rather than rendering duplicate keyed receipt rows', async () => {
     const projectId = 'p-creator-lab';
     const current: ContentStudy = {
