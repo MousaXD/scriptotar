@@ -80,7 +80,7 @@ def _preflight_zip_footer(snapshot: bytes) -> None:
     evidence archives and fail closed rather than creating a large index.
     """
     # End Of Central Directory is 22 bytes plus at most 65535 comment bytes.
-    offset = snapshot.rfind(b"PK\\x05\\x06", max(0, len(snapshot) - 65557))
+    offset = snapshot.rfind(b"PK\x05\x06", max(0, len(snapshot) - 65557))
     if offset < 0 or len(snapshot) - offset < 22:
         raise ValueError("Missing native evidence ZIP end directory")
     (disk, directory_disk, disk_entries, total_entries, directory_bytes,
