@@ -113,6 +113,30 @@ describe('Verified v11 candidate comparison', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
     expect(read).not.toHaveBeenCalled();
   });
+  it('refuses a candidate read with changed Study source attachments even at the same revision', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    read.mockImplementation(async (_project, _study, draftId) =>
+      ({ ...study, sources: [{ kind: 'transcript' as const, id: 'substituted-source' }],
+        draftId, draftRevision: 1, draft: 'Wrong-source ' + draftId }));
+    render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
+    expect(screen.queryByText('Wrong-source generated-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+  });
+
+  it('refuses inconsistent draft summaries even when the returned body claims a current revision', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    read.mockImplementation(async (_project, _study, draftId) => ({
+      ...study, draftId, draftRevision: 1, draft: 'Forged ' + draftId,
+      drafts: study.drafts?.map(d => d.id === draftId ? { ...d, revision: 2 } : d)
+    }));
+    render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Cannot compare/);
+    expect(screen.queryByText('Forged generated-a')).not.toBeInTheDocument();
+  });
+
   it('refuses saved bodies from a different Study revision, even for exact draft IDs', async () => {
     const { study, gateway, read, projectId } = fixture();
     read.mockImplementation(async (_project, _study, draftId) =>
