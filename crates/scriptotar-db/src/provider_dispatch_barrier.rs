@@ -19,6 +19,25 @@ use uuid::Uuid;
 
 use super::{storage_error, SqliteStore};
 
+/// Immutable identity that v13 cross-validates against the RESERVED v10/v12
+/// attempt in the SAME SQLite IMMEDIATE transaction as barrier admission.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderDispatchEffect<'a> {
+    pub run_id: &'a str,
+    pub step_id: &'a str,
+    pub idempotency_key: &'a str,
+    pub attempt: i64,
+    pub provider: &'a str,
+    pub wire_sha256: &'a str,
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 /// Canonical project, Study, transcript, evidence, research and writing inputs.
 /// Never protect agent_external_effects here: its pre-send CAS and receipt
 /// reconciliation must be able to commit while the provider barrier is active.
@@ -56,7 +75,25 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
             project_id TEXT NOT NULL REFERENCES projects(id),
             study_id TEXT NOT NULL REFERENCES content_studies(id),
             scope_digest TEXT NOT NULL CHECK(length(scope_digest)=64),
-            acquired_at TEXT NOT NULL
+            acquired_at TEXT NOT NULL,
+            effect_run_id TEXT,
+            effect_step_id TEXT,
+            effect_idempotency_key TEXT REFERENCES agent_external_effects(idempotency_key),
+            effect_attempt INTEGER,
+            effect_provider TEXT,
+            effect_wire_sha256 TEXT,
+            CHECK(
+                (effect_run_id IS NULL AND effect_step_id IS NULL
+                 AND effect_idempotency_key IS NULL AND effect_attempt IS NULL
+                 AND effect_provider IS NULL AND effect_wire_sha256 IS NULL)
+                OR
+                (length(effect_run_id) BETWEEN 1 AND 128
+                 AND length(effect_step_id) BETWEEN 1 AND 128
+                 AND length(effect_idempotency_key) BETWEEN 1 AND 256
+                 AND effect_attempt BETWEEN 1 AND 3
+                 AND length(effect_provider) BETWEEN 1 AND 64
+                 AND length(effect_wire_sha256)=64)
+            )
         );
         CREATE TRIGGER provider_dispatch_barrier_immutable
         BEFORE UPDATE ON provider_dispatch_barrier
@@ -127,38 +164,116 @@ impl Drop for ProviderDispatchBarrier {
 }
 
 impl SqliteStore {
+    /// Unbound freeze for offline host-scope and database regression tests.
+    /// This is not accepted by the production sealed dispatch authority.
     pub fn acquire_provider_dispatch_barrier(
         &self,
         project_id: Uuid,
         study_id: Uuid,
         scope_digest: &str,
     ) -> RepositoryResult<ProviderDispatchBarrier> {
-        if scope_digest.len() != 64
-            || !scope_digest
-                .bytes()
-                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-        {
+        self.acquire_provider_dispatch_barrier_inner(project_id, study_id, scope_digest, None)
+    }
+
+    /// Production admission binds the freeze to one previously RESERVED effect.
+    /// This validation and the freeze INSERT run in one IMMEDIATE transaction:
+    /// no independent cancellation or source writer can slip between them.
+    pub fn acquire_provider_dispatch_barrier_for_effect(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        scope_digest: &str,
+        effect: ProviderDispatchEffect<'_>,
+    ) -> RepositoryResult<ProviderDispatchBarrier> {
+        self.acquire_provider_dispatch_barrier_inner(
+            project_id,
+            study_id,
+            scope_digest,
+            Some(effect),
+        )
+    }
+
+    fn acquire_provider_dispatch_barrier_inner(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        scope_digest: &str,
+        effect: Option<ProviderDispatchEffect<'_>>,
+    ) -> RepositoryResult<ProviderDispatchBarrier> {
+        if !valid_digest(scope_digest) {
             return Err(RepositoryError::Validation(
                 "invalid provider scope digest".into(),
             ));
+        }
+        if let Some(bound) = effect {
+            if bound.run_id.is_empty()
+                || bound.run_id.len() > 128
+                || bound.step_id.is_empty()
+                || bound.step_id.len() > 128
+                || bound.idempotency_key.is_empty()
+                || bound.idempotency_key.len() > 256
+                || !(1..=3).contains(&bound.attempt)
+                || bound.provider.is_empty()
+                || bound.provider.len() > 64
+                || !valid_digest(bound.wire_sha256)
+            {
+                return Err(RepositoryError::Validation(
+                    "invalid bound provider effect identity".into(),
+                ));
+            }
         }
         let token = Uuid::new_v4().to_string();
         let mut connection = self.connection()?;
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(storage_error)?;
+        if let Some(bound) = effect {
+            let valid_effect: i64 = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_external_effects
+                     WHERE idempotency_key=?1 AND project_id=?2 AND study_id=?3
+                       AND run_id=?4 AND step_id=?5 AND attempt=?6
+                       AND provider=?7 AND fingerprint=?8
+                       AND status='reserved' AND cancel_requested=0",
+                    params![
+                        bound.idempotency_key,
+                        project_id.to_string(),
+                        study_id.to_string(),
+                        bound.run_id,
+                        bound.step_id,
+                        bound.attempt,
+                        bound.provider,
+                        bound.wire_sha256,
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(storage_error)?;
+            if valid_effect != 1 {
+                return Err(RepositoryError::Conflict(
+                    "provider barrier requires exact uncancelled durable reservation".into(),
+                ));
+            }
+        }
         // Primary key singleton=1 forbids a second concurrent paid send.
         // SQLite IMMEDIATE serializes barrier admission against every writer.
         tx.execute(
             "INSERT INTO provider_dispatch_barrier(
-                 singleton, token, project_id, study_id, scope_digest, acquired_at
-             ) VALUES(1, ?1, ?2, ?3, ?4, ?5)",
+                 singleton, token, project_id, study_id, scope_digest, acquired_at,
+                 effect_run_id, effect_step_id, effect_idempotency_key, effect_attempt,
+                 effect_provider, effect_wire_sha256
+             ) VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 token,
                 project_id.to_string(),
                 study_id.to_string(),
                 scope_digest,
-                now_rfc3339()
+                now_rfc3339(),
+                effect.map(|item| item.run_id),
+                effect.map(|item| item.step_id),
+                effect.map(|item| item.idempotency_key),
+                effect.map(|item| item.attempt),
+                effect.map(|item| item.provider),
+                effect.map(|item| item.wire_sha256),
             ],
         )
         .map_err(storage_error)?;
