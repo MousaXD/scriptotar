@@ -1467,7 +1467,9 @@ mod tests {
         let second_authorized = services
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
-        let second_guard = services.lock_dispatch_scope(&second_authorized).unwrap();
+        let second_guard = services
+            .lock_dispatch_scope(&second_authorized)
+            .unwrap();
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("agent10_os_process_writer_only")
             .arg("--nocapture")
