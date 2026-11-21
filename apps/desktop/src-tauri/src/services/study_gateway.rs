@@ -1506,6 +1506,66 @@ mod tests {
         assert!(prepare_three("canonical-study-1", current.clone()).is_ok());
         assert!(CurrentStudy::load(&services, Uuid::new_v4(), study_id).is_err());
 
+        // Offline negative contract for the new approved-report binding.
+        // Real production research still has to pass its v8 Applied receipt
+        // and canonical source-content check before reaching this helper.
+        let research_artifact = Uuid::new_v4();
+        let research_sources = current
+            .sources
+            .iter()
+            .map(|source| super::super::study_research::ResearchWritingSource {
+                study_source_id: source.study_source_id,
+                origin_id: source.origin_id,
+                source_sha256: "a".repeat(64),
+                attachment_fingerprint: source.fingerprint.clone(),
+                attachment_revision: source.source_revision.clone(),
+                collected_at: source.collected_at.clone(),
+                access: scriptotar_research::study_intelligence::StudyResearchAccess::Available,
+            })
+            .collect::<Vec<_>>();
+        let research_evidence = current
+            .evidence
+            .iter()
+            .map(|item| {
+                let mut attributed = item.clone();
+                let origin = Uuid::parse_str(&item.locator.source_id).unwrap();
+                let selected = current
+                    .sources
+                    .iter()
+                    .find(|source| source.origin_id == origin)
+                    .unwrap();
+                attributed.id =
+                    format!("research:{research_artifact}:{}:0", selected.study_source_id);
+                attributed
+            })
+            .collect::<Vec<_>>();
+        let research = super::super::study_research::ResearchWritingContext {
+            project_id: project,
+            study_id,
+            sources: research_sources,
+            evidence: research_evidence,
+            findings: Vec::new(),
+            attributed_source_count: 3,
+            meets_three_source_evidence_floor: true,
+            limitations: vec!["Attribution is not factual verification".into()],
+            source_text_is_untrusted_data: true,
+        };
+        let bound =
+            bind_approved_research_context(current.clone(), research.clone(), research_artifact)
+                .unwrap();
+        assert_eq!(
+            super::super::study_writing::research_artifact_id(&bound.evidence).unwrap(),
+            Some(research_artifact)
+        );
+        assert!(bound.brief.constraints.iter().any(|note| note.contains("sha256=")));
+        let mut forged = research.clone();
+        forged.sources[0].attachment_fingerprint = "forged-fingerprint".into();
+        assert!(bind_approved_research_context(current.clone(), forged, research_artifact).is_err());
+        let mut changed = research.clone();
+        changed.sources[0].source_sha256 = "not-a-content-hash".into();
+        assert!(bind_approved_research_context(current.clone(), changed, research_artifact).is_err());
+        assert!(bind_approved_research_context(current.clone(), research, Uuid::new_v4()).is_err());
+
         let first_origin = Uuid::parse_str(&references[0].id).unwrap();
         conn.execute(
             "UPDATE transcripts SET text=?1, updated_at=?2 WHERE id=?3",
