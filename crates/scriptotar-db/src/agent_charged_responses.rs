@@ -1,11 +1,11 @@
 // Proposed additive v14 charged-response checkpoint.
-//!
+//
 // This is an intentionally staged post-v13 module: Agent 00 must register
 // migration_charged_responses as schema v14 AFTER the approved v13 migration.
 // Never invent a v13 slot or change historical v8/v10-v12 schema entries.
 // The only writer is a trusted adapter which has authenticated a provider
 // response AND exact usage evidence before calling this API. It is not IPC.
-//!
+//
 // No new request is sent by this module. A missing seal after a charged remote
 // response is UNRESOLVED, not permission to retry or fabricate response data.
 use sha2::{Digest, Sha256};
