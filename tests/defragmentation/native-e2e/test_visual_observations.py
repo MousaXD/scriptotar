@@ -308,6 +308,57 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "native ZIP directory"):
                     analyze(path, SHA)
 
+    def test_underreported_real_directory_cannot_allocate_zipinfo(self):
+        # Original Agent10 negative: a 137-member archive can advertise
+        # just one member in BOTH EOCD count fields. ZipFile would otherwise
+        # construct 137 records *before* post-parse membership checks.
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "forged-count.zip"
+            fixture_zip(path)
+            with zipfile.ZipFile(path, "a") as z:
+                for i in range(129):
+                    z.writestr(f"extra-{i}.txt", b"x")
+            actual = path.read_bytes()
+            eocd = actual.rfind(bytes.fromhex("504b0506"))
+            self.assertGreater(eocd, 0)
+            forged = bytearray(actual)
+            struct.pack_into("<HH", forged, eocd + 8, 1, 1)
+            path.write_bytes(forged)
+
+            with patch.object(visual_observations.zipfile, "ZipFile",
+                              side_effect=AssertionError("ZipFile indexed hostile entries")):
+                with self.assertRaisesRegex(
+                    ValueError, "central directory claimed count differs"
+                ):
+                    analyze(path, SHA)
+
+    def test_directory_length_and_header_corruption_denied_before_index(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "corrupt-directory.zip"
+            fixture_zip(path)
+            original = path.read_bytes()
+            eocd = original.rfind(bytes.fromhex("504b0506"))
+            self.assertGreater(eocd, 0)
+            directory_offset = struct.unpack_from("<I", original, eocd + 16)[0]
+            for mutation in ("directory_length", "directory_offset",
+                             "central_signature", "local_signature"):
+                with self.subTest(mutation=mutation):
+                    data = bytearray(original)
+                    if mutation == "directory_length":
+                        struct.pack_into("<I", data, eocd + 12, 2)
+                    elif mutation == "directory_offset":
+                        struct.pack_into("<I", data, eocd + 16, 2)
+                    elif mutation == "central_signature":
+                        data[directory_offset] = 0
+                    else:
+                        data[0] = 0
+                    path.write_bytes(data)
+                    with patch.object(visual_observations.zipfile, "ZipFile",
+                                      side_effect=AssertionError("ZipFile indexed corruption")):
+                        with self.assertRaisesRegex(ValueError, "native ZIP"):
+                            analyze(path, SHA)
+
+
     def test_zip_footer_allows_legitimate_native_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "valid.zip"
