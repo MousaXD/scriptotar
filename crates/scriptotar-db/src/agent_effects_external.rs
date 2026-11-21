@@ -2146,3 +2146,6 @@ mod tests {
     }
 
 }
+
+// Stage post-v13 charged-response checkpoint without changing v8/v10-v12.
+include!("agent_charged_responses.rs");
