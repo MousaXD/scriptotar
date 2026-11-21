@@ -1,0 +1,43 @@
+name: Agent10 exact RESERVED-effect v13 DB admission and OS-process negatives
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent10-v13-bound-effect-cross-process.yml
+      - crates/scriptotar-db/tests/provider_dispatch_barrier_bound_os_process.rs
+permissions:
+  contents: read
+jobs:
+  original-v13-bound:
+    name: Exact v13 effect + OS process negative (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Audit immutable Agent01 original three production Git blobs and exact test-only changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=ad9fae4b8f3862bdf77d5c5287c5b1bc3490374d
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/provider_dispatch_barrier.rs)" = bab27029c380c82bc8fece7a4243f8fe0b673fa1
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/lib.rs)" = 9c389614b69f5d0bf9158b9380fd65a63b0d9e47
+          test "$(git rev-parse HEAD:apps/desktop/src-tauri/src/services/provider_consent.rs)" = 48ff63c479e45829c314f506a1006a3795159550
+          EXPECTED="$(printf '%s\n' .github/workflows/agent10-v13-bound-effect-cross-process.yml crates/scriptotar-db/tests/provider_dispatch_barrier_bound_os_process.rs | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS original Agent01 immutable v13 effect-bound code and test-only delta"
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+      - name: Execute independent reserved effect / cancellation / OS-process / one-winner CAS checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p scriptotar-db --test provider_dispatch_barrier_bound_os_process --locked -- --nocapture
+          echo "PASS scoped ledger / SQLite checks; NO paid network request or release certification"
