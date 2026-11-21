@@ -6,8 +6,12 @@ throughout the application, or all mandatory cases. Never change result.json.
 from __future__ import annotations
 import argparse
 import hashlib
+import io
 import json
+import math
+import os
 import re
+import stat
 import struct
 import zlib
 import zipfile
@@ -17,6 +21,150 @@ PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SAMPLE_X, SAMPLE_Y = 450, 200
 HEX_SHA = re.compile(r"[0-9a-f]{40}\Z")
 RUN_URL = re.compile(r"https://github\.com/MousaXD/scriptotar/actions/runs/[1-9][0-9]*\Z")
+MAX_ARCHIVE_BYTES = 64 * 1024 * 1024
+MAX_TOTAL_MEMBER_BYTES = 64 * 1024 * 1024
+MAX_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_SCREENSHOT_BYTES = 8 * 1024 * 1024
+MAX_JSON_BYTES = 1024 * 1024
+MAX_MEMBERS = 128
+
+
+def _read_archive_snapshot(archive: Path) -> bytes:
+    """Open once, cap before allocation, hash exactly the bytes later parsed."""
+    if archive.is_symlink():
+        raise ValueError("Symlinked evidence ZIP is not accepted")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    with os.fdopen(os.open(archive, flags), "rb") as stream:
+        before = os.fstat(stream.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("Evidence ZIP is not a regular file")
+        if before.st_size > MAX_ARCHIVE_BYTES:
+            raise ValueError("Evidence ZIP exceeds input size limit")
+        snapshot = stream.read(MAX_ARCHIVE_BYTES + 1)
+        after = os.fstat(stream.fileno())
+    if (len(snapshot) > MAX_ARCHIVE_BYTES or
+            len(snapshot) != before.st_size or
+            after.st_size != before.st_size or
+            after.st_mtime_ns != before.st_mtime_ns):
+        raise ValueError("Evidence ZIP changed during bounded snapshot read")
+    return snapshot
+
+
+def _unique_json_pairs(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate JSON member in native evidence")
+        result[key] = value
+    return result
+
+
+def _reject_nonfinite(value: str) -> object:
+    raise ValueError("Nonfinite JSON constant in native evidence: " + value)
+
+
+def _finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("Nonfinite JSON number in native evidence")
+    return parsed
+
+
+MAX_DIRECTORY_BYTES = 1024 * 1024
+
+
+def _preflight_zip_footer(snapshot: bytes) -> None:
+    """Bound the *actual* central directory before ZipFile allocates ZipInfo.
+
+    EOCD count fields are attacker-controlled: a 137-entry ZIP can advertise
+    only one. Walk the exact raw central directory on the capped snapshot,
+    validating fixed header, filename/extra/comment spans, offsets and count
+    before handing anything to Python's ZIP indexer. No member is inflated.
+    Unsupported ZIP64, multi-disk, prepended data and trailing records are
+    rejected for this narrowly defined native evidence format.
+    """
+    offset = snapshot.rfind(b"PK\x05\x06", max(0, len(snapshot) - 65557))
+    if offset < 0 or len(snapshot) - offset < 22:
+        raise ValueError("Missing native evidence ZIP end directory")
+    (disk, directory_disk, disk_entries, total_entries, directory_bytes,
+     directory_offset, comment_bytes) = struct.unpack_from("<HHHHIIH", snapshot, offset + 4)
+    if (offset + 22 + comment_bytes != len(snapshot) or
+            disk != 0 or directory_disk != 0 or
+            disk_entries != total_entries or
+            total_entries == 0 or total_entries > MAX_MEMBERS or
+            directory_bytes == 0 or directory_bytes > MAX_DIRECTORY_BYTES or
+            directory_offset == 0xffffffff or
+            total_entries == 0xffff or directory_bytes == 0xffffffff or
+            directory_offset + directory_bytes != offset):
+        raise ValueError("Unsafe or excessive native ZIP directory metadata")
+
+    cursor = directory_offset
+    for _ in range(total_entries):
+        if cursor + 46 > offset or snapshot[cursor:cursor + 4] != b"PK\x01\x02":
+            raise ValueError("Native ZIP central directory count/signature mismatch")
+        compressed, inflated = struct.unpack_from("<II", snapshot, cursor + 20)
+        name_len, extra_len, member_comment_len, disk_start = struct.unpack_from(
+            "<HHHH", snapshot, cursor + 28
+        )
+        local_offset = struct.unpack_from("<I", snapshot, cursor + 42)[0]
+        end = cursor + 46 + name_len + extra_len + member_comment_len
+        if (name_len == 0 or name_len > 300 or extra_len > 4096 or
+                member_comment_len > 4096 or disk_start != 0 or
+                compressed == 0xffffffff or inflated == 0xffffffff or
+                local_offset == 0xffffffff or local_offset >= directory_offset or
+                snapshot[local_offset:local_offset + 4] != b"PK\x03\x04" or
+                end > offset):
+            raise ValueError("Unsafe or inconsistent native ZIP central directory member")
+        cursor = end
+
+    if cursor != offset:
+        raise ValueError("Native ZIP central directory claimed count differs from raw record count")
+
+
+def _preflight_members(z: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+    """Deny hostile ZIP metadata before opening or inflating any member."""
+    entries = z.infolist()
+    if not 1 <= len(entries) <= MAX_MEMBERS:
+        raise ValueError("Evidence ZIP has excessive or missing members")
+    names = {}
+    total = 0
+    for info in entries:
+        name = info.filename
+        original = getattr(info, "orig_filename", name)
+        parts = name.split("/")
+        unix_mode = (info.external_attr >> 16) if info.create_system == 3 else 0
+        if (not name or len(name.encode("utf-8")) > 300 or
+                "\x00" in original or "\\" in name or ":" in name or
+                name.startswith("/") or any(part in ("", ".", "..") for part in parts) or
+                info.is_dir() or
+                (stat.S_IFMT(unix_mode) not in (0, stat.S_IFREG)) or
+                (info.flag_bits & 1) or
+                info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED) or
+                info.file_size < 0 or info.file_size > MAX_MEMBER_BYTES or
+                info.compress_size < 0 or info.compress_size > MAX_ARCHIVE_BYTES):
+            raise ValueError("Unsafe or oversized evidence ZIP member")
+        if name in names:
+            raise ValueError("Duplicate evidence ZIP name")
+        total += info.file_size
+        if total > MAX_TOTAL_MEMBER_BYTES:
+            raise ValueError("Excessive total evidence ZIP inflated size")
+        names[name] = info
+    if "result.json" not in names:
+        raise ValueError("Missing native result.json")
+    if names["result.json"].file_size > MAX_JSON_BYTES:
+        raise ValueError("Oversized native result.json")
+    return names
+
+
+def _read_member(z: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> bytes:
+    """Read at most limit+1 bytes, including when central sizes are dishonest."""
+    if info.file_size > limit:
+        raise ValueError("Oversized native ZIP member: " + info.filename)
+    with z.open(info, "r") as stream:
+        payload = stream.read(limit + 1)
+        if len(payload) > limit or len(payload) != info.file_size or stream.read(1):
+            raise ValueError("Native ZIP member exceeds declared bounded length")
+    return payload
 
 
 def _paeth(a: int, b: int, c: int) -> int:
@@ -122,21 +270,32 @@ def analyze(archive: Path, exact_sha: str) -> dict:
     """Observe real native screenshots without manufacturing any PASS verdict."""
     if not HEX_SHA.fullmatch(exact_sha):
         raise ValueError("Invalid 40-character exact source SHA")
-    with zipfile.ZipFile(archive) as z:
-        names = z.namelist()
-        if len(set(names)) != len(names) or "result.json" not in names:
-            raise ValueError("Duplicate evidence name or missing native result.json")
-        report = json.loads(z.read("result.json"))
+    snapshot = _read_archive_snapshot(archive)
+    _preflight_zip_footer(snapshot)
+    with zipfile.ZipFile(io.BytesIO(snapshot)) as z:
+        names = _preflight_members(z)
+        report = json.loads(
+            _read_member(z, names["result.json"], MAX_JSON_BYTES),
+            object_pairs_hook=_unique_json_pairs,
+            parse_constant=_reject_nonfinite,
+            parse_float=_finite_float,
+        )
+        if not isinstance(report, dict):
+            raise ValueError("Native result.json must be a JSON object")
         if (report.get("scope") != "native-installed" or
                 report.get("source_sha") != exact_sha or
-                not RUN_URL.fullmatch(str(report.get("run_url")))):
+                not isinstance(report.get("run_url"), str) or
+                not RUN_URL.fullmatch(report["run_url"])):
             raise ValueError("Installed run/source identity not matched")
         if report.get("native_ui_probe") != "installed-webview-automation":
             raise ValueError("Not the installed native probe")
-        if any(not re.fullmatch(r"[0-9a-f]{64}", str(report.get(key)))
+        if any(not isinstance(report.get(key), str) or
+               not re.fullmatch(r"[0-9a-f]{64}", report[key])
                for key in ("package_sha256", "executable_sha256")):
             raise ValueError("Installed package/executable identity missing")
-        platform_name = str(report.get("platform", "")).lower()
+        if not isinstance(report.get("platform"), str):
+            raise ValueError("Native platform must be a string")
+        platform_name = report["platform"].lower()
         if platform_name.startswith("windows"):
             platform = "windows"
             theme = [f"windows-theme-{v}.png" for v in ("system", "light", "dark", "dark-reopened")]
@@ -154,7 +313,7 @@ def analyze(archive: Path, exact_sha: str) -> dict:
         screenshots = {}
         sizes = set()
         for name in required:
-            image = z.read(name)
+            image = _read_member(z, names[name], MAX_SCREENSHOT_BYTES)
             if len(image) < 100:
                 raise ValueError("Native screenshot is implausibly small")
             rgb, dimensions = sample_png_rgb(image)
@@ -168,8 +327,12 @@ def analyze(archive: Path, exact_sha: str) -> dict:
             }
         if len(sizes) != 1:
             raise ValueError("Inconsistent native screenshot dimensions")
+        if not isinstance(report.get("cases"), dict):
+            raise ValueError("Native result cases must be an object")
+        if not isinstance(report.get("visual_capture"), dict):
+            raise ValueError("Native visual capture must be an object")
         cases = {k: (v.get("status") if isinstance(v, dict) else v)
-                 for k, v in report.get("cases", {}).items()}
+                 for k, v in report["cases"].items()}
         real_ui = (cases.get("installed_webview") == "PASS" and
                    cases.get("theme_mode_control") == "PASS" and
                    report.get("visual_capture", {}).get("explicit_light_option") is True)
@@ -181,7 +344,7 @@ def analyze(archive: Path, exact_sha: str) -> dict:
             "source_sha": exact_sha,
             "run_url": report["run_url"],
             "platform": platform,
-            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "archive_sha256": hashlib.sha256(snapshot).hexdigest(),
             "screenshots": screenshots,
             "native_theme_ui_gate_passed": bool(real_ui),
             "light_dark_and_persisted_dark_observed": bool(appearance and real_ui),
