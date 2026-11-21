@@ -345,3 +345,331 @@ impl SqliteStore {
         Ok(sealed)
     }
 }
+
+
+#[cfg(test)]
+mod charged_response_regressions {
+    use super::*;
+    use scriptotar_agent::{
+        AuditKind, CheckpointStore, Estimate, Limits, Plan, RunSnapshot,
+        RunState, StepInput, StepPlan, StepRecord, StepState, Usage,
+    };
+    use scriptotar_core::{Project, ProjectRepository};
+    use tempfile::TempDir;
+
+    fn fixture(
+        step: &str,
+    ) -> (TempDir, SqliteStore, Uuid, Uuid, RunSnapshot) {
+        let temp = TempDir::new().unwrap();
+        let db = SqliteStore::open(temp.path().join("charged.sqlite3")).unwrap();
+        assert_eq!(db.schema_version().unwrap(), 12);
+        let project = Project::new("Charged responses");
+        db.create_project(&project).unwrap();
+        let study = db.create_study(project.id, "Receipt test", "").unwrap().id;
+        let run_id = Uuid::new_v4().to_string();
+        let plan = Plan {
+            id: run_id.clone(),
+            project_id: project.id.to_string(),
+            study_id: study.to_string(),
+            steps: vec![StepPlan {
+                id: step.to_owned(),
+                input: StepInput::DraftScript {
+                    brief_id: Uuid::new_v4().to_string(),
+                },
+                estimate: Estimate {
+                    tokens: 500,
+                    cost_microusd: 2500,
+                    max_output_bytes: 400000,
+                    cpu_ms: 1,
+                    peak_memory_mib: 1,
+                },
+                max_attempts: 3,
+                requires_approval: true,
+            }],
+            limits: Limits {
+                max_tool_calls: 1,
+                max_tokens: 500,
+                max_cost_microusd: 2500,
+                max_elapsed_ms: 60000,
+                max_output_bytes: 400000,
+                max_cpu_ms: 100,
+                max_peak_memory_mib: 4,
+            },
+        };
+        let mut run = RunSnapshot {
+            schema_version: 1,
+            plan,
+            revision: 0,
+            state: RunState::Planned,
+            current_step: 0,
+            steps: vec![StepRecord {
+                id: step.to_owned(),
+                state: StepState::Pending,
+                attempts: 0,
+                approved: false,
+                idempotency_key: format!("{run_id}:0:{step}"),
+                pending_effect_id: None,
+                output: None,
+                failure_code: None,
+            }],
+            usage: Usage::default(),
+            started_ms: 100,
+            cancel_requested: false,
+            pause_requested: false,
+            events: vec![],
+        };
+        run.event(100, AuditKind::Created);
+        let checkpoints = db.scoped_agent_checkpoints(project.id, study).unwrap();
+        checkpoints.create(run.clone()).unwrap();
+        run.revision = 1;
+        run.state = RunState::Running;
+        run.steps[0].state = StepState::Running;
+        run.steps[0].attempts = 1;
+        run.steps[0].approved = true;
+        run.usage.tool_calls = 1;
+        run.event(101, AuditKind::Dispatched);
+        checkpoints.compare_and_swap(0, run.clone()).unwrap();
+
+        // Fixture-only post-v12 DDL: production requires Agent 00 to register
+        // reviewed v13 followed by v14 in the append-only migration ledger.
+        let mut conn = database(&db).unwrap();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
+        migration_charged_responses(&tx).unwrap();
+        tx.commit().unwrap();
+        (temp, db, project.id, study, run)
+    }
+
+    fn key<'a>(
+        run: &'a RunSnapshot,
+        project: Uuid,
+        study: Uuid,
+    ) -> ExternalEffectKey<'a> {
+        ExternalEffectKey {
+            project,
+            study,
+            run_id: &run.plan.id,
+            step_id: &run.plan.steps[0].id,
+            idempotency_key: &run.steps[0].idempotency_key,
+        }
+    }
+
+    fn fp() -> &'static str {
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+
+    fn dispatch(db: &SqliteStore, key: ExternalEffectKey<'_>) {
+        let fresh = db
+            .reserve_external_effect(
+                key,
+                fp(),
+                "openai",
+                ExternalEffectLimits {
+                    tokens: 500,
+                    cost_microusd: 2500,
+                },
+            )
+            .unwrap();
+        let ExternalReservation::Fresh(effect) = fresh else {
+            panic!("must reserve once");
+        };
+        db.mark_external_dispatched(key, effect.revision, 1).unwrap();
+    }
+
+    fn receipt<'a>(
+        key: ExternalEffectKey<'a>,
+        text: &'a str,
+    ) -> AuthenticatedChargedResponse<'a> {
+        AuthenticatedChargedResponse {
+            key,
+            attempt: 1,
+            provider: "openai",
+            request_sha256: fp(),
+            provider_request_id: "trusted_request_14",
+            receipt_id: "trusted_receipt_14",
+            input_tokens: 11,
+            output_tokens: 18,
+            cost_microusd: 110,
+            response: text,
+        }
+    }
+
+    #[test]
+    fn charged_result_is_atomic_immutable_and_read_only_after_restart() {
+        for step in ["angles", "draft-1", "draft-2", "draft-3"] {
+            let (temp, db, project, study, run) = fixture(step);
+            let k = key(&run, project, study);
+            assert!(db.read_sealed_charged_response(k).unwrap().is_none());
+            dispatch(&db, k);
+            let outbound = db.get_external_effect(k).unwrap().unwrap();
+            assert_eq!(outbound.status, ExternalEffectStatus::Dispatched);
+
+            let response = "{\"text\":\"genuine provider bytes\"}";
+            let sealed = db
+                .settle_authenticated_charged_response(receipt(k, response))
+                .unwrap();
+            assert_eq!(sealed.response, response);
+            assert_eq!(sealed.input_tokens, 11);
+            assert_eq!(sealed.output_tokens, 18);
+            assert_eq!(sealed.cost_microusd, 110);
+            let completed = db.get_external_effect(k).unwrap().unwrap();
+            assert_eq!(completed.status, ExternalEffectStatus::Completed);
+            assert_eq!(completed.actual_tokens, 29);
+            let duplicate = db
+                .settle_authenticated_charged_response(receipt(k, response))
+                .unwrap();
+            assert_eq!(duplicate, sealed);
+            assert_eq!(db.get_external_effect(k).unwrap().unwrap(), completed);
+            assert!(db
+                .settle_authenticated_charged_response(receipt(k, "different result"))
+                .is_err());
+            drop(db);
+
+            let db = SqliteStore::open(temp.path().join("charged.sqlite3")).unwrap();
+            assert_eq!(db.read_sealed_charged_response(k).unwrap(), Some(sealed));
+            assert!(db.mark_external_dispatched(k, completed.revision, 1).is_err());
+            let effects = db
+                .inspect_external_effects_for_run(project, study, &run.plan.id)
+                .unwrap();
+            assert_eq!(effects.len(), 1);
+        }
+    }
+
+    #[test]
+    fn uncheckpointed_charged_response_remains_unresolved_without_resend() {
+        let (_temp, db, project, study, run) = fixture("angles");
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        // Simulate response received outside SQLite, then process dies before
+        // the authenticated response seal and settlement transaction.
+        assert!(db.read_sealed_charged_response(k).unwrap().is_none());
+        assert_eq!(db.recover_external_effects(project, study, &run.plan.id).unwrap(), 1);
+        let uncertain = db.get_external_effect(k).unwrap().unwrap();
+        assert_eq!(uncertain.status, ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(k, uncertain.revision, 1).is_err());
+        assert!(matches!(
+            db.reserve_external_effect(
+                k, fp(), "openai",
+                ExternalEffectLimits { tokens: 500, cost_microusd: 2500 },
+            ).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        // A late authenticated response may still settle the original attempt.
+        let restored = db
+            .settle_authenticated_charged_response(receipt(k, "late authentic result"))
+            .unwrap();
+        assert_eq!(restored.response, "late authentic result");
+    }
+
+    #[test]
+    fn old_receipt_only_path_cannot_complete_any_four_step_writing_effect() {
+        let (_temp, db, project, study, run) = fixture("draft-2");
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        assert!(db.reconcile_external_effect(k, 1, ExternalResolution::Completed {
+            provider_request_id: Some("trusted_request_14"),
+            receipt_id: "trusted_receipt_14",
+            tokens: 29,
+            cost_microusd: 110,
+        }).is_err());
+        assert_eq!(
+            db.get_external_effect(k).unwrap().unwrap().status,
+            ExternalEffectStatus::Dispatched
+        );
+        assert!(db.read_sealed_charged_response(k).unwrap().is_none());
+    }
+
+    #[test]
+    fn receipt_or_v8_fault_rolls_back_original_bytes_and_all_accounts() {
+        for reject in ["v10", "v8"] {
+            let (_temp, db, project, study, run) = fixture("draft-3");
+            let k = key(&run, project, study);
+            dispatch(&db, k);
+            let conn = database(&db).unwrap();
+            let sql = if reject == "v10" {
+                "CREATE TRIGGER charge_fault BEFORE UPDATE OF status ON agent_external_effects
+                 WHEN NEW.status='completed'
+                 BEGIN SELECT RAISE(ABORT, 'injected v10 settlement failure'); END;"
+            } else {
+                "CREATE TRIGGER charge_fault BEFORE UPDATE OF status ON agent_effects
+                 WHEN NEW.status='applied'
+                 BEGIN SELECT RAISE(ABORT, 'injected v8 settlement failure'); END;"
+            };
+            conn.execute_batch(sql).unwrap();
+            assert!(db
+                .settle_authenticated_charged_response(receipt(k, "must not survive"))
+                .is_err());
+            assert!(db.read_sealed_charged_response(k).unwrap().is_none());
+            assert_eq!(
+                db.get_external_effect(k).unwrap().unwrap().status,
+                ExternalEffectStatus::Dispatched
+            );
+            let claims: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM agent_external_provider_identities
+                     WHERE identity IN ('trusted_request_14','trusted_receipt_14')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(claims, 0, "v12 identity claims must roll back");
+            conn.execute_batch("DROP TRIGGER charge_fault;").unwrap();
+            assert!(db
+                .settle_authenticated_charged_response(receipt(k, "must not survive"))
+                .is_ok());
+        }
+    }
+
+    #[test]
+    fn archived_owner_can_settle_late_but_cannot_redispatch() {
+        let (temp, db, project, study, run) = fixture("draft-1");
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        db.archive_study(project, study).unwrap();
+        db.archive_project(project).unwrap();
+        db.recover_external_effects(project, study, &run.plan.id).unwrap();
+        drop(db);
+        let db = SqliteStore::open(temp.path().join("charged.sqlite3")).unwrap();
+        let sealed = db
+            .settle_authenticated_charged_response(receipt(k, "archive-settled bytes"))
+            .unwrap();
+        assert_eq!(
+            db.read_sealed_charged_response(k).unwrap(),
+            Some(sealed)
+        );
+        assert!(db.reserve_external_effect(
+            k, fp(), "openai",
+            ExternalEffectLimits { tokens: 500, cost_microusd: 2500 }
+        ).is_ok()); // Existing is inspection only; never a second dispatch permit.
+        let old = db.get_external_effect(k).unwrap().unwrap();
+        assert!(db.mark_external_dispatched(k, old.revision, 1).is_err());
+    }
+
+    #[test]
+    fn forged_identity_usage_and_corrupted_bytes_fail_closed() {
+        let (_temp, db, project, study, run) = fixture("angles");
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        let mut fake = receipt(k, "real bytes");
+        fake.provider = "openai:forged-model";
+        assert!(db.settle_authenticated_charged_response(fake).is_err());
+        let mut fake = receipt(k, "real bytes");
+        fake.request_sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+        assert!(db.settle_authenticated_charged_response(fake).is_err());
+        let mut fake = receipt(k, "real bytes");
+        fake.output_tokens = 500;
+        assert!(db.settle_authenticated_charged_response(fake).is_err());
+        let real = db
+            .settle_authenticated_charged_response(receipt(k, "real bytes"))
+            .unwrap();
+        assert_eq!(real.response, "real bytes");
+        let conn = database(&db).unwrap();
+        // Test adversarial SQLite DDL outside the v13 permission threat model:
+        // even a modified immutable-seal table is rejected by read digest.
+        conn.execute_batch(
+            "DROP TRIGGER charged_response_immutable_update;
+             UPDATE agent_charged_responses SET response_bytes=X'666f72676564';",
+        )
+        .unwrap();
+        assert!(db.read_sealed_charged_response(k).is_err());
+    }
+}
