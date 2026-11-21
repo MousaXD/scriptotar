@@ -321,42 +321,42 @@ impl SqliteStore {
         })?;
         match (run, step, key, attempt, provider, wire) {
             (Some(run), Some(step), Some(key), Some(attempt), Some(provider), Some(wire)) => {
-            let outcome: Option<(String, Option<String>, Option<String>)> = tx
-                .query_row(
-                    "SELECT status,receipt_id,reconciliation_id
-                     FROM agent_external_effects
-                     WHERE idempotency_key=?1 AND run_id=?2 AND step_id=?3
-                       AND attempt=?4 AND provider=?5 AND fingerprint=?6",
-                    params![key, run, step, attempt, provider, wire],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()
-                .map_err(storage_error)?;
-            let safe = match outcome {
-                // No successful DISPATCHED CAS: this bound attempt cannot
-                // have made a provider request through the certified path.
-                Some((status, _, _)) if status == "reserved" => true,
-                // A terminal charge has a durable provider receipt; a
-                // certified nonexecution/cancellation has provider evidence.
-                Some((status, receipt, _))
-                    if matches!(status.as_str(), "completed" | "failed") =>
-                {
-                    receipt.is_some()
+                let outcome: Option<(String, Option<String>, Option<String>)> = tx
+                    .query_row(
+                        "SELECT status,receipt_id,reconciliation_id
+                         FROM agent_external_effects
+                         WHERE idempotency_key=?1 AND run_id=?2 AND step_id=?3
+                           AND attempt=?4 AND provider=?5 AND fingerprint=?6",
+                        params![key, run, step, attempt, provider, wire],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()
+                    .map_err(storage_error)?;
+                let safe = match outcome {
+                    // No successful DISPATCHED CAS: this bound attempt cannot
+                    // have made a provider request through the certified path.
+                    Some((status, _, _)) if status == "reserved" => true,
+                    // A terminal charge has a durable provider receipt; a
+                    // certified nonexecution/cancellation has provider evidence.
+                    Some((status, receipt, _))
+                        if matches!(status.as_str(), "completed" | "failed") =>
+                    {
+                        receipt.is_some()
+                    }
+                    Some((status, _, evidence))
+                        if matches!(status.as_str(), "not_executed" | "cancelled") =>
+                    {
+                        evidence.is_some()
+                    }
+                    // DISPATCHED/UNCERTAIN, changed attempts or missing owner
+                    // remain globally frozen for independently audited recovery.
+                    _ => false,
+                };
+                if !safe {
+                    return Err(RepositoryError::Conflict(
+                        "unresolved or unauthenticated provider attempt retains scope freeze".into(),
+                    ));
                 }
-                Some((status, _, evidence))
-                    if matches!(status.as_str(), "not_executed" | "cancelled") =>
-                {
-                    evidence.is_some()
-                }
-                // DISPATCHED/UNCERTAIN, changed attempts or missing owner
-                // remain globally frozen for independently audited recovery.
-                _ => false,
-            };
-            if !safe {
-                return Err(RepositoryError::Conflict(
-                    "unresolved or unauthenticated provider attempt retains scope freeze".into(),
-                ));
-            }
             }
             (None, None, None, None, None, None) => {}
             _ => {
