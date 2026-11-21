@@ -355,7 +355,7 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
                     path.write_bytes(data)
                     with patch.object(visual_observations.zipfile, "ZipFile",
                                       side_effect=AssertionError("ZipFile indexed corruption")):
-                        with self.assertRaisesRegex(ValueError, "native ZIP"):
+                        with self.assertRaisesRegex(ValueError, "(?:Native|native) ZIP"):
                             analyze(path, SHA)
 
 
