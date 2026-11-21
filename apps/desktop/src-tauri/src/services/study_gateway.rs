@@ -567,6 +567,33 @@ impl AppServices {
         P: super::study_writing::WritingTextProvider,
         S: super::study_writing::StopSignal,
     {
+        if super::study_writing::research_artifact_id(&plan.context.evidence)?.is_none() {
+            return Err(super::study_writing::WritingWorkflowError::InvalidContext(
+                "production generation requires approved research",
+            ));
+        }
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+    }
+
+    /// Keep the older local four-step fixture available to unit tests, but
+    /// never compile the unapproved-generation entrypoint into production.
+    #[cfg(test)]
+    fn generate_three_writing_offline_fixture<B, P, S>(
+        &self,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
             current: self,
@@ -584,6 +611,11 @@ impl AppServices {
         batch: &super::study_writing::GeneratedBatch,
     ) -> super::study_writing::WriteResult<[Uuid; 3]> {
         use super::study_writing::AtomicCandidateStore;
+        if super::study_writing::research_artifact_id(&batch.context.evidence)?.is_none() {
+            return Err(super::study_writing::WritingWorkflowError::InvalidContext(
+                "production persistence requires approved research",
+            ));
+        }
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
             current: self,
@@ -1814,7 +1846,7 @@ mod tests {
             steps: 0,
         };
         assert!(matches!(
-            services.generate_three_writing_with_boundary(
+            services.generate_three_writing_offline_fixture(
                 &plan,
                 &mut permit,
                 &mut provider,
@@ -1825,7 +1857,7 @@ mod tests {
         assert_eq!(provider.calls, 0);
         permit.approved = true;
         let stored = services
-            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .generate_three_writing_offline_fixture(&plan, &mut permit, &mut provider, &NeverStop)
             .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
@@ -1920,7 +1952,7 @@ mod tests {
             calls: 0,
         };
         let recovered = reopened
-            .generate_three_writing_with_boundary(
+            .generate_three_writing_offline_fixture(
                 &plan,
                 &mut no_approval,
                 &mut no_provider,
