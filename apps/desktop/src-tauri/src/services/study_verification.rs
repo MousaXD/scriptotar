@@ -355,6 +355,35 @@ fn saved_lineage_id_matches_source(
         .is_some_and(|source_id| *source_id == source.id)
 }
 
+/// The v11 writing bridge includes creator observations with a descriptive
+/// prefix and 960-character bound. Older structured test artifacts used the
+/// raw exact observation. Neither form may invent a different excerpt,
+/// section, time, origin or collection date for a genuine StudyEvidence ID.
+fn exact_observation_lineage(
+    item: &writing::EvidenceRef,
+    evidence: &scriptotar_core::EvidenceReference,
+    source: &scriptotar_core::StudySource,
+) -> bool {
+    let excerpt: String = evidence.input.claim.chars().take(960).collect();
+    let prefixed_excerpt = format!("Unverified user observation: {excerpt}");
+    let section: String = evidence.input.locator.chars().take(500).collect();
+    let timestamp_seconds = evidence.input.timestamp_seconds.and_then(|value| {
+        (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX))
+            .then_some(value as u32)
+    });
+    (item.excerpt == prefixed_excerpt || item.excerpt == evidence.input.claim)
+        && item.locator.document_section.as_deref() == Some(section.as_str())
+        && item.locator.timestamp_seconds == timestamp_seconds
+        && item.locator.canonical_url.is_none()
+        && (item.locator.collected_at.as_deref() == Some(evidence.created_at.as_str())
+            || item.locator.collected_at.as_deref() == Some(source.collected_at.as_str()))
+        && matches!(
+            item.kind,
+            writing::EvidenceKind::CreativeObservation | writing::EvidenceKind::ManualNote
+        )
+        && item.status == writing::EvidenceStatus::Unverified
+}
+
 /// Match the entire typed manifest against a host-persisted structured
 /// revision, then require its rendered body to be byte-identical to the
 /// canonical immutable saved version. A model-selected UUID is not authority.
@@ -737,6 +766,10 @@ impl AppServices {
             .iter()
             .map(|reference| (reference.id, reference.input.study_source_id))
             .collect();
+        let evidence_records: HashMap<Uuid, _> = references
+            .iter()
+            .map(|reference| (reference.id, reference))
+            .collect();
         // The canonical v11 writer derives each lineage edge from the
         // original Study evidence map. Reconfirm it here: a structured claim
         // cannot cite Study source B under an unrelated draft-linked source A.
@@ -759,6 +792,24 @@ impl AppServices {
                     return Err(RepositoryError::Conflict(
                         "saved claim evidence is attributed to the wrong source".into(),
                     ));
+                }
+                // The ID-to-StudySource relationship alone is insufficient:
+                // a saved candidate could carry an invented observation quote
+                // or section while borrowing a real evidence UUID.
+                let observation_id = item
+                    .id
+                    .strip_prefix("observation:")
+                    .or_else(|| (!item.id.contains(':')).then_some(item.id.as_str()))
+                    .and_then(|id| Uuid::parse_str(id).ok());
+                if let Some(id) = observation_id {
+                    if !evidence_records
+                        .get(&id)
+                        .is_some_and(|record| exact_observation_lineage(item, record, source))
+                    {
+                        return Err(RepositoryError::Conflict(
+                            "saved claim observation excerpt or locator is not canonical".into(),
+                        ));
+                    }
                 }
             }
         }
