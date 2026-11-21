@@ -463,6 +463,24 @@ fn typed_revision_matches(
     canonical == *supplied
 }
 
+/// Treat script letters, numerals, and common combining/joining marks as
+/// a contiguous token. Arabic harakat and Latin accents must not allow a
+/// partial quote to masquerade as a complete written assertion.
+fn is_claim_token_continuation(ch: char) -> bool {
+    ch.is_alphanumeric()
+        || matches!(
+            ch,
+            '\u{0300}'..='\u{036f}' // Common Latin combining accents
+                | '\u{0610}'..='\u{061a}' // Arabic honorific marks
+                | '\u{064b}'..='\u{065f}' // Arabic harakat
+                | '\u{0670}' // Arabic superscript alef
+                | '\u{06d6}'..='\u{06ed}' // Arabic Qur'anic marks
+                | '\u{08d3}'..='\u{08ff}' // Arabic extended combining marks
+                | '\u{200c}' // Zero-width non-joiner
+                | '\u{200d}' // Zero-width joiner
+        )
+}
+
 /// Require a complete text-token boundary, not an arbitrary interior substring.
 /// Otherwise a model-supplied claim "5" would match a saved script saying "50",
 /// or an Arabic fragment inside a longer Arabic word. Preserve exact case,
@@ -483,8 +501,10 @@ fn exact_visible_claim_span(text: &str, statement: &str) -> bool {
     text.match_indices(statement).any(|(start, _)| {
         let before = text[..start].chars().next_back();
         let after = text[start + statement.len()..].chars().next();
-        (!first.is_alphanumeric() || before.is_none_or(|ch| !ch.is_alphanumeric()))
-            && (!last.is_alphanumeric() || after.is_none_or(|ch| !ch.is_alphanumeric()))
+        (!is_claim_token_continuation(first)
+            || before.is_none_or(|ch| !is_claim_token_continuation(ch)))
+            && (!is_claim_token_continuation(last)
+                || after.is_none_or(|ch| !is_claim_token_continuation(ch)))
     })
 }
 
@@ -2238,6 +2258,11 @@ mod authenticity_tests {
         assert!(exact_visible_claim_span("المعدل جيد", "المعدل"));
         assert!(!exact_visible_claim_span("عدد ١٠٠", "١"));
         assert!(exact_visible_claim_span("عدد ١٠٠", "١٠٠"));
+        assert!(!exact_visible_claim_span("كِتاب", "ك"));
+        assert!(!exact_visible_claim_span("كَتاب", "كَ"));
+        assert!(exact_visible_claim_span("كَتاب", "كَتاب"));
+        assert!(!exact_visible_claim_span("cafe\u{0301} is here", "cafe"));
+        assert!(exact_visible_claim_span("cafe\u{0301} is here", "cafe\u{0301}"));
         assert!(!exact_visible_claim_span("a pinned fact", "Pinned"));
         assert!(!exact_visible_claim_span("source", ""));
         assert!(!exact_visible_claim_span("A claim!", "!"));
