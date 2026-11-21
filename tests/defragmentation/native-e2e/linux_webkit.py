@@ -1297,13 +1297,19 @@ def capture_native_tab_order(report: dict, ax: AxWebKit, key: str, count: int = 
         activated = command("xdotool", "windowactivate", target, check=False)
         if activated.returncode != 0:
             raise NativeUnavailable("Cannot activate installed X11 window for Tab audit")
+        focused = command("xdotool", "windowfocus", target, check=False)
+        if focused.returncode != 0:
+            raise NativeUnavailable("Cannot request installed X11 keyboard focus for Tab audit")
 
         def owns_keyboard() -> bool:
+            # _NET_ACTIVE_WINDOW can remain on Scriptotar even if the actual
+            # X input focus belongs to another process. Require BOTH checks,
+            # never the weaker active-window OR keyboard-focus condition.
             active = command("xdotool", "getactivewindow", check=False)
-            if active.returncode == 0 and active.stdout.strip() == target:
-                return True
             focused_window = command("xdotool", "getwindowfocus", check=False)
-            return (focused_window.returncode == 0
+            return (active.returncode == 0
+                    and active.stdout.strip() == target
+                    and focused_window.returncode == 0
                     and focused_window.stdout.strip() == target)
 
         deadline = time.monotonic() + 3
