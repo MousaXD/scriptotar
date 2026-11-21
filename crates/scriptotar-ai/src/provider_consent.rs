@@ -1591,6 +1591,78 @@ mod tests {
     }
 
     #[test]
+    fn shared_scope_stays_frozen_until_authenticated_receipt_is_settled() {
+        use std::{sync::mpsc, time::Duration};
+
+        struct PausedSettlement {
+            entered: mpsc::Sender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            committed: AtomicUsize,
+        }
+        impl PaidEffectFence for PausedSettlement {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn settle(
+                &self,
+                _: &str,
+                _: &str,
+                _: &ActualUsage,
+            ) -> Result<(), ConsentError> {
+                self.entered.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                self.committed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {}
+        }
+
+        let (intent, _) = fixture();
+        let authority = LockedAuthority(Mutex::new(intent.scope.clone()));
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let (mutated_tx, mutated_rx) = mpsc::channel();
+        let fence = PausedSettlement {
+            entered: entered_tx,
+            resume: Mutex::new(resume_rx),
+            committed: AtomicUsize::new(0),
+        };
+        let runner = Runner::default();
+
+        std::thread::scope(|threads| {
+            let dispatch = threads.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102)
+            });
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            // The provider has replied, but the durable receipt still waits.
+            threads.spawn(|| {
+                authority.0.lock().unwrap().material_digest = "b".repeat(64);
+                mutated_tx.send(()).unwrap();
+            });
+            assert!(
+                mutated_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+                "source mutation completed while receipt settlement was pending"
+            );
+            resume_tx.send(()).unwrap();
+            assert!(dispatch.join().unwrap().is_ok());
+            mutated_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fence.committed.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn revocation_while_reservation_is_paused_never_starts_provider_send() {
         use std::sync::mpsc;
 
