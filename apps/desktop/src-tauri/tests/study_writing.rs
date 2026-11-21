@@ -37,6 +37,7 @@ fn context() -> StudyWritingContext {
         project_id: Uuid::new_v4(),
         study_id: Uuid::new_v4(),
         study_revision: 5,
+        approved_research: None,
         sources: ids
             .iter()
             .map(|(study_source_id, origin_id)| SelectedWritingSource {
