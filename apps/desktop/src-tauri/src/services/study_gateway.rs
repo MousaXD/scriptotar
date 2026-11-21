@@ -1344,11 +1344,6 @@ impl super::study_writing::CurrentStudy for AppServices {
         for source in &verified.sources {
             if !selected.insert(source.study_source_id)
                 || !origins.insert(source.origin_id)
-                || !matches!(
-                    source.access,
-                    super::study_research::StudyResearchAccess::Available
-                        | super::study_research::StudyResearchAccess::Partial
-                )
                 || !base.sources.iter().any(|candidate| {
                     candidate.study_source_id == source.study_source_id
                         && candidate.origin_id == source.origin_id
