@@ -425,8 +425,7 @@ fn denied_approval_does_not_contact_provider_or_persist() {
 fn oversized_recorded_paid_result_never_dispatches_or_creates_drafts() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     let recorded_key = format!("{}:angles:{}", plan.run_id, plan.angles_prompt.prompt);
-    gate.step_response
-        .insert(recorded_key, "a".repeat(400_001));
+    gate.step_response.insert(recorded_key, "a".repeat(400_001));
     let mut sink =
         SqlFixtureSink::open(&temp.path().join("replay-limit.sqlite"), current.0.clone());
     assert!(matches!(
@@ -1354,7 +1353,9 @@ fn revision_sqlite_cas_rejects_forged_lineage_quality_and_review_history() {
     let mut fabricated_audit = legitimate.clone();
     fabricated_audit.audit.duration.words += 1;
     let mut fabricated_review = legitimate.clone();
-    fabricated_review.review_findings.push(scriptotar_ai::writing::ReviewFinding {
+    fabricated_review
+        .review_findings
+        .push(scriptotar_ai::writing::ReviewFinding {
             beat_id: Some("cta".into()),
             concern: "Invented model review".into(),
             recommendation: "Misleading advice".into(),
