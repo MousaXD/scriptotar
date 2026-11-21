@@ -888,6 +888,102 @@ mod tests {
             .unwrap();
         assert_eq!(settled.status, ExternalEffectStatus::Completed);
         guard.verify().unwrap();
+        drop(guard);
+        // A committed, authenticated terminal receipt permits ordinary
+        // scoped edits again; it did not authorize a second network send.
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE content_studies SET goal='after receipt' WHERE id=?1",
+                    params![study.to_string()],
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn v13_ambiguous_sent_attempt_keeps_freeze_after_guard_drop_and_restart() {
+        let (dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: reserved.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        db.mark_external_dispatched(key, reserved.revision, 1)
+            .unwrap();
+        // Sending may have charged a provider. Dropping the normal RAII
+        // guard is NOT permission to erase its ownership record.
+        drop(guard);
+        drop(db);
+        let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        let independent = rusqlite::Connection::open(reopened.path()).unwrap();
+        let persisted: (String, String, String, i64) = independent
+            .query_row(
+                "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
+                        effect_attempt FROM provider_dispatch_barrier WHERE singleton=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(persisted, (
+            key.run_id.to_owned(),
+            key.step_id.to_owned(),
+            key.idempotency_key.to_owned(),
+            1,
+        ));
+        assert!(independent
+            .execute(
+                "UPDATE content_studies SET goal='unapproved restart edit' WHERE id=?1",
+                params![study.to_string()],
+            )
+            .is_err());
+        assert!(reopened
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: 1,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .is_err());
+        // Even if a late authenticated terminal receipt is persisted, a
+        // crashed token is not silently unlocked on DB reopen. Agent 02
+        // owns the future independently reviewed identity-bound release.
+        reopened
+            .reconcile_external_effect(
+                key,
+                1,
+                ExternalResolution::Completed {
+                    provider_request_id: Some("request_after_crash_v13"),
+                    receipt_id: "receipt_after_crash_v13",
+                    tokens: 42,
+                    cost_microusd: 100,
+                },
+            )
+            .unwrap();
+        let still_locked: i64 = independent
+            .query_row("SELECT COUNT(*) FROM provider_dispatch_barrier", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(still_locked, 1);
     }
 
     #[test]
