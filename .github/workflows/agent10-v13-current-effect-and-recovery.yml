@@ -1,0 +1,50 @@
+name: Agent10 immutable latest v13 paid-effect cross-process + crash gate
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent10-v13-current-effect-and-recovery.yml
+      - crates/scriptotar-db/tests/provider_dispatch_barrier_current_os_process.rs
+permissions:
+  contents: read
+jobs:
+  independent-v13:
+    name: Current exact v13 OS-process and crash controls (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 24
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Freeze full original Agent01 source and test-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=1b7ed32bd77a10818a28b69e0441d6580e0dd0aa
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/provider_dispatch_barrier.rs)" = db3b2da8f40fe58d8951d05e89c188b26486950c
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/lib.rs)" = 9c389614b69f5d0bf9158b9380fd65a63b0d9e47
+          test "$(git rev-parse HEAD:apps/desktop/src-tauri/src/services/provider_consent.rs)" = ec0c6f4a3e67105b46797cadc29fd4dad0ccca4b
+          EXPECTED="$(printf '%s\n' .github/workflows/agent10-v13-current-effect-and-recovery.yml crates/scriptotar-db/tests/provider_dispatch_barrier_current_os_process.rs | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS exact immutable Agent01 v13 original Git tree and two test-only paths"
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+      - name: Independent second OS-process effect-bound negative
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p scriptotar-db --test provider_dispatch_barrier_current_os_process --locked -- --nocapture
+          echo "PASS original cross-process test only; NO paid egress or release approval"
+      - name: Original v13 uncertain-send crash retention, cancel ordering and receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p scriptotar-db --lib v13_ --locked -- --nocapture
+          cargo test -p scriptotar-db --test content_studies --locked
+          echo "PASS original v13 and migration regression suites without mocking native installed apps"
