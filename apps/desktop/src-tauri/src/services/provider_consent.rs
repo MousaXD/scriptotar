@@ -15,8 +15,8 @@ use scriptotar_ai::{
 };
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
-    ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation,
-    ExternalResolution, SqliteStore,
+    AuthenticatedChargedResponse, ExternalEffectKey, ExternalEffectLimits,
+    ExternalEffectStatus, ExternalReservation, ExternalResolution, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -291,6 +291,11 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         usage: &ActualUsage,
     ) -> Result<(), ConsentError> {
         self.check_effect_id(effect_id)?;
+        // Charged writing requires sealed bytes atomically with the receipt.
+        // The historical v10 receipt-only path cannot complete this outcome.
+        if matches!(self.step_id.as_str(), "angles" | "draft-1" | "draft-2" | "draft-3") {
+            return Err(ConsentError::EffectFenceUnavailable);
+        }
         // BoundedProvider::verified_usage_receipt MUST authenticate this ID
         // before calling settle. The v10 ledger uses it as the receipt key
         // until the wire adapter exposes a distinct provider receipt ID.
@@ -354,6 +359,37 @@ impl PaidEffectFence for SqlitePaidEffectFence {
                     cost_microusd: usage.cost_microusd,
                 },
             )
+            .map_err(|_| ConsentError::UncertainEffect)?;
+        Ok(())
+    }
+
+    fn settle_with_response(
+        &self,
+        effect_id: &str,
+        provider_request_id: &str,
+        usage: &ActualUsage,
+        response: &str,
+    ) -> Result<(), ConsentError> {
+        self.check_effect_id(effect_id)?;
+        if !matches!(self.step_id.as_str(), "angles" | "draft-1" | "draft-2" | "draft-3") {
+            return self.settle(effect_id, provider_request_id, usage);
+        }
+        // This is reachable only after the consent policy authenticated the
+        // provider reply and computed its authoritative billed cost. A name
+        // or receipt supplied by model output / Studio is never sufficient.
+        self.store
+            .settle_authenticated_charged_response(AuthenticatedChargedResponse {
+                key: self.key(),
+                attempt: 1,
+                provider: &self.provider,
+                request_sha256: &self.wire_sha256,
+                provider_request_id,
+                receipt_id: provider_request_id,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cost_microusd: usage.cost_microusd,
+                response,
+            })
             .map_err(|_| ConsentError::UncertainEffect)?;
         Ok(())
     }
