@@ -8,6 +8,8 @@
   export let api: ScriptotarApi;
   export let projectId: string;
   export let studyId: string;
+  /** The displayed editor has changes not yet authenticated by the Study host. */
+  export let pendingEdits = false;
 
   const labels = {
     en: {
@@ -23,6 +25,7 @@
       loading: 'Loading saved research…', transcript: 'Transcript', research: 'Research',
       approvalScope: 'Approve these exact sources', sourceCount: 'sources',
       missingScope: 'A selected source is no longer available. Deny this run and prepare a new one.',
+      saveBeforeApproval: 'Save Study changes before preparing or approving local research.',
       provenance: 'Source provenance', partial: 'Partial transcript · review limitations',
       sourceId: 'Study source ID', originId: 'Origin ID', revision: 'Snapshot revision',
       collected: 'Collected at', noRevision: 'Not recorded',
@@ -49,6 +52,7 @@
       loading: 'جارٍ تحميل البحث المحفوظ…', transcript: 'نص مفرغ', research: 'بحث',
       approvalScope: 'الموافقة على هذه المصادر تحديدًا', sourceCount: 'مصادر',
       missingScope: 'أحد المصادر المختارة لم يعد متاحًا. ارفض التشغيل وأعد تحضير طلب جديد.',
+      saveBeforeApproval: 'احفظ تغييرات الدراسة قبل تحضير البحث المحلي أو الموافقة عليه.',
       provenance: 'مصدر الأدلة', partial: 'نص مفرغ جزئي · راجع القيود',
       sourceId: 'معرّف مصدر الدراسة', originId: 'معرّف المصدر الأصلي', revision: 'إصدار اللقطة',
       collected: 'تاريخ الجمع', noRevision: 'غير مسجل',
@@ -104,14 +108,14 @@
   }
 
   function hasSelectedSources(): boolean {
-    return selectedIds.length >= 1 && selectedIds.length <= 8 &&
+    return !pendingEdits && selectedIds.length >= 1 && selectedIds.length <= 8 &&
       new Set(selectedIds).size === selectedIds.length &&
       selectedIds.every((id) => sources.some((source) => source.id === id && source.available));
   }
 
   function hasCurrentRunSources(run: StudyResearchRun): boolean {
     const ids = run.plan.steps[0]?.input.source_ids;
-    return Array.isArray(ids) && ids.length >= 1 && ids.length <= 8 &&
+    return !pendingEdits && Array.isArray(ids) && ids.length >= 1 && ids.length <= 8 &&
       new Set(ids).size === ids.length &&
       ids.every((id) => sources.some((source) => source.id === id && source.available));
   }
@@ -184,7 +188,7 @@
   }
 
   async function prepare(): Promise<void> {
-    if (busy || loading || activeRun?.state === 'awaiting_approval') return;
+    if (busy || loading || pendingEdits || activeRun?.state === 'awaiting_approval') return;
     if (!hasSelectedSources()) { errorText = t.choose; return; }
     const requested = [...selectedIds];
     const requestEpoch = ++epoch;
@@ -209,6 +213,7 @@
 
   async function decide(action: 'approve' | 'deny' | 'cancel' | 'recover'): Promise<void> {
     if (!activeRun || busy || loading || !scoped(activeRun) ||
+        ((action === 'approve' || action === 'recover') && pendingEdits) ||
         (action === 'approve' && !hasCurrentRunSources(activeRun))) return;
     const requestEpoch = ++epoch;
     busy = true;
@@ -241,6 +246,7 @@
       on:click={() => void refresh()}>{t.refresh}</button>
   </div>
   <p class="muted">{t.privacy}</p>
+  {#if pendingEdits}<p class="muted" role="status">{t.saveBeforeApproval}</p>{/if}
   {#if loading}
     <div class="research-loading" role="status" aria-label={t.loading}>
       <span class="research-loading-line"></span><span class="research-loading-line short"></span>
@@ -278,7 +284,7 @@
             {/each}
           </ul>
         </details>
-        {#if !hasCurrentRunSources(activeRun)}
+        {#if !pendingEdits && !hasCurrentRunSources(activeRun)}
           <p class="studio-error" role="alert">{t.missingScope}</p>
         {/if}
         <button type="button" class="button primary" disabled={busy || loading || !hasCurrentRunSources(activeRun)}
@@ -286,7 +292,7 @@
         <button type="button" class="button secondary" disabled={busy || loading}
           on:click={() => void decide('deny')}>{t.deny}</button>
       {:else if activeRun.state === 'blocked'}
-        <button type="button" class="button secondary" disabled={busy || loading}
+        <button type="button" class="button secondary" disabled={busy || loading || pendingEdits}
           on:click={() => void decide('recover')}>{t.recover}</button>
       {:else if ['planned', 'running', 'paused', 'needs_input'].includes(activeRun.state)}
         <button type="button" class="button secondary" disabled={busy || loading}
@@ -295,7 +301,7 @@
     </div>
   {/if}
   {#if errorText}<p role="alert" class="studio-error">{errorText}</p>{/if}
-  {#if report}
+  {#if report && !pendingEdits}
     <div class="research-result" aria-label={t.title + ' report'}>
       {#if report.feature_support.length}
         <details class="research-feature-support">
