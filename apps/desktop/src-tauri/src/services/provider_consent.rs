@@ -15,8 +15,8 @@ use scriptotar_ai::{
 };
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
-    AuthenticatedChargedResponse, ExternalEffectKey, ExternalEffectLimits,
-    ExternalEffectStatus, ExternalReservation, ExternalResolution, SqliteStore,
+    AuthenticatedChargedResponse, ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus,
+    ExternalReservation, ExternalResolution, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -293,7 +293,10 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         self.check_effect_id(effect_id)?;
         // Charged writing requires sealed bytes atomically with the receipt.
         // The historical v10 receipt-only path cannot complete this outcome.
-        if matches!(self.step_id.as_str(), "angles" | "draft-1" | "draft-2" | "draft-3") {
+        if matches!(
+            self.step_id.as_str(),
+            "angles" | "draft-1" | "draft-2" | "draft-3"
+        ) {
             return Err(ConsentError::EffectFenceUnavailable);
         }
         // BoundedProvider::verified_usage_receipt MUST authenticate this ID
@@ -371,7 +374,10 @@ impl PaidEffectFence for SqlitePaidEffectFence {
         response: &str,
     ) -> Result<(), ConsentError> {
         self.check_effect_id(effect_id)?;
-        if !matches!(self.step_id.as_str(), "angles" | "draft-1" | "draft-2" | "draft-3") {
+        if !matches!(
+            self.step_id.as_str(),
+            "angles" | "draft-1" | "draft-2" | "draft-3"
+        ) {
             return self.settle(effect_id, provider_request_id, usage);
         }
         // This is reachable only after the consent policy authenticated the
