@@ -1164,6 +1164,12 @@ mod tests {
         let scope = services
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
+        // Production paid dispatch must not downgrade to a test-only unbound
+        // SQLite writer freeze when there is no exact v10 reservation.
+        assert!(matches!(
+            services.lock_effect_dispatch_scope(&scope, None),
+            Err(ConsentError::EffectFenceUnavailable)
+        ));
         let stale = StudyScope {
             material_digest: "f".repeat(64),
             ..scope.clone()
