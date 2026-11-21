@@ -643,6 +643,39 @@ fn separately_approved_revision_proposal_does_not_change_saved_text() {
 }
 
 #[test]
+fn revision_preview_rejects_source_copy_without_mutating_an_accepted_draft() {
+    let (temp, _original_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The original interview explains how the community chose each location along the path and describes a series of meetings held before neighbors agreed to revisit their walking plans together";
+    let mut context = current.0.borrow().clone();
+    context.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("revision-preview-copy", context.clone()).unwrap();
+    current.0.replace(context);
+    let mut sink = SqlFixtureSink::open(&temp.path().join("preview-copy.sqlite"), current.0.clone());
+    let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
+    let candidate = sink.get(ids[0]).candidates[0].clone();
+    provider.responses.push_back(
+        json!({"beat_id":"hook","replacement_narration":passage}).to_string(),
+    );
+    assert!(matches!(
+        study_writing::propose_beat_revision(
+            &plan,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            study_writing::RevisionRequest {
+                candidate: &candidate,
+                beat_id: "hook",
+                feedback: "Make the hook clearer",
+            },
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 5);
+    assert_eq!(sink.get(ids[0]).candidates[0].draft, candidate.draft);
+}
+
+#[test]
 fn optional_model_review_is_advisory_not_a_verification_verdict() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
