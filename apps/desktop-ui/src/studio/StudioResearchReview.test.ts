@@ -100,6 +100,27 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
   });
 
+  it('does not fall back to an older valid approval when the newest saved research run is corrupt', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const sources = await api.listStudyResearchSources(projectId, studyId);
+    const first = await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    await api.decideStudyResearch(projectId, studyId, first.plan.id, 'approve');
+    const newer = await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    const original = api.listStudyResearchRuns.bind(api);
+    api.listStudyResearchRuns = async (project, study) => {
+      const runs = await original(project, study);
+      return runs.map((run) => run.plan.id === newer.plan.id ? {
+        ...run, state: 'completed' as const,
+        steps: [{ ...run.steps[0], state: 'completed', approved: true, output: null }]
+      } : run);
+    };
+    const read = vi.spyOn(api, 'readStudyResearchReport');
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('denies an approval after Study source revocation and does not show a report', async () => {
     const { api, projectId, studyId } = await fixture();
     render(StudioResearchReview, { props: { api, projectId, studyId } });
