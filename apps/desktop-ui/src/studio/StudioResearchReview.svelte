@@ -13,7 +13,8 @@
 
   const labels = {
     en: {
-      title: 'Study research', reportLabel: 'Study research report', privacy: 'Local analysis of saved Study sources. No AI provider or paid request.',
+      title: 'Study research', reportLabel: 'Study research report',
+      artifactId: 'Saved local artifact ID (not provider authorization)', privacy: 'Local analysis of saved Study sources. No AI provider or paid request.',
       refresh: 'Refresh', prepare: 'Prepare research', approve: 'Approve local analysis',
       deny: 'Deny', cancel: 'Cancel', recover: 'Reconcile saved run',
       noSources: 'Attach and save a research item or transcript to analyze it.',
@@ -40,7 +41,8 @@
         blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
     },
     ar: {
-      title: 'بحث الدراسة', reportLabel: 'تقرير بحث الدراسة', privacy: 'تحليل محلي لمصادر الدراسة المحفوظة. دون طلب مدفوع أو اتصال بمزود الذكاء الاصطناعي.',
+      title: 'بحث الدراسة', reportLabel: 'تقرير بحث الدراسة',
+      artifactId: 'معرّف أثر البحث المحلي المحفوظ (ليس تصريحًا بإرسال البيانات إلى المزود)', privacy: 'تحليل محلي لمصادر الدراسة المحفوظة. دون طلب مدفوع أو اتصال بمزود الذكاء الاصطناعي.',
       refresh: 'تحديث', prepare: 'تحضير البحث', approve: 'الموافقة على التحليل المحلي',
       deny: 'رفض', cancel: 'إلغاء', recover: 'تسوية التشغيل المحفوظ',
       noSources: 'أرفق واحفظ مصدراً بحثياً أو نصاً لتتمكن من تحليله.',
@@ -337,6 +339,9 @@
   {#if report && !pendingEdits}
     <div class="research-result" role="region" aria-label={t.reportLabel}
       dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
+      <p class="muted research-artifact-id">{t.artifactId}:
+        <code dir="ltr">{activeRun?.steps[0]?.output?.artifact_id}</code>
+      </p>
       {#if report.feature_support.length}
         <details class="research-feature-support">
           <summary>{t.features}</summary>
@@ -452,6 +457,8 @@
   .research-source small, .result-source p { font-size: var(--text-xs); color: var(--color-text-muted); }
   .result-source { border-top: 1px solid var(--color-border); padding-block: 9px; overflow-wrap: anywhere; }
   .research-result { margin-block: 12px; }
+  .research-artifact-id { overflow-wrap: anywhere; }
+  .research-artifact-id code { unicode-bidi: isolate; }
   .research-provenance, .research-metrics, .research-feature-support { margin-block: 8px; }
   .research-provenance dl, .research-metrics dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 5px 12px; padding-inline-start: 8px; }
   .research-provenance dt, .research-metrics dt { color: var(--color-text-muted); }
