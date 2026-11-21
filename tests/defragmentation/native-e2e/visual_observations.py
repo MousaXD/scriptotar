@@ -70,16 +70,19 @@ def _finite_float(value: str) -> float:
     return parsed
 
 
-def _preflight_zip_footer(snapshot: bytes) -> None:
-    """Reject excessive ZIP directory counts BEFORE ZipFile creates ZipInfo.
+MAX_DIRECTORY_BYTES = 1024 * 1024
 
-    The bounded outer snapshot is already read, but ZipFile's constructor
-    materializes central-directory records before _preflight_members() can
-    inspect them. Limit the advertised count at the original EOCD footer.
-    ZIP64/multidisk/ambiguous footers are not required for these small native
-    evidence archives and fail closed rather than creating a large index.
+
+def _preflight_zip_footer(snapshot: bytes) -> None:
+    """Bound the *actual* central directory before ZipFile allocates ZipInfo.
+
+    EOCD count fields are attacker-controlled: a 137-entry ZIP can advertise
+    only one. Walk the exact raw central directory on the capped snapshot,
+    validating fixed header, filename/extra/comment spans, offsets and count
+    before handing anything to Python's ZIP indexer. No member is inflated.
+    Unsupported ZIP64, multi-disk, prepended data and trailing records are
+    rejected for this narrowly defined native evidence format.
     """
-    # End Of Central Directory is 22 bytes plus at most 65535 comment bytes.
     offset = snapshot.rfind(b"PK\x05\x06", max(0, len(snapshot) - 65557))
     if offset < 0 or len(snapshot) - offset < 22:
         raise ValueError("Missing native evidence ZIP end directory")
@@ -89,10 +92,33 @@ def _preflight_zip_footer(snapshot: bytes) -> None:
             disk != 0 or directory_disk != 0 or
             disk_entries != total_entries or
             total_entries == 0 or total_entries > MAX_MEMBERS or
-            directory_bytes == 0 or directory_bytes == 0xffffffff or
+            directory_bytes == 0 or directory_bytes > MAX_DIRECTORY_BYTES or
             directory_offset == 0xffffffff or
-            total_entries == 0xffff):
+            total_entries == 0xffff or directory_bytes == 0xffffffff or
+            directory_offset + directory_bytes != offset):
         raise ValueError("Unsafe or excessive native ZIP directory metadata")
+
+    cursor = directory_offset
+    for _ in range(total_entries):
+        if cursor + 46 > offset or snapshot[cursor:cursor + 4] != b"PK\x01\x02":
+            raise ValueError("Native ZIP central directory count/signature mismatch")
+        compressed, inflated = struct.unpack_from("<II", snapshot, cursor + 20)
+        name_len, extra_len, member_comment_len, disk_start = struct.unpack_from(
+            "<HHHH", snapshot, cursor + 28
+        )
+        local_offset = struct.unpack_from("<I", snapshot, cursor + 42)[0]
+        end = cursor + 46 + name_len + extra_len + member_comment_len
+        if (name_len == 0 or name_len > 300 or extra_len > 4096 or
+                member_comment_len > 4096 or disk_start != 0 or
+                compressed == 0xffffffff or inflated == 0xffffffff or
+                local_offset == 0xffffffff or local_offset >= directory_offset or
+                snapshot[local_offset:local_offset + 4] != b"PK\x03\x04" or
+                end > offset):
+            raise ValueError("Unsafe or inconsistent native ZIP central directory member")
+        cursor = end
+
+    if cursor != offset:
+        raise ValueError("Native ZIP central directory claimed count differs from raw record count")
 
 
 def _preflight_members(z: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
