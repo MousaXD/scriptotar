@@ -1950,9 +1950,7 @@ mod authenticity_tests {
             created_at: "2026-11-21T00:00:00Z".into(),
         };
         let binding = HostSourceBinding {
-            content_sha256: Some(verification::canonical_source_sha256(&[
-                b"Literal text",
-            ])),
+            content_sha256: Some(verification::canonical_source_sha256(&[b"Literal text"])),
             segments: Vec::new(),
         };
         let first = from_study_evidence(&reference, &source, &binding);
