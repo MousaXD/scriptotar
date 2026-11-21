@@ -426,6 +426,29 @@ impl SqliteStore {
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
         may_execute(&tx,key)?;
         let previous=checked(&tx,key)?;
+        // Recheck the original v8 claim under the SAME write transaction as
+        // DISPATCHED CAS. A cross-process recovery/cancel may have changed the
+        // legacy fence before v13 barrier admission; no caller may send when
+        // that authoritative claim is already UNKNOWN or terminal.
+        let legacy_status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM agent_effects
+                 WHERE idempotency_key=?1 AND project_id=?2 AND study_id=?3
+                   AND run_id=?4 AND step_id=?5",
+                params![
+                    key.idempotency_key,
+                    key.project.to_string(),
+                    key.study.to_string(),
+                    key.run_id,
+                    key.step_id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        if legacy_status.as_deref() != Some("reserved") {
+            return Err(conflict("external dispatch requires exact reserved v8 claim"));
+        }
         if previous.status != ExternalEffectStatus::Reserved || previous.revision != expected_revision
             || previous.attempt != attempt || previous.cancel_requested {
             return Err(conflict("external effect cannot be dispatched again"));
