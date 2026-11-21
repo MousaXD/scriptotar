@@ -188,6 +188,20 @@ pub trait PaidEffectFence: Send + Sync {
         provider_request_id: &str,
         usage: &ActualUsage,
     ) -> Result<(), ConsentError>;
+
+    /// A successful writing step must seal its original authenticated output
+    /// in the same transaction as the billable receipt. Existing non-writing
+    /// fences can retain receipt-only semantics; the production writing fence
+    /// overrides this and fails closed if v14 is not installed.
+    fn settle_with_response(
+        &self,
+        effect_id: &str,
+        provider_request_id: &str,
+        usage: &ActualUsage,
+        _original_response: &str,
+    ) -> Result<(), ConsentError> {
+        self.settle(effect_id, provider_request_id, usage)
+    }
     fn mark_uncertain(&self, effect_id: &str);
 }
 
@@ -828,7 +842,12 @@ impl ConsentBoundary {
             return Err(ConsentError::UsageOverBudget);
         }
         if fence
-            .settle(&effect_id, &generated.provider_request_id, &usage)
+            .settle_with_response(
+                &effect_id,
+                &generated.provider_request_id,
+                &usage,
+                &generated.text,
+            )
             .is_err()
         {
             fence.mark_uncertain(&effect_id);
