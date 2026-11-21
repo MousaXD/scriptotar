@@ -633,9 +633,12 @@ pub(super) fn enforce_candidate_originality(
         }
         let creative_narration = creative_parts.join(" ");
         let creative_words = originality_words(&creative_narration);
-        if creative_words.is_empty() {
+        // A one- or two-word hook plus a common CTA is not a meaningfully
+        // distinct full script. Short-form scripts remain supported, but must
+        // contain at least a small amount of original creative narration.
+        if creative_words.len() < 6 {
             return Err(WritingWorkflowError::InvalidResponse(
-                "candidate has no original creative narration".into(),
+                "candidate creative narration is too short".into(),
             ));
         }
         scripts.push(creative_words);
@@ -688,10 +691,42 @@ pub(super) fn enforce_candidate_originality(
 }
 
 fn originality_words(text: &str) -> Vec<String> {
-    text.split(|character: char| !character.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .map(str::to_lowercase)
-        .collect()
+    // Arabic vowel marks, tatweel and invisible format characters must not
+    // split a copied word into fragments that bypass the lexical safety check.
+    // Keep this deterministic and dependency-free for offline evidence tests.
+    let mut words = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        let is_format_mark = [
+            '\u{0640}',
+            '\u{200B}',
+            '\u{200C}',
+            '\u{200D}',
+            '\u{FEFF}',
+        ]
+        .contains(&character);
+        let is_arabic_mark = ('\u{0610}'..='\u{061A}').contains(&character)
+            || ('\u{064B}'..='\u{065F}').contains(&character)
+            || character == '\u{0670}'
+            || ('\u{06D6}'..='\u{06ED}').contains(&character)
+            || ('\u{08D3}'..='\u{08FF}').contains(&character);
+        if is_format_mark || is_arabic_mark {
+            continue;
+        }
+        let normalized = match character {
+            'أ' | 'إ' | 'آ' | 'ٱ' => 'ا',
+            _ => character,
+        };
+        if normalized.is_alphanumeric() {
+            current.extend(normalized.to_lowercase());
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 pub(super) fn lineage_for(
