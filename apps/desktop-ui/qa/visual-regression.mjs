@@ -293,6 +293,15 @@ async function runWorkspace(browser, width, locale, theme) {
       await checkCustomSelectKeyboard(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
       if (view.name === 'research') {
+        // The narrower EN/AR capture form must not compress "Save watchlist"
+        // into individual word fragments. Browser-only geometry assertion.
+        if (width === 760) {
+          const saveButton = page.locator('.research-capture button[type="button"]').first();
+          const bounds = await saveButton.boundingBox();
+          if (!bounds || bounds.width < 140) {
+            recordFailure(label + '/research-save-width', 'Save watchlist action is too narrow for a readable label');
+          }
+        }
         const search = page.locator('#workspace-main .search-field input').first();
         await search.fill('qa-absent-research-000000000');
         await page.locator('.research-table').waitFor({ state: 'hidden', timeout: 5000 });
