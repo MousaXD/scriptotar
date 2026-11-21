@@ -886,7 +886,7 @@ mod tests {
     }
 
     #[test]
-    fn v13_pre_send_cleanup_v8_conflict_rolls_back_v10_and_preserves_barrier() {
+    fn v13_pre_send_cleanup_v8_write_failure_rolls_back_v10_and_preserves_barrier() {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
         let original = reserve(&db, &snapshot, project, study);
@@ -907,20 +907,46 @@ mod tests {
             .unwrap();
         let other = rusqlite::Connection::open(db.path()).unwrap();
 
-        // Simulate an independent recovery writer changing the v8 claim,
-        // after admission but before our owned guard's Drop. This v8
-        // transition must invalidate the pre-send cleanup as a unit.
-        assert_eq!(
-            other
-                .execute(
-                    "UPDATE agent_effects
-                     SET status='unknown',revision=revision+1
-                     WHERE idempotency_key=?1 AND status='reserved'",
-                    params![key.idempotency_key],
-                )
-                .unwrap(),
-            1
+        // Even status-only and DELETE bypasses against the v8 single-send
+        // ledger must be rejected from a separate SQLite connection.
+        let bypassed = other
+            .execute(
+                "UPDATE agent_effects
+                 SET status='unknown',revision=revision+1
+                 WHERE idempotency_key=?1 AND status='reserved'",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            bypassed
+                .to_string()
+                .contains("provider dispatch v8 fence is frozen"),
+            "v8 mutation failed for unrelated reason: {bypassed}"
         );
+        let deleted = other
+            .execute(
+                "DELETE FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            deleted
+                .to_string()
+                .contains("provider dispatch v8 fence cannot be deleted"),
+            "v8 deletion failed for unrelated reason: {deleted}"
+        );
+
+        // Inject a deterministic v8 write fault at the exact second half
+        // of the owned two-ledger cleanup. A transaction must restore both
+        // the v10 RESERVED row AND the already-deleted barrier on rollback.
+        other
+            .execute_batch(
+                "CREATE TRIGGER test_block_v8_pre_send_close
+                 BEFORE UPDATE OF status ON agent_effects
+                 WHEN NEW.status='not_applied'
+                 BEGIN SELECT RAISE(ABORT, 'injected v8 close fault'); END;",
+            )
+            .unwrap();
 
         drop(guard); // Release must fail closed: no half-cancelled claim.
         let after = db.get_external_effect(key).unwrap().unwrap();
@@ -934,7 +960,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(v8_status, "unknown");
+        assert_eq!(v8_status, "reserved");
         let retained: i64 = other
             .query_row(
                 "SELECT COUNT(*) FROM provider_dispatch_barrier
