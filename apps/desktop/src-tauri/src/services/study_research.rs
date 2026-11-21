@@ -2151,18 +2151,20 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
         let project = services.active_project_id().unwrap();
-        let created = services.create_studio_study(
-            project,
-            crate::dto::UiStudioBrief {
-                title: "Three recorded transcripts".into(),
-                goal: "Produce an original tutorial script".into(),
-                audience: "New learners".into(),
-                platform: "YouTube".into(),
-                language: "English".into(),
-                duration: "45".into(),
-                style: "Grounded".into(),
-            },
-        ).unwrap();
+        let created = services
+            .create_studio_study(
+                project,
+                crate::dto::UiStudioBrief {
+                    title: "Three recorded transcripts".into(),
+                    goal: "Produce an original tutorial script".into(),
+                    audience: "New learners".into(),
+                    platform: "YouTube".into(),
+                    language: "English".into(),
+                    duration: "45".into(),
+                    style: "Grounded".into(),
+                },
+            )
+            .unwrap();
         let study = Uuid::parse_str(&created.id).unwrap();
         let timestamp = "2026-11-15T12:30:00Z";
         let mut attached = Vec::new();
@@ -2269,15 +2271,15 @@ mod tests {
 
         // The production service must require the same approved, applied
         // research artifact, not independently sampled transcript excerpts.
-        let plan = reopened.prepare_three_writing_plan(
-            project, study, artifact, "approved-research-three-source",
-        ).unwrap();
+        let plan = reopened
+            .prepare_three_writing_plan(project, study, artifact, "approved-research-three-source")
+            .unwrap();
         assert_eq!(plan.context.evidence, bridge.evidence);
         assert_eq!(plan.context.findings, bridge.findings);
         assert_eq!(plan.context.sources.len(), 3);
-        assert!(reopened.prepare_three_writing_plan(
-            project, study, Uuid::new_v4(), "forged-research-artifact",
-        ).is_err());
+        assert!(reopened
+            .prepare_three_writing_plan(project, study, Uuid::new_v4(), "forged-research-artifact")
+            .is_err());
 
         // This merely constructs a zero-cost structured writing request. It
         // does not dispatch AI, verify any factual claim or save a draft.
@@ -2315,10 +2317,11 @@ mod tests {
             "UPDATE transcripts SET text='Changed after approval',
              updated_at='2026-11-16T00:00:00Z' WHERE id=?1",
             params![origin_ids[0].to_string()],
-        ).unwrap();
-        assert!(reopened.prepare_three_writing_plan(
-            project, study, artifact, "stale-research-artifact",
-        ).is_err());
+        )
+        .unwrap();
+        assert!(reopened
+            .prepare_three_writing_plan(project, study, artifact, "stale-research-artifact")
+            .is_err());
     }
 
     #[test]
