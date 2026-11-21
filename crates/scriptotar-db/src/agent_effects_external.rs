@@ -1459,6 +1459,106 @@ mod tests {
     }
 
     #[test]
+    fn v13_proven_retry_rearms_exact_v8_claim_and_abort_restores_unknown() {
+        let (_dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        db.record_external_ack(key, 1, "nonexecution_first_ack").unwrap();
+        let proof = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "authenticated_nonexecution_first",
+            },
+        ).unwrap();
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Unknown
+        );
+        let retry = db.prepare_external_retry(key, proof.revision).unwrap();
+        assert_eq!(retry.attempt, 2);
+        assert_eq!(retry.status, ExternalEffectStatus::Reserved);
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Reserved
+        );
+        let guard = db.acquire_provider_dispatch_barrier_for_effect(
+            project, study, &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id, step_id: key.step_id,
+                idempotency_key: key.idempotency_key, attempt: 2,
+                provider: "openai", wire_sha256: fp(),
+            },
+        ).unwrap();
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        assert!(other.execute(
+            "UPDATE agent_effects SET status='unknown'
+             WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+        ).is_err());
+        // This attempt never reached its DISPATCHED CAS, so the exact owner
+        // may close it. Its prior attempt must remain permanently fenced.
+        drop(guard);
+        let aborted = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(aborted.status, ExternalEffectStatus::Cancelled);
+        assert!(aborted.cancel_requested);
+        assert_eq!(
+            db.get_agent_effect(project, study, &snap.plan.id, key.idempotency_key)
+                .unwrap().unwrap().status,
+            super::super::EffectStatus::Unknown
+        );
+        let history: i64 = other.query_row(
+            "SELECT COUNT(*) FROM agent_external_attempt_history
+             WHERE idempotency_key=?1 AND attempt=1
+               AND evidence_id='authenticated_nonexecution_first'",
+            params![key.idempotency_key], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(history, 1);
+        let barriers: i64 = other.query_row(
+            "SELECT COUNT(*) FROM provider_dispatch_barrier",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(barriers, 0);
+        assert!(db.mark_external_dispatched(key, aborted.revision, 2).is_err());
+        assert!(db.prepare_external_retry(key, aborted.revision).is_err());
+    }
+
+    #[test]
+    fn v13_retry_rejects_uncertain_or_corrupted_v8_claim_without_rearming() {
+        let (_dir, db, project, study, snap) = setup();
+        let key = identity(&snap, project, study);
+        let first = reserve(&db, &snap, project, study);
+        db.mark_external_dispatched(key, first.revision, 1).unwrap();
+        let unresolved = db.reconcile_external_effect(
+            key, 1, ExternalResolution::Uncertain,
+        ).unwrap();
+        assert!(db.prepare_external_retry(key, unresolved.revision).is_err());
+        let proven = db.reconcile_external_effect(
+            key, 1, ExternalResolution::VerifiedNotExecuted {
+                evidence_id: "authenticated_no_send_proof",
+            },
+        ).unwrap();
+        // A changed legacy claim is NOT authorized by the v10 receipt alone.
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        other.execute(
+            "UPDATE agent_effects SET status='not_applied',
+             revision=revision+1 WHERE idempotency_key=?1 AND status='unknown'",
+            params![key.idempotency_key],
+        ).unwrap();
+        assert!(db.prepare_external_retry(key, proven.revision).is_err());
+        let unchanged = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(unchanged.status, ExternalEffectStatus::NotExecuted);
+        assert_eq!(unchanged.attempt, 1);
+        let history: i64 = other.query_row(
+            "SELECT COUNT(*) FROM agent_external_attempt_history
+             WHERE idempotency_key=?1", params![key.idempotency_key],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(history, 0);
+    }
+
+    #[test]
     fn different_project_overbudget_and_corrupt_checkpoint_fail_closed() {
         let (_dir,db,project,study,snap)=setup();
         let key=identity(&snap,project,study);
