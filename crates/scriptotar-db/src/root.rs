@@ -32,4 +32,6 @@ pub use agent_effects::external::{
     AuthenticatedChargedResponse, ExternalEffect, ExternalEffectKey, ExternalEffectLimits,
     ExternalEffectStatus, ExternalReservation, ExternalResolution, SealedChargedResponse,
 };
+pub use agent_effects::external::ExpectedChargedWritingStep;
+pub use agent_effects::external::load_four_sealed_effect_outcomes;
 pub use agent_effects::{AgentEffect, EffectClaim, EffectStatus, EffectUpdate};
