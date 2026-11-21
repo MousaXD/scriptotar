@@ -13,7 +13,11 @@ use scriptotar_core::{
 };
 use uuid::Uuid;
 
-pub const LATEST_SCHEMA_VERSION: u32 = 12;
+#[path = "provider_dispatch_barrier.rs"]
+mod provider_dispatch_barrier;
+pub use provider_dispatch_barrier::ProviderDispatchBarrier;
+
+pub const LATEST_SCHEMA_VERSION: u32 = 13;
 
 /// Per-project job counts and lexicographically latest persisted update.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +317,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 12,
         name: "durable_provider_receipt_identity_claims",
         apply: crate::agent_effects::external::migration_provider_identities,
+    },
+    Migration {
+        version: 13,
+        name: "provider_cross_connection_dispatch_barrier",
+        apply: provider_dispatch_barrier::migration_13,
     },
 ];
 
