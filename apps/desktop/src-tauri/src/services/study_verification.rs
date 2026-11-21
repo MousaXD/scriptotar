@@ -2219,7 +2219,7 @@ mod authenticity_tests {
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
         assert_eq!(proposed[0].kind, verification::ClaimKind::Fact);
-        draft.claims[0].assertion = "on-screen source citation".into();
+        draft.claims[0].assertion = "Visible on-screen source citation!".into();
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
         assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
