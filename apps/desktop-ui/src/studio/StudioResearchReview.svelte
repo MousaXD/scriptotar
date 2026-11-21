@@ -13,7 +13,7 @@
 
   const labels = {
     en: {
-      title: 'Study research', privacy: 'Local analysis of saved Study sources. No AI provider or paid request.',
+      title: 'Study research', reportLabel: 'Study research report', privacy: 'Local analysis of saved Study sources. No AI provider or paid request.',
       refresh: 'Refresh', prepare: 'Prepare research', approve: 'Approve local analysis',
       deny: 'Deny', cancel: 'Cancel', recover: 'Reconcile saved run',
       noSources: 'Attach and save a research item or transcript to analyze it.',
@@ -40,7 +40,7 @@
         blocked: 'Blocked', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled' }
     },
     ar: {
-      title: 'بحث الدراسة', privacy: 'تحليل محلي لمصادر الدراسة المحفوظة. دون طلب مدفوع أو اتصال بمزود الذكاء الاصطناعي.',
+      title: 'بحث الدراسة', reportLabel: 'تقرير بحث الدراسة', privacy: 'تحليل محلي لمصادر الدراسة المحفوظة. دون طلب مدفوع أو اتصال بمزود الذكاء الاصطناعي.',
       refresh: 'تحديث', prepare: 'تحضير البحث', approve: 'الموافقة على التحليل المحلي',
       deny: 'رفض', cancel: 'إلغاء', recover: 'تسوية التشغيل المحفوظ',
       noSources: 'أرفق واحفظ مصدراً بحثياً أو نصاً لتتمكن من تحليله.',
@@ -302,7 +302,7 @@
   {/if}
   {#if errorText}<p role="alert" class="studio-error">{errorText}</p>{/if}
   {#if report && !pendingEdits}
-    <div class="research-result" aria-label={t.title + ' report'}>
+    <div class="research-result" role="region" aria-label={t.reportLabel}>
       {#if report.feature_support.length}
         <details class="research-feature-support">
           <summary>{t.features}</summary>
