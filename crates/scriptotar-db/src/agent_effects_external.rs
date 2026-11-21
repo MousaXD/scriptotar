@@ -748,6 +748,33 @@ mod tests {
         checkpoints.compare_and_swap(0,snap.clone()).unwrap();
         (dir,db,project.id,study,snap)
     }
+    // Legacy upgrade fixtures deliberately reconstruct pre-v12 databases.
+    // First remove the independently additive v13 barrier and its triggers;
+    // do not alter how the production v12 identity migration is tested.
+    fn remove_v13_from_legacy_fixture(conn: &rusqlite::Connection) {
+        let mut statement = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='trigger'
+                 AND name LIKE 'provider_dispatch_barrier_%'",
+            )
+            .unwrap();
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        drop(statement);
+        for name in names {
+            assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+            conn.execute_batch(&format!("DROP TRIGGER {name};")).unwrap();
+        }
+        conn.execute_batch(
+            "DROP TABLE provider_dispatch_barrier;
+             DELETE FROM schema_migrations WHERE version = 13;",
+        )
+        .unwrap();
+    }
+
     fn identity(snap:&RunSnapshot,project:Uuid,study:Uuid)->ExternalEffectKey<'_> {
         ExternalEffectKey {project,study,run_id:&snap.plan.id,step_id:"draft",
             idempotency_key:&snap.steps[0].idempotency_key}
@@ -1030,6 +1057,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
+            remove_v13_from_legacy_fixture(&conn);
             conn.execute_batch(
                 "DROP TRIGGER external_provider_identity_on_insert;
                  DROP TRIGGER external_provider_identity_on_update;
@@ -1079,6 +1107,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
+            remove_v13_from_legacy_fixture(&conn);
             conn.execute_batch(
                 "DROP TRIGGER external_provider_identity_on_insert;
                  DROP TRIGGER external_provider_identity_on_update;
@@ -1316,6 +1345,7 @@ mod tests {
         // Construct a valid legacy v11 file with duplicate final receipt IDs.
         // Only the v12 infrastructure is removed; historical v10/v11 migrations stay intact.
         let connection = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&connection);
         connection.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;
@@ -1445,6 +1475,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         drop(db);
         let conn = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&conn);
         conn.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;
@@ -1548,6 +1579,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         drop(db);
         let conn = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&conn);
         conn.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;
