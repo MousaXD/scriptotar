@@ -1328,6 +1328,19 @@ mod tests {
             saved_version_digest(project, study_id, &versions[0])
         );
         assert!(bound.draft_version_sha256.starts_with("sha256:"));
+        assert!(bound.evidence_snapshot_sha256.starts_with("sha256:"));
+        assert_eq!(bound.omitted_unassessed_portions, 0);
+        assert!(bound.unassessed_portions.iter().any(|portion| {
+            portion.beat_id.as_deref() == Some("hook")
+                && portion.kind == UnassessedPortionKind::Narration
+                && portion.preview.contains("A manual author claims")
+        }));
+        let repeated = services
+            .verify_studio_claims_with_version_read_only(
+                project, study_id, study.revision, 1, &actual,
+            )
+            .unwrap();
+        assert_eq!(bound.evidence_snapshot_sha256, repeated.evidence_snapshot_sha256);
         assert!(bound.report.draft_content_bound);
         assert_eq!(bound.claim_sources.len(), 1);
         assert_eq!(bound.claim_sources[0].evidence_id, format!("observation:{}", cited.id));
@@ -1369,6 +1382,11 @@ mod tests {
             SourceAttribution::DisputedObservation
         );
         assert_ne!(
+            bound.evidence_snapshot_sha256,
+            disputed.evidence_snapshot_sha256,
+            "human evidence dispute must invalidate the exact snapshot fingerprint"
+        );
+        assert_ne!(
             disputed.report.claims[0].status,
             verification::VerificationStatus::Verified
         );
@@ -1404,6 +1422,42 @@ mod tests {
         assert!(services
             .verify_studio_claims_read_only(
                 Uuid::new_v4(), study_id, study.revision, 1, &actual,
+            )
+            .is_err());
+
+        // Even with the correct attached source and genuine observation ID,
+        // the persisted writer's evidence locator cannot point to another
+        // source or a model-invented identifier.
+        let mut forged_locator = candidate.clone();
+        forged_locator.lineage[0].evidence[0].locator.source_id =
+            Uuid::new_v4().to_string();
+        let forged_body = export_candidate(&forged_locator);
+        let forged_draft = services
+            .store
+            .create_draft(project, study_id, &forged_locator.draft.title, &forged_body)
+            .unwrap();
+        services
+            .store
+            .attach_source_to_draft(project, forged_draft.id, attached.id)
+            .unwrap();
+        db.execute(
+            "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+             VALUES(?1,1,?2)",
+            params![
+                forged_draft.id.to_string(),
+                serde_json::to_string(&forged_locator).unwrap()
+            ],
+        )
+        .unwrap();
+        let mut forged_locator_claims = forged_locator.draft.clone();
+        forged_locator_claims.id = forged_draft.id.to_string();
+        assert!(services
+            .verify_studio_claims_read_only(
+                project,
+                study_id,
+                study.revision,
+                1,
+                &forged_locator_claims,
             )
             .is_err());
 
@@ -1798,4 +1852,64 @@ mod authenticity_tests {
         )
         .is_none());
     }
+    #[test]
+    fn immediate_read_snapshot_prevents_concurrent_sqlite_writers() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let services = AppServices::new(tmp.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Concurrent verification", "Provenance")
+            .unwrap();
+
+        let mut verifier = Connection::open(services.store.path()).unwrap();
+        verifier.busy_timeout(Duration::from_secs(1)).unwrap();
+        let snapshot = verifier
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        let before: String = snapshot
+            .query_row(
+                "SELECT title FROM content_studies WHERE id=?1 AND project_id=?2",
+                params![study.id.to_string(), project.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let path = services.store.path().to_path_buf();
+        let study_id = study.id.to_string();
+        let contender = std::thread::spawn(move || {
+            let writer = Connection::open(path).unwrap();
+            writer.busy_timeout(Duration::from_millis(100)).unwrap();
+            writer.execute(
+                "UPDATE content_studies SET title='raced mutation' WHERE id=?1",
+                params![study_id],
+            )
+            .is_err()
+        });
+        assert!(
+            contender.join().unwrap(),
+            "a concurrent writer must not interleave"
+        );
+        let within_snapshot: String = snapshot
+            .query_row(
+                "SELECT title FROM content_studies WHERE id=?1 AND project_id=?2",
+                params![study.id.to_string(), project.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, within_snapshot);
+        snapshot.commit().unwrap();
+
+        // The reservation is released after return; normal edits can resume.
+        let writer = Connection::open(services.store.path()).unwrap();
+        writer
+            .execute(
+                "UPDATE content_studies SET title='later mutation' WHERE id=?1",
+                params![study.id.to_string()],
+            )
+            .unwrap();
+    }
+
 }
