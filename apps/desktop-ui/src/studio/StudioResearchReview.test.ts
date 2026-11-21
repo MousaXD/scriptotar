@@ -69,6 +69,33 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect((await api.readStudyResearchReport(projectId, studyId, artifactId!)).sources).toHaveLength(2);
   });
 
+  it('blocks preparing and approving while the visible Study has unsaved changes', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const view = render(StudioResearchReview, {
+      props: { api, projectId, studyId, pendingEdits: false }
+    });
+    const prepare = screen.getByRole('button', { name: 'Prepare research' });
+    await waitFor(() => expect(prepare).toBeEnabled());
+    await fireEvent.click(prepare);
+    const approve = await screen.findByRole('button', { name: 'Approve local analysis' });
+    expect(approve).toBeEnabled();
+
+    await view.rerender({ api, projectId, studyId, pendingEdits: true });
+    expect(prepare).toBeDisabled();
+    expect(approve).toBeDisabled();
+    expect(screen.getByText('Save Study changes before preparing or approving local research.')).toBeInTheDocument();
+    await fireEvent.click(approve);
+    expect((await api.listStudyResearchRuns(projectId, studyId))[0].state).toBe('awaiting_approval');
+
+    await view.rerender({ api, projectId, studyId, pendingEdits: false });
+    expect(approve).toBeEnabled();
+    await fireEvent.click(approve);
+    await waitFor(() => expect(screen.getByText(/Completed/)).toBeInTheDocument());
+    expect(screen.getByLabelText('Study research report')).toBeInTheDocument();
+    await view.rerender({ api, projectId, studyId, pendingEdits: true });
+    expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
+  });
+
   it('denies an approval after Study source revocation and does not show a report', async () => {
     const { api, projectId, studyId } = await fixture();
     render(StudioResearchReview, { props: { api, projectId, studyId } });
