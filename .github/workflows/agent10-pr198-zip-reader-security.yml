@@ -1,0 +1,44 @@
+name: Agent10 independent PR198 ZIP reader hostile source verification
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent10-pr198-zip-reader-security.yml
+      - tests/defragmentation/native-e2e/test_agent10_visual_zip_trust_boundary.py
+permissions:
+  contents: read
+jobs:
+  exact-pr198-source-adversarial:
+    name: Immutable PR198 ZIP evidence negative (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Pin original PR198 Git blobs, ancestry and exact negative-test delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=2fa15fc625df760df5642f98b0afa40d4ca84d01
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/visual_observations.py)" = 8aaaad67c5e5d392ebb92623d431926800357544
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/test_visual_observations.py)" = 97fc8b9eac1dcf4b8a523d9ddf02af6224577a4b
+          EXPECTED="$(printf '%s\n' '.github/workflows/agent10-pr198-zip-reader-security.yml' 'tests/defragmentation/native-e2e/test_agent10_visual_zip_trust_boundary.py' | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS: EXACT original PR198 two reviewed source blobs, ancestry and only two Agent10 test-only paths"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Run original hostile visual ZIP suite and forged provenance negative controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_*visual*.py' -v
+          echo "PASS: unit tests only. No installed WebView, original artifact attestation, RTL or release certification."
