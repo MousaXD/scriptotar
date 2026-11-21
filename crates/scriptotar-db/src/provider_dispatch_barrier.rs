@@ -60,7 +60,15 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         );
         CREATE TRIGGER provider_dispatch_barrier_immutable
         BEFORE UPDATE ON provider_dispatch_barrier
-        BEGIN SELECT RAISE(ABORT, 'dispatch barrier cannot be updated'); END;",
+        BEGIN SELECT RAISE(ABORT, 'dispatch barrier cannot be updated'); END;
+        -- v10 receipt and provider-ack status transitions must remain writable.
+        -- Only cancellation intent is serialized against the final provider
+        -- dispatch gate. A pre-admission cancellation wins via v10 CAS;
+        -- after admission it must not race the network point of no return.
+        CREATE TRIGGER provider_dispatch_barrier_effect_cancel
+        BEFORE UPDATE OF cancel_requested ON agent_external_effects
+        WHEN EXISTS (SELECT 1 FROM provider_dispatch_barrier)
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation is frozen'); END;",
     )?;
     for table in FREEZE_TABLES {
         for (verb, suffix) in [
