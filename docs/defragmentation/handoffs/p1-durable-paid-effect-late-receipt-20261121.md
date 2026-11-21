@@ -83,6 +83,22 @@ These are **guard tests for a known failure**, not an implementation of atomic v
 
 **Validation chronology:** exact head `4036afd6022d8d53acd9b82c1576f8d15a0d30d0` completed 6/8 workflows green (Rust foundation including workspace tests, CI, migration, security, independent provider-race and MCP E2E). Linux and Windows packaging **failed** at trusted-source scope guards; neither installer was certified. Subsequent test additions require all checks to rerun on their new exact SHA. Never count an earlier success as proof of later commits.
 
+## 21 November continuation — read-only recovery inspection and v13 collision
+
+Agent 02 added `SqliteStore::inspect_external_effects_for_run(project, study, run_id)` (private trusted-host API). It verifies persisted project/Study/run checkpoint identity even after archival; returns up to 128 ordered v10 effect identities/statuses/revisions; fails closed on a corrupt checkpoint, foreign scope or unexpectedly oversized run; and **does not modify** the receipt ledger, v8 checkpoint, status, provider request, barrier or any dispatch state. Restart inspection must be explicitly presented as a read-only diagnostic, **not** proof of a remote noncharge, recovery ownership lease, approval, or an automatic retry. Deterministic persisted-SQLite tests cover archived effects, foreign identifiers, inspection immutability and corrupt checkpoints.
+
+**Exact-SHA CI chronology:** earlier `b19fa8fb2a0512aa87bb36a4b10aae8df8cf286c` (before this inspection API) passed all six non-packaging workflows, including Rustfmt/Clippy/workspace tests and independent provider-race. Linux and Windows installers both failed reviewed-source gates. New inspection code/tests require fresh CI and independent Agent 10 review on their own commit.
+
+### New conflicting integration contract: Agent 01 v13 barrier
+
+Agent 01's pending PR #192 has already registered schema **v13** for `provider_dispatch_barrier`. It protects many canonical tables with a committed SQLite singleton barrier across a paid send, and a crash deliberately strands the freeze. A separate v13 proposed for paid response/output recording **cannot** be registered at the same version. Agent 00 must choose a combined reviewed v13 before merge or a separately numbered additive migration (likely v14). Agent 02 has not modified v13 or any historical migration.
+
+The pending barrier stores only a token, project/Study, scope digest and acquisition time. It presently lacks the original `run_id`, `step_id`, `idempotency_key`, attempt, provider/account namespace and sealed wire SHA-256 needed to prove which exact paid effect may authorize a crash-recovery unlock. **Never infer the owner from project/Study/scope digest alone**; four-step writing may charge several distinct effects. A valid recovery/unlock must be independently reviewed, explicitly scoped, authenticated, one-shot and never grant another provider send. Refuse recovery unlock if exact owner/proof is missing. Agent 10 should also test an independent SQLite cancellation between the committed v10 DISPATCHED CAS and socket I/O; v13 currently freezes agent_runs but not the external-effect cancellation field.
+
+### Four original sealed writing outcomes remain P1 blocker
+
+Agent 05 identifies four effect steps: `angles`, `draft-1`, `draft-2`, `draft-3`. Each needs an exact committed wire hash, typed provider/account identity, signed/independently authenticated receipt, input/output usage and immutable bounded response bytes plus digest. No such response-output records exist in current v10–v12 and the run inspection API deliberately does **not** invent them. The v11 three-draft sink may only read exactly those four **already persisted** original outcomes under one IMMEDIATE transaction, recheck source/lineage/copy policies, and idempotently commit original drafts without a paid request. Where an original charged response is lost before storage, remain blocked until trustworthy provider-side recovery or manual settlement; never retry on absence or timeout.
+
 ## Remaining blockers / Agent 00 and 10 handoff
 
 - **Agent 00:** run Rustfmt, Clippy and host/DB suites on this exact branch SHA, then integrate the narrowly reviewed host changes into #114. Ensure the actual shipped provider command still returns the hard-disabled error; do not enable paid egress.
