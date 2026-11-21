@@ -1546,8 +1546,9 @@ mod tests {
     #[test]
     fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
         use super::super::study_writing::{
-            DurablePermissionBoundary, NeverStop, StepAdmission, StudyWritingContext, WriteResult,
-            WritingTextProvider, WritingWorkflowError,
+            AtomicCandidateStore, DurablePermissionBoundary, GeneratedBatch, NeverStop,
+            StepAdmission, StudyWritingContext, WriteResult, WritingTextProvider,
+            WritingWorkflowError,
         };
         use scriptotar_agent::RunState;
         use scriptotar_ai::{AiRequest, AiResponse};
@@ -1687,6 +1688,30 @@ mod tests {
             )
             .unwrap();
         let seal = plan.context.approved_research.as_ref().unwrap();
+        // A direct internal call to the genuine canonical v11 SQLite sink
+        // must not turn otherwise-valid transcript-first Study evidence into
+        // a paid-generation batch without an approved research identity.
+        let unapproved =
+            super::super::study_writing::CurrentStudy::load(&reopened, project, study).unwrap();
+        assert!(unapproved.approved_research.is_none());
+        let mut sink = super::super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &reopened.store,
+            current: &reopened,
+        };
+        let bypass = GeneratedBatch {
+            run_id: "unapproved-direct-sink".into(),
+            context: unapproved,
+            candidates: Vec::new(),
+        };
+        assert!(matches!(
+            sink.commit_three(&bypass),
+            Err(WritingWorkflowError::Denied(_))
+        ));
+        assert!(reopened
+            .store
+            .list_draft_summaries(project, study, 200)
+            .unwrap()
+            .is_empty());
         assert_eq!(seal.artifact_id, artifact);
         assert_eq!(seal.run_id, waiting.plan.id);
         assert_eq!(seal.sources.len(), 3);
@@ -1828,7 +1853,25 @@ mod tests {
             1,
         );
         drop(reopened);
+        // After accepting the three immutable version-one drafts, a source
+        // can be changed or revoked. That must block all *new* writing, but
+        // never turn a lost commit reply into another paid dispatch.
+        db.execute(
+            "UPDATE transcripts SET text='Source changed after canonical batch save'
+             WHERE id=?1",
+            rusqlite::params![modified_origin.to_string()],
+        )
+        .unwrap();
+        gate.replies.clear();
         let restarted = AppServices::new(dir.path()).unwrap();
+        assert!(restarted
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "fresh-after-revocation",
+                artifact,
+            )
+            .is_err());
         let recovered = restarted
             .generate_three_writing_with_boundary(&plan, &mut gate, &mut provider, &NeverStop)
             .unwrap();
