@@ -21,6 +21,15 @@
 - The test `hard_output_ceiling_and_one_time_claim` now asserts that the original metered provider response is passed to the settlement hook. This is a deterministic fixture only, not proof of a live OpenAI account receipt or a no-double-charge guarantee from the provider.
 - Persisting provider outputs creates an explicit local-content retention/privacy obligation. The migration stores raw bytes in Scriptotar's existing private SQLite database; at-rest encryption, key management, and deletion/retention policy are **not added** by this patch and require owner/security review.
 
+
+## Owner-owned migration-number collision and same-transaction consumer fix
+
+**Important November 21 coordination change:** Agent 00's draft PR #213 independently proposes a *different* version-14 migration for proof-bound retry transitions in the v8 ledger. Agent 10 explicitly rejected treating both migrations as the same version. This branch has **no migration registry change**, so it does not compete for the schema version in executable production code. Agent 00 must choose and independently certify a final two-slot ordering (**v14/v15**, whichever stage is integrated first), preserve the exact original migration names and hashes already installed, and validate both upgrade paths. Do not simply rename a recorded migration after deployment. Previous references to "charged response v14" in this source/handoff are historical *proposal* labels, not an authorized registry slot.
+
+Agent 05 requested same-transaction verification before inserting drafts. This source now exports `scriptotar_db::load_four_sealed_effect_outcomes(&Transaction, project, study, run_id, &[ExpectedChargedWritingStep; 4])`. It uses Agent 05's **existing** v11 IMMEDIATE transaction/connection, authenticates the original persisted run step/idempotency mapping, and checks four exactly ordered sealed outcomes against their individually expected prepared request SHA-256 fingerprints, receipt, provider, usage and original byte digests. A missing/replayed/wrong-result step is rejected before writing anything; it never reconnects, dispatches, or creates drafts. A multi-step no-network Rust regression constructs all four distinct provider/receipt IDs and checks both successful read-only inspection and denial of a swapped wire SHA in the *same* transaction.
+
+**Not yet wired:** Agent 05/Agent 00 must call this exported helper from the canonical v11 sink **after** the host independently reauthenticates exact approved Research artifact/report/source hashes/Study revision and derives all four prepared request hashes from the matching GenerationPlan. That original research binding is not part of the generic v10 effect row and must NOT be invented by this database API. Provider account identity, trusted billing provenance, and v13 barrier lifetime still need cross-agent verification. The test for a four-result read does NOT certify the full paid writing user journey.
+
 ## Exact crash/recovery state table
 
 | Crash point / observed state | Durable local result | Allowed recovery | Forbidden action |
