@@ -13,6 +13,7 @@ rusqlite.workspace = true
 scriptotar-core = { path = "../scriptotar-core" }
 scriptotar-agent = { path = "../scriptotar-agent" }
 serde_json.workspace = true
+sha2 = "0.10.9"
 uuid.workspace = true
 
 [dev-dependencies]
