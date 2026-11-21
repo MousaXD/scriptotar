@@ -1303,6 +1303,28 @@ mod tests {
         assert_eq!(approved.selected_source_ids.len(), 1);
         let dispatch_guard = services.lock_dispatch_scope(&approved).unwrap();
 
+        // Agent 10's independent challenge: a separate SQLite connection
+        // must be denied WHILE the dispatch guard is alive (rather than only
+        // discovering the mutation on a later scope recheck).
+        let external = rusqlite::Connection::open(services.store.path()).unwrap();
+        let rejected = external
+            .execute(
+                "UPDATE transcripts SET text=?1, updated_at=?2 WHERE id=?3",
+                rusqlite::params![
+                    "Unauthorized mid-send transcript mutation",
+                    "2026-11-21T00:02:00Z",
+                    transcript_id.to_string()
+                ],
+            )
+            .unwrap_err();
+        assert!(
+            rejected
+                .to_string()
+                .contains("provider dispatch scope is frozen"),
+            "external writer was rejected for an unrelated reason: {rejected}"
+        );
+        assert_eq!(dispatch_guard.scope(), &approved);
+
         let writer = services.clone();
         let (started_tx, started_rx) = mpsc::channel();
         let (completed_tx, completed_rx) = mpsc::channel();
