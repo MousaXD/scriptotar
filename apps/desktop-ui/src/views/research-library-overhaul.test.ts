@@ -38,14 +38,14 @@ function libraryItems(count: number): LibraryItem[] {
   }));
 }
 
-function mountResearch(items: ResearchItem[], options: { onQueue?: (ids: string[]) => Promise<void> | void; onScan?: (url: string, limit: number) => Promise<void> | void; watchlistStatuses?: WatchlistStatus[] } = {}) {
+function mountResearch(items: ResearchItem[], options: { onQueue?: (ids: string[]) => Promise<void> | void; onScan?: (url: string, limit: number) => Promise<void> | void; onSave?: (url: string, limit: number) => Promise<void> | void; watchlistStatuses?: WatchlistStatus[] } = {}) {
   return render(ResearchView, {
     props: {
       items,
       watchlistStatuses: options.watchlistStatuses || [],
       onQueue: options.onQueue || vi.fn(),
       onScan: options.onScan || vi.fn(),
-      onSave: vi.fn()
+      onSave: options.onSave || vi.fn()
     }
   });
 }
@@ -120,6 +120,8 @@ describe('Research workspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Queue selected (201)' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Queue disk unavailable');
     expect(screen.getByRole('alert')).toHaveTextContent('200 submitted; remaining selection preserved');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+    expect(screen.getByRole('alert')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('Selected: 1')).toBeInTheDocument();
     expect(onQueue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('button', { name: 'Queue selected (1)' })).toBeEnabled();
@@ -197,6 +199,22 @@ describe('Research workspace', () => {
     expect(screen.getByTestId('research-r-0')).toHaveTextContent('YouTube');
   });
 
+  it('focuses Arabic watchlist-save failures while preserving host diagnostics and URL bytes', async () => {
+    setLocale('ar');
+    const onSave = vi.fn().mockRejectedValueOnce(new Error('Host permission denied: /home/مسار'));
+    mountResearch([], { onSave });
+    const input = screen.getByRole('textbox', { name: 'رابط ملف المنشئ' });
+    await fireEvent.input(input, { target: { value: 'https://example.org/منشئ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'حفظ قائمة المتابعة' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Host permission denied: /home/مسار');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    expect(alert).toHaveAttribute('tabindex', '-1');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(onSave).toHaveBeenCalledWith('https://example.org/منشئ', 25);
+    expect(screen.getByRole('button', { name: 'حفظ قائمة المتابعة' })).toBeEnabled();
+  });
+
   it('handles scan failures without silently swallowing backend errors', async () => {
     const onScan = vi.fn().mockRejectedValue(new Error('Provider unavailable'));
     mountResearch([], { onScan });
@@ -204,7 +222,10 @@ describe('Research workspace', () => {
       target: { value: 'https://youtube.com/@creator' }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Scan profile' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Provider unavailable');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Provider unavailable');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert).toHaveAttribute('dir', 'auto');
     expect(onScan).toHaveBeenCalledWith('https://youtube.com/@creator', 25);
     expect(screen.getByRole('button', { name: 'Scan profile' })).toBeEnabled();
   });
