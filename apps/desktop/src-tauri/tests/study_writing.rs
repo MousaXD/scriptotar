@@ -1942,6 +1942,44 @@ fn writing_batch_cannot_cite_only_observations_from_two_original_sources() {
 }
 
 #[test]
+fn copied_source_split_between_caption_and_on_screen_text_is_rejected() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "Residents gathered near the old library to compare walking paths and discuss safer crossings during their first neighborhood meeting";
+    let words: Vec<_> = passage.split_whitespace().collect();
+    assert!(words.len() < 22);
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.caption = Some(words[..10].join(" "));
+    batch.candidates[0].draft.beats[0].on_screen_text = Some(words[10..].join(" "));
+    // Neither individual visible field has the 12-token source-copy window.
+    assert!(words[..10].len() < 12 && words[10..].len() < 12);
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn copied_source_claim_assertion_is_rejected_at_direct_sqlite_acceptance() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
