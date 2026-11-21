@@ -1398,7 +1398,9 @@ mod tests {
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
         assert_eq!(previously_authorized.selected_source_ids.len(), 1);
-        let held_guard = services.lock_dispatch_scope(&previously_authorized).unwrap();
+        let held_guard = services
+            .lock_dispatch_scope(&previously_authorized)
+            .unwrap();
         assert_eq!(held_guard.scope(), &previously_authorized);
 
         // An unrelated connection models a separate application process: it
