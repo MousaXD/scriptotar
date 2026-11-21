@@ -377,11 +377,14 @@ fn exact_observation_lineage(
         && item.locator.canonical_url.is_none()
         && (item.locator.collected_at.as_deref() == Some(evidence.created_at.as_str())
             || item.locator.collected_at.as_deref() == Some(source.collected_at.as_str()))
-        && matches!(
-            item.kind,
-            writing::EvidenceKind::CreativeObservation | writing::EvidenceKind::ManualNote
-        )
-        && item.status == writing::EvidenceStatus::Unverified
+        // Canonical v11 observation aliases are explicitly unverified.
+        // Historical direct UUID references can use older kind/status labels;
+        // their labels are never adopted as the host's evidence state.
+        && (!item.id.starts_with("observation:")
+            || (matches!(
+                item.kind,
+                writing::EvidenceKind::CreativeObservation | writing::EvidenceKind::ManualNote
+            ) && item.status == writing::EvidenceStatus::Unverified))
 }
 
 /// Match the entire typed manifest against a host-persisted structured
