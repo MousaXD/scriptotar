@@ -1325,6 +1325,115 @@ mod tests {
         );
     }
 
+    /// Independent Agent10 NEGATIVE proof. This test intentionally succeeds only
+    /// when the existing in-process authorization guard fails to serialize
+    /// a second SQLite connection's canonical source mutation. It is NOT
+    /// approval to activate paid egress, and no provider/HTTP is invoked.
+    #[test]
+    fn agent10_external_sqlite_can_change_transcript_while_dispatch_guard_is_held() {
+        use crate::dto::{UiStudioSourceRef, UiStudioStudyPatch};
+        use std::thread;
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "External writer consent boundary".into(),
+                    goal: "Create evidence-backed scripts".into(),
+                    audience: "Creators".into(),
+                    platform: "Reels".into(),
+                    language: "English".into(),
+                    style: "Clear".into(),
+                    duration: "30".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.execute(
+            "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+             VALUES(?1,?2,NULL,'url','https://example.org/agent10-original','2026-11-21T00:00:00Z')",
+            rusqlite::params![source_id.to_string(), project.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO media(id,source_id,local_path,created_at)
+             VALUES(?1,?2,'/tmp/agent10-external-writer.mp4','2026-11-21T00:00:00Z')",
+            rusqlite::params![media_id.to_string(), source_id.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+             VALUES(?1,?2,'Original canonical transcript',
+                    '2026-11-21T00:00:00Z','2026-11-21T00:00:00Z')",
+            rusqlite::params![transcript_id.to_string(), media_id.to_string()],
+        )
+        .unwrap();
+        drop(db);
+        services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(vec![UiStudioSourceRef {
+                        kind: "transcript".into(),
+                        id: transcript_id.to_string(),
+                    }]),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+
+        let previously_authorized = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        assert_eq!(previously_authorized.selected_source_ids.len(), 1);
+        let held_guard = services.lock_dispatch_scope(&previously_authorized).unwrap();
+        assert_eq!(held_guard.scope(), &previously_authorized);
+
+        // An unrelated connection models a separate application process: it
+        // has neither a reference to AppServices nor its active_project mutex.
+        // The provider transport is never constructed or called.
+        let path = services.store.path().to_path_buf();
+        let transcript = transcript_id.to_string();
+        let writer = thread::spawn(move || {
+            let external = rusqlite::Connection::open(path).unwrap();
+            external
+                .execute(
+                    "UPDATE transcripts SET text=?1,updated_at=?2 WHERE id=?3",
+                    rusqlite::params![
+                        "CHANGED DURING HELD DISPATCH GUARD",
+                        "2026-11-21T00:01:00Z",
+                        transcript
+                    ],
+                )
+                .unwrap()
+        });
+        assert_eq!(
+            writer.join().unwrap(),
+            1,
+            "independent SQLite write must commit before the held guard releases"
+        );
+        // Guard is an immutable snapshot; it cannot notice this committed
+        // canonical source change while the application mutex remains held.
+        assert_eq!(held_guard.scope(), &previously_authorized);
+        drop(held_guard);
+        assert!(matches!(
+            services.lock_dispatch_scope(&previously_authorized),
+            Err(ConsentError::ChangedContext)
+        ));
+    }
+
     /// Executes actual AppServices -> ConsentBoundary -> v10 reservation/CAS
     /// -> controlled presealed transport -> bounded receipt. This is a real
     /// host path test, not a policy-only or structural smoke test.
