@@ -38,6 +38,23 @@ describe('dashboard creator workflow', () => {
     await waitFor(() => expect(onCreateProject).toHaveBeenCalledWith('Second project'));
   });
 
+  it('focuses the project name on opening, returns focus on cancel, and focuses actionable errors', async () => {
+    const { onCreateProject } = setup();
+    const open = screen.getByRole('button', { name: 'New project' });
+    await fireEvent.click(open);
+    await waitFor(() => expect(screen.getByLabelText('Project name')).toHaveFocus());
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(open).toHaveFocus());
+
+    onCreateProject.mockRejectedValueOnce(new Error('Project already exists'));
+    await fireEvent.click(open);
+    await fireEvent.input(screen.getByLabelText('Project name'), { target: { value: 'Duplicate' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create project' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Project already exists');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
   it('keeps project creation visible after the backend rejects the name', async () => {
     const { onCreateProject } = setup();
     onCreateProject.mockRejectedValueOnce(new Error('Duplicate project'));

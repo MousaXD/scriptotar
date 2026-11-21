@@ -45,3 +45,12 @@ All isolation is presentational. Underlying dates, source IDs, project/Study own
 - `qa/approve-baseline.mjs` continues to require an explicit human approval process and now refuses incomplete 232/20 reports; Agent 09 **has not** approved any baseline.
 - `qa/compare-browser-metrics.mjs` refuses comparisons across incompatible old/new scenario inventories; do not report performance improvements from mismatched samples.
 - `qa/tooling.nodecheck.mjs` updates isolated synthetic verifier fixtures to 232 and includes a rejection test for legacy 140-case reports. Synthetic fixture bytes do **not** constitute captured screenshots.
+
+## Final non-Studio keyboard/RTL pass (2026-11-21)
+
+- Home: keyboard focus moves to the project name when opening the inline form, returns to **New project** on cancel, and focuses unredacted failure alerts after rejected creates. No new actions or navigation.
+- Transcripts: EN/AR ownership-denial copy is localized without weakening the existing project/ID guard; focus moves to the denial so it can be read with a keyboard/screen reader; list headings, source platform names, reader timestamps, metadata and Arabic search queries receive local bidi isolation without changing stored transcript text.
+- Transcript view controls: **Use in Studio** and **Show more segments** now use typed shared EN/AR message keys. Queue diagnostic **Request ID** is localized while the opaque identifier stays LTR.
+- Added frontend regressions for Arabic wrong-project refusal/focus, mixed-direction transcript UI and Home project-form keyboard focus. No edits to Agent 06-owned StudioView, studio/ components, backend, payment, native harness, or security-sensitive workflows.
+- Exact-head native installation, appearance and screen-reader verification remains Agent 07's independent responsibility; Chromium screenshots are not native proof. No manual visual baseline was approved and no production release is authorized by this pass.
+- Verify the *new* PR #189 GitHub head SHA with Desktop UI, CI, visual QA and source-guard workflows; earlier success on `bcb1f98ceb1beedd63512a107ffed93e3fd06395` does not certify the new commit. Existing package gates were failing at reviewed/trusted-source verification before this patch.

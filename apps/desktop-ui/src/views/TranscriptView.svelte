@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
-  import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import type { Transcript, TranscriptSegment, TranscriptSummary } from '../types';
   import type { ScriptotarApi } from '../api/client';
@@ -28,6 +27,7 @@
   let selectedLoadId = '';
   let selectedLoading = false;
   let selectedLoadError = '';
+  let selectedLoadErrorElement: HTMLParagraphElement | undefined;
   let selectedGeneration = 0;
   const SEGMENT_BATCH = 140;
   let visibleCount = SEGMENT_BATCH;
@@ -63,7 +63,7 @@
       if (!expected) throw new Error($translator('transcript.unavailable'));
       const transcript = await api.getTranscript(id);
       if (transcript.id !== id || transcript.projectId !== expected.projectId) {
-        throw new Error('Loaded transcript did not match the selected project and transcript ID.');
+        throw new Error($translator('transcript.projectMismatch'));
       }
       if (generation === selectedGeneration && selectedId === id && transcripts.some((item) => item.id === id && item.projectId === expected.projectId)) {
         selected = transcript;
@@ -76,7 +76,13 @@
         selectedLoadError = cause instanceof Error ? cause.message : $translator('transcript.loadFailed');
       }
     } finally {
-      if (generation === selectedGeneration) selectedLoading = false;
+      if (generation === selectedGeneration) {
+        selectedLoading = false;
+        if (selectedLoadError) {
+          await tick();
+          if (generation === selectedGeneration && selectedId === id) selectedLoadErrorElement?.focus();
+        }
+      }
     }
   }
 
@@ -238,7 +244,7 @@
     {#if selectedLoading}<div class="transcript-skeleton" aria-hidden="true" data-testid="transcript-loading-skeleton"><span></span><span></span><span></span></div>{/if}
     <strong role="status">{$translator(selectedLoading ? 'transcript.loading' : 'transcript.unavailable')}</strong>
     {#if selectedLoadError}
-      <p role="alert">{selectedLoadError}</p>
+      <p bind:this={selectedLoadErrorElement} tabindex="-1" role="alert" dir="auto">{selectedLoadError}</p>
       <button class="button secondary" type="button" on:click={() => loadSelected(selectedId)}>{$translator('transcript.retryLoading')}</button>
     {/if}
     <div class="transcript-fallback-select">
@@ -255,7 +261,7 @@
         <div class="transcript-list-scroll">
           {#each transcripts as transcript}
             <button class:active={transcript.id === selected.id} aria-current={transcript.id === selected.id ? 'true' : undefined} on:click={() => selectTranscript(transcript.id)}>
-              <strong>{transcript.title}</strong><small>{transcript.language} · {time(transcript.durationSeconds)}</small>
+              <strong dir="auto">{transcript.title}</strong><small dir="auto">{transcript.language} · <span dir="ltr">{time(transcript.durationSeconds)}</span></small>
             </button>
           {/each}
         </div>
@@ -264,10 +270,10 @@
 
     <section class="panel transcript-reader">
       <div class="reader-head" data-i18n-ignore>
-        <div class="reader-title"><h2>{selected.title}</h2><p>{selected.language} · {time(selected.durationSeconds)} · {selected.platform}</p></div>
+        <div class="reader-title"><h2 dir="auto">{selected.title}</h2><p dir="auto">{selected.language} · <span dir="ltr">{time(selected.durationSeconds)}</span> · <bdi>{selected.platform}</bdi></p></div>
         <div class="action-cluster">
           {#if !listOpen}<button class="icon-button" on:click={toggleList} aria-label={$translator('transcript.showList')} title={$translator('transcript.showList')}><Icon name="panel" size={17} /></button>{/if}
-          {#if onUseInStudio}<button class="button secondary" type="button" on:click={() => { if (selected) onUseInStudio?.(selected.id); }}>{$locale === 'ar' ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
+          {#if onUseInStudio}<button class="button secondary" type="button" on:click={() => { if (selected) onUseInStudio?.(selected.id); }}>{$translator('transcript.useInStudio')}</button>{/if}
           <button class="button secondary" on:click={copyText}>{$translator('transcript.copyText')}</button>
           <details class="export-menu">
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
@@ -284,7 +290,7 @@
       </div>
 
       <div class="transcript-search-row" data-i18n-ignore>
-        <label class="search-field transcript-search"><span aria-hidden="true">⌕</span><input bind:this={searchInput} aria-label={$translator('transcript.search')} bind:value={query} placeholder={$translator('transcript.searchPlaceholder')} /><kbd>Ctrl F</kbd></label>
+        <label class="search-field transcript-search"><span aria-hidden="true">⌕</span><input bind:this={searchInput} dir="auto" aria-label={$translator('transcript.search')} bind:value={query} placeholder={$translator('transcript.searchPlaceholder')} /><kbd>Ctrl F</kbd></label>
         {#if query.trim()}
           <div class="search-navigation" aria-live="polite">
             <span>{matchingSegments.length > 0 ? $translator('transcript.matches', { current: searchCursor + 1, count: matchingSegments.length }) : $translator('transcript.noMatches')}</span>
@@ -300,12 +306,12 @@
         {:else}
           {#each visibleSegments as segment (segment.id)}
             <article id={`segment-${segment.id}`} tabindex="-1" class:search-current={Boolean(query) && matchingSegments[searchCursor]?.id === segment.id} class="segment">
-              <button class="timestamp" aria-label={$translator('transcript.jumpTo', { time: time(segment.startSeconds) })} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
+              <button class="timestamp" dir="ltr" aria-label={$translator('transcript.jumpTo', { time: time(segment.startSeconds) })} on:click={() => jumpToSegment(segment.id)}>{time(segment.startSeconds)}</button>
               <p>{segment.text}</p>
             </article>
           {/each}
           {#if visibleCount < readingSegments.length}
-            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label={$locale === 'ar' ? 'عرض مقاطع تفريغ إضافية' : 'Show more transcript segments'}>{$locale === 'ar' ? 'عرض المزيد' : 'Show more'} ({visibleCount} / {readingSegments.length})</button>
+            <button type="button" class="show-more-segments" on:click={showNextSegments} aria-label={$translator('transcript.showMoreLabel')}>{$translator('transcript.showMore')} ({visibleCount} / {readingSegments.length})</button>
           {/if}
         {/if}
       </div>
@@ -314,13 +320,13 @@
     {#if detailsOpen}
       <aside class="panel details-panel" data-i18n-ignore>
         <div class="rail-head"><h3>{$translator('transcript.details')}</h3><button class="rail-button" on:click={toggleDetails} aria-label={$translator('transcript.hideDetails')} title={$translator('transcript.hideDetails')}>›</button></div>
-        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd>{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd>{selected.platform}</dd></div><div><dt>{$translator('ai.sourceLabel')}</dt><dd class="source-value" dir="auto">{selected.source}</dd></div></dl>
+        <dl><div><dt>{$translator('transcript.language')}</dt><dd>{selected.language}</dd></div><div><dt>{$translator('transcript.direction')}</dt><dd>{selected.direction.toUpperCase()}</dd></div><div><dt>{$translator('transcript.duration')}</dt><dd dir="ltr">{time(selected.durationSeconds)}</dd></div><div><dt>{$translator('transcript.platform')}</dt><dd dir="auto">{selected.platform}</dd></div><div><dt>{$translator('ai.sourceLabel')}</dt><dd class="source-value" dir="auto">{selected.source}</dd></div></dl>
         <button class="button secondary folder-unavailable" disabled title={$translator('transcript.folderHelp')}>{$translator('transcript.folderUnavailable')}</button>
       </aside>
     {/if}
   </div>
   {#if status}<p class="status-copy" aria-live="polite" data-i18n-ignore>{status}</p>{/if}
-  {#if actionError}<p class="status-copy" role="alert" data-i18n-ignore>{actionError}</p>{/if}
+  {#if actionError}<p class="status-copy" role="alert" dir="auto" data-i18n-ignore>{actionError}</p>{/if}
 {/if}
 
 <style>

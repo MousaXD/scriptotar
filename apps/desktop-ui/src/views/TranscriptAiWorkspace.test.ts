@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, mockBootstrap } from '../api/mockClient';
 import type { Transcript } from '../types';
 import TranscriptView from './TranscriptView.svelte';
+import { setLocale } from '../i18n';
 import AiStudioView from './AiStudioView.svelte';
 
-beforeEach(() => window.localStorage.clear());
+beforeEach(() => { window.localStorage.clear(); setLocale('en'); });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -146,6 +147,42 @@ describe('Transcript reader workspace', () => {
     expect(content).toHaveTextContent('أول ثلاث ثواني');
     expect(content.querySelectorAll('button.timestamp')).toHaveLength(2);
     expect(screen.getByText('local://arabic-hook.mp4')).toBeInTheDocument();
+  });
+  it('localizes ownership mismatch and focuses its real denial without displaying foreign content', async () => {
+    setLocale('ar');
+    const original = mockBootstrap.transcripts[0];
+    const api = createMockClient({
+      getTranscript: async () => ({ ...original, projectId: 'foreign-project' })
+    });
+    render(TranscriptView, { props: { api, transcripts: [original], selectedId: original.id } });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('لا يطابق المشروع');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(screen.queryByTestId('transcript-content')).not.toBeInTheDocument();
+  });
+
+  it('keeps Arabic reader labels translated and isolates mixed-script metadata and timestamps', async () => {
+    setLocale('ar');
+    const transcript: Transcript = {
+      ...mockBootstrap.transcripts[0],
+      title: 'Scriptotar — مقابلة المبدع',
+      segments: Array.from({ length: 142 }, (_, index) => ({
+        id: 'ar-segment-' + index,
+        startSeconds: index * 4,
+        endSeconds: index * 4 + 3,
+        text: 'المقطع Scriptotar ' + index
+      }))
+    };
+    const onUseInStudio = vi.fn();
+    const api = createMockClient({ getTranscript: async () => transcript });
+    render(TranscriptView, { props: { api, transcripts: [transcript], selectedId: transcript.id, onUseInStudio } });
+    const content = await screen.findByTestId('transcript-content');
+    expect(screen.getByRole('heading', { name: transcript.title })).toHaveAttribute('dir', 'auto');
+    expect(content.querySelector('button.timestamp')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'البحث في النص المفرغ' })).toHaveAttribute('dir', 'auto');
+    expect(screen.getByRole('button', { name: 'عرض مقاطع تفريغ إضافية' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'استخدام في الاستوديو' }));
+    expect(onUseInStudio).toHaveBeenCalledWith(transcript.id);
   });
 });
 

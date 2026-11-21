@@ -281,7 +281,7 @@
   </details>
 </section>
 
-{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · request ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="ltr"> Request ID: {urlDenialId}</small>{/if}</p>{/if}
+{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · ' + $translator('queue.requestId') + ' ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="auto"> {$translator('queue.requestId')} <bdi dir="ltr">{urlDenialId}</bdi></small>{/if}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>
