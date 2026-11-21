@@ -22,9 +22,9 @@
   // summaries (for example a manual candidate precedes the generated batch).
   // Track ALL saved draft revisions so an unseen candidate edit invalidates
   // an already-rendered three-script comparison.
-  $: signature = JSON.stringify([projectId, study?.id, study?.revision,
-    (study?.drafts ?? []).map(item => [item.id, item.revision]),
-    (study?.archivedDrafts ?? []).map(item => [item.id, item.revision])]);
+  $: signature = JSON.stringify([projectId, study?.id, study?.revision, study?.sources,
+    (study?.drafts ?? []).map(item => [item.id, item.revision, item.title]),
+    (study?.archivedDrafts ?? []).map(item => [item.id, item.revision, item.title])]);
   $: if (signature !== observed) {
     observed = signature;
     epoch++;
