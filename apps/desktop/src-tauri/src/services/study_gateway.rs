@@ -1518,6 +1518,152 @@ mod tests {
         assert!(CurrentStudy::load(&services, project, study_id).is_err());
     }
 
+    /// A real approved research run, not similar independently extracted
+    /// transcript material, must shape the canonical original-writing plan.
+    #[test]
+    fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
+        use scriptotar_agent::RunState;
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let created = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study = Uuid::parse_str(&created.id).unwrap();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        let mut selected = Vec::new();
+        let mut origins = Vec::new();
+        for index in 0..3 {
+            let source = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            db.execute(
+                "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+                 VALUES(?1,?2,'local_file',?3,'Original transcript','2026-11-15T12:30:00Z')",
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("/mock/bridge-{index}.mp4")
+                ],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+                 VALUES(?1,?2,?3,6.0,'2026-11-15T12:30:00Z')",
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/mock/bridge-{index}.mp4")
+                ],
+            )
+            .unwrap();
+            let spoken = format!(
+                "How can we make original tutorial {index}? First describe one method. Follow for more."
+            );
+            let segments = serde_json::json!([
+                {"index":0,"start":0.0,"end":2.0,"text":spoken.clone()},
+                {"index":1,"start":2.0,"end":4.0,"text":"A real timed explanation."},
+                {"index":2,"start":4.0,"end":6.0,"text":"Return to the central question."}
+            ]);
+            db.execute(
+                "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+                 VALUES(?1,?2,'en',?3,?4,'2026-11-15T12:30:00Z','2026-11-15T12:30:00Z')",
+                rusqlite::params![transcript.to_string(), media.to_string(), spoken, segments.to_string()],
+            )
+            .unwrap();
+            origins.push(transcript);
+            selected.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+        services
+            .save_studio_study(
+                project,
+                study,
+                created.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(selected),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        let attached = services
+            .store
+            .list_study_sources(project, study)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let waiting = services.start_study_research(project, study, attached).unwrap();
+        assert_eq!(waiting.state, RunState::AwaitingApproval);
+        let finished = services
+            .decide_study_research(project, study, &waiting.plan.id, "approve")
+            .unwrap();
+        assert_eq!(finished.state, RunState::Completed);
+        let artifact =
+            Uuid::parse_str(&finished.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+        drop(services);
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let plan = reopened
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "authenticated-bridge",
+                artifact,
+            )
+            .unwrap();
+        let seal = plan.context.approved_research.as_ref().unwrap();
+        assert_eq!(seal.artifact_id, artifact);
+        assert_eq!(seal.run_id, waiting.plan.id);
+        assert_eq!(seal.sources.len(), 3);
+        assert!(seal.sources.iter().all(|source| {
+            source.origin_sha256.len() == 64
+                && origins.contains(&source.origin_id)
+        }));
+        assert!(plan.context.evidence.iter().all(|item| {
+            item.id.starts_with(&format!("research:{artifact}:"))
+        }));
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "wrong-artifact",
+                Uuid::new_v4()
+            )
+            .is_err());
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(
+                Uuid::new_v4(),
+                study,
+                "wrong-project",
+                artifact
+            )
+            .is_err());
+
+        // Same timestamp / same attachment ID is not enough to preserve the
+        // original source's content digest or the user's research approval.
+        db.execute(
+            "UPDATE transcripts SET text='Substituted content with unchanged timestamp'
+             WHERE id=?1",
+            rusqlite::params![origins[0].to_string()],
+        )
+        .unwrap();
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "source-changed",
+                artifact
+            )
+            .is_err());
+    }
+
     /// Genuine AppServices + canonical transcripts + four controlled no-cost
     /// provider steps + v11 atomic three-draft receipt. No public Tauri
     /// handler, API keys, network or synthetic persisted Study context.
