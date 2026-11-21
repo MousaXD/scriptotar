@@ -342,6 +342,31 @@ fn setup() -> (
 }
 
 #[test]
+fn copied_source_angle_stops_before_any_draft_provider_step() {
+    let (temp, _original_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The researcher describes the old town square in careful detail and follows three separate walking routes before comparing which crossing is safer for residents of the neighborhood";
+    let mut scoped = current.0.borrow().clone();
+    scoped.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("angle-copy-blocked", scoped.clone()).unwrap();
+    current.0.replace(scoped);
+    let mut proposed: serde_json::Value =
+        serde_json::from_str(provider.responses.front().unwrap()).unwrap();
+    proposed["angles"][0]["hook"] = json!(passage);
+    *provider.responses.front_mut().unwrap() = proposed.to_string();
+    let mut sink = SqlFixtureSink::open(
+        &temp.path().join("bad-angle.sqlite"),
+        current.0.clone(),
+    );
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 1, "no draft request follows a copied angle");
+    assert_eq!(gate.attempts, 1);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
 fn three_distinct_source_linked_candidates_persist_reopen_export_without_rebilling() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     let path = temp.path().join("test.sqlite");
