@@ -686,8 +686,7 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         // source links, quality findings or provider-review history to an
         // otherwise valid one-beat edit. Derive these from canonical inputs.
         let expected_lineage = lineage_for(context, &original.angle, &expected)?;
-        let expected_audit =
-            writing::audit_draft(&expected, &context.brief, &context.evidence);
+        let expected_audit = writing::audit_draft(&expected, &context.brief, &context.evidence);
         let expected_reviews = original
             .review_findings
             .iter()
