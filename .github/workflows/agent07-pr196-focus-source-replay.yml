@@ -1,0 +1,61 @@
+name: Agent07 exact PR196 focus-source refusal replay (test-only)
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent07-pr196-focus-source-replay.yml
+      - tests/defragmentation/native-e2e/test_agent07_focus_adversarial_replay.py
+permissions:
+  contents: read
+jobs:
+  source-only:
+    name: PR196 noncertifying focus guards (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify original PR196 source blobs, ancestry and exact test-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=d9225202e70cfb26aed6b04fce3ba0a256a49c13
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/linux_webkit.py)" = 8331d612ebda387db651502abd2f137396f484e4
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/windows_webview2.ps1)" = a52d0643cb41de4a98e17f36def7ea70b7c4b877
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/test_native_tab_focus_guard.py)" = 507493b25bce282aa11b98a404ad6f2939f62a3c
+          EXPECTED="$(printf '%s\n' .github/workflows/agent07-pr196-focus-source-replay.yml tests/defragmentation/native-e2e/test_agent07_focus_adversarial_replay.py | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS original focus-source blobs, exact ancestry and two test-only changed paths"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Run existing six and supplemental six negative source-only regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_native_tab_focus_guard.py' -v
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_agent07_focus_adversarial_replay.py' -v
+          echo "SOURCE-ONLY OS transport mocks; no installed application, no native acceptance PASS."
+      - name: Validate Windows native UIA PowerShell parser only (never execute installed driver)
+        if: matrix.os == 'windows-2022'
+        shell: pwsh
+        run: |
+          $errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tests/defragmentation/native-e2e/windows_webview2.ps1').Path,
+            [ref]$tokens, [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host "PASS parse only. UIA, Windows keyboard recipient and installed WebView NOT TESTED."
