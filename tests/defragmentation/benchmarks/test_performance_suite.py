@@ -373,7 +373,7 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
 
 from .native_ui_trace import (summarize_ui_trace, UI_KIND, MAX_TRACE_BYTES,
-                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS)
+                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS, main as ui_trace_main)
 
 
 class NativeUiTraceContractTests(unittest.TestCase):
@@ -397,6 +397,64 @@ class NativeUiTraceContractTests(unittest.TestCase):
             "start_evidence_id": f"evidence-before-{index:02}",
             "completion_evidence_id": f"evidence-after-{index:02}",
         }
+
+    def test_native_trace_cli_output_is_exclusive_and_symlink_safe(self):
+        # All observations are synthetic and remain externally UNVERIFIED.
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trace = root / "one-unverified-event.jsonl"
+            trace.write_text(json.dumps(self.event(0)), encoding="utf-8")
+
+            def argv(output):
+                return ["native_ui_trace", "--trace", str(trace),
+                        "--source-sha", SHA, "--package-sha256", HASH,
+                        "--executable-sha256", HASH, "--output", str(output)]
+
+            new_report = root / "original-output.json"
+            with patch("sys.argv", argv(new_report)):
+                ui_trace_main()
+            parsed = json.loads(new_report.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
+            # Existing reports must be preserved, including a second CLI call.
+            frozen = new_report.read_bytes()
+            with patch("sys.argv", argv(new_report)):
+                with self.assertRaises(SystemExit) as refused:
+                    ui_trace_main()
+            self.assertEqual(refused.exception.code, 2)
+            self.assertEqual(new_report.read_bytes(), frozen)
+
+            # Path.exists() is false for a dangling link: it must still never
+            # create an attacker-selected file at the link destination.
+            target = root / "not-yet-created.json"
+            link = root / "dangling-report.json"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                pass  # Some locked-down Windows runners cannot create symlinks.
+            else:
+                self.assertFalse(link.exists())
+                self.assertTrue(link.is_symlink())
+                with patch("sys.argv", argv(link)):
+                    with self.assertRaises(SystemExit) as refused:
+                        ui_trace_main()
+                self.assertEqual(refused.exception.code, 2)
+                self.assertFalse(target.exists())
+
+            # Another process can create the target after the preflight check.
+            # Exclusive open("x") must reject that race rather than overwrite it.
+            raced = root / "raced-report.json"
+            def create_during_parse(*_args, **_kwargs):
+                raced.write_text("KEEP ORIGINAL", encoding="utf-8")
+                return {"scope": "SYNTHETIC_UNVERIFIED"}
+            with patch("sys.argv", argv(raced)):
+                with patch("tests.defragmentation.benchmarks.native_ui_trace.summarize_ui_trace",
+                           side_effect=create_during_parse):
+                    with self.assertRaises(FileExistsError):
+                        ui_trace_main()
+            self.assertEqual(raced.read_text(encoding="utf-8"), "KEEP ORIGINAL")
 
     def test_required_studio_actions_have_distinct_unverified_cohorts(self):
         # A generic navigation bucket is not an honest substitute for
