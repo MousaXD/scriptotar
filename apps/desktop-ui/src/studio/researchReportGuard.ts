@@ -20,15 +20,18 @@ export function matchesResearchReportScope(
   projectId: string,
   studyId: string
 ): boolean {
-  const step = run.plan.steps[0];
-  const requested = step?.input.source_ids;
-  if (run.state !== 'completed' || run.plan.project_id !== projectId ||
-      run.plan.study_id !== studyId || run.plan.steps.length !== 1 ||
+  const plan = run?.plan;
+  const steps = plan?.steps;
+  const step = Array.isArray(steps) ? steps[0] : undefined;
+  const requested = step?.input?.source_ids;
+  if (!run || !plan || !Array.isArray(steps) ||
+      run.state !== 'completed' || plan.project_id !== projectId ||
+      plan.study_id !== studyId || steps.length !== 1 ||
       step?.input.tool !== 'analyze_evidence' ||
       !Array.isArray(requested) || requested.length < 1 || requested.length > 8 ||
       requested.some((id) => typeof id !== 'string' || !id) ||
       new Set(requested).size !== requested.length ||
-      report.project_id !== projectId || report.study_id !== studyId ||
+      !report || report.project_id !== projectId || report.study_id !== studyId ||
       report.source_text_is_untrusted_data !== true ||
       !Array.isArray(report.sources) || report.sources.length !== requested.length ||
       !Array.isArray(report.feature_support) || report.feature_support.length > 8 ||
@@ -64,6 +67,7 @@ export function matchesResearchReportScope(
   const allowed = new Set(requested);
   const seen = new Set<string>();
   for (const finding of report.sources) {
+    if (!finding || typeof finding !== 'object') return false;
     const id = finding.study_source_id;
     if (!allowed.has(id) || seen.has(id)) return false;
     seen.add(id);
@@ -99,7 +103,7 @@ export function matchesResearchReportScope(
     }
 
     for (const observation of finding.observations) {
-      const evidence = observation.evidence;
+      const evidence = observation?.evidence;
       if (!evidence || evidence.study_source_id !== id ||
           evidence.reference_id !== finding.reference_id ||
           // Real Rust anchors carry the same canonical transcript origin and
