@@ -1319,6 +1319,82 @@ fn direct_sqlite_acceptance_rejects_forged_manual_edit_flags_without_partial_wri
 }
 
 #[test]
+fn revision_sqlite_cas_rejects_forged_lineage_quality_and_review_history() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let mut latest = plan.context.clone();
+    latest.study_revision += 1;
+    current.0.replace(latest.clone());
+
+    let original = &batch.candidates[0];
+    let before = original.draft.beats[0].narration.clone();
+    let response = json!({
+        "beat_id": "hook",
+        "replacement_narration": "A uniquely revised introduction for our community explainer"
+    })
+    .to_string();
+    let legitimate = apply_reviewed_beat_revision(
+        original,
+        &latest,
+        &response,
+        "hook",
+        "Improve the opening",
+        &before,
+        false,
+    )
+    .unwrap();
+    let mut missing_lineage = legitimate.clone();
+    missing_lineage.lineage.clear();
+    let mut fabricated_audit = legitimate.clone();
+    fabricated_audit.audit.duration.words += 1;
+    let mut fabricated_review = legitimate.clone();
+    fabricated_review
+        .review_findings
+        .push(scriptotar_ai::writing::ReviewFinding {
+            beat_id: Some("cta".into()),
+            concern: "Invented model review".into(),
+            recommendation: "Misleading advice".into(),
+            evidence_ids: vec![],
+            needs_human_review: true,
+        });
+
+    for candidate in [&missing_lineage, &fabricated_audit, &fabricated_review] {
+        assert!(matches!(
+            study_writing::VersionedCandidateStore::save_revision(
+                &mut sink, &latest, ids[0], 1, &before, "hook", candidate
+            ),
+            Err(WritingWorkflowError::InvalidContext(_))
+        ));
+        assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().revision, 1);
+        assert_eq!(
+            db.list_draft_versions(latest.project_id, ids[0])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    // A genuine transformation still commits exactly one new immutable
+    // version, proving the guard targets forged metadata, not normal edits.
+    let next = study_writing::VersionedCandidateStore::save_revision(
+        &mut sink,
+        &latest,
+        ids[0],
+        1,
+        &before,
+        "hook",
+        &legitimate,
+    )
+    .unwrap();
+    assert_eq!(next, 2);
+}
+
+#[test]
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
