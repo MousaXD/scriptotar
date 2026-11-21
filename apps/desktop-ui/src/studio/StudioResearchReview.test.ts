@@ -269,7 +269,8 @@ describe('Study research is a local, explicitly authorized workflow', () => {
       return changed;
     };
     render(StudioResearchReview, { props: { api, projectId, studyId } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.getByRole('button', { name: 'Prepare research' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
   });
@@ -352,7 +353,8 @@ describe('Study research is a local, explicitly authorized workflow', () => {
       return runs;
     };
     render(StudioResearchReview, { props: { api, projectId, studyId } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved report cannot be reopened/i);
+    expect(screen.getByRole('button', { name: 'Prepare research' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
   });
 
