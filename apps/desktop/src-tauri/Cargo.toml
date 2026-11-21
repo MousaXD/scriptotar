@@ -27,6 +27,7 @@ scriptotar-mcp = { path = "../../../crates/scriptotar-mcp" }
 scriptotar-orchestrator = { path = "../../../crates/scriptotar-orchestrator" }
 scriptotar-research = { path = "../../../crates/scriptotar-research" }
 rusqlite.workspace = true
+sha2 = "0.10"
 serde.workspace = true
 serde_json.workspace = true
 tauri.workspace = true

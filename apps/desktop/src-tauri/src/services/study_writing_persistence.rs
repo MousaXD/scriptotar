@@ -32,6 +32,94 @@ fn denied(reason: &'static str) -> WritingWorkflowError {
     WritingWorkflowError::InvalidContext(reason)
 }
 
+/// Canonical draft IDs are bound to the same scoped writing run in every
+/// receipt path. A receipt must never point to three unrelated Study drafts.
+pub(super) fn canonical_draft_ids(project: Uuid, study: Uuid, run_id: &str) -> [Uuid; 3] {
+    std::array::from_fn(|index| {
+        let material = format!("scriptotar/writing-batch/v1/{project}/{study}/{run_id}/{index}");
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
+    })
+}
+
+/// Check immutable v1 snapshots, not the mutable editor's latest body. This
+/// protects lost-response reconciliation after a human makes further edits.
+pub(super) fn verify_committed_versions(
+    db: &Connection,
+    batch: &GeneratedBatch,
+    ids: &[Uuid; 3],
+) -> WriteResult<()> {
+    if batch.candidates.len() != 3
+        || *ids
+            != canonical_draft_ids(
+                batch.context.project_id,
+                batch.context.study_id,
+                &batch.run_id,
+            )
+    {
+        return Err(WritingWorkflowError::PersistFailed(
+            "writing receipt draft IDs do not match run identity".into(),
+        ));
+    }
+    for (id, candidate) in ids.iter().zip(&batch.candidates) {
+        let saved: Option<(String, String, String)> = db
+            .query_row(
+                "SELECT v.title,v.body,sr.structured_json
+                 FROM creative_drafts d
+                 JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
+                 JOIN study_writing_revisions sr
+                   ON sr.draft_id=d.id AND sr.version=1
+                 WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
+                params![
+                    id.to_string(),
+                    batch.context.project_id.to_string(),
+                    batch.context.study_id.to_string()
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(error)?;
+        let Some((title, body, structured)) = saved else {
+            return Err(WritingWorkflowError::PersistFailed(
+                "writing receipt is missing a canonical initial version".into(),
+            ));
+        };
+        let restored: GeneratedCandidate = serde_json::from_str(&structured).map_err(|_| {
+            WritingWorkflowError::PersistFailed("corrupt structured initial draft".into())
+        })?;
+        if &restored != candidate
+            || title != candidate.draft.title.trim()
+            || body != export_candidate(candidate)
+        {
+            return Err(WritingWorkflowError::PersistFailed(
+                "writing receipt does not match immutable initial draft".into(),
+            ));
+        }
+        // Original cited links are durable provenance, not replaceable
+        // editor metadata. New links may be added by the user later, so
+        // require a superset rather than forbidding those human additions.
+        for source in &candidate.lineage {
+            let linked: i64 = db
+                .query_row(
+                    "SELECT COUNT(*) FROM draft_source_links
+                     WHERE project_id=?1 AND draft_id=?2 AND study_source_id=?3",
+                    params![
+                        batch.context.project_id.to_string(),
+                        id.to_string(),
+                        source.source_id.to_string()
+                    ],
+                    |row| row.get(0),
+                )
+                .map_err(error)?;
+            if linked != 1 {
+                return Err(WritingWorkflowError::PersistFailed(
+                    "writing receipt is missing an original source link".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Requires a canonical, active-project-scoped CurrentStudy implementation.
 /// A test FixedStudy is NOT sufficient for live Tauri wiring. This adapter
 /// acquires SQLite's write reservation BEFORE refreshing that context, making
@@ -85,24 +173,7 @@ impl<C: CurrentStudy> AtomicCandidateStore for CanonicalSqliteCandidateStore<'_,
         }
         let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
             .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
-        for id in ids {
-            let initial: i64 = db
-                .query_row(
-                    "SELECT COUNT(*) FROM creative_drafts d
-                     JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
-                     JOIN study_writing_revisions sr
-                       ON sr.draft_id=d.id AND sr.version=1
-                     WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                    params![id.to_string(), project, study],
-                    |row| row.get(0),
-                )
-                .map_err(error)?;
-            if initial != 1 {
-                return Err(WritingWorkflowError::PersistFailed(
-                    "saved writing receipt missing canonical initial draft".into(),
-                ));
-            }
-        }
+        verify_committed_versions(&db, &original, &ids)?;
         Ok(Some(ids))
     }
 }
@@ -137,6 +208,12 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         // Model output may assert 'supported', but that is NEVER a verification
         // decision. Save these claims as unverified until Agent 04 reviews them.
         let mut normalized = batch.clone();
+        // A direct sink caller must obey the same originality and script
+        // diversity barrier as the four-step model orchestrator.
+        super::study_writing::enforce_candidate_originality(
+            &batch.context,
+            &normalized.candidates,
+        )?;
         let evidence_ids: HashSet<_> = batch
             .context
             .evidence
@@ -160,6 +237,20 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         if !writing::compare_angles(&proposed_angles).is_empty() {
             return Err(denied("duplicate or similar script angles"));
         }
+        // All model outputs pass through these strict parsers on the normal
+        // generation path. Reuse them for direct sink admission as well.
+        let angles_json = serde_json::to_string(&writing::AngleResponse {
+            angles: proposed_angles.clone(),
+        })
+        .map_err(|_| denied("invalid angle serialization"))?;
+        let angle_input = writing::WritingInput {
+            brief: batch.context.brief.clone(),
+            evidence: batch.context.evidence.clone(),
+            findings: batch.context.findings.clone(),
+            task: writing::WritingTask::ProposeAngles { count: 3 },
+        };
+        writing::parse_angles(&angles_json, &angle_input)
+            .map_err(|_| denied("invalid proposed angle structure"))?;
         let mut angles = HashSet::new();
         let mut scripts = HashSet::new();
         let mut normalized_prose = HashSet::new();
@@ -205,10 +296,32 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 {
                     return Err(denied("unknown claim evidence"));
                 }
-                if claim.status == ClaimStatus::Supported {
-                    claim.status = ClaimStatus::Unverified;
-                }
+                // A generated label (including "disputed" or "opinion")
+                // is not a human or independent fact-review decision.
+                // All model-inventoried factual claims start unverified.
+                claim.status = ClaimStatus::Unverified;
             }
+            // The provider-facing parser clears model-supplied manual edit
+            // flags. Direct v11 sink callers must enforce the same rule:
+            // only a later authenticated human edit may claim protection.
+            if candidate
+                .draft
+                .beats
+                .iter()
+                .any(|beat| beat.manually_edited)
+            {
+                return Err(denied("generated drafts cannot claim human edits"));
+            }
+            // The sink may be called independently of parse_draft. Validate
+            // all beat IDs, claim-to-beat bindings, field limits and citations
+            // again after unverified-claim normalization.
+            writing::validate_draft(&candidate.draft, &batch.context.evidence)
+                .map_err(|_| denied("malformed canonical script draft"))?;
+            candidate.audit = writing::audit_draft(
+                &candidate.draft,
+                &batch.context.brief,
+                &batch.context.evidence,
+            );
             for beat in &candidate.draft.beats {
                 if !beat
                     .evidence_ids
@@ -244,8 +357,22 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                     }
                 }
             }
-            for finding in &mut candidate.review_findings {
-                finding.needs_human_review = true;
+            if !candidate.review_findings.is_empty() {
+                let review_json = serde_json::to_string(&writing::ReviewResponse {
+                    findings: candidate.review_findings.clone(),
+                })
+                .map_err(|_| denied("invalid review serialization"))?;
+                let review_input = writing::WritingInput {
+                    brief: batch.context.brief.clone(),
+                    evidence: batch.context.evidence.clone(),
+                    findings: batch.context.findings.clone(),
+                    task: writing::WritingTask::Review {
+                        draft: candidate.draft.clone(),
+                    },
+                };
+                candidate.review_findings = writing::parse_review(&review_json, &review_input)
+                    .map_err(|_| denied("invalid generated review finding"))?
+                    .findings;
             }
         }
         // Exact persisted original inputs (incl. original angles, source
@@ -285,22 +412,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
             }
             let ids: [Uuid; 3] = serde_json::from_str(&ids_json)
                 .map_err(|_| WritingWorkflowError::PersistFailed("corrupt batch receipt".into()))?;
-            for id in ids {
-                let exists: i64 = tx
-                    .query_row(
-                        "SELECT COUNT(*) FROM creative_drafts d
-                     JOIN draft_versions v ON v.draft_id=d.id AND v.version=1
-                     WHERE d.id=?1 AND d.project_id=?2 AND d.study_id=?3",
-                        params![id.to_string(), project, study],
-                        |row| row.get(0),
-                    )
-                    .map_err(error)?;
-                if exists != 1 {
-                    return Err(WritingWorkflowError::PersistFailed(
-                        "receipt has missing initial draft".into(),
-                    ));
-                }
-            }
+            verify_committed_versions(&tx, &normalized, &ids)?;
             tx.commit().map_err(error)?;
             return Ok(ids);
         }
@@ -373,13 +485,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
                 "Study has reached its 200-draft limit".into(),
             ));
         }
-        let ids: [Uuid; 3] = std::array::from_fn(|index| {
-            let material = format!(
-                "scriptotar/writing-batch/v1/{project}/{study}/{}/{}",
-                batch.run_id, index
-            );
-            Uuid::new_v5(&Uuid::NAMESPACE_URL, material.as_bytes())
-        });
+        let ids = canonical_draft_ids(project, study, &batch.run_id);
         let now = now_rfc3339();
         let consumed = tx
             .execute(
@@ -556,6 +662,9 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         {
             return Err(denied("empty or unchanged revision"));
         }
+        // Direct callers cannot evade the same source-copy barrier applied
+        // to model suggestions; this runs before any version/body mutation.
+        super::study_writing::reject_extended_source_copy(context, replacement)?;
         // The typed writing primitive clears claims/citations made stale by
         // changed narration, and preserves all other beats. Verify that exact
         // transformation rather than trusting arbitrary model-provided JSON.
@@ -572,6 +681,23 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
             return Err(denied(
                 "revision modified untouched beats or citation statuses",
             ));
+        }
+        // A caller bypassing the typed revision helper must not attach forged
+        // source links, quality findings or provider-review history to an
+        // otherwise valid one-beat edit. Derive these from canonical inputs.
+        let expected_lineage = lineage_for(context, &original.angle, &expected)?;
+        let expected_audit = writing::audit_draft(&expected, &context.brief, &context.evidence);
+        let expected_reviews = original
+            .review_findings
+            .iter()
+            .filter(|finding| finding.beat_id.as_deref() != Some(beat_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if reviewed.lineage != expected_lineage
+            || reviewed.audit != expected_audit
+            || reviewed.review_findings != expected_reviews
+        {
+            return Err(denied("revision forged lineage, audit or review history"));
         }
         if body.matches(previous_beat_text).count() != 1 {
             return Err(WritingWorkflowError::StaleContext);

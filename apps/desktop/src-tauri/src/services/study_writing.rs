@@ -163,7 +163,13 @@ impl StudyWritingContext {
                 .ok_or(WritingWorkflowError::InvalidContext(
                     "foreign evidence source",
                 ))?;
-            covered.insert(binding.study_source_id);
+            // Only actual attributable source content counts toward the
+            // three-original-source writing floor. Human observations are
+            // useful context, but three notes about one transcript must not
+            // impersonate three independent source excerpts.
+            if original_source_excerpt(item) {
+                covered.insert(binding.study_source_id);
+            }
             // A disputed/contradicted observation is not an eligible citation
             // or writing input. The canonical gateway already filters these;
             // enforce the exclusion again at the workflow boundary.
@@ -388,7 +394,17 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
         return Err(WritingWorkflowError::Cancelled);
     }
     match gate.begin(&plan.run_id, &plan.context, step, request)? {
-        StepAdmission::Recorded { response_json } => Ok(response_json),
+        StepAdmission::Recorded { response_json } => {
+            // Even authenticated persisted outputs must obey the same bounds
+            // as live provider responses before any JSON parse or draft save.
+            // The future receipt loader should independently bound SQLite IO.
+            if response_json.len() > 400_000 || response_json.chars().count() > 100_000 {
+                return Err(WritingWorkflowError::InvalidResponse(
+                    "recorded provider output exceeds bound".into(),
+                ));
+            }
+            Ok(response_json)
+        }
         StepAdmission::Dispatch { effect_key } => {
             if stop.cancelled() {
                 gate.abandon_before_dispatch(&effect_key)?;
@@ -398,7 +414,7 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
                 Ok(response) => {
                     // Fail closed on malformed/oversized receipt: do not retry
                     // a possibly billable call after an uncertain outcome.
-                    if response.text.chars().count() > 100_000 {
+                    if response.text.len() > 400_000 || response.text.chars().count() > 100_000 {
                         gate.mark_uncertain(&effect_key)?;
                         return Err(WritingWorkflowError::InvalidResponse(
                             "provider output exceeds bound".into(),
@@ -458,6 +474,16 @@ where
     if !writing::compare_angles(&angles).is_empty() {
         return Err(WritingWorkflowError::DuplicateOrSimilar);
     }
+    // Reject a source-copying angle before reserving any of the three draft
+    // steps. The SQLite sink also enforces this against direct batch callers.
+    for angle in &angles {
+        for text in [&angle.hook, &angle.approach, &angle.promise] {
+            reject_extended_source_copy(&plan.context, text)?;
+        }
+        for beat in &angle.outline {
+            reject_extended_source_copy(&plan.context, &beat.intent)?;
+        }
+    }
     let mut candidates = Vec::with_capacity(3);
     let mut normalized_scripts = HashSet::new();
     for (index, angle) in angles.iter().enumerate() {
@@ -500,6 +526,9 @@ where
         return Err(WritingWorkflowError::Cancelled);
     }
     check_current(current, plan)?;
+    // Reject near-identical scripts and extended copied source passages before
+    // asking SQLite to accept any result. The sink repeats this check.
+    enforce_candidate_originality(&plan.context, &candidates)?;
     // The sink is responsible for a second scoped context check INSIDE its
     // transaction, exact-once receipt and immutable initial versions.
     sink.commit_three(&GeneratedBatch {
@@ -507,6 +536,305 @@ where
         context: plan.context.clone(),
         candidates,
     })
+}
+
+/// A provider's originality instruction is not an acceptance guarantee. Check
+/// both the orchestration path and the canonical SQLite sink: direct callers
+/// must not bypass the same source-copy and candidate-diversity requirements.
+/// This is a deterministic safety screen, not a plagiarism determination.
+fn original_source_excerpt(item: &EvidenceRef) -> bool {
+    !item.excerpt.trim().is_empty()
+        && matches!(
+            (item.kind, item.status),
+            (EvidenceKind::SocialTranscript, EvidenceStatus::Attributed)
+                | (
+                    EvidenceKind::IndependentDocument,
+                    EvidenceStatus::Attributed
+                )
+                | (
+                    EvidenceKind::IndependentDocument,
+                    EvidenceStatus::Corroborated
+                )
+        )
+}
+
+/// Targeted revisions are independently screened so a provider cannot put a
+/// long copied transcript passage into a later version of a valid original.
+/// The direct SQLite revision sink repeats this check under its write lock.
+pub(super) fn reject_extended_source_copy(
+    context: &StudyWritingContext,
+    replacement: &str,
+) -> WriteResult<()> {
+    const WINDOW: usize = 12;
+    let words = originality_words(replacement);
+    if words.len() < WINDOW {
+        return Ok(());
+    }
+    let candidate_windows: HashSet<Vec<String>> =
+        words.windows(WINDOW).map(<[String]>::to_vec).collect();
+    for item in &context.evidence {
+        if matches!(
+            item.kind,
+            EvidenceKind::SocialTranscript | EvidenceKind::IndependentDocument
+        ) && originality_words(&item.excerpt)
+            .windows(WINDOW)
+            .any(|source| candidate_windows.contains(source))
+        {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "generated text reproduces an extended source passage".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn enforce_candidate_originality(
+    context: &StudyWritingContext,
+    candidates: &[GeneratedCandidate],
+) -> WriteResult<()> {
+    const SOURCE_WINDOW: usize = 12;
+    const SHORT_SHARED_CTA_WORDS: usize = 10;
+    const LONG_SCRIPT_WINDOW: usize = 5;
+    const SHORT_SCRIPT_WINDOW: usize = 3;
+    const VERY_SHORT_SCRIPT_WINDOW: usize = 2;
+
+    let mut source_windows = HashSet::new();
+    for evidence in &context.evidence {
+        if !matches!(
+            evidence.kind,
+            EvidenceKind::SocialTranscript | EvidenceKind::IndependentDocument
+        ) {
+            continue;
+        }
+        let words = originality_words(&evidence.excerpt);
+        source_windows.extend(words.windows(SOURCE_WINDOW).map(<[String]>::to_vec));
+    }
+
+    let mut scripts = Vec::with_capacity(candidates.len());
+    let mut cited_sources = HashSet::new();
+    for candidate in candidates {
+        if candidate.angle.evidence_ids.is_empty() {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate angle has no supporting evidence".into(),
+            ));
+        }
+        // Count only evidence cited by the actual script beats/claims. An
+        // angle may cite a source that never supports any script content.
+        let mut script_evidence = HashSet::new();
+        for beat in &candidate.draft.beats {
+            script_evidence.extend(beat.evidence_ids.iter().map(String::as_str));
+            for shot in &beat.shots {
+                script_evidence.extend(shot.evidence_ids.iter().map(String::as_str));
+            }
+        }
+        for claim in &candidate.draft.claims {
+            script_evidence.extend(claim.evidence_ids.iter().map(String::as_str));
+        }
+        let mut candidate_covered = false;
+        for line in &candidate.lineage {
+            // Every candidate must cite at least one attributable original
+            // excerpt, not merely a creator note or metadata observation.
+            // The batch must additionally cite three distinct such origins.
+            if line.evidence.iter().any(|item| {
+                script_evidence.contains(item.id.as_str()) && original_source_excerpt(item)
+            }) {
+                candidate_covered = true;
+                cited_sources.insert(line.source_id);
+            }
+        }
+        if !candidate_covered {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate has no attributable original source citation".into(),
+            ));
+        }
+        let narration = candidate
+            .draft
+            .beats
+            .iter()
+            .map(|beat| beat.narration.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        // The source-copy check covers every user-visible generated text field.
+        // A model must not hide copied passages in an on-screen line, caption,
+        // CTA or shot suggestion instead of the main spoken narration.
+        let mut generated_text = vec![narration.as_str(), candidate.draft.title.as_str()];
+        if let Some(cta) = candidate.draft.cta.as_deref() {
+            generated_text.push(cta);
+        }
+        if let Some(caption) = candidate.draft.caption.as_deref() {
+            generated_text.push(caption);
+        }
+        for beat in &candidate.draft.beats {
+            if let Some(text) = beat.on_screen_text.as_deref() {
+                generated_text.push(text);
+            }
+            for shot in &beat.shots {
+                generated_text.push(shot.visual.as_str());
+                generated_text.push(shot.purpose.as_str());
+            }
+        }
+        for claim in &candidate.draft.claims {
+            generated_text.push(claim.assertion.as_str());
+        }
+        for finding in &candidate.review_findings {
+            generated_text.push(finding.concern.as_str());
+            generated_text.push(finding.recommendation.as_str());
+        }
+        generated_text.push(candidate.angle.hook.as_str());
+        generated_text.push(candidate.angle.approach.as_str());
+        generated_text.push(candidate.angle.promise.as_str());
+        for beat in &candidate.angle.outline {
+            generated_text.push(beat.intent.as_str());
+        }
+        // Check across visible field boundaries as well. Splitting a
+        // transcript passage into a short caption and an on-screen label
+        // must not defeat the 12-word verbatim-copy threshold.
+        let visible_words = originality_words(&generated_text.join(" "));
+        if visible_words
+            .windows(SOURCE_WINDOW)
+            .any(|window| source_windows.contains(window))
+        {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "script reproduces an extended source passage".into(),
+            ));
+        }
+
+        // Only a genuinely short FINAL CTA beat may be excluded from
+        // diversity checks. A model cannot evade originality by labeling
+        // long or nonterminal story narration "cta", or by putting a long
+        // copied story into the separately exported CTA field.
+        let mut creative_parts = candidate
+            .draft
+            .beats
+            .iter()
+            .enumerate()
+            .filter(|(index, beat)| {
+                !(*index + 1 == candidate.draft.beats.len()
+                    && beat.role == scriptotar_ai::writing::BeatRole::Cta
+                    && originality_words(&beat.narration).len() <= SHORT_SHARED_CTA_WORDS)
+            })
+            .map(|(_, beat)| beat.narration.as_str())
+            .collect::<Vec<_>>();
+        if let Some(cta) = candidate.draft.cta.as_deref() {
+            if originality_words(cta).len() > SHORT_SHARED_CTA_WORDS {
+                creative_parts.push(cta);
+            }
+        }
+        // Substantial captions/on-screen passages are often the actual script
+        // in text-led videos. Distinct six-word voiceovers must not disguise
+        // an otherwise cloned long story in these exported fields. Routine
+        // short labels and reusable closing prompts remain exempt.
+        if let Some(caption) = candidate.draft.caption.as_deref() {
+            if originality_words(caption).len() > SHORT_SHARED_CTA_WORDS {
+                creative_parts.push(caption);
+            }
+        }
+        for beat in &candidate.draft.beats {
+            if let Some(on_screen) = beat.on_screen_text.as_deref() {
+                if originality_words(on_screen).len() > SHORT_SHARED_CTA_WORDS {
+                    creative_parts.push(on_screen);
+                }
+            }
+        }
+        let creative_narration = creative_parts.join(" ");
+        let creative_words = originality_words(&creative_narration);
+        // A one- or two-word hook plus a common CTA is not a meaningfully
+        // distinct full script. Short-form scripts remain supported, but must
+        // contain at least a small amount of original creative narration.
+        if creative_words.len() < 6 {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "candidate creative narration is too short".into(),
+            ));
+        }
+        scripts.push(creative_words);
+    }
+
+    if candidates.len() == 3 && cited_sources.len() < 3 {
+        return Err(WritingWorkflowError::InvalidResponse(
+            "three-script batch does not cite three distinct Study sources".into(),
+        ));
+    }
+
+    for left in 0..scripts.len() {
+        for right in (left + 1)..scripts.len() {
+            let left_words = &scripts[left];
+            let right_words = &scripts[right];
+            if left_words == right_words {
+                return Err(WritingWorkflowError::DuplicateOrSimilar);
+            }
+            // A fixed 15-word floor allowed one-word edits of 10-14 word
+            // scripts to bypass diversity checks. Choose a shorter n-gram
+            // for shorter narrations instead. The smaller-script overlap
+            // ratio handles different-length candidates without using CTA.
+            let shorter = left_words.len().min(right_words.len());
+            let (window, minimum_shared, minimum_percent) = if shorter >= 15 {
+                (LONG_SCRIPT_WINDOW, 3, 60)
+            } else if shorter >= 10 {
+                (SHORT_SCRIPT_WINDOW, 3, 60)
+            } else if shorter >= 6 {
+                (VERY_SHORT_SCRIPT_WINDOW, 2, 60)
+            } else {
+                (VERY_SHORT_SCRIPT_WINDOW, 2, 80)
+            };
+            let left_shingles: HashSet<Vec<String>> =
+                left_words.windows(window).map(<[String]>::to_vec).collect();
+            let right_shingles: HashSet<Vec<String>> = right_words
+                .windows(window)
+                .map(<[String]>::to_vec)
+                .collect();
+            let smaller = left_shingles.len().min(right_shingles.len());
+            if smaller == 0 {
+                continue;
+            }
+            let shared = left_shingles.intersection(&right_shingles).count();
+            if shared >= minimum_shared && shared * 100 >= smaller * minimum_percent {
+                return Err(WritingWorkflowError::DuplicateOrSimilar);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn originality_words(text: &str) -> Vec<String> {
+    // Arabic vowel marks, tatweel and invisible format characters must not
+    // split a copied word into fragments that bypass the lexical safety check.
+    // Keep this deterministic and dependency-free for offline evidence tests.
+    let mut words = Vec::new();
+    let mut current = String::new();
+    for character in text.chars() {
+        let is_format_mark =
+            ['\u{0640}', '\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'].contains(&character);
+        let is_arabic_mark = ('\u{0610}'..='\u{061A}').contains(&character)
+            || ('\u{064B}'..='\u{065F}').contains(&character)
+            || character == '\u{0670}'
+            || ('\u{06D6}'..='\u{06ED}').contains(&character)
+            || ('\u{08D3}'..='\u{08FF}').contains(&character);
+        // Unicode direction controls can be inserted between every letter
+        // without changing visible Arabic/English words. Treat these as
+        // ignorable for originality admission, not token boundaries.
+        let is_bidi_control = character == '\u{061C}'
+            || character == '\u{200E}'
+            || character == '\u{200F}'
+            || character == '\u{2060}'
+            || ('\u{202A}'..='\u{202E}').contains(&character)
+            || ('\u{2066}'..='\u{2069}').contains(&character);
+        if is_format_mark || is_arabic_mark || is_bidi_control {
+            continue;
+        }
+        let normalized = match character {
+            'أ' | 'إ' | 'آ' | 'ٱ' => 'ا',
+            _ => character,
+        };
+        if normalized.is_alphanumeric() {
+            current.extend(normalized.to_lowercase());
+        } else if !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 pub(super) fn lineage_for(
@@ -599,8 +927,11 @@ where
     let step = format!("revise-{}-{}", candidate.draft.id, beat_id);
     let proposed = execute_step(gate, provider, stop, plan, &step, &request)?;
     check_current(current, plan)?;
-    writing::parse_revision_proposal(&proposed, &input)
+    let replacement = writing::parse_revision_proposal(&proposed, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    // Do not expose copied source prose merely because the caller requested
+    // a preview. Human acceptance and SQLite CAS remain separate boundaries.
+    reject_extended_source_copy(&plan.context, &replacement.replacement_narration)?;
     Ok(proposed)
 }
 
@@ -632,6 +963,13 @@ where
     check_current(current, plan)?;
     let review = writing::parse_review(&proposed, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    // An optional model review remains user-visible even when the caller
+    // does not persist it. Apply the same transcript-copy protection before
+    // returning the advisory text, not only at the later SQLite sink.
+    for finding in &review.findings {
+        reject_extended_source_copy(&plan.context, &finding.concern)?;
+        reject_extended_source_copy(&plan.context, &finding.recommendation)?;
+    }
     let mut updated = candidate.clone();
     updated.review_findings = review.findings;
     Ok(updated)
@@ -671,6 +1009,7 @@ pub fn apply_reviewed_beat_revision(
     };
     let proposal = writing::parse_revision_proposal(response_json, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    reject_extended_source_copy(context, &proposal.replacement_narration)?;
     let updated = writing::apply_beat_revision(
         &candidate.draft,
         &BeatRevision {

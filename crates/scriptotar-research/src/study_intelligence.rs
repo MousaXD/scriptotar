@@ -131,6 +131,15 @@ pub struct StudySourceFinding {
     /// Exact scanned_at (research) or updated_at (transcript) at extraction.
     /// A later update must invalidate a persisted report, not silently reuse it.
     pub origin_revision: Option<String>,
+    /// SHA-256 of the actual canonical origin record at analysis time.
+    /// Legacy reports without this binding fail closed at the host boundary.
+    #[serde(default)]
+    pub origin_sha256: Option<String>,
+    /// The exact selected StudySource fingerprint and caller-visible revision.
+    #[serde(default)]
+    pub attachment_fingerprint: Option<String>,
+    #[serde(default)]
+    pub attachment_revision: Option<String>,
     pub metrics: Option<ObservedMetrics>,
     pub observations: Vec<StudyPatternObservation>,
     pub limitations: Vec<String>,
@@ -510,7 +519,7 @@ pub fn analyze_study_sources(
                 counts
                     .entry(feature)
                     .or_default()
-                    .insert(source.study_source_id);
+                    .insert(source.reference_id);
             }
         }
         let origin_revision = source
@@ -526,6 +535,9 @@ pub fn analyze_study_sources(
             collected_at: source.collected_at,
             access: source.access,
             origin_revision,
+            origin_sha256: None,
+            attachment_fingerprint: None,
+            attachment_revision: None,
             metrics,
             observations,
             limitations,
@@ -534,7 +546,7 @@ pub fn analyze_study_sources(
     let feature_support = counts.into_iter().map(|(feature, ids)| StudyFeatureSupport {
         feature,
         distinct_selected_sources: ids.len(),
-        meaning: "Number of distinct selected sources with a transcript hypothesis; not a success, causality or retention measure.".into(),
+        meaning: "Number of distinct original transcript sources with a hypothesis; repeated Study attachments do not count twice. Not a success, causality or retention measure.".into(),
     }).collect();
     Ok(StudyResearchReport {
         project_id,
@@ -775,7 +787,7 @@ mod tests {
                 }),
             });
         }
-        let report = analyze_study_sources(p, st, when(), sources).unwrap();
+        let report = analyze_study_sources(p, st, when(), sources.clone()).unwrap();
         assert_eq!(report.sources.len(), 3);
         assert!(report.source_text_is_untrusted_data);
         assert!(report
@@ -787,6 +799,23 @@ mod tests {
             .observations
             .iter()
             .all(|o| o.confidence != SourceConfidence::Unverified)));
+
+        // Two distinct Study attachments referring to the SAME original
+        // transcript must not inflate observed cross-source feature counts.
+        let mut aliased = sources;
+        let original_origin = aliased[0].reference_id;
+        let original_locator = aliased[0].locator.clone();
+        let original_transcript = aliased[0].transcript.clone();
+        aliased[1].reference_id = original_origin;
+        aliased[1].locator = original_locator;
+        aliased[1].transcript = original_transcript;
+        let repeated_origin = analyze_study_sources(p, st, when(), aliased).unwrap();
+        assert_eq!(repeated_origin.sources.len(), 3);
+        assert!(repeated_origin
+            .feature_support
+            .iter()
+            .any(|item| item.feature == TranscriptFeature::CallToAction
+                && item.distinct_selected_sources == 2));
     }
     #[test]
     fn unregistered_study_service_is_valid_and_formatted_rust() {
