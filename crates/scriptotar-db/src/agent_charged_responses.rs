@@ -130,10 +130,25 @@ pub struct SealedChargedResponse {
     pub cost_microusd: u64,
 }
 
+struct ChargedResponseRow {
+    attempt: i64,
+    provider: String,
+    wire: String,
+    request_id: String,
+    receipt: String,
+    project: String,
+    study: String,
+    bytes: Vec<u8>,
+    digest: String,
+    input: i64,
+    output: i64,
+    cost: i64,
+}
+
 fn response_row(
     db: &rusqlite::Connection,
     key: ExternalEffectKey<'_>,
-) -> RepositoryResult<Option<(i64, String, String, String, String, String, String, Vec<u8>, String, i64, i64, i64)>> {
+) -> RepositoryResult<Option<ChargedResponseRow>> {
     db.query_row(
         "SELECT attempt,provider,request_sha256,provider_request_id,receipt_id,
                 project_id,study_id,response_bytes,response_sha256,
@@ -144,11 +159,20 @@ fn response_row(
         params![key.idempotency_key, key.project.to_string(), key.study.to_string(),
                 key.run_id, key.step_id],
         |row| {
-            Ok((
-                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
-                row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
-                row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
-            ))
+            Ok(ChargedResponseRow {
+                attempt: row.get(0)?,
+                provider: row.get(1)?,
+                wire: row.get(2)?,
+                request_id: row.get(3)?,
+                receipt: row.get(4)?,
+                project: row.get(5)?,
+                study: row.get(6)?,
+                bytes: row.get(7)?,
+                digest: row.get(8)?,
+                input: row.get(9)?,
+                output: row.get(10)?,
+                cost: row.get(11)?,
+            })
         },
     )
     .optional()
@@ -160,8 +184,10 @@ fn verified_charged_response(
     key: ExternalEffectKey<'_>,
     effect: &ExternalEffect,
 ) -> RepositoryResult<Option<SealedChargedResponse>> {
-    let Some((attempt, provider, wire, request_id, receipt, project, study,
-              bytes, digest, input, output, cost)) = response_row(db, key)? else {
+    let Some(ChargedResponseRow {
+        attempt, provider, wire, request_id, receipt, project, study,
+        bytes, digest, input, output, cost,
+    }) = response_row(db, key)? else {
         return Ok(None);
     };
     let original = std::str::from_utf8(&bytes)
