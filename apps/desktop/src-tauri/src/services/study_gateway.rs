@@ -1546,6 +1546,46 @@ mod tests {
     #[test]
     fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
         use scriptotar_agent::RunState;
+        use scriptotar_ai::{AiRequest, AiResponse};
+        use super::super::study_writing::{
+            DurablePermissionBoundary, NeverStop, StepAdmission, StudyWritingContext, WriteResult,
+            WritingTextProvider, WritingWorkflowError,
+        };
+        use std::collections::HashMap;
+
+        /// Recorded outputs here are zero-egress test fixtures, NOT v14
+        /// authenticated charged-provider outcomes.
+        struct RecordedFixture {
+            replies: HashMap<String, String>,
+        }
+        impl DurablePermissionBoundary for RecordedFixture {
+            fn begin(
+                &mut self,
+                _run: &str,
+                _context: &StudyWritingContext,
+                step: &str,
+                _request: &AiRequest,
+            ) -> WriteResult<StepAdmission> {
+                self.replies.get(step).cloned().map(|response_json| {
+                    StepAdmission::Recorded { response_json }
+                }).ok_or(WritingWorkflowError::UncertainEffect)
+            }
+            fn record_response(&mut self, _effect_key: &str, _response: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+            fn mark_uncertain(&mut self, _effect_key: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+            fn abandon_before_dispatch(&mut self, _effect_key: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+        }
+        struct NeverDispatch;
+        impl WritingTextProvider for NeverDispatch {
+            fn generate(&mut self, _request: &AiRequest) -> Result<AiResponse, ()> {
+                panic!("recorded test outcomes must never send a new provider request");
+            }
+        }
 
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
@@ -1680,6 +1720,14 @@ mod tests {
 
         // Same timestamp / same attachment ID is not enough to preserve the
         // original source's content digest or the user's research approval.
+        let modified_origin = seal.sources[0].origin_id;
+        let original_text: String = db
+            .query_row(
+                "SELECT text FROM transcripts WHERE id=?1",
+                rusqlite::params![modified_origin.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
         db.execute(
             "UPDATE transcripts SET text='Substituted content with unchanged timestamp'
              WHERE id=?1",
@@ -1689,6 +1737,109 @@ mod tests {
         assert!(reopened
             .prepare_three_writing_plan_from_research(project, study, "source-changed", artifact)
             .is_err());
+        // Restore the same original bytes without modifying approved research
+        // identity. All four explicitly recorded test outcomes can now pass
+        // through the actual host and v11 SQLite sink with no provider call.
+        db.execute(
+            "UPDATE transcripts SET text=?1 WHERE id=?2",
+            rusqlite::params![original_text, modified_origin.to_string()],
+        )
+        .unwrap();
+        let mut distinct_origins = HashSet::new();
+        let selected_evidence = plan
+            .context
+            .evidence
+            .iter()
+            .filter(|item| {
+                item.status == WritingEvidenceStatus::Attributed
+                    && distinct_origins.insert(item.locator.source_id.clone())
+            })
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(selected_evidence.len(), 3);
+        let e = &selected_evidence;
+        let angles = serde_json::json!({
+            "angles": [
+                {"id":"contrast","approach":"contrast two decisions",
+                 "hook":"One neighborhood, two different choices",
+                 "promise":"Discover a useful contrast",
+                 "outline":[{"role":"hook","intent":"compare options","estimated_seconds":10}],
+                 "evidence_ids":[e[0]]},
+                {"id":"journey","approach":"a personal learning diary",
+                 "hook":"A notebook changed my weekend route",
+                 "promise":"An original journey of discovery",
+                 "outline":[{"role":"hook","intent":"share a journey","estimated_seconds":12}],
+                 "evidence_ids":[e[1]]},
+                {"id":"guide","approach":"practical preparation",
+                 "hook":"Build your own helpful checklist",
+                 "promise":"Simple grounded guidance",
+                 "outline":[{"role":"hook","intent":"teach practical steps","estimated_seconds":9}],
+                 "evidence_ids":[e[2]]}
+            ]
+        }).to_string();
+        let draft = |index: usize, angle: &str, evidence: &str, narration: &str| {
+            serde_json::json!({
+                "id":format!("draft-{index}"),
+                "angle_id":angle,
+                "title":format!("Original research script {index}"),
+                "language":"Arabic",
+                "beats":[
+                    {"id":"hook","role":"hook","narration":narration,
+                     "on_screen_text":null,"shots":[],"evidence_ids":[evidence],
+                     "manually_edited":true},
+                    {"id":"cta","role":"cta",
+                     "narration":"Invite others to share their experiences.",
+                     "on_screen_text":null,"shots":[],"evidence_ids":[],
+                     "manually_edited":false}
+                ],
+                "cta":"Share your own story",
+                "caption":"Source-grounded original narration",
+                "claims":[{"id":"claim-a","beat_id":"hook",
+                           "assertion":"The transcript addresses this topic",
+                           "status":"unverified","evidence_ids":[evidence]}]
+            }).to_string()
+        };
+        let mut gate = RecordedFixture {
+            replies: HashMap::from([
+                ("angles".into(), angles),
+                ("draft-1".into(), draft(1, "contrast", &e[0],
+                    "Two routes reveal different community experiences across the neighborhood.")),
+                ("draft-2".into(), draft(2, "journey", &e[1],
+                    "I followed my small notebook to discover a quiet walking route.")),
+                ("draft-3".into(), draft(3, "guide", &e[2],
+                    "First gather examples, next compare options, then share practical advice.")),
+            ]),
+        };
+        let mut provider = NeverDispatch;
+        let committed = reopened
+            .generate_three_writing_with_boundary(
+                &plan,
+                &mut gate,
+                &mut provider,
+                &NeverStop,
+            )
+            .unwrap();
+        assert_eq!(committed.len(), 3);
+        assert_eq!(committed.iter().collect::<HashSet<_>>().len(), 3);
+        assert_eq!(
+            reopened.list_studio_writing_batches(project, study).unwrap().len(),
+            1,
+        );
+        drop(reopened);
+        let restarted = AppServices::new(dir.path()).unwrap();
+        let recovered = restarted
+            .generate_three_writing_with_boundary(
+                &plan,
+                &mut gate,
+                &mut provider,
+                &NeverStop,
+            )
+            .unwrap();
+        assert_eq!(recovered, committed, "read-only restart replay is exact-once");
+        assert_eq!(
+            restarted.list_studio_writing_batches(project, study).unwrap().len(),
+            1,
+        );
     }
 
     /// Genuine AppServices + canonical transcripts + four controlled no-cost
