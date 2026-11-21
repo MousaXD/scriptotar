@@ -194,6 +194,13 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         fail_after: Option<usize>,
     ) -> WriteResult<[Uuid; 3]> {
         batch.context.validate()?;
+        if self.current.require_approved_research_for_acceptance()
+            && batch.context.approved_research.is_none()
+        {
+            return Err(WritingWorkflowError::Denied(
+                "the production v11 sink requires approved research".into(),
+            ));
+        }
         if batch.candidates.len() != 3
             || batch.run_id.is_empty()
             || batch.run_id.len() > 128
