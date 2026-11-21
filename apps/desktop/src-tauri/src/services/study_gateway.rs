@@ -490,6 +490,7 @@ impl AppServices {
     /// Private production entrypoint: reconstruct canonical request material
     /// directly from the active Study, never from a browser-supplied context.
     /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    #[cfg(test)] // Legacy no-cost fixtures must not be a production entrypoint.
     #[allow(dead_code)]
     pub(super) fn prepare_three_writing_plan(
         &self,
@@ -502,6 +503,24 @@ impl AppServices {
         super::study_writing::prepare_three(run_id, current)
     }
 
+    /// Authoritative production writing plan: the user-selected research
+    /// artifact must be the exact completed, Applied AnalyzeEvidence outcome.
+    /// The private loader rechecks source bytes, digest, selection, revision,
+    /// original transcript locators and research run on every later step.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_writing_plan_from_research(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        run_id: &str,
+        approved_artifact_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let verified =
+            CurrentStudy::load_for_research(self, project_id, study_id, approved_artifact_id)?;
+        super::study_writing::prepare_three(run_id, verified)
+    }
+
     /// Production service orchestration seam: canonical CurrentStudy +
     /// four independently authorized provider steps + atomic v11 persistence.
     /// The caller-supplied boundary MUST enforce signed approval, exact
@@ -512,6 +531,33 @@ impl AppServices {
     /// and complete four-step consent lifecycle are registered in Tauri.
     #[allow(dead_code)]
     pub(super) fn generate_three_writing_with_boundary<B, P, S>(
+        &self,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
+        if plan.context.approved_research.is_none() {
+            return Err(super::study_writing::WritingWorkflowError::Denied(
+                "approved research artifact is required for production generation".into(),
+            ));
+        }
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: self,
+        };
+        super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+    }
+
+    /// Offline integration fixtures retain the old CurrentStudy-only path.
+    /// This method is not compiled into the installed production executable.
+    #[cfg(test)]
+    fn generate_three_offline_fixture_with_boundary<B, P, S>(
         &self,
         plan: &super::study_writing::GenerationPlan,
         boundary: &mut B,
@@ -539,7 +585,12 @@ impl AppServices {
         &self,
         batch: &super::study_writing::GeneratedBatch,
     ) -> super::study_writing::WriteResult<[Uuid; 3]> {
-        use super::study_writing::AtomicCandidateStore;
+        use super::study_writing::{AtomicCandidateStore, WritingWorkflowError};
+        if batch.context.approved_research.is_none() {
+            return Err(WritingWorkflowError::Denied(
+                "approved research artifact is required for batch persistence".into(),
+            ));
+        }
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
             current: self,
@@ -1260,6 +1311,81 @@ impl super::study_writing::CurrentStudy for AppServices {
             input,
         )
     }
+
+    fn load_for_research(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        artifact_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+        use super::study_writing::{
+            ApprovedResearch, ApprovedResearchSource, CurrentStudy, WritingWorkflowError,
+        };
+        // The ordinary canonical Study view supplies the persisted brief and
+        // exact current attachment membership, never the research findings.
+        let base = CurrentStudy::load(self, project_id, study_id)?;
+        let verified = self
+            .research_writing_context(project_id, study_id, artifact_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if verified.approved_artifact_id != artifact_id
+            || verified.approved_run_id.is_empty()
+            || verified.project_id != project_id
+            || verified.study_id != study_id
+            || !verified.meets_three_source_evidence_floor
+            || verified.attributed_source_count < 3
+            || !verified.source_text_is_untrusted_data
+            || verified.sources.len() != base.sources.len()
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let mut selected = HashSet::new();
+        let mut origins = HashSet::new();
+        let mut seals = Vec::with_capacity(verified.sources.len());
+        for source in &verified.sources {
+            if !selected.insert(source.study_source_id)
+                || !origins.insert(source.origin_id)
+                || !matches!(
+                    source.access,
+                    super::study_research::StudyResearchAccess::Available
+                        | super::study_research::StudyResearchAccess::Partial
+                )
+                || !base.sources.iter().any(|candidate| {
+                    candidate.study_source_id == source.study_source_id
+                        && candidate.origin_id == source.origin_id
+                        && candidate.fingerprint == source.attachment_fingerprint
+                        && candidate.source_revision == source.attachment_revision
+                        && candidate.collected_at == source.collected_at
+                })
+            {
+                return Err(WritingWorkflowError::StaleContext);
+            }
+            seals.push(ApprovedResearchSource {
+                study_source_id: source.study_source_id,
+                origin_id: source.origin_id,
+                origin_sha256: source.source_sha256.clone(),
+                attachment_fingerprint: source.attachment_fingerprint.clone(),
+                attachment_revision: source.attachment_revision.clone(),
+                collected_at: source.collected_at.clone(),
+            });
+        }
+        seals.sort_by_key(|source| source.study_source_id);
+        let mut bound = base.clone();
+        bound.approved_research = Some(ApprovedResearch {
+            artifact_id,
+            run_id: verified.approved_run_id,
+            sources: seals,
+        });
+        bound.evidence = verified.evidence;
+        bound.findings = verified.findings;
+        // Compare a second complete canonical view to reject changes while
+        // the approved report was loaded. Agent 01's shared dispatch/SQLite
+        // barrier still owns cross-process mutation linearization at send.
+        if CurrentStudy::load(self, project_id, study_id)? != base {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        bound.validate()?;
+        Ok(bound)
+    }
 }
 
 #[cfg(test)]
@@ -1614,7 +1740,7 @@ mod tests {
             steps: 0,
         };
         assert!(matches!(
-            services.generate_three_writing_with_boundary(
+            services.generate_three_offline_fixture_with_boundary(
                 &plan,
                 &mut permit,
                 &mut provider,
@@ -1625,7 +1751,7 @@ mod tests {
         assert_eq!(provider.calls, 0);
         permit.approved = true;
         let stored = services
-            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .generate_three_offline_fixture_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
             .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
@@ -1720,7 +1846,7 @@ mod tests {
             calls: 0,
         };
         let recovered = reopened
-            .generate_three_writing_with_boundary(
+            .generate_three_offline_fixture_with_boundary(
                 &plan,
                 &mut no_approval,
                 &mut no_provider,
