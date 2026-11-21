@@ -121,7 +121,30 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
               AND b.effect_attempt=OLD.attempt
         )
          AND NEW.status IN ('cancelled','not_executed')
-        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation status is frozen'); END;",
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch cancellation status is frozen'); END;
+        -- The v8 claim is the canonical legacy single-send fence. A separate
+        -- SQLite writer must not silently change/delete it while the bound
+        -- v10 effect is RESERVED or DISPATCHED. After v10 receipt/recovery
+        -- moves that effect to terminal/UNCERTAIN, its own transaction may
+        -- update v8 to APPLIED or UNKNOWN as originally designed.
+        CREATE TRIGGER provider_dispatch_barrier_v8_update
+        BEFORE UPDATE ON agent_effects
+        WHEN EXISTS (
+            SELECT 1 FROM provider_dispatch_barrier b
+            JOIN agent_external_effects e
+              ON e.idempotency_key=b.effect_idempotency_key
+            WHERE b.effect_idempotency_key=OLD.idempotency_key
+              AND b.effect_attempt=e.attempt
+              AND e.status IN ('reserved','dispatched')
+        )
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch v8 fence is frozen'); END;
+        CREATE TRIGGER provider_dispatch_barrier_v8_delete
+        BEFORE DELETE ON agent_effects
+        WHEN EXISTS (
+            SELECT 1 FROM provider_dispatch_barrier b
+            WHERE b.effect_idempotency_key=OLD.idempotency_key
+        )
+        BEGIN SELECT RAISE(ABORT, 'provider dispatch v8 fence cannot be deleted'); END;",
     )?;
     for table in FREEZE_TABLES {
         for (verb, suffix) in [
@@ -257,11 +280,18 @@ impl SqliteStore {
         if let Some(bound) = effect {
             let valid_effect: i64 = tx
                 .query_row(
-                    "SELECT COUNT(*) FROM agent_external_effects
-                     WHERE idempotency_key=?1 AND project_id=?2 AND study_id=?3
-                       AND run_id=?4 AND step_id=?5 AND attempt=?6
-                       AND provider=?7 AND fingerprint=?8
-                       AND status='reserved' AND cancel_requested=0",
+                    "SELECT COUNT(*) FROM agent_external_effects e
+                     JOIN agent_effects legacy
+                       ON legacy.idempotency_key=e.idempotency_key
+                      AND legacy.project_id=e.project_id
+                      AND legacy.study_id=e.study_id
+                      AND legacy.run_id=e.run_id
+                      AND legacy.step_id=e.step_id
+                     WHERE e.idempotency_key=?1 AND e.project_id=?2
+                       AND e.study_id=?3 AND e.run_id=?4 AND e.step_id=?5
+                       AND e.attempt=?6 AND e.provider=?7 AND e.fingerprint=?8
+                       AND e.status='reserved' AND e.cancel_requested=0
+                       AND legacy.status='reserved'",
                     params![
                         bound.idempotency_key,
                         project_id.to_string(),
