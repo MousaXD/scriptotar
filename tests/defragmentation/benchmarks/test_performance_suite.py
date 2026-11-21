@@ -372,6 +372,7 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
 
 
+from . import native_ui_trace as native_ui_trace_module
 from .native_ui_trace import (summarize_ui_trace, UI_KIND, MAX_TRACE_BYTES,
                               MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS, main as ui_trace_main)
 
@@ -450,8 +451,10 @@ class NativeUiTraceContractTests(unittest.TestCase):
                 raced.write_text("KEEP ORIGINAL", encoding="utf-8")
                 return {"scope": "SYNTHETIC_UNVERIFIED"}
             with patch("sys.argv", argv(raced)):
-                with patch("tests.defragmentation.benchmarks.native_ui_trace.summarize_ui_trace",
-                           side_effect=create_during_parse):
+                # Patch the actual relative module, regardless of whether CI
+                # imports it as defragmentation.* or tests.defragmentation.*.
+                with patch.object(native_ui_trace_module, "summarize_ui_trace",
+                                  side_effect=create_during_parse):
                     with self.assertRaises(FileExistsError):
                         ui_trace_main()
             self.assertEqual(raced.read_text(encoding="utf-8"), "KEEP ORIGINAL")
