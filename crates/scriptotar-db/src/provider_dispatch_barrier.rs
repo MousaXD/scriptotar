@@ -17,7 +17,7 @@ use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use scriptotar_core::{now_rfc3339, RepositoryError, RepositoryResult};
 use uuid::Uuid;
 
-use crate::{storage_error, SqliteStore};
+use super::{storage_error, SqliteStore};
 
 /// Canonical project, Study, transcript, evidence, research and writing inputs.
 /// Never protect agent_external_effects here: its pre-send CAS and receipt
