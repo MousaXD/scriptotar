@@ -397,16 +397,29 @@ impl SqliteStore {
                     // No successful DISPATCHED CAS: this bound attempt cannot
                     // have made a provider request through the certified path.
                     Some((status, _, _)) if status == "reserved" => {
-                        // Only an original never-dispatched attempt can be
-                        // closed here. A later retry has earlier billed history
-                        // and requires independent durable recovery.
-                        if attempt != 1 {
-                            false
+                        // A retry may also be closed without a network send,
+                        // but ONLY if the preceding attempt carries durable
+                        // provider nonexecution proof. Its v8 fence must
+                        // return to UNKNOWN rather than NOT_APPLIED.
+                        let previously_proven = if attempt == 1 {
+                            true
                         } else {
+                            let proof_count: i64 = tx
+                                .query_row(
+                                    "SELECT COUNT(*) FROM agent_external_attempt_history
+                                     WHERE idempotency_key=?1 AND attempt=?2
+                                       AND length(evidence_id)>0",
+                                    params![&key, attempt - 1],
+                                    |row| row.get(0),
+                                )
+                                .map_err(storage_error)?;
+                            proof_count == 1
+                        };
+                        if previously_proven {
                             pre_send_abort =
                                 Some((key.clone(), run.clone(), step.clone(), attempt));
-                            true
                         }
+                        previously_proven
                     }
                     // A terminal charge has a durable provider receipt; a
                     // certified nonexecution/cancellation has provider evidence.
@@ -466,15 +479,18 @@ impl SqliteStore {
                     "provider reservation changed before safe pre-send cancellation".into(),
                 ));
             }
-            // The original v8 claim must also become terminal in the SAME
-            // commit; otherwise checkpoint recovery could misread an orphan.
+            // A first no-send claim is terminal NOT_APPLIED. A later
+            // proven-nonexecution retry must restore UNKNOWN to preserve
+            // the history of its earlier dispatched attempt. The gate is
+            // already removed, and both updates commit atomically.
+            let legacy_status = if attempt == 1 { "not_applied" } else { "unknown" };
             let legacy = tx
                 .execute(
                     "UPDATE agent_effects
-                     SET status='not_applied',revision=revision+1,updated_at=?1
-                     WHERE idempotency_key=?2 AND run_id=?3 AND step_id=?4
+                     SET status=?1,revision=revision+1,updated_at=?2
+                     WHERE idempotency_key=?3 AND run_id=?4 AND step_id=?5
                        AND status='reserved'",
-                    params![now, key, run, step],
+                    params![legacy_status, now, key, run, step],
                 )
                 .map_err(storage_error)?;
             if legacy != 1 {
