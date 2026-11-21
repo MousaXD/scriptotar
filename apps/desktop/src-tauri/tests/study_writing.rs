@@ -1472,6 +1472,41 @@ fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
 }
 
 #[test]
+fn four_recorded_outputs_repair_local_batch_rollback_without_a_fifth_provider_call() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let path = temp.path().join("recorded-replay.sqlite");
+    let mut sink = SqlFixtureSink::open(&path, current.0.clone());
+    sink.fail_at = Some(1);
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(gate.step_response.len(), 4);
+    assert_eq!(sink.count(), 0);
+    drop(sink);
+
+    // This fixture intentionally represents an already-authenticated set of
+    // recorded responses. The production v14 storage and receipt attestations
+    // remain Agent 02/00 work; a vanished billed response MUST stay uncertain.
+    let mut reopened = SqlFixtureSink::open(&path, current.0.clone());
+    provider.fail_on = Some(5);
+    let ids = generate_three(
+        &plan,
+        &current,
+        &mut gate,
+        &mut provider,
+        &stop,
+        &mut reopened,
+    )
+    .unwrap();
+    assert_eq!(provider.calls, 4, "recorded outcomes must never resend");
+    assert_eq!(gate.step_response.len(), 4);
+    assert_eq!(reopened.count(), 3);
+    assert_eq!(reopened.get(ids[0]).candidates.len(), 3);
+}
+
+#[test]
 fn canonical_concurrent_same_run_commits_only_three_drafts() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, _current, batch) = canonical_batch_fixture();
