@@ -484,6 +484,23 @@ pub struct ClaimSourceNavigation {
     pub attribution: SourceAttribution,
 }
 
+/// An evidence ID must have one and only one authoritative resolved record.
+/// Collisions never silently pick the last source for navigation/citations.
+fn unique_resolved_evidence<'a>(
+    resolved: &'a [ResolvedEvidence],
+) -> HashMap<&'a str, Option<&'a ResolvedEvidence>> {
+    let mut by_id = HashMap::new();
+    for evidence in resolved {
+        if by_id
+            .insert(evidence.evidence_id.as_str(), Some(evidence))
+            .is_some()
+        {
+            by_id.insert(evidence.evidence_id.as_str(), None);
+        }
+    }
+    by_id
+}
+
 fn source_attribution(state: EvidenceState) -> SourceAttribution {
     match state {
         EvidenceState::Unreviewed => SourceAttribution::LiteralExcerptUnreviewed,
@@ -882,11 +899,7 @@ impl AppServices {
         // Resolve only declared FactualClaim IDs against real Study evidence.
         // Unknown IDs are deliberately retained as invalid citations so the
         // report records attempted forgery rather than silently dropping them.
-        let known: HashMap<&str, &ResolvedEvidence> = ctx
-            .evidence
-            .iter()
-            .map(|entry| (entry.evidence_id.as_str(), entry))
-            .collect();
+        let known = unique_resolved_evidence(&ctx.evidence);
         let mut claims = verification::extract_draft_claims(draft);
         for (proposal, supplied) in claims.iter_mut().zip(draft.claims.iter()) {
             proposal.citations = supplied
@@ -894,7 +907,7 @@ impl AppServices {
                 .iter()
                 .take(17)
                 .map(|id| {
-                    if let Some(entry) = known.get(id.as_str()) {
+                    if let Some(Some(entry)) = known.get(id.as_str()) {
                         Citation {
                             evidence_id: id.clone(),
                             source_id: entry.source_id.clone(),
@@ -926,7 +939,7 @@ impl AppServices {
             .iter()
             .flat_map(|claim| {
                 claim.citations.iter().filter_map(|citation| {
-                    let evidence = known.get(citation.evidence_id.as_str())?;
+                    let evidence = known.get(citation.evidence_id.as_str())?.as_ref()?;
                     Some(ClaimSourceNavigation {
                         claim_id: claim.id.clone(),
                         evidence_id: evidence.evidence_id.clone(),
@@ -1852,6 +1865,59 @@ mod authenticity_tests {
         )
         .is_none());
     }
+    #[test]
+    fn duplicate_resolved_evidence_ids_are_never_chosen_for_navigation() {
+        use scriptotar_core::{EvidenceInput, EvidenceReference, StudySource};
+
+        let project = Uuid::new_v4();
+        let study = Uuid::new_v4();
+        let source = StudySource {
+            id: Uuid::new_v4(),
+            project_id: project,
+            study_id: study,
+            kind: StudySourceKind::Manual,
+            reference_id: None,
+            locator: "source:manual".into(),
+            manual_text: Some("Literal text".into()),
+            fingerprint: "local".into(),
+            source_revision: None,
+            collected_at: "2026-11-21T00:00:00Z".into(),
+            uncertainty: None,
+            available: true,
+            created_at: "2026-11-21T00:00:00Z".into(),
+        };
+        let reference = EvidenceReference {
+            id: Uuid::new_v4(),
+            project_id: project,
+            study_id: study,
+            input: EvidenceInput {
+                study_source_id: source.id,
+                claim: "Literal text".into(),
+                locator: "source:manual".into(),
+                timestamp_seconds: None,
+                certainty: EvidenceCertainty::Unverified,
+                uncertainty_note: None,
+            },
+            created_at: "2026-11-21T00:00:00Z".into(),
+        };
+        let binding = HostSourceBinding {
+            content_sha256: Some(verification::canonical_source_sha256(&[
+                b"Literal text",
+            ])),
+            segments: Vec::new(),
+        };
+        let first = from_study_evidence(&reference, &source, &binding);
+        let mut collision = first.clone();
+        collision.source_id = Uuid::new_v4().to_string();
+        let evidence = [first.clone(), collision];
+        assert!(unique_resolved_evidence(&evidence)
+            .get(first.evidence_id.as_str())
+            .is_some_and(Option::is_none));
+        assert!(unique_resolved_evidence(&[first.clone()])
+            .get(first.evidence_id.as_str())
+            .is_some_and(Option::is_some));
+    }
+
     #[test]
     fn immediate_read_snapshot_prevents_concurrent_sqlite_writers() {
         use tempfile::TempDir;
