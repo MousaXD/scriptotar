@@ -458,18 +458,30 @@ describe('Content Study Studio', () => {
     });
     const original = await api.getStudy('p-creator-lab', study.id);
     expect(original.revision).toBe(attached.revision);
+    // A pending local approval must not retain a clickable stale source scope
+    // after native revocation increments this same Study's persisted revision.
+    const researchSources = await api.listStudyResearchSources('p-creator-lab', study.id);
+    expect(researchSources).toHaveLength(1);
+    const pendingResearch = await api.startStudyResearch('p-creator-lab', study.id, [researchSources[0].id]);
+    const sourceReads = vi.spyOn(api, 'listStudyResearchSources');
     const provider = vi.spyOn(api, 'runAi');
     render(App, { props: { api } });
     await screen.findByRole('heading', { name: 'Creator Lab' });
     await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
     await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
     await fireEvent.click(screen.getByRole('option', { name: 'Permission withdrawal' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeEnabled());
+    const previousSourceReads = sourceReads.mock.calls.length;
     await fireEvent.click(screen.getByRole('button', { name: 'Hook breakdown — Arabic sample' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Revoke source access' }));
     expect(screen.getByText(/Linked evidence and draft history remain/)).toBeInTheDocument();
     expect((await api.getStudy('p-creator-lab', study.id)).revision).toBe(original.revision);
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm revoke' }));
     await screen.findByText('Study source access revoked. Historical evidence retained.');
+    await waitFor(() => expect(sourceReads.mock.calls.length).toBeGreaterThan(previousSourceReads));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve local analysis' })).toBeDisabled());
+    expect((await api.listStudyResearchRuns('p-creator-lab', study.id))[0].plan.id).toBe(pendingResearch.plan.id);
+    expect((await api.listStudyResearchRuns('p-creator-lab', study.id))[0].steps[0].output).toBeNull();
     const changed = await api.getStudy('p-creator-lab', study.id);
     expect(changed.sources).toEqual([]);
     expect(changed.revision).toBe(original.revision + 1);
