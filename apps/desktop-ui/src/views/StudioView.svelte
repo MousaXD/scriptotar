@@ -1190,7 +1190,7 @@
     const source = gateway;
     const current = record;
     if (!source || !current || exportingBatchId || busy || saving ||
-        loading || dirty || importingSavedResult) return;
+        loading || dirty || revocationBusy || importingSavedResult) return;
     const ownerProject = projectId;
     const ownerStudy = current.id;
     const ownerEpoch = writingBatchEpoch;
@@ -1215,7 +1215,8 @@
       // invalidates an in-flight read; never download another project's text.
       if (ownerEpoch !== writingBatchEpoch || projectId !== ownerProject ||
           studyId !== ownerStudy || record?.id !== ownerStudy ||
-          record?.revision !== current.revision ||
+          record?.revision !== current.revision || changed() || saving ||
+          revocationBusy || importingSavedResult || loading ||
           !writingBatches.includes(batch)) return;
       if (snapshots.some((item, index) =>
         item.id !== ownerStudy || item.projectId !== ownerProject ||
@@ -1577,7 +1578,7 @@
                     </div>
                   {/each}
                   <button type="button" class="button secondary"
-                    disabled={!!exportingBatchId || busy || saving || dirty || loading || importingSavedResult ||
+                    disabled={!!exportingBatchId || busy || saving || dirty || revocationBusy || loading || importingSavedResult ||
                       !batch.draftIds.every(id => record?.drafts?.some(candidate => candidate.id === id))}
                     on:click={() => void exportWritingBatch(batch)}>{t.exportAllThree}</button>
                 </div>
