@@ -624,14 +624,19 @@ impl SqliteStore {
                 ).map_err(db_error)?;
                 if settled!=1 { return Err(conflict("legacy effect fence changed before cancellation")); }
             } else {
-                let fence:String=tx.query_row(
-                    "SELECT status FROM agent_effects WHERE idempotency_key=?1
-                     AND project_id=?2 AND study_id=?3 AND run_id=?4",
-                    params![key.idempotency_key,key.project.to_string(),
-                        key.study.to_string(),key.run_id],
-                    |r|r.get(0),
+                // A proven-nonexecution retry temporarily reacquires the exact
+                // v8 RESERVED fence. Cancelling before this new attempt sends
+                // restores UNKNOWN, retaining all prior dispatched history.
+                let restored=tx.execute(
+                    "UPDATE agent_effects SET status='unknown',revision=revision+1,
+                     updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+                     AND study_id=?4 AND run_id=?5 AND step_id=?6 AND status='reserved'",
+                    params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                        key.study.to_string(),key.run_id,key.step_id],
                 ).map_err(db_error)?;
-                if fence!="unknown" { return Err(conflict("retry cancellation requires blocked v8 fence")); }
+                if restored!=1 {
+                    return Err(conflict("retry cancellation requires exact reserved v8 claim"));
+                }
             }
         } else if matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain)
             && !old.cancel_requested {
@@ -699,6 +704,30 @@ impl SqliteStore {
         }
         let evidence=old.reconciliation_id.as_deref()
             .ok_or_else(|| conflict("missing provider nonexecution proof"))?;
+        // v13 requires RESERVED in BOTH v8 and v10 at the dispatch
+        // admission boundary. The previous attempt correctly left v8
+        // UNKNOWN. Only an exact, current, provider-proven NotExecuted
+        // resolution may re-arm that original claim for a bounded new
+        // attempt, in the SAME transaction as the v10 attempt increment.
+        // A generic UNKNOWN/UNCERTAIN or a stale revision cannot be reset.
+        let rearmed=tx.execute(
+            "UPDATE agent_effects SET status='reserved',revision=revision+1,
+             updated_at=?1 WHERE idempotency_key=?2 AND project_id=?3
+             AND study_id=?4 AND run_id=?5 AND step_id=?6 AND status='unknown'
+             AND EXISTS (
+                 SELECT 1 FROM agent_external_effects e
+                 WHERE e.idempotency_key=?2 AND e.project_id=?3
+                   AND e.study_id=?4 AND e.run_id=?5 AND e.step_id=?6
+                   AND e.status='not_executed' AND e.revision=?7
+                   AND e.attempt=?8 AND e.reconciliation_id=?9
+             )",
+            params![now_rfc3339(),key.idempotency_key,key.project.to_string(),
+                key.study.to_string(),key.run_id,key.step_id,
+                expected_revision,old.attempt,evidence],
+        ).map_err(db_error)?;
+        if rearmed!=1 {
+            return Err(conflict("retry requires exact blocked v8 claim and provider proof"));
+        }
         tx.execute(
             "INSERT INTO agent_external_attempt_history(idempotency_key,attempt,evidence_id,settled_at)
              VALUES(?1,?2,?3,?4)",
