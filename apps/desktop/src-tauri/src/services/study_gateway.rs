@@ -1545,12 +1545,12 @@ mod tests {
     /// independently extracted four-source Study, must shape the writing plan.
     #[test]
     fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
-        use scriptotar_agent::RunState;
-        use scriptotar_ai::{AiRequest, AiResponse};
         use super::super::study_writing::{
             DurablePermissionBoundary, NeverStop, StepAdmission, StudyWritingContext, WriteResult,
             WritingTextProvider, WritingWorkflowError,
         };
+        use scriptotar_agent::RunState;
+        use scriptotar_ai::{AiRequest, AiResponse};
         use std::collections::HashMap;
 
         /// Recorded outputs here are zero-egress test fixtures, NOT v14
@@ -1566,9 +1566,11 @@ mod tests {
                 step: &str,
                 _request: &AiRequest,
             ) -> WriteResult<StepAdmission> {
-                self.replies.get(step).cloned().map(|response_json| {
-                    StepAdmission::Recorded { response_json }
-                }).ok_or(WritingWorkflowError::UncertainEffect)
+                self.replies
+                    .get(step)
+                    .cloned()
+                    .map(|response_json| StepAdmission::Recorded { response_json })
+                    .ok_or(WritingWorkflowError::UncertainEffect)
             }
             fn record_response(&mut self, _effect_key: &str, _response: &str) -> WriteResult<()> {
                 Err(WritingWorkflowError::UncertainEffect)
@@ -1776,7 +1778,8 @@ mod tests {
                  "outline":[{"role":"hook","intent":"teach practical steps","estimated_seconds":9}],
                  "evidence_ids":[e[2]]}
             ]
-        }).to_string();
+        })
+        .to_string();
         let draft = |index: usize, angle: &str, evidence: &str, narration: &str| {
             serde_json::json!({
                 "id":format!("draft-{index}"),
@@ -1797,7 +1800,8 @@ mod tests {
                 "claims":[{"id":"claim-a","beat_id":"hook",
                            "assertion":"The transcript addresses this topic",
                            "status":"unverified","evidence_ids":[evidence]}]
-            }).to_string()
+            })
+            .to_string()
         };
         let mut gate = RecordedFixture {
             replies: HashMap::from([
@@ -1812,32 +1816,31 @@ mod tests {
         };
         let mut provider = NeverDispatch;
         let committed = reopened
-            .generate_three_writing_with_boundary(
-                &plan,
-                &mut gate,
-                &mut provider,
-                &NeverStop,
-            )
+            .generate_three_writing_with_boundary(&plan, &mut gate, &mut provider, &NeverStop)
             .unwrap();
         assert_eq!(committed.len(), 3);
         assert_eq!(committed.iter().collect::<HashSet<_>>().len(), 3);
         assert_eq!(
-            reopened.list_studio_writing_batches(project, study).unwrap().len(),
+            reopened
+                .list_studio_writing_batches(project, study)
+                .unwrap()
+                .len(),
             1,
         );
         drop(reopened);
         let restarted = AppServices::new(dir.path()).unwrap();
         let recovered = restarted
-            .generate_three_writing_with_boundary(
-                &plan,
-                &mut gate,
-                &mut provider,
-                &NeverStop,
-            )
+            .generate_three_writing_with_boundary(&plan, &mut gate, &mut provider, &NeverStop)
             .unwrap();
-        assert_eq!(recovered, committed, "read-only restart replay is exact-once");
         assert_eq!(
-            restarted.list_studio_writing_batches(project, study).unwrap().len(),
+            recovered, committed,
+            "read-only restart replay is exact-once"
+        );
+        assert_eq!(
+            restarted
+                .list_studio_writing_batches(project, study)
+                .unwrap()
+                .len(),
             1,
         );
     }
