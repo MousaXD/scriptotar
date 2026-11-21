@@ -911,6 +911,21 @@ mod tests {
                 .contains("provider dispatch cancellation is frozen"),
             "external cancellation was rejected for unrelated reason: {cancelled}"
         );
+        for terminal in ["cancelled", "not_executed"] {
+            let forbidden = external
+                .execute(
+                    "UPDATE agent_external_effects SET status=?1
+                     WHERE idempotency_key=?2",
+                    params![terminal, key.idempotency_key],
+                )
+                .unwrap_err();
+            assert!(
+                forbidden
+                    .to_string()
+                    .contains("provider dispatch cancellation status is frozen"),
+                "status-only bypass should be rejected by the gate: {forbidden}"
+            );
+        }
         // v10/v12 receipt reconciliation is independent of protected
         // canonical context writes and must remain operable.
         let settled = db
