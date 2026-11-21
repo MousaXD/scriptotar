@@ -1171,6 +1171,7 @@ pub(super) struct AuthenticatedResearchWritingPlan {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ResearchWritingContext {
+    pub identity: AuthenticatedResearchIdentity,
     pub project_id: Uuid,
     pub study_id: Uuid,
     pub sources: Vec<ResearchWritingSource>,
@@ -1310,7 +1311,14 @@ fn research_writing_from_report(
         "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research."
             .into(),
     );
+    let report_bytes = serde_json::to_vec(report).map_err(|_| storage())?;
     Ok(ResearchWritingContext {
+        identity: AuthenticatedResearchIdentity {
+            project_id: report.project_id,
+            study_id: report.study_id,
+            artifact_id: artifact,
+            report_sha256: format!("{:x}", Sha256::digest(&report_bytes)),
+        },
         project_id: report.project_id,
         study_id: report.study_id,
         sources,
@@ -1332,7 +1340,9 @@ fn bind_research_to_current(
     research: &ResearchWritingContext,
 ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
     use super::study_writing::WritingWorkflowError;
-    if current.project_id != research.project_id
+    if research.identity.project_id != research.project_id
+        || research.identity.study_id != research.study_id
+        || current.project_id != research.project_id
         || current.study_id != research.study_id
         || !research.source_text_is_untrusted_data
         || !research.meets_three_source_evidence_floor
@@ -1594,18 +1604,10 @@ impl AppServices {
         run_id: &str,
     ) -> super::study_writing::WriteResult<AuthenticatedResearchWritingPlan> {
         use super::study_writing::{prepare_three, CurrentStudy, WritingWorkflowError};
-        let report = read_study_research_artifact(self, project, study, artifact)
+        let research = self
+            .research_writing_context(project, study, artifact)
             .map_err(|_| WritingWorkflowError::StaleContext)?;
-        let report_bytes =
-            serde_json::to_vec(&report).map_err(|_| WritingWorkflowError::StaleContext)?;
-        let identity = AuthenticatedResearchIdentity {
-            project_id: project,
-            study_id: study,
-            artifact_id: artifact,
-            report_sha256: format!("{:x}", Sha256::digest(&report_bytes)),
-        };
-        let research = research_writing_from_report(artifact, &report)
-            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let identity = research.identity.clone();
         let current = CurrentStudy::load(self, project, study)?;
         let bound = bind_research_to_current(&current, &research)?;
         let writing = prepare_three(run_id, bound)?;
@@ -1631,19 +1633,16 @@ impl AppServices {
         {
             return Err(WritingWorkflowError::StaleContext);
         }
-        let report = read_study_research_artifact(
-            self,
-            identity.project_id,
-            identity.study_id,
-            identity.artifact_id,
-        )
-        .map_err(|_| WritingWorkflowError::StaleContext)?;
-        let bytes = serde_json::to_vec(&report).map_err(|_| WritingWorkflowError::StaleContext)?;
-        if format!("{:x}", Sha256::digest(&bytes)) != identity.report_sha256 {
+        let research = self
+            .research_writing_context(
+                identity.project_id,
+                identity.study_id,
+                identity.artifact_id,
+            )
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if &research.identity != identity {
             return Err(WritingWorkflowError::StaleContext);
         }
-        let research = research_writing_from_report(identity.artifact_id, &report)
-            .map_err(|_| WritingWorkflowError::StaleContext)?;
         let current = CurrentStudy::load(self, identity.project_id, identity.study_id)?;
         let rebound = bind_research_to_current(&current, &research)?;
         if rebound != plan.context {
