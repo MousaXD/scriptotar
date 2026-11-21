@@ -42,8 +42,12 @@ class FakeInstalledAx:
 
 
 class KeyboardTransport:
-    def __init__(self, focus_after_tabs=0):
+    def __init__(self, focus_after_tabs=0, active_after_tabs=None,
+                 refuse_focus_request=False):
         self.focus_after_tabs = focus_after_tabs
+        self.active_after_tabs = (focus_after_tabs if active_after_tabs is None
+                                  else active_after_tabs)
+        self.refuse_focus_request = refuse_focus_request
         self.tabs = 0
         self.commands = []
 
@@ -56,8 +60,14 @@ class KeyboardTransport:
             return subprocess.CompletedProcess(args, 0, "Scriptotar", "")
         if action == "windowactivate":
             return subprocess.CompletedProcess(args, 0, "", "")
+        if action == "windowfocus":
+            return subprocess.CompletedProcess(
+                args, 1 if self.refuse_focus_request else 0, "", ""
+            )
         if action in ("getactivewindow", "getwindowfocus"):
-            owned = self.tabs < self.focus_after_tabs
+            limit = (self.active_after_tabs if action == "getactivewindow"
+                     else self.focus_after_tabs)
+            owned = self.tabs < limit
             return subprocess.CompletedProcess(args, 0, "88\n" if owned else "999\n", "")
         if action == "key":
             if args[-1] != "Tab":
@@ -88,6 +98,32 @@ class NativeTabInputGuardTests(unittest.TestCase):
                           "arabic_reopened_native_tab_order"])
         self.assertFalse(report["native_layout_observations"][
             "arabic_reopened_native_tab_order"]["certifies_rtl_or_visual"])
+
+    def test_active_window_alone_cannot_authorize_keyboard_input(self):
+        transport = KeyboardTransport(focus_after_tabs=0, active_after_tabs=100)
+        report = self.run_probe(transport)
+        self.assertEqual(transport.tabs, 0)
+        self.assertIn("lacks keyboard focus",
+                      report["native_layout_observation_errors"][
+                          "arabic_reopened_native_tab_order"])
+        self.assertFalse(report["native_layout_observations"][
+            "arabic_reopened_native_tab_order"]["certifies_rtl_or_visual"])
+
+    def test_keyboard_focus_alone_cannot_authorize_keyboard_input(self):
+        transport = KeyboardTransport(focus_after_tabs=100, active_after_tabs=0)
+        report = self.run_probe(transport)
+        self.assertEqual(transport.tabs, 0)
+        self.assertIn("lacks keyboard focus",
+                      report["native_layout_observation_errors"][
+                          "arabic_reopened_native_tab_order"])
+
+    def test_refuse_failed_windowfocus_request(self):
+        transport = KeyboardTransport(focus_after_tabs=100, refuse_focus_request=True)
+        report = self.run_probe(transport)
+        self.assertEqual(transport.tabs, 0)
+        self.assertIn("Cannot request installed X11 keyboard focus",
+                      report["native_layout_observation_errors"][
+                          "arabic_reopened_native_tab_order"])
 
     def test_focus_theft_stops_following_tabs(self):
         transport = KeyboardTransport(focus_after_tabs=1)
