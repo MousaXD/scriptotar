@@ -886,6 +886,56 @@ mod tests {
     }
 
     #[test]
+    fn v13_admission_and_v10_cas_reject_changed_v8_single_send_claim() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        // A separate process can resolve the old effect BEFORE the v13 gate
+        // commits. A still-RESERVED v10 row is not independent authorization
+        // to send once the canonical v8 fence has become UNKNOWN.
+        assert_eq!(
+            other
+                .execute(
+                    "UPDATE agent_effects SET status='unknown',
+                     revision=revision+1 WHERE idempotency_key=?1
+                     AND status='reserved'",
+                    params![key.idempotency_key],
+                )
+                .unwrap(),
+            1
+        );
+        let result = db.acquire_provider_dispatch_barrier_for_effect(
+            project,
+            study,
+            &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id,
+                step_id: key.step_id,
+                idempotency_key: key.idempotency_key,
+                attempt: reserved.attempt,
+                provider: "openai",
+                wire_sha256: fp(),
+            },
+        );
+        assert!(result.is_err(), "v13 admitted a no-longer-reserved v8 claim");
+        assert!(db
+            .mark_external_dispatched(key, reserved.revision, reserved.attempt)
+            .is_err(), "v10 CAS ignored changed v8 single-send state");
+        let effect = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Reserved);
+        assert_eq!(effect.revision, reserved.revision);
+        let barrier_count: i64 = other
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(barrier_count, 0);
+    }
+
+    #[test]
     fn v13_pre_send_cleanup_v8_write_failure_rolls_back_v10_and_preserves_barrier() {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
