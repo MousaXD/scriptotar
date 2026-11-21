@@ -334,9 +334,14 @@ fn scoped(
 /// can exist remotely while local accounting becomes permanently inaccessible.
 /// Preserve the same exact run/Study ownership and checkpoint integrity checks,
 /// but never require active/unarchived state just to read a billable receipt.
-fn verified_settlement_scope(
+/// Check persisted scope without requiring the owner to remain unarchived.
+/// This read-only check is shared by late receipt reconciliation and restart
+/// recovery; it never grants permission to issue a new provider request.
+fn verified_run_settlement_scope(
     db: &rusqlite::Connection,
-    key: ExternalEffectKey<'_>,
+    project: Uuid,
+    study: Uuid,
+    run_id: &str,
 ) -> RepositoryResult<()> {
     let raw: String = db
         .query_row(
@@ -345,9 +350,9 @@ fn verified_settlement_scope(
              JOIN projects p ON p.id=r.project_id
              WHERE r.id=?1 AND r.project_id=?2 AND r.study_id=?3",
             params![
-                key.run_id,
-                key.project.to_string(),
-                key.study.to_string()
+                run_id,
+                project.to_string(),
+                study.to_string()
             ],
             |row| row.get(0),
         )
@@ -356,9 +361,9 @@ fn verified_settlement_scope(
         .ok_or_else(|| RepositoryError::NotFound("scoped agent run".into()))?;
     let run: RunSnapshot = serde_json::from_str(&raw)
         .map_err(|_| RepositoryError::Storage("agent checkpoint is corrupt".into()))?;
-    if run.plan.id != key.run_id
-        || run.plan.project_id != key.project.to_string()
-        || run.plan.study_id != key.study.to_string()
+    if run.plan.id != run_id
+        || run.plan.project_id != project.to_string()
+        || run.plan.study_id != study.to_string()
         || !run.plan.validate()
         || run.current_step > run.plan.steps.len()
         || run.steps.len() != run.plan.steps.len()
@@ -368,6 +373,13 @@ fn verified_settlement_scope(
         ));
     }
     Ok(())
+}
+
+fn verified_settlement_scope(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+) -> RepositoryResult<()> {
+    verified_run_settlement_scope(db, key.project, key.study, key.run_id)
 }
 
 fn checked(
@@ -686,7 +698,10 @@ impl SqliteStore {
         -> RepositoryResult<usize> {
         let mut db=database(self)?;
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
-        verified_scope(&tx,project,study,run_id)?;
+        // Do not lose track of an already-dispatched charge merely because
+        // its owner was archived. This is a one-way accounting transition,
+        // never an ownership lease or permission to send another request.
+        verified_run_settlement_scope(&tx,project,study,run_id)?;
         let changed=tx.execute(
             "UPDATE agent_external_effects SET status='uncertain',revision=revision+1,
              updated_at=?1 WHERE project_id=?2 AND study_id=?3 AND run_id=?4 AND status='dispatched'",
@@ -841,6 +856,84 @@ mod tests {
         assert_eq!(db.get_external_effect(key).unwrap().unwrap().status,ExternalEffectStatus::Completed);
         assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
         assert!(db.mark_external_dispatched(key,success.revision,1).is_err());
+    }
+
+
+    #[test]
+    fn archived_restart_recovery_blocks_replay_and_still_settles_late_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.archive_study(project,study).unwrap();
+        db.archive_project(project).unwrap();
+        drop(db); // Process exited after the network-send permit committed.
+
+        let db=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let pending=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(pending.status,ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(key,pending.revision,1).is_err());
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
+        let recorded=db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("archived_restart_request"),
+            receipt_id:"archived_restart_receipt",tokens:90,cost_microusd:400,
+        }).unwrap();
+        assert_eq!(recorded.status,ExternalEffectStatus::Completed);
+        assert_eq!(recorded.actual_cost_microusd,400);
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),0);
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),recorded);
+        assert!(db.mark_external_dispatched(key,recorded.revision,1).is_err());
+    }
+
+    #[test]
+    fn second_sqlite_process_recovery_racing_with_late_receipt_never_loses_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let barrier=Arc::new(Barrier::new(3));
+
+        let recovery=thread::spawn({
+            let path=path.clone();
+            let run_id=snap.plan.id.clone();
+            let barrier=barrier.clone();
+            move || {
+                let other_process=SqliteStore::open(path).unwrap();
+                barrier.wait();
+                other_process.recover_external_effects(project,study,&run_id).unwrap()
+            }
+        });
+        let receipt=thread::spawn({
+            let path=path.clone();
+            let snap=snap.clone();
+            let barrier=barrier.clone();
+            move || {
+                let other_process=SqliteStore::open(path).unwrap();
+                barrier.wait();
+                other_process.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("raced_request"),
+                        receipt_id:"raced_receipt",tokens:55,cost_microusd:275,
+                    },
+                ).unwrap()
+            }
+        });
+        barrier.wait();
+        let recovered=recovery.join().unwrap();
+        assert!(recovered<=1);
+        let completed=receipt.join().unwrap();
+        assert_eq!(completed.status,ExternalEffectStatus::Completed);
+        let persisted=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(persisted,completed);
+        assert_eq!(persisted.actual_cost_microusd,275);
+        assert!(db.mark_external_dispatched(key,persisted.revision,1).is_err());
+        assert!(db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("raced_request"),
+            receipt_id:"raced_receipt",tokens:55,cost_microusd:275,
+        }).is_ok());
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),persisted);
     }
 
     #[test]
