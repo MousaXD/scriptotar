@@ -339,21 +339,27 @@
 
   async function loadWritingBatches(id: string): Promise<void> {
     const epoch = ++writingBatchEpoch;
+    const expectedRevision = record?.revision;
     writingBatches = [];
     writingBatchError = '';
     batchExportError = '';
     if (!gateway?.listStudyWritingBatches) return;
     try {
       const result = await gateway.listStudyWritingBatches(projectId, id);
-      if (epoch !== writingBatchEpoch || record?.id !== id || studyId !== id) return;
+      if (epoch !== writingBatchEpoch || record?.id !== id ||
+          record?.revision !== expectedRevision || studyId !== id) return;
       // A read-only history response must never turn another project's
       // receipt or a malformed/fourth-draft record into clickable candidates.
-      if (!Array.isArray(result) || result.length > 50 || result.some((batch) =>
-        batch.projectId !== projectId || batch.studyId !== id ||
-        !batch.runId || !Array.isArray(batch.draftIds) ||
-        batch.draftIds.length !== 3 ||
-        batch.draftIds.some((draftId) => typeof draftId !== 'string' || !draftId) ||
-        new Set(batch.draftIds).size !== 3)) {
+      if (!Array.isArray(result) || result.length > 50 ||
+          result.some((batch) => !batch || typeof batch.runId !== 'string' ||
+            !batch.runId || batch.runId.length > 128 ||
+            batch.projectId !== projectId || batch.studyId !== id ||
+            typeof batch.committedAt !== 'string' || batch.committedAt.length > 80 ||
+            !Array.isArray(batch.draftIds) || batch.draftIds.length !== 3 ||
+            batch.draftIds.some((draftId) =>
+              typeof draftId !== 'string' || !draftId || draftId.length > 128) ||
+            new Set(batch.draftIds).size !== 3) ||
+          new Set(result.map((batch) => batch.runId)).size !== result.length) {
         throw new Error(t.invalidStudy);
       }
       writingBatches = result;
@@ -438,6 +444,9 @@
       studies = studies.map((item) => item.id === expectedId
         ? { id: saved.id, projectId: saved.projectId, revision: saved.revision, brief: saved.brief } : item);
       status = t.saved;
+      // A saved revision/source scope invalidates any pending batch read or
+      // export. The host must revalidate canonical receipts at the new scope.
+      void loadWritingBatches(expectedId);
     } catch (cause) {
       if (epoch === currentRequest && studyId === expectedId) error = message(cause, t.errorSave);
     } finally {
@@ -791,6 +800,9 @@
       preparing = false;
       prompt = '';
       status = t.revokeSourceSaved;
+      // Remove receipt links from the old attachment snapshot immediately,
+      // including exports already awaiting asynchronous candidate reads.
+      void loadWritingBatches(ownerStudy);
       void loadEvidence(ownerStudy);
     } catch (cause) {
       if (projectId === ownerProject && studyId === ownerStudy) {
@@ -1208,9 +1220,11 @@
       if (snapshots.some((item, index) =>
         item.id !== ownerStudy || item.projectId !== ownerProject ||
         item.revision !== current.revision ||
+        !Array.isArray(item.sources) || !sameRefs(item.sources, current.sources) ||
         item.draftId !== ids[index] ||
         item.draftRevision !== candidates[index]?.revision ||
-        !item.drafts?.some(candidate => candidate.id === ids[index]) ||
+        !item.drafts?.some(candidate =>
+          candidate.id === ids[index] && candidate.revision === candidates[index]?.revision) ||
         typeof item.draft !== 'string' || !item.draft.trim() ||
         item.draft.length > 100_000)) {
         throw new Error(t.invalidStudy);
