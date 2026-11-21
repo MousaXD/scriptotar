@@ -626,8 +626,7 @@ pub(super) fn enforce_candidate_originality(
             // excerpt, not merely a creator note or metadata observation.
             // The batch must additionally cite three distinct such origins.
             if line.evidence.iter().any(|item| {
-                script_evidence.contains(item.id.as_str())
-                    && original_source_excerpt(item)
+                script_evidence.contains(item.id.as_str()) && original_source_excerpt(item)
             }) {
                 candidate_covered = true;
                 cited_sources.insert(line.source_id);
