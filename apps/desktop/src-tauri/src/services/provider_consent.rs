@@ -1325,6 +1325,28 @@ mod tests {
         );
     }
 
+    /// Runs only when invoked by a separate copy of the Rust test executable.
+    /// No network, provider key or paid transport is constructed.
+    #[test]
+    fn agent10_os_process_writer_only() {
+        let Some(path) = std::env::var_os("SCRIPTOTAR_AGENT10_DB_PATH") else {
+            return;
+        };
+        let transcript = std::env::var("SCRIPTOTAR_AGENT10_TRANSCRIPT_ID").unwrap();
+        let external = rusqlite::Connection::open(path).unwrap();
+        let changed = external
+            .execute(
+                "UPDATE transcripts SET text=?1,updated_at=?2 WHERE id=?3",
+                rusqlite::params![
+                    "CHANGED BY INDEPENDENT OS PROCESS",
+                    "2026-11-21T00:02:00Z",
+                    transcript
+                ],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+    }
+
     /// Independent Agent10 NEGATIVE proof. This test intentionally succeeds only
     /// when the existing in-process authorization guard fails to serialize
     /// a second SQLite connection's canonical source mutation. It is NOT
@@ -1437,6 +1459,53 @@ mod tests {
         );
         assert!(matches!(
             services.lock_dispatch_scope(&previously_authorized),
+            Err(ConsentError::ChangedContext)
+        ));
+
+        // Stronger follow-up: an actual SECOND OS PROCESS, not only an
+        // independent thread/connection, commits while the host guard is held.
+        let second_authorized = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        let second_guard = services.lock_dispatch_scope(&second_authorized).unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("agent10_os_process_writer_only")
+            .arg("--nocapture")
+            .env("SCRIPTOTAR_AGENT10_DB_PATH", services.store.path())
+            .env("SCRIPTOTAR_AGENT10_TRANSCRIPT_ID", transcript_id.to_string())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut exited = None;
+        for _ in 0..500 {
+            if let Some(status) = child.try_wait().unwrap() {
+                exited = Some(status);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if exited.is_none() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        assert_eq!(second_guard.scope(), &second_authorized);
+        drop(second_guard);
+        assert!(
+            exited.is_some_and(|status| status.success()),
+            "separate OS-process SQLite writer must complete BEFORE guard release"
+        );
+        let actual: String = rusqlite::Connection::open(services.store.path())
+            .unwrap()
+            .query_row(
+                "SELECT text FROM transcripts WHERE id=?1",
+                rusqlite::params![transcript_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(actual, "CHANGED BY INDEPENDENT OS PROCESS");
+        assert!(matches!(
+            services.lock_dispatch_scope(&second_authorized),
             Err(ConsentError::ChangedContext)
         ));
     }
