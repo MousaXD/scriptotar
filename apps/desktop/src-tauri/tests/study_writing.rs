@@ -1787,8 +1787,7 @@ fn writing_batch_cannot_cite_only_observations_from_two_original_sources() {
         candidate.draft.beats[0].evidence_ids = vec![note_id.clone()];
         candidate.draft.claims[0].evidence_ids = vec![note_id];
         candidate.lineage =
-            study_writing::lineage_for(&batch.context, &candidate.angle, &candidate.draft)
-                .unwrap();
+            study_writing::lineage_for(&batch.context, &candidate.angle, &candidate.draft).unwrap();
     }
     // There are three genuine excerpts attached to the Study, but the output
     // cites only one: two other draft claims refer to user-authored notes.
