@@ -1375,7 +1375,8 @@
     {/if}
     {#if record && !loading}
       {#key projectId + ':' + record.id + ':' + record.revision}
-        <StudioResearchReview {api} {projectId} studyId={record.id} />
+        <StudioResearchReview {api} {projectId} studyId={record.id}
+          pendingEdits={dirty || saving || importingSavedResult} />
       {/key}
     {/if}
     <section class="panel studio-history">
