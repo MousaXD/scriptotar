@@ -569,11 +569,26 @@ impl AppServices {
         P: super::study_writing::WritingTextProvider,
         S: super::study_writing::StopSignal,
     {
+        // Keep the controlled no-cost integration test canonical while the
+        // production AppServices loader enforces approved research at the sink.
+        struct OfflineStudy<'a>(&'a AppServices);
+        impl super::study_writing::CurrentStudy for OfflineStudy<'_> {
+            fn load(
+                &self,
+                project: Uuid,
+                study: Uuid,
+            ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+                super::study_writing::CurrentStudy::load(self.0, project, study)
+            }
+        }
+        let fixture = OfflineStudy(self);
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
-            current: self,
+            current: &fixture,
         };
-        super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+        super::study_writing::generate_three(
+            plan, &fixture, boundary, provider, stop, &mut sink,
+        )
     }
 
     /// Private production v11 sink: three new drafts, immutable versions,
@@ -1246,6 +1261,10 @@ impl AppServices {
  * transport admission still need Agent 01's host-wide shared guard.
  */
 impl super::study_writing::CurrentStudy for AppServices {
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        true
+    }
+
     fn load(
         &self,
         project_id: Uuid,
