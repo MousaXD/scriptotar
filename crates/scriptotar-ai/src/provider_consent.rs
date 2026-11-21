@@ -918,6 +918,7 @@ mod tests {
     struct Fence {
         claims: Mutex<Vec<String>>,
         receipts: Mutex<Vec<String>>,
+        original_responses: Mutex<Vec<String>>,
         settled: AtomicUsize,
         uncertain: AtomicUsize,
     }
@@ -946,6 +947,21 @@ mod tests {
                 .unwrap()
                 .push(provider_request_id.into());
             self.settled.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn settle_with_response(
+            &self,
+            effect_id: &str,
+            request_id: &str,
+            usage: &ActualUsage,
+            original_response: &str,
+        ) -> Result<(), ConsentError> {
+            self.settle(effect_id, request_id, usage)?;
+            self.original_responses
+                .lock()
+                .unwrap()
+                .push(original_response.to_owned());
             Ok(())
         }
 
@@ -1177,6 +1193,10 @@ mod tests {
             .dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 103)
             .unwrap();
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            fence.original_responses.lock().unwrap().as_slice(),
+            &[intent.prompt.clone()]
+        );
         assert_eq!(
             fence.receipts.lock().unwrap().clone(),
             vec!["fixture-request-id".to_string()]
