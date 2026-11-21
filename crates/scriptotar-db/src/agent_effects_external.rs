@@ -793,6 +793,45 @@ mod tests {
     }
 
     #[test]
+    fn v13_cancellation_committed_before_barrier_admission_denies_paid_send() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        assert_eq!(
+            other
+                .execute(
+                    "UPDATE agent_external_effects
+                     SET cancel_requested=1 WHERE idempotency_key=?1",
+                    params![key.idempotency_key],
+                )
+                .unwrap(),
+            1
+        );
+        let refused = db.acquire_provider_dispatch_barrier_for_effect(
+            project,
+            study,
+            &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id,
+                step_id: key.step_id,
+                idempotency_key: key.idempotency_key,
+                attempt: reserved.attempt,
+                provider: "openai",
+                wire_sha256: fp(),
+            },
+        );
+        assert!(refused.is_err());
+        let freeze_count: i64 = other
+            .query_row("SELECT COUNT(*) FROM provider_dispatch_barrier", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(freeze_count, 0, "failed consent cannot strand an unowned scope lock");
+        assert!(db
+            .mark_external_dispatched(key, reserved.revision, reserved.attempt)
+            .is_err());
+    }
+
+    #[test]
     fn v13_dispatch_freeze_blocks_external_cancel_but_allows_v10_cas_and_receipt() {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
