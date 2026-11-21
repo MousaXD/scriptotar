@@ -464,6 +464,36 @@ impl SqliteStore {
         Ok(ExternalReservation::Fresh(fresh))
     }
 
+    /// Read-only recovery inspection. A trusted host can enumerate a single
+    /// persisted run, including archived owners, without dispatching, probing,
+    /// changing checkpoint state or claiming another provider attempt.
+    /// This is NOT a recovery lease and does not prove remote nonexecution.
+    pub fn inspect_external_effects_for_run(
+        &self, project: Uuid, study: Uuid, run_id: &str,
+    ) -> RepositoryResult<Vec<ExternalEffect>> {
+        const MAX_VISIBLE_EFFECTS: usize = 128;
+        let db = database(self)?;
+        verified_run_settlement_scope(&db, project, study, run_id)?;
+        let query = format!(
+            "{SELECT} WHERE project_id=?1 AND study_id=?2 AND run_id=?3
+             ORDER BY step_id, idempotency_key LIMIT 129"
+        );
+        let mut statement = db.prepare(&query).map_err(db_error)?;
+        let rows = statement
+            .query_map(params![project.to_string(), study.to_string(), run_id], row)
+            .map_err(db_error)?;
+        let mut effects = Vec::new();
+        for next in rows {
+            if effects.len() >= MAX_VISIBLE_EFFECTS {
+                return Err(RepositoryError::Storage(
+                    "external effect inspection exceeds bounded run size".into(),
+                ));
+            }
+            effects.push(next.map_err(db_error)?);
+        }
+        Ok(effects)
+    }
+
     pub fn get_external_effect(&self, key: ExternalEffectKey<'_>)
         -> RepositoryResult<Option<ExternalEffect>> {
         let db = database(self)?;
@@ -1083,6 +1113,66 @@ mod tests {
             tokens:135,cost_microusd:800,
         }).is_ok());
         assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),charged);
+    }
+
+    #[test]
+    fn read_only_recovery_inspection_preserves_archived_effect_and_denies_foreign_scope() {
+        let (dir, db, project, study, snap) = setup();
+        let key=identity(&snap,project,study);
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id)
+            .unwrap().is_empty());
+        let fresh=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.archive_study(project,study).unwrap();
+        db.archive_project(project).unwrap();
+        drop(db);
+
+        let reopened=SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        let before=reopened.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(before,dispatched);
+        let listed=reopened.inspect_external_effects_for_run(
+            project,study,&snap.plan.id
+        ).unwrap();
+        assert_eq!(listed,vec![dispatched.clone()]);
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),before,
+            "inspection must not classify DISPATCHED as UNCERTAIN or mark it charged");
+        assert!(reopened.inspect_external_effects_for_run(
+            Uuid::new_v4(),study,&snap.plan.id
+        ).is_err());
+        assert!(reopened.inspect_external_effects_for_run(
+            project,Uuid::new_v4(),&snap.plan.id
+        ).is_err());
+        assert!(reopened.inspect_external_effects_for_run(
+            project,study,&Uuid::new_v4().to_string()
+        ).is_err());
+        assert!(reopened.mark_external_dispatched(key,dispatched.revision,1).is_err());
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),before);
+    }
+
+    #[test]
+    fn recovery_inspection_refuses_corrupt_run_without_changing_effect() {
+        let (dir, db, project, study, snap)=setup();
+        let key=identity(&snap,project,study);
+        let reserved=reserve(&db,&snap,project,study);
+        let conn=rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        conn.execute(
+            "UPDATE agent_runs SET snapshot_json='{}' WHERE id=?1",
+            params![snap.plan.id],
+        ).unwrap();
+        assert!(reopened_inspection_denied(&db,project,study,&snap.plan.id));
+        let raw_status:String=conn.query_row(
+            "SELECT status FROM agent_external_effects WHERE idempotency_key=?1",
+            params![key.idempotency_key],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(raw_status,"reserved");
+        assert_eq!(reserved.status,ExternalEffectStatus::Reserved);
+    }
+
+    #[cfg(test)]
+    fn reopened_inspection_denied(
+        db:&SqliteStore,project:Uuid,study:Uuid,run_id:&str
+    )->bool {
+        db.inspect_external_effects_for_run(project,study,run_id).is_err()
     }
 
     #[test]
