@@ -759,17 +759,17 @@ impl ConsentBoundary {
         // SAME gate. Do not hold a SQLite write transaction during HTTP I/O.
         let scope_guard =
             match authority.lock_effect_dispatch_scope(&intent.scope, bound_attempt.as_ref()) {
-            Ok(guard) => guard,
-            Err(_) => {
-                fence.mark_uncertain(&effect_id);
-                if let Ok(mut pending) = consent.lock() {
-                    if pending.decision == Decision::Reserving {
-                        pending.decision = Decision::Uncertain;
+                Ok(guard) => guard,
+                Err(_) => {
+                    fence.mark_uncertain(&effect_id);
+                    if let Ok(mut pending) = consent.lock() {
+                        if pending.decision == Decision::Reserving {
+                            pending.decision = Decision::Uncertain;
+                        }
                     }
+                    return Err(ConsentError::UncertainEffect);
                 }
-                return Err(ConsentError::UncertainEffect);
-            }
-        };
+            };
 
         // Reacquire consent only after the authoritative guard. A cancel that
         // won while the gate was blocked must prevent both the pre-send CAS
