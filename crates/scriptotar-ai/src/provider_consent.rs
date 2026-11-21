@@ -1606,12 +1606,7 @@ mod tests {
             fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
                 Ok(())
             }
-            fn settle(
-                &self,
-                _: &str,
-                _: &str,
-                _: &ActualUsage,
-            ) -> Result<(), ConsentError> {
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
                 self.entered.send(()).unwrap();
                 self.resume.lock().unwrap().recv().unwrap();
                 self.committed.fetch_add(1, Ordering::SeqCst);
