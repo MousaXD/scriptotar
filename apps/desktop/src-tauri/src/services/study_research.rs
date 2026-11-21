@@ -2387,6 +2387,10 @@ mod tests {
         let bridge = reopened
             .research_writing_context(project, study, artifact)
             .unwrap();
+        assert_eq!(bridge.identity.project_id, project);
+        assert_eq!(bridge.identity.study_id, study);
+        assert_eq!(bridge.identity.artifact_id, artifact);
+        assert_eq!(bridge.identity.report_sha256.len(), 64);
         assert_eq!(bridge.sources.len(), 3);
         assert_eq!(bridge.attributed_source_count, 3);
         assert!(bridge.meets_three_source_evidence_floor);
