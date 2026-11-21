@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 #[path = "provider_dispatch_barrier.rs"]
 mod provider_dispatch_barrier;
-pub use provider_dispatch_barrier::ProviderDispatchBarrier;
+pub use provider_dispatch_barrier::{ProviderDispatchBarrier, ProviderDispatchEffect};
 
 pub const LATEST_SCHEMA_VERSION: u32 = 13;
 
