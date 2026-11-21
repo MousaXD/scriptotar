@@ -1256,6 +1256,34 @@ mod tests {
                 },
             )
             .unwrap();
+
+        // An independent SQLite connection can mutate the transcript without
+        // taking AppServices::active_project. A subsequent scope recheck MUST
+        // reject the stale approval even though this does NOT establish a
+        // cross-process lock during an in-flight provider send.
+        let stale_before_external_edit = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        let external = rusqlite::Connection::open(services.store.path()).unwrap();
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE transcripts SET text = ?1, updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![
+                        "Externally modified canonical transcript content",
+                        "2026-11-21T00:01:00Z",
+                        transcript_id.to_string()
+                    ],
+                )
+                .unwrap(),
+            1
+        );
+        drop(external);
+        assert!(matches!(
+            services.lock_dispatch_scope(&stale_before_external_edit),
+            Err(ConsentError::ChangedContext)
+        ));
+
         let approved = services
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
