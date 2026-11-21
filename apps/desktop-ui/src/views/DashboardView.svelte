@@ -183,7 +183,6 @@
   .project-heading p { margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .header-actions, .project-form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .header-actions { justify-content: flex-end; }
-  .header-actions .text-button { min-height: var(--control-height); padding-inline: var(--space-2); }
   .project-create { margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
   .project-create h2 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
   .project-create form { display: grid; gap: var(--space-2); max-width: 600px; }
