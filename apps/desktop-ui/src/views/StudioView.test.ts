@@ -99,6 +99,37 @@ describe('Content Study Studio', () => {
   });
 
 
+  it('blocks local research approval immediately when the open Studio brief becomes dirty', async () => {
+    const api = createMockClient();
+    const projectId = 'p-creator-lab';
+    const study = await api.createStudy(projectId, { ...emptyBrief(),
+      title: 'Pending local approval', goal: 'Original source-grounded writing' });
+    await api.saveStudy(projectId, study.id, study.revision, {
+      sources: [{ kind: 'transcript', id: 't-ar' }]
+    });
+    const sources = await api.listStudyResearchSources(projectId, study.id);
+    const run = await api.startStudyResearch(projectId, study.id, [sources[0].id]);
+
+    render(App, { props: { api } });
+    await screen.findByRole('heading', { name: 'Creator Lab' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Studio' }));
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Pending local approval' }));
+
+    const approve = await screen.findByRole('button', { name: 'Approve local analysis' });
+    await waitFor(() => expect(approve).toBeEnabled());
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Creative goal' }), {
+      target: { value: 'Changed locally but not saved' }
+    });
+    expect(approve).toBeDisabled();
+    expect(screen.getByText('Save Study changes before preparing or approving local research.')).toBeInTheDocument();
+    const persisted = await api.listStudyResearchRuns(projectId, study.id);
+    expect(persisted[0].plan.id).toBe(run.plan.id);
+    expect(persisted[0].steps[0].output).toBeNull();
+  });
+
   it('uses a genuine project-scoped gateway read for a foreign Study reference and rejects it visibly', async () => {
     const projectA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const projectB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
