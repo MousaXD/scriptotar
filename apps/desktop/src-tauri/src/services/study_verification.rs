@@ -368,8 +368,7 @@ fn exact_observation_lineage(
     let prefixed_excerpt = format!("Unverified user observation: {excerpt}");
     let section: String = evidence.input.locator.chars().take(500).collect();
     let timestamp_seconds = evidence.input.timestamp_seconds.and_then(|value| {
-        (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX))
-            .then_some(value as u32)
+        (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX)).then_some(value as u32)
     });
     (item.excerpt == prefixed_excerpt || item.excerpt == evidence.input.claim)
         && item.locator.document_section.as_deref() == Some(section.as_str())
