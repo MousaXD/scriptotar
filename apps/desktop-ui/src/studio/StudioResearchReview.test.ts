@@ -63,6 +63,10 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(runs[0].plan.steps[0].input.tool).toBe('analyze_evidence');
     const artifactId = runs[0].steps[0].output?.artifact_id;
     expect(artifactId).toBeTruthy();
+    // Identity is read-only and originates from the approved, completed host
+    // run, never a client-constructed report or writing permission.
+    expect(screen.getByText(artifactId!)).toBeInTheDocument();
+    expect(screen.getByText(/not provider authorization/i)).toBeInTheDocument();
     view.unmount();
     render(StudioResearchReview, { props: { api, projectId, studyId } });
     expect((await screen.findAllByText(/not independently fact-checked/)).length).toBe(2);
