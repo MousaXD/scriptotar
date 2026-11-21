@@ -101,7 +101,10 @@ describe('Study research report display scope', () => {
   });
 
   it('requires a completed approved local step and its exact saved artifact identity', () => {
+    expect(valid(report, { ...run, steps: [{ ...run.steps[0], state: 'failed' }] })).toBe(false);
     expect(valid(report, { ...run, steps: [{ ...run.steps[0], approved: false }] })).toBe(false);
+    expect(valid(report, { ...run, steps: [{ ...run.steps[0],
+      output: { ...run.steps[0].output!, cost_microusd: 1 } }] })).toBe(false);
     expect(valid(report, { ...run, steps: [{ ...run.steps[0], output: null }] })).toBe(false);
     expect(valid(report, { ...run, steps: [{ ...run.steps[0], id: 'foreign-step' }] })).toBe(false);
     expect(valid(report, { ...run, plan: { ...run.plan,
