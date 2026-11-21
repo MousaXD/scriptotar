@@ -643,8 +643,10 @@ fn checked_report_envelope(
             .get_study_source(project, study, finding.study_source_id)?;
         let correct_kind = matches!(
             (source.kind, finding.kind),
-            (StudySourceKind::ResearchItem, StudyResearchKind::ResearchItem)
-                | (StudySourceKind::Transcript, StudyResearchKind::Transcript)
+            (
+                StudySourceKind::ResearchItem,
+                StudyResearchKind::ResearchItem
+            ) | (StudySourceKind::Transcript, StudyResearchKind::Transcript)
         );
         if !correct_kind
             || !source.available
@@ -737,7 +739,11 @@ pub(super) fn read_study_research_artifact(
         .iter()
         .map(|source| source.study_source_id)
         .collect();
-    let approved_ids = run.plan.steps.first().and_then(|step| selected_ids(&step.input).ok());
+    let approved_ids = run
+        .plan
+        .steps
+        .first()
+        .and_then(|step| selected_ids(&step.input).ok());
     // The observation time is factual provenance: it must be consistent
     // with the persisted, user-approved actual dispatch, not merely an
     // arbitrary timestamp in a locally editable report JSON file.
@@ -752,9 +758,7 @@ pub(super) fn read_study_research_artifact(
     let analyzed_ms = u64::try_from(saved.report.analyzed_at.unix_seconds)
         .ok()
         .and_then(|seconds| seconds.checked_mul(1_000))
-        .and_then(|ms| {
-            ms.checked_add(u64::from(saved.report.analyzed_at.nanosecond / 1_000_000))
-        });
+        .and_then(|ms| ms.checked_add(u64::from(saved.report.analyzed_at.nanosecond / 1_000_000)));
     if !valid_research_run(&run, project, study)
         || run.state != scriptotar_agent::RunState::Completed
         || !run.steps[0].approved
@@ -1180,9 +1184,12 @@ fn research_writing_from_report(
             collected_at: source.collected_at.clone(),
             access: source.access,
         });
-        limitations.extend(source.limitations.iter().map(|reason| {
-            format!("Source {}: {reason}", source.study_source_id)
-        }));
+        limitations.extend(
+            source
+                .limitations
+                .iter()
+                .map(|reason| format!("Source {}: {reason}", source.study_source_id)),
+        );
         for (index, observation) in source.observations.iter().enumerate() {
             if evidence.len() >= 40 || findings.len() >= 30 {
                 truncated = true;
@@ -1198,11 +1205,7 @@ fn research_writing_from_report(
             {
                 return Err(not_found());
             }
-            let section = match (
-                anchor.segment_id.as_deref(),
-                anchor.start_ms,
-                anchor.end_ms,
-            ) {
+            let section = match (anchor.segment_id.as_deref(), anchor.start_ms, anchor.end_ms) {
                 (Some(segment), Some(start), Some(end)) if start < end => {
                     format!("Transcript segment {segment} ({start}-{end} ms)")
                 }
@@ -1233,21 +1236,29 @@ fn research_writing_from_report(
                 },
             });
             findings.push(ResearchFinding {
-                id: format!("research-finding:{artifact}:{}:{index}", source.study_source_id),
+                id: format!(
+                    "research-finding:{artifact}:{}:{index}",
+                    source.study_source_id
+                ),
                 kind: FindingKind::CreativePattern,
                 statement: observation.statement.clone(),
                 evidence_ids: vec![id],
                 limitations: Some(format!(
                     "Transcript-only {}; no independent factual verification. {}",
-                    if is_literal { "observation" } else { "hypothesis" },
+                    if is_literal {
+                        "observation"
+                    } else {
+                        "hypothesis"
+                    },
                     observation.limitations.join(" ")
                 )),
             });
         }
     }
     if truncated {
-        limitations
-            .push("Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into());
+        limitations.push(
+            "Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into(),
+        );
     }
     let attributed_source_count = evidence
         .iter()
@@ -1672,7 +1683,10 @@ mod tests {
 
         let exact = dir.path().join("exact-limit.json");
         fs::write(&exact, vec![b'x'; MAX_REPORT_BYTES]).unwrap();
-        assert_eq!(read_bounded_report_file(&exact).unwrap().len(), MAX_REPORT_BYTES);
+        assert_eq!(
+            read_bounded_report_file(&exact).unwrap().len(),
+            MAX_REPORT_BYTES
+        );
         assert!(read_bounded_report_file(&dir.path().join("missing.json")).is_err());
     }
 
@@ -1824,9 +1838,10 @@ mod tests {
         assert!(!approved_bridge.evidence.is_empty());
         assert_eq!(approved_bridge.attributed_source_count, 1);
         assert!(!approved_bridge.meets_three_source_evidence_floor);
-        assert!(approved_bridge.evidence.iter().all(|observation| {
-            observation.locator.source_id == transcript.to_string()
-        }));
+        assert!(approved_bridge
+            .evidence
+            .iter()
+            .all(|observation| { observation.locator.source_id == transcript.to_string() }));
         assert!(services
             .research_writing_context(Uuid::new_v4(), study, approved_artifact)
             .is_err());
@@ -1836,8 +1851,7 @@ mod tests {
         // three sources for which the user approved this exact run.
         let approved_path = artifact_path(&services, approved_artifact).unwrap();
         let original_approved_bytes = fs::read(&approved_path).unwrap();
-        let mut swapped: ReportEnvelope =
-            serde_json::from_slice(&original_approved_bytes).unwrap();
+        let mut swapped: ReportEnvelope = serde_json::from_slice(&original_approved_bytes).unwrap();
         let (_, unapproved_report) = inspect_selected(
             &services,
             project,
@@ -1927,9 +1941,10 @@ mod tests {
         assert!(bridge.findings.iter().all(|item| {
             item.kind == FindingKind::CreativePattern && item.evidence_ids.len() == 1
         }));
-        assert!(bridge.evidence.iter().any(|item| {
-            item.status == EvidenceStatus::Unverified
-        }));
+        assert!(bridge
+            .evidence
+            .iter()
+            .any(|item| { item.status == EvidenceStatus::Unverified }));
         assert!(bridge.evidence.iter().any(|item| {
             item.locator
                 .document_section
@@ -2035,8 +2050,8 @@ mod tests {
 
     #[test]
     fn three_real_timed_transcripts_prepare_original_local_writing_request() {
-        use scriptotar_ai::writing::{CreativeBrief, WritingInput, WritingTask};
         use scriptotar_agent::RunState;
+        use scriptotar_ai::writing::{CreativeBrief, WritingInput, WritingTask};
 
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
@@ -2140,9 +2155,10 @@ mod tests {
         assert_eq!(bridge.attributed_source_count, 3);
         assert!(bridge.meets_three_source_evidence_floor);
         assert!(bridge.source_text_is_untrusted_data);
-        assert!(bridge.findings.iter().all(|finding| {
-            finding.kind == FindingKind::CreativePattern
-        }));
+        assert!(bridge
+            .findings
+            .iter()
+            .all(|finding| { finding.kind == FindingKind::CreativePattern }));
         assert!(bridge.evidence.iter().all(|item| {
             item.kind == EvidenceKind::SocialTranscript
                 && item.status != EvidenceStatus::Corroborated
@@ -2275,7 +2291,9 @@ mod tests {
                 .unwrap()
                 .available
         );
-        assert!(reopened.start_study_research(project, study, vec![source]).is_err());
+        assert!(reopened
+            .start_study_research(project, study, vec![source])
+            .is_err());
         assert!(checked_report(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
         assert!(checked_report(&reopened, project, study, artifact).is_err());
