@@ -21,6 +21,20 @@ fn charged_step(step: &str) -> bool {
     matches!(step, "angles" | "draft-1" | "draft-2" | "draft-3")
 }
 
+fn check_original_step_output_limit(
+    db: &rusqlite::Connection,
+    key: ExternalEffectKey<'_>,
+    bytes: usize,
+) -> RepositoryResult<()> {
+    let run = verified_run_settlement_scope(db, key.project, key.study, key.run_id)?;
+    let step = run.plan.steps.iter().find(|step| step.id == key.step_id)
+        .ok_or_else(|| conflict("charged writing step missing from original plan"))?;
+    if u64::try_from(bytes).unwrap_or(u64::MAX) > step.estimate.max_output_bytes {
+        return Err(conflict("original approved writing output byte limit exceeded"));
+    }
+    Ok(())
+}
+
 /// Additive migration for the reviewed v13 -> v14 transition; it has no
 /// impact on historical provider effect and writing batch tables.
 #[allow(dead_code)] // Agent 00 registers the post-v13 migration on integration.
@@ -190,6 +204,7 @@ fn verified_charged_response(
     }) = response_row(db, key)? else {
         return Ok(None);
     };
+    check_original_step_output_limit(db, key, bytes.len())?;
     let original = std::str::from_utf8(&bytes)
         .map_err(|_| RepositoryError::Storage("sealed response is not UTF-8".into()))?;
     let tokens = input.checked_add(output).ok_or_else(|| conflict("sealed usage overflow"))?;
@@ -299,6 +314,7 @@ impl SqliteStore {
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
         let effect = checked(&tx, key)?;
+        check_original_step_output_limit(&tx, key, bytes.len())?;
         if effect.attempt != evidence.attempt
             || effect.provider != evidence.provider
             || effect.fingerprint != evidence.request_sha256
