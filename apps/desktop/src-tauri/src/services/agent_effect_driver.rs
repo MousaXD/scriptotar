@@ -43,9 +43,22 @@ impl ProviderEvidence {
 /// The actual approved provider adapter owns network I/O. A timeout, 5xx,
 /// lost acknowledgement, or eventually consistent absence is UNCERTAIN.
 pub trait ExternalEffectProvider: Send + Sync {
+    /// Stable, reviewed provider-identity namespace: never a model or alias.
+    /// The provider adapter must authenticate any receipt returned by probe.
+    fn provider_namespace(&self) -> &'static str;
     fn dispatch_once(&self,ctx:&ExecutionContext,fingerprint:&str,attempt:i64,
                      limits:ExternalEffectLimits)->ProviderEvidence;
     fn probe(&self,effect:&ExternalEffect)->ProviderEvidence;
+}
+
+fn canonical_provider(provider_name: &str, provider: &dyn ExternalEffectProvider)
+    -> RepositoryResult<()> {
+    // The only reviewed wire provider here is OpenAI; a model-suffixed or
+    // alias provider would split the immutable v12 receipt tombstone scope.
+    if provider_name != "openai" || provider.provider_namespace() != provider_name {
+        return Err(RepositoryError::Conflict("unreviewed external provider namespace".into()));
+    }
+    Ok(())
 }
 
 fn effect_key(ctx:&ExecutionContext)->RepositoryResult<ExternalEffectKey<'_>> {
@@ -65,6 +78,7 @@ impl AppServices {
         limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
         provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
+        canonical_provider(provider_name,provider)?;
         let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
         policy.authorize(ctx,provider_name,fingerprint,limits)?;
@@ -85,6 +99,7 @@ impl AppServices {
         limits:ExternalEffectLimits,policy:&dyn ExternalEffectPolicy,
         provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
+        canonical_provider(provider_name,provider)?;
         let key=effect_key(ctx)?;
         self.require_active_project(key.project)?;
         policy.authorize(ctx,provider_name,fingerprint,limits)?;
@@ -139,13 +154,15 @@ impl AppServices {
     }
 
     /// Query the real provider; never repeat a request as a way of probing.
+    /// Existing effects may settle after archival, but this does not authorize
+    /// new work or dispatch, and the adapter must be a trusted read-only probe.
     pub fn reconcile_external_with_provider(
         &self,ctx:&ExecutionContext,provider:&dyn ExternalEffectProvider,
     )->RepositoryResult<ExternalEffect> {
         let key=effect_key(ctx)?;
-        self.require_active_project(key.project)?;
         let old=self.store.get_external_effect(key)?
             .ok_or_else(||RepositoryError::NotFound("external effect".into()))?;
+        canonical_provider(&old.provider,provider)?;
         if !matches!(old.status,ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain) {
             return Err(RepositoryError::Conflict("effect is not awaiting reconciliation".into()));
         }
@@ -214,6 +231,7 @@ mod recovery_driver_tests {
         probes: AtomicUsize,
     }
     impl ExternalEffectProvider for LocalProviderDouble {
+        fn provider_namespace(&self) -> &'static str { "openai" }
         fn dispatch_once(
             &self, _ctx: &ExecutionContext, _fingerprint: &str,
             _attempt: i64, _limits: ExternalEffectLimits,
@@ -875,6 +893,52 @@ mod recovery_driver_tests {
             .unwrap();
         assert_eq!(stored.status, ExternalEffectStatus::Cancelled);
         assert_eq!(stored.actual_cost_microusd, 0);
+    }
+
+    #[test]
+    fn archived_owner_restart_reconciliation_uses_read_only_probe_not_dispatch() {
+        let (_directory, services, context)=approved_host();
+        let provider=LocalProviderDouble::default();
+        let policy=ExplicitlyApprovedMock;
+        let limits=ExternalEffectLimits { tokens:500,cost_microusd:2500 };
+        let wire="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let first=services.dispatch_authorized_external_effect(
+            &context,"openai",wire,limits,&policy,&provider,
+        ).unwrap();
+        assert_eq!(first.status,ExternalEffectStatus::Dispatched);
+        let project=Uuid::parse_str(&context.project_id).unwrap();
+        let study=Uuid::parse_str(&context.study_id).unwrap();
+        services.store.archive_study(project,study).unwrap();
+        services.store.archive_project(project).unwrap();
+        assert_eq!(
+            services.store.recover_external_effects(project,study,&context.run_id).unwrap(),1
+        );
+        let settled=services.reconcile_external_with_provider(&context,&provider).unwrap();
+        assert_eq!(settled.status,ExternalEffectStatus::Completed);
+        assert_eq!(settled.actual_cost_microusd,450);
+        assert_eq!(provider.calls.load(Ordering::SeqCst),1);
+        assert_eq!(provider.probes.load(Ordering::SeqCst),1);
+        assert!(services.dispatch_authorized_external_effect(
+            &context,"openai",wire,limits,&policy,&provider,
+        ).is_err());
+        assert_eq!(provider.calls.load(Ordering::SeqCst),1);
+    }
+
+    #[test]
+    fn model_aliases_cannot_split_provider_receipt_namespace() {
+        let (_directory,services,context)=approved_host();
+        let provider=LocalProviderDouble::default();
+        let policy=ExplicitlyApprovedMock;
+        let wire="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let limits=ExternalEffectLimits {tokens:500,cost_microusd:2500};
+        for wrong in ["OpenAI","openai:gpt-model","other-provider"] {
+            assert!(services.dispatch_authorized_external_effect(
+                &context,wrong,wire,limits,&policy,&provider,
+            ).is_err());
+        }
+        assert_eq!(provider.calls.load(Ordering::SeqCst),0);
+        assert!(services.store.get_external_effect(effect_key(&context).unwrap())
+            .unwrap().is_none());
     }
 
     #[test]
