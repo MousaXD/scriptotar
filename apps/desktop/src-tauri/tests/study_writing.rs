@@ -1743,6 +1743,35 @@ fn allows_distinct_scripts_that_share_short_common_phrases() {
 }
 
 #[test]
+fn identical_long_caption_cannot_disguise_three_short_distinct_voiceovers() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    // Each spoken opening is distinct, but all the substantive on-screen
+    // script content is cloned. A batch must reject that as near-duplicate.
+    let shared = "Imagine a neighborhood meeting where three different families compare their walking routes. First they collect observations, next they mark important crossings on a printed map, then they discuss how to make the route safer for the children. The group writes the results on a common board and gathers feedback from more residents before making their final plan together.";
+    for candidate in &mut batch.candidates {
+        candidate.draft.caption = Some(shared.into());
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
