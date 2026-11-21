@@ -794,7 +794,9 @@ impl ConsentBoundary {
             intent.max_output_tokens,
             deadline_ms,
         );
-        drop(scope_guard);
+        // Release this run's mutex, but retain the authoritative scope
+        // barrier through authenticated receipt settlement. A source change
+        // must not race a successful paid receipt before it is durable.
         drop(record);
         let mut generated = match generated {
             Ok(response) => response,
@@ -850,6 +852,7 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
+        drop(scope_guard);
         let mut record = consent.lock().map_err(|_| ConsentError::UncertainEffect)?;
         record.decision = Decision::Complete;
         Ok(generated)
