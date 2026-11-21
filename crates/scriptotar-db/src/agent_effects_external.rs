@@ -342,7 +342,7 @@ fn verified_run_settlement_scope(
     project: Uuid,
     study: Uuid,
     run_id: &str,
-) -> RepositoryResult<()> {
+) -> RepositoryResult<RunSnapshot> {
     let raw: String = db
         .query_row(
             "SELECT r.snapshot_json FROM agent_runs r
@@ -361,25 +361,38 @@ fn verified_run_settlement_scope(
         .ok_or_else(|| RepositoryError::NotFound("scoped agent run".into()))?;
     let run: RunSnapshot = serde_json::from_str(&raw)
         .map_err(|_| RepositoryError::Storage("agent checkpoint is corrupt".into()))?;
-    if run.plan.id != run_id
+    if run.schema_version != 1
+        || run.plan.id != run_id
         || run.plan.project_id != project.to_string()
         || run.plan.study_id != study.to_string()
         || !run.plan.validate()
         || run.current_step > run.plan.steps.len()
         || run.steps.len() != run.plan.steps.len()
+        || run.steps.iter().zip(&run.plan.steps).enumerate().any(|(index, (record, plan))| {
+            record.id != plan.id
+                || record.idempotency_key != format!("{}:{}:{}", run_id, index, record.id)
+        })
     {
         return Err(RepositoryError::Storage(
             "agent checkpoint identity is invalid".into(),
         ));
     }
-    Ok(())
+    Ok(run)
 }
 
 fn verified_settlement_scope(
     db: &rusqlite::Connection,
     key: ExternalEffectKey<'_>,
 ) -> RepositoryResult<()> {
-    verified_run_settlement_scope(db, key.project, key.study, key.run_id)
+    let run = verified_run_settlement_scope(db, key.project, key.study, key.run_id)?;
+    if !run.steps.iter().any(|record| {
+        record.id == key.step_id && record.idempotency_key == key.idempotency_key
+    }) {
+        return Err(RepositoryError::Storage(
+            "external effect identity does not match persisted run step".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn checked(
@@ -473,7 +486,7 @@ impl SqliteStore {
     ) -> RepositoryResult<Vec<ExternalEffect>> {
         const MAX_VISIBLE_EFFECTS: usize = 128;
         let db = database(self)?;
-        verified_run_settlement_scope(&db, project, study, run_id)?;
+        let checkpoint = verified_run_settlement_scope(&db, project, study, run_id)?;
         let query = format!(
             "{SELECT} WHERE project_id=?1 AND study_id=?2 AND run_id=?3
              ORDER BY step_id, idempotency_key LIMIT 129"
@@ -489,7 +502,16 @@ impl SqliteStore {
                     "external effect inspection exceeds bounded run size".into(),
                 ));
             }
-            effects.push(next.map_err(db_error)?);
+            let effect = next.map_err(db_error)?;
+            if !checkpoint.steps.iter().any(|record| {
+                record.id == effect.step_id
+                    && record.idempotency_key == effect.idempotency_key
+            }) {
+                return Err(RepositoryError::Storage(
+                    "external effect inspection found an unowned run step".into(),
+                ));
+            }
+            effects.push(effect);
         }
         Ok(effects)
     }
@@ -1166,6 +1188,27 @@ mod tests {
         ).unwrap();
         assert_eq!(raw_status,"reserved");
         assert_eq!(reserved.status,ExternalEffectStatus::Reserved);
+    }
+
+    #[test]
+    fn recovery_rejects_valid_json_checkpoint_with_forged_step_identity() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let claimed=reserve(&db,&snap,project,study);
+        assert_eq!(claimed.status,ExternalEffectStatus::Reserved);
+        let conn=rusqlite::Connection::open(dir.path().join("external.sqlite3")).unwrap();
+        let mut forged=snap.clone();
+        forged.steps[0].idempotency_key="forged-step-key".to_owned();
+        let json=serde_json::to_string(&forged).unwrap();
+        conn.execute("UPDATE agent_runs SET snapshot_json=?1 WHERE id=?2",
+            params![json,snap.plan.id]).unwrap();
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
+        assert!(db.get_external_effect(key).is_err());
+        let stored:String=conn.query_row(
+            "SELECT status FROM agent_external_effects WHERE idempotency_key=?1",
+            params![key.idempotency_key],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(stored,"reserved","failed inspection never rewrites provider state");
     }
 
     #[test]
