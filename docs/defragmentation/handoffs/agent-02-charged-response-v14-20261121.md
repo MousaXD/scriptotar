@@ -11,6 +11,16 @@
 5. The v14 trigger rejects any \`completed\` transition for these four steps **without a same-effect sealed response matching receipt, usage, provider, attempt and wire digest**. The historical generic receipt method continues to work for other effect types. A historical/altered \`completed\` writing effect lacking a seal is **UNRESOLVED**, not silently declared recoverable.
 6. The trusted receipt **authentication remains external**: comparing a caller-supplied provider name with \`openai\` is not cryptographic proof. Agent 01 and the reviewed wire adapter must attest exact response bytes, response ID, usage, model pricing revision and account ownership. An HTTP timeout, claimed provider name, user-supplied ID, or model-produced JSON cannot authenticate completion.
 
+
+## Consent receipt + original response hook (Agent 02 continuation)
+
+- `scriptotar-ai::provider_consent::PaidEffectFence` now exposes an additive `settle_with_response(effect_id, provider_request_id, usage, original_response)` hook. The `ConsentBoundary::dispatch` success path invokes it **after** the provider transport's authenticated usage verification and authoritative pricing calculation, and **before** returning a successful response. Existing mock/non-writing fences delegate to their original `settle` implementation by default.
+- The production host `SqlitePaidEffectFence` overrides that hook for the four exact step IDs and invokes `settle_authenticated_charged_response` with its own persisted project, Study, run, step, idempotency, canonical provider, sealed wire SHA, verified provider response ID, split usage and **the exact generated text**. It deliberately rejects ordinary receipt-only `settle` for those steps; in a v12 database without the v14 migration, the resulting seal attempt fails closed to **UNCERTAIN**, not `COMPLETED`.
+- This change does **not** make `provider_consent` itself a writing orchestrator. Agent 05 still owns `DurablePermissionBoundary::begin`, prompt/request equivalence, saved-step replay and v11 batch commit. Each of the four paid steps needs a separately scoped, exact-wire approved request. Consent must never be inferred from an earlier or different step.
+- Agent 01's separate v13 branch changes the lifetime of the authoritative dispatch scope guard; **Agent 00 must manually reconcile** the source overlap in `provider_consent.rs` and `scriptotar-ai/src/provider_consent.rs`. The v13 barrier must not be released before the original authenticated receipt+response transaction, and a post-send crash must leave recovery blocked until independently verified. The submitted v12-based source is *not* v13-certified.
+- The test `hard_output_ceiling_and_one_time_claim` now asserts that the original metered provider response is passed to the settlement hook. This is a deterministic fixture only, not proof of a live OpenAI account receipt or a no-double-charge guarantee from the provider.
+- Persisting provider outputs creates an explicit local-content retention/privacy obligation. The migration stores raw bytes in Scriptotar's existing private SQLite database; at-rest encryption, key management, and deletion/retention policy are **not added** by this patch and require owner/security review.
+
 ## Exact crash/recovery state table
 
 | Crash point / observed state | Durable local result | Allowed recovery | Forbidden action |
