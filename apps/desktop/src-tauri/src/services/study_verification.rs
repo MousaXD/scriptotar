@@ -463,6 +463,38 @@ fn typed_revision_matches(
     canonical == *supplied
 }
 
+/// A structured assertion has not been inventoried against the saved script
+/// merely because its claim ID and candidate payload are stored together.
+/// Only exact text in the uniquely identified canonical narration/on-screen
+/// beat is accepted as an anchored script statement. Paraphrases, fabricated
+/// annotations and ambiguous beat IDs remain UNSUPPORTED, never Verified.
+fn bind_saved_claims_to_visible_script(
+    draft: &writing::ScriptDraft,
+    claims: &mut [verification::ClaimProposal],
+) {
+    for (proposal, declared) in claims.iter_mut().zip(&draft.claims) {
+        let mut matching_beats = draft.beats.iter().filter(|beat| beat.id == declared.beat_id);
+        let beat = matching_beats.next();
+        let exactly_one = matching_beats.next().is_none();
+        let statement = declared.assertion.trim();
+        let anchored = !statement.is_empty()
+            && exactly_one
+            && proposal.id == declared.id
+            && proposal.beat_id == declared.beat_id
+            && beat.is_some_and(|beat| {
+                beat.narration.contains(statement)
+                    || beat
+                        .on_screen_text
+                        .as_deref()
+                        .is_some_and(|text| text.contains(statement))
+            });
+        if !anchored {
+            proposal.kind = verification::ClaimKind::UnsupportedStatement;
+            proposal.model_claims_verified = false;
+        }
+    }
+}
+
 /// Load only the current immutable version. Loading a draft's entire
 /// historical version-body timeline would be an unbounded memory operation
 /// when a long-lived Studio script accumulates many edits.
@@ -1014,7 +1046,15 @@ impl AppServices {
         // Unknown IDs are deliberately retained as invalid citations so the
         // report records attempted forgery rather than silently dropping them.
         let known = unique_resolved_evidence(&ctx.evidence);
+        // The extractor caps generated proposals. Refuse a saved manifest
+        // that would silently omit declared claims from the returned report.
+        if draft.claims.len() > 128 || draft.beats.len() > 128 {
+            return Err(RepositoryError::Validation(
+                "saved claim or script beat count exceeds verification coverage".into(),
+            ));
+        }
         let mut claims = verification::extract_draft_claims(draft);
+        bind_saved_claims_to_visible_script(draft, &mut claims);
         for (proposal, supplied) in claims.iter_mut().zip(draft.claims.iter()) {
             proposal.citations = supplied
                 .evidence_ids
@@ -2147,6 +2187,56 @@ mod authenticity_tests {
         assert!(unique_resolved_evidence(std::slice::from_ref(&first))
             .get(first.evidence_id.as_str())
             .is_some_and(Option::is_some));
+    }
+
+    #[test]
+    fn fabricated_or_unanchored_claims_never_describe_saved_beat_as_fact_checked() {
+        use scriptotar_ai::writing::{BeatRole, ClaimStatus, FactualClaim, ScriptBeat, ScriptDraft};
+        let mut draft = ScriptDraft {
+            id: Uuid::new_v4().to_string(),
+            angle_id: "first-angle".into(),
+            title: "Original".into(),
+            language: "en".into(),
+            beats: vec![ScriptBeat {
+                id: "beat-1".into(),
+                role: BeatRole::Explanation,
+                narration: "The actual script mentions a bounded observation.".into(),
+                on_screen_text: Some("Visible on-screen source citation".into()),
+                shots: vec![],
+                evidence_ids: vec![],
+                manually_edited: false,
+            }],
+            cta: None,
+            caption: None,
+            claims: vec![FactualClaim {
+                id: "claim-1".into(),
+                beat_id: "beat-1".into(),
+                assertion: "bounded observation".into(),
+                status: ClaimStatus::Unverified,
+                evidence_ids: vec![],
+            }],
+        };
+        let mut proposed = verification::extract_draft_claims(&draft);
+        bind_saved_claims_to_visible_script(&draft, &mut proposed);
+        assert_eq!(proposed[0].kind, verification::ClaimKind::Fact);
+        draft.claims[0].assertion = "on-screen source citation".into();
+        let mut proposed = verification::extract_draft_claims(&draft);
+        bind_saved_claims_to_visible_script(&draft, &mut proposed);
+        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
+        draft.claims[0].assertion = "Visible on-screen source citation".into();
+        let mut proposed = verification::extract_draft_claims(&draft);
+        bind_saved_claims_to_visible_script(&draft, &mut proposed);
+        assert_eq!(proposed[0].kind, verification::ClaimKind::Fact);
+        draft.claims[0].assertion = "Invented claim not in script".into();
+        let mut proposed = verification::extract_draft_claims(&draft);
+        bind_saved_claims_to_visible_script(&draft, &mut proposed);
+        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
+        assert!(!proposed[0].model_claims_verified);
+        draft.beats.push(draft.beats[0].clone());
+        draft.claims[0].assertion = "bounded observation".into();
+        let mut proposed = verification::extract_draft_claims(&draft);
+        bind_saved_claims_to_visible_script(&draft, &mut proposed);
+        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
     }
 
     #[test]
