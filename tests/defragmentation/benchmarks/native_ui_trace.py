@@ -17,10 +17,16 @@ SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,127}\Z")
 UI_KIND = "externally-observed-installed-a11y-action"
 RUN_URL = re.compile(r"https://github[.]com/MousaXD/scriptotar/actions/runs/[1-9][0-9]*\Z")
+# Exact native accessibility action kinds. Avoid reusing a generic action
+# to report noncomparable Studio journeys in a single latency cohort.
+# Each event is still external UNVERIFIED evidence until Agent07 authenticates
+# the installed driver and start/completion observations.
 ACTIONS = frozenset({
     "cold_start_window", "warm_start_window", "studio_actionable",
-    "project_switch", "study_open", "candidate_typing", "candidate_save",
-    "candidate_reopen", "source_navigation", "transcript_navigation",
+    "project_switch", "study_create", "study_open",
+    "source_select", "source_navigation", "transcript_navigation",
+    "research_navigation", "draft_open", "draft_version_restore",
+    "draft_export", "candidate_typing", "candidate_save", "candidate_reopen",
     "gui_interaction",
 })
 ALLOWED_KEYS = frozenset({
@@ -84,6 +90,11 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
     # purported trial. A single accessibility observation cannot prove ten
     # independent trials merely by relabeling the trial_id field.
     used_evidence: set[tuple[str, str]] = set()
+    # A real native driver session cannot silently switch host, platform,
+    # fixture, workflow run or canonical-workload size mid-session. Otherwise
+    # independently reported cohorts can be stitched from contradictory claims.
+    # The labels themselves remain operator-supplied, not an attestation.
+    session_identity: dict[str, tuple] = {}
     # Never read the whole unbounded file: the additional byte detects an
     # oversize trace without admitting its content to JSON parsing. A file
     # that grows while being read is bounded by the same hard cap.
@@ -141,6 +152,13 @@ def summarize_ui_trace(path: Path, source_sha: str, package_sha256: str,
             value = event[name]
             if not isinstance(value, str) or not TOKEN.fullmatch(value):
                 raise ValueError(f"line {number}: invalid {name}")
+        session_key = event["session_id"]
+        identity = (event["native_provider"], event["study_count"],
+                    event["fixture_sha256"], event["host_evidence_sha256"],
+                    event["native_qa_run_url"])
+        if session_key in session_identity and session_identity[session_key] != identity:
+            raise ValueError(f"line {number}: inconsistent native session host/fixture/workload identity")
+        session_identity[session_key] = identity
         start, end = event["start_monotonic_ns"], event["completion_monotonic_ns"]
         if (type(start) is not int or type(end) is not int or start <= 0 or end <= start
                 or end - start > 600_000_000_000):
@@ -216,11 +234,15 @@ def main() -> None:
     parser.add_argument("--min-trials", type=int, default=10)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.output.exists() or not args.output.parent.is_dir():
-        parser.error("output must not exist and parent must exist")
+    if args.output.exists() or args.output.is_symlink() or not args.output.parent.is_dir():
+        parser.error("output must not exist (including symlinks) and parent must exist")
     result = summarize_ui_trace(args.trace, args.source_sha, args.package_sha256,
                                 args.executable_sha256, min_trials=args.min_trials)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    # Exclusive creation also refuses an output created between preflight and
+    # the final write. Untrusted offline evidence must never clobber another file.
+    with args.output.open("x", encoding="utf-8") as stream:
+        json.dump(result, stream, indent=2)
+        stream.write("\n")
     print("Uncertified native UI format report: " + str(args.output))
 
 

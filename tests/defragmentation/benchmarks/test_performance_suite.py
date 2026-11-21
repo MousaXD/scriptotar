@@ -372,8 +372,9 @@ class StudyPerformanceSuiteTests(unittest.TestCase):
 
 
 
+from . import native_ui_trace as native_ui_trace_module
 from .native_ui_trace import (summarize_ui_trace, UI_KIND, MAX_TRACE_BYTES,
-                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS)
+                              MAX_TRACE_LINE_CHARS, MAX_TRACE_EVENTS, main as ui_trace_main)
 
 
 class NativeUiTraceContractTests(unittest.TestCase):
@@ -397,6 +398,128 @@ class NativeUiTraceContractTests(unittest.TestCase):
             "start_evidence_id": f"evidence-before-{index:02}",
             "completion_evidence_id": f"evidence-after-{index:02}",
         }
+
+    def test_native_trace_cli_output_is_exclusive_and_symlink_safe(self):
+        # All observations are synthetic and remain externally UNVERIFIED.
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trace = root / "one-unverified-event.jsonl"
+            trace.write_text(json.dumps(self.event(0)), encoding="utf-8")
+
+            def argv(output):
+                return ["native_ui_trace", "--trace", str(trace),
+                        "--source-sha", SHA, "--package-sha256", HASH,
+                        "--executable-sha256", HASH, "--output", str(output)]
+
+            new_report = root / "original-output.json"
+            with patch("sys.argv", argv(new_report)):
+                ui_trace_main()
+            parsed = json.loads(new_report.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+
+            # Existing reports must be preserved, including a second CLI call.
+            frozen = new_report.read_bytes()
+            with patch("sys.argv", argv(new_report)):
+                with self.assertRaises(SystemExit) as refused:
+                    ui_trace_main()
+            self.assertEqual(refused.exception.code, 2)
+            self.assertEqual(new_report.read_bytes(), frozen)
+
+            # Path.exists() is false for a dangling link: it must still never
+            # create an attacker-selected file at the link destination.
+            target = root / "not-yet-created.json"
+            link = root / "dangling-report.json"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                pass  # Some locked-down Windows runners cannot create symlinks.
+            else:
+                self.assertFalse(link.exists())
+                self.assertTrue(link.is_symlink())
+                with patch("sys.argv", argv(link)):
+                    with self.assertRaises(SystemExit) as refused:
+                        ui_trace_main()
+                self.assertEqual(refused.exception.code, 2)
+                self.assertFalse(target.exists())
+
+            # Another process can create the target after the preflight check.
+            # Exclusive open("x") must reject that race rather than overwrite it.
+            raced = root / "raced-report.json"
+            def create_during_parse(*_args, **_kwargs):
+                raced.write_text("KEEP ORIGINAL", encoding="utf-8")
+                return {"scope": "SYNTHETIC_UNVERIFIED"}
+            with patch("sys.argv", argv(raced)):
+                # Patch the actual relative module, regardless of whether CI
+                # imports it as defragmentation.* or tests.defragmentation.*.
+                with patch.object(native_ui_trace_module, "summarize_ui_trace",
+                                  side_effect=create_during_parse):
+                    with self.assertRaises(FileExistsError):
+                        ui_trace_main()
+            self.assertEqual(raced.read_text(encoding="utf-8"), "KEEP ORIGINAL")
+
+    def test_required_studio_actions_have_distinct_unverified_cohorts(self):
+        # A generic navigation bucket is not an honest substitute for
+        # separately measured Study/source/research/version journeys.
+        required = (
+            "study_create", "source_select", "research_navigation",
+            "draft_open", "draft_version_restore", "draft_export",
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "offline-actions-not-installed.jsonl"
+            for action in required:
+                with self.subTest(action=action):
+                    trace.write_text("\n".join(
+                        json.dumps({**self.event(i), "action": action})
+                        for i in range(10)
+                    ), encoding="utf-8")
+                    result = summarize_ui_trace(trace, SHA, HASH, HASH)
+                    self.assertEqual(result["event_count"], 10)
+                    self.assertEqual(result["certification"],
+                                     "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
+                    self.assertEqual(result["scope"], "EXTERNAL_NATIVE_UI_TRACE_FORMAT_ONLY")
+                    self.assertEqual(result["groups"][0]["action"], action)
+                    self.assertEqual(result["groups"][0]["status"], "UNVERIFIED_EXTERNAL_TRACE")
+            trace.write_text(json.dumps({
+                **self.event(0), "action": "unreviewed-paid-provider-call",
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "action or Study count invalid"):
+                summarize_ui_trace(trace, SHA, HASH, HASH)
+
+    def test_same_native_session_cannot_relabel_host_fixture_or_study_scale(self):
+        # Each individual claim passes syntax. Contradictory same-session
+        # origin/workload labels are nevertheless refused before aggregation.
+        base = self.event(0)
+        alternate = self.event(1)
+        changed_values = {
+            "native_provider": "windows-webview2-uia",
+            "study_count": 1000,
+            "fixture_sha256": "d" * 64,
+            "host_evidence_sha256": "d" * 64,
+            "native_qa_run_url": "https://github.com/MousaXD/scriptotar/actions/runs/44333456022",
+        }
+        with tempfile.TemporaryDirectory() as folder:
+            trace = Path(folder) / "contradictory-session.jsonl"
+            for field, changed in changed_values.items():
+                with self.subTest(field=field):
+                    second = {**alternate, "session_id": base["session_id"],
+                              field: changed}
+                    trace.write_text("\n".join(
+                        json.dumps(event) for event in (base, second)
+                    ), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "inconsistent native session"):
+                        summarize_ui_trace(trace, SHA, HASH, HASH)
+            # A genuinely distinct session may specify another fixture.
+            # It remains below ten trials and entirely uncertified.
+            second = {**alternate, "fixture_sha256": "d" * 64}
+            trace.write_text("\n".join(json.dumps(event)
+                                       for event in (base, second)), encoding="utf-8")
+            result = summarize_ui_trace(trace, SHA, HASH, HASH)
+            self.assertEqual(len(result["groups"]), 2)
+            self.assertTrue(all(bucket["status"] == "INSUFFICIENT_TRIALS"
+                                for bucket in result["groups"]))
+            self.assertEqual(result["certification"], "PENDING_INDEPENDENT_AGENT07_INSTALLED_QA")
 
     def test_underpowered_trace_cannot_claim_p50_or_p95(self):
         with tempfile.TemporaryDirectory() as folder:
