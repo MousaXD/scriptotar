@@ -937,6 +937,108 @@ mod tests {
     }
 
     #[test]
+    fn two_independent_connections_same_late_receipt_settle_once() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        assert_eq!(
+            db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1
+        );
+        let path=dir.path().join("external.sqlite3");
+        let gate=Arc::new(Barrier::new(3));
+        let threads=(0..2).map(|_| {
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("same_request_race"),
+                        receipt_id:"same_receipt_race",
+                        tokens:71,cost_microusd:225,
+                    },
+                ).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        gate.wait();
+        let results=threads.into_iter().map(|t|t.join().unwrap()).collect::<Vec<_>>();
+        assert_eq!(results[0],results[1]);
+        assert_eq!(results[0].status,ExternalEffectStatus::Completed);
+        assert_eq!(results[0].actual_cost_microusd,225);
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),results[0]);
+        let conn=rusqlite::Connection::open(path).unwrap();
+        let claims:i64=conn.query_row(
+            "SELECT COUNT(*) FROM agent_external_provider_identities
+             WHERE provider='openai' AND identity IN ('same_request_race','same_receipt_race')",
+            [],|row|row.get(0),
+        ).unwrap();
+        assert_eq!(claims,2,"only the original request and receipt may own identities");
+        assert!(db.mark_external_dispatched(key,results[0].revision,1).is_err());
+    }
+
+    #[test]
+    fn cancellation_racing_late_receipt_never_hides_verified_charge() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let fresh=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,fresh.revision,1).unwrap();
+        db.record_external_ack(key,1,"cancel_race_request").unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let gate=Arc::new(Barrier::new(3));
+
+        let cancelled={
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.request_external_cancel(identity(&snap,project,study))
+            })
+        };
+        let receipt={
+            let gate=gate.clone();
+            let path=path.clone();
+            let snap=snap.clone();
+            thread::spawn(move || {
+                let other=SqliteStore::open(path).unwrap();
+                gate.wait();
+                other.reconcile_external_effect(
+                    identity(&snap,project,study),1,ExternalResolution::Completed {
+                        provider_request_id:Some("cancel_race_request"),
+                        receipt_id:"cancel_race_receipt",
+                        tokens:42,cost_microusd:125,
+                    },
+                ).unwrap()
+            })
+        };
+        gate.wait();
+        let cancel_outcome=cancelled.join().unwrap();
+        let completed=receipt.join().unwrap();
+        // A cancellation before receipt is only an intent; after a final
+        // receipt it must be rejected, never erase the recorded charge.
+        if let Ok(requested)=cancel_outcome {
+            assert!(requested.cancel_requested);
+            assert!(matches!(
+                requested.status,
+                ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+            ));
+        }
+        assert_eq!(completed.status,ExternalEffectStatus::Completed);
+        assert_eq!(completed.actual_cost_microusd,125);
+        let persisted=db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(persisted,completed);
+        assert_eq!(persisted.receipt_id.as_deref(),Some("cancel_race_receipt"));
+        assert!(db.mark_external_dispatched(key,persisted.revision,1).is_err());
+        let v8=db.get_agent_effect(project,study,&snap.plan.id,key.idempotency_key)
+            .unwrap().unwrap();
+        assert_eq!(v8.status,super::super::EffectStatus::Applied);
+    }
+
+    #[test]
     fn concurrent_claimers_only_one_fresh_and_fingerprint_cannot_change() {
         let (_dir,db,project,study,snap)=setup();
         let barrier=Arc::new(Barrier::new(3));
