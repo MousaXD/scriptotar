@@ -232,6 +232,23 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
   });
 
+  it('does not approve a saved research run whose durable step ID differs from its plan', async () => {
+    const { api, projectId, studyId } = await fixture();
+    const sources = await api.listStudyResearchSources(projectId, studyId);
+    await api.startStudyResearch(projectId, studyId, [sources[0].id]);
+    const original = api.listStudyResearchRuns.bind(api);
+    api.listStudyResearchRuns = async (project, study) => {
+      const runs = await original(project, study);
+      const changed = structuredClone(runs);
+      changed[0].steps[0].id = 'unrelated-persisted-step';
+      return changed;
+    };
+    render(StudioResearchReview, { props: { api, projectId, studyId } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Prepare research' })).toBeEnabled());
+    expect(screen.queryByRole('button', { name: 'Approve local analysis' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
+  });
+
   it('quarantines malformed saved run indexes without rendering approval', async () => {
     const { api, projectId, studyId } = await fixture();
     const original = api.listStudyResearchRuns.bind(api);
