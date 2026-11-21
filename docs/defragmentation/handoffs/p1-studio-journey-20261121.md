@@ -56,3 +56,12 @@ This is a code-level parity ledger, **not** certification of installed desktop b
 - [ ] Agent 00 reviews consent/effect/provider and closes all release gates before considering a main merge.
 
 **No backend reimplementation, no production paid egress, no main merge, no release authorized by this PR.**
+
+## 2026-11-21 continuation — asynchronous reopen and same-Study revocation
+
+- **Desktop UI original failures:** exact-head  `743ade13f26e8ea6791e9f2bc538262b61cd9393` failed two tests reopening saved Studies. Both clicked the **disabled** `Open study` picker while its asynchronous index was still loading. Test commit `29179e9ffc71e656e459a6810d083636b4507b18` now waits for the enabled state and accessible saved option, without weakening the busy-state guard or replacing keyboard semantics.
+- **Saved-revision boundary:** commit `04e9dc28ac236307b834a1936199771602777370` keys the local research panel by project, Study and **persisted Study revision**, instead of only project/Study. A newly saved source change or revocation discards the old report and approval UI, reloads canonical attachments/run state, and lets the backend reject stale plans.
+- **Negative regression:** commit `33ba80515c107e8bbbbdb9afed85c7247291498f` extends Studio source-revocation acceptance: an awaiting-approval local research plan is visible before revocation; after the revision changes its previous approval is disabled, sources have been refetched, and no research output or paid run was produced.
+- **Boundary:** a change made by another process while this Study remains open requires an explicit refresh/reopen or future native invalidation event; a frontend display guard cannot replace host-side current-source authorization.
+- **Agent 07 handoff delta:** on installed Windows WebView2 and Linux WebKitGTK, start a locally approved pending analysis, revoke an attached source via Studio, verify that the old approval cannot be clicked and no stale report is shown; then quit/reopen the Study and verify the denial persists. Repeat after a normal saved brief edit to check refreshing does not drop draft bytes. The broader 15-step journey still requires a certified paid backend to test any provider generation.
+- **Validation:** local Cargo and npm execution unavailable in the connector-only environment. Every test change is committed, but **exact-head GitHub Actions and independent installed-app results must be read from the current head, not inferred from earlier runs**. Until those pass, the PR is draft and the merge remains NO-GO.
