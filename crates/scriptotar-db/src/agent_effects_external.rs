@@ -1194,6 +1194,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(settled.status, ExternalEffectStatus::Completed);
+        // The new v13 v8 mutation fence must not block the legitimate
+        // receipt's v10-terminal -> v8-APPLIED transaction.
+        let legacy_status: String = external
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_status, "applied");
         guard.verify().unwrap();
         drop(guard);
         // A committed, authenticated terminal receipt permits ordinary
