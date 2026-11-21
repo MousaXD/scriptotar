@@ -395,6 +395,45 @@ fn verified_settlement_scope(
     Ok(())
 }
 
+/// Validate *every* external row against the historical canonical step map
+/// before any multi-row restart classification. This runs on the SAME SQLite
+/// connection/transaction as the subsequent UPDATE, never on a stale snapshot.
+fn scoped_recovery_effects(
+    db: &rusqlite::Connection,
+    project: Uuid,
+    study: Uuid,
+    run_id: &str,
+    checkpoint: &RunSnapshot,
+) -> RepositoryResult<Vec<ExternalEffect>> {
+    const MAX_VISIBLE_EFFECTS: usize = 128;
+    let query = format!(
+        "{SELECT} WHERE project_id=?1 AND study_id=?2 AND run_id=?3
+         ORDER BY step_id, idempotency_key LIMIT 129"
+    );
+    let mut statement = db.prepare(&query).map_err(db_error)?;
+    let rows = statement
+        .query_map(params![project.to_string(), study.to_string(), run_id], row)
+        .map_err(db_error)?;
+    let mut effects = Vec::new();
+    for next in rows {
+        if effects.len() >= MAX_VISIBLE_EFFECTS {
+            return Err(RepositoryError::Storage(
+                "external effect recovery exceeds bounded run size".into(),
+            ));
+        }
+        let effect = next.map_err(db_error)?;
+        if !checkpoint.steps.iter().any(|record| {
+            record.id == effect.step_id && record.idempotency_key == effect.idempotency_key
+        }) {
+            return Err(RepositoryError::Storage(
+                "external effect recovery found an unowned run step".into(),
+            ));
+        }
+        effects.push(effect);
+    }
+    Ok(effects)
+}
+
 fn checked(
     db: &rusqlite::Connection,
     key: ExternalEffectKey<'_>,
@@ -484,36 +523,9 @@ impl SqliteStore {
     pub fn inspect_external_effects_for_run(
         &self, project: Uuid, study: Uuid, run_id: &str,
     ) -> RepositoryResult<Vec<ExternalEffect>> {
-        const MAX_VISIBLE_EFFECTS: usize = 128;
         let db = database(self)?;
         let checkpoint = verified_run_settlement_scope(&db, project, study, run_id)?;
-        let query = format!(
-            "{SELECT} WHERE project_id=?1 AND study_id=?2 AND run_id=?3
-             ORDER BY step_id, idempotency_key LIMIT 129"
-        );
-        let mut statement = db.prepare(&query).map_err(db_error)?;
-        let rows = statement
-            .query_map(params![project.to_string(), study.to_string(), run_id], row)
-            .map_err(db_error)?;
-        let mut effects = Vec::new();
-        for next in rows {
-            if effects.len() >= MAX_VISIBLE_EFFECTS {
-                return Err(RepositoryError::Storage(
-                    "external effect inspection exceeds bounded run size".into(),
-                ));
-            }
-            let effect = next.map_err(db_error)?;
-            if !checkpoint.steps.iter().any(|record| {
-                record.id == effect.step_id
-                    && record.idempotency_key == effect.idempotency_key
-            }) {
-                return Err(RepositoryError::Storage(
-                    "external effect inspection found an unowned run step".into(),
-                ));
-            }
-            effects.push(effect);
-        }
-        Ok(effects)
+        scoped_recovery_effects(&db, project, study, run_id, &checkpoint)
     }
 
     pub fn get_external_effect(&self, key: ExternalEffectKey<'_>)
@@ -753,7 +765,11 @@ impl SqliteStore {
         // Do not lose track of an already-dispatched charge merely because
         // its owner was archived. This is a one-way accounting transition,
         // never an ownership lease or permission to send another request.
-        verified_run_settlement_scope(&tx,project,study,run_id)?;
+        let checkpoint=verified_run_settlement_scope(&tx,project,study,run_id)?;
+        // The run snapshot alone does not prove every persisted effect belongs
+        // to a canonical step. Refuse the WHOLE restart transaction if an
+        // orphan/forged external effect appears in this run.
+        scoped_recovery_effects(&tx,project,study,run_id,&checkpoint)?;
         let changed=tx.execute(
             "UPDATE agent_external_effects SET status='uncertain',revision=revision+1,
              updated_at=?1 WHERE project_id=?2 AND study_id=?3 AND run_id=?4 AND status='dispatched'",
@@ -1209,6 +1225,48 @@ mod tests {
             params![key.idempotency_key],|r|r.get(0),
         ).unwrap();
         assert_eq!(stored,"reserved","failed inspection never rewrites provider state");
+    }
+
+    #[test]
+    fn recovery_refuses_orphan_effect_without_mutating_valid_dispatch() {
+        let (dir,db,project,study,snap)=setup();
+        let original=identity(&snap,project,study);
+        let first=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(original,first.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        conn.pragma_update(None,"foreign_keys",true).unwrap();
+        let bogus_key=format!("{}:0:forged-draft",snap.plan.id);
+        let bogus_wire="f".repeat(64);
+        conn.execute(
+            "INSERT INTO agent_effects(
+                idempotency_key,run_id,project_id,study_id,step_id,tool_kind,
+                status,revision,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,'draft','DraftScript','reserved',1,'2026-11-21','2026-11-21')",
+            params![bogus_key,snap.plan.id,project.to_string(),study.to_string()],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO agent_external_effects(
+                idempotency_key,project_id,study_id,run_id,step_id,fingerprint,
+                provider,status,token_limit,cost_limit_microusd,created_at,updated_at
+             ) VALUES(?1,?2,?3,?4,'draft',?5,'openai','reserved',500,2500,'2026-11-21','2026-11-21')",
+            params![bogus_key,project.to_string(),study.to_string(),snap.plan.id,bogus_wire],
+        ).unwrap();
+
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err(),
+            "a forged effect must reject restart classification as a whole");
+        assert_eq!(db.get_external_effect(original).unwrap().unwrap(),dispatched,
+            "authentic effect must remain DISPATCHED with unchanged revision");
+        assert!(db.inspect_external_effects_for_run(project,study,&snap.plan.id).is_err());
+
+        // Restore a legitimate DB (not a production recovery override) and
+        // prove the exact original attempt can be classified once.
+        conn.execute("DELETE FROM agent_effects WHERE idempotency_key=?1",
+            params![bogus_key]).unwrap();
+        assert_eq!(db.recover_external_effects(project,study,&snap.plan.id).unwrap(),1);
+        let uncertain=db.get_external_effect(original).unwrap().unwrap();
+        assert_eq!(uncertain.status,ExternalEffectStatus::Uncertain);
+        assert!(db.mark_external_dispatched(original,uncertain.revision,1).is_err());
     }
 
     #[test]
