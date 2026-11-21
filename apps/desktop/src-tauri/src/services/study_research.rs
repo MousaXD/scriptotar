@@ -37,6 +37,10 @@ use uuid::Uuid;
 
 use super::AppServices;
 
+// SQL bounds origin metadata before loading user-controlled text into Rust.
+const MAX_RESEARCH_TEXT_BYTES: i64 = 4_096;
+const MAX_RESEARCH_PLATFORM_BYTES: i64 = 128;
+const MAX_RESEARCH_DATE_BYTES: i64 = 128;
 const MAX_TRANSCRIPT_BYTES: i64 = 128_000;
 const MAX_SEGMENTS_JSON_BYTES: i64 = 128_000;
 const MAX_REPORT_BYTES: usize = 96_000;
@@ -159,12 +163,21 @@ fn research_row(
          JOIN research_items r ON r.id=ss.research_id AND r.project_id=ss.project_id
          WHERE ss.project_id=?1 AND ss.study_id=?2 AND ss.id=?3
            AND ss.kind='research_item' AND ss.reference_id=?4
-           AND ss.research_id=?4 AND st.archived_at IS NULL AND p.archived_at IS NULL",
+           AND ss.research_id=?4 AND st.archived_at IS NULL AND p.archived_at IS NULL
+            AND length(CAST(r.source_url AS BLOB)) <= ?5
+            AND length(CAST(r.platform AS BLOB)) <= ?6
+            AND (r.title IS NULL OR length(CAST(r.title AS BLOB)) <= ?5)
+            AND length(CAST(r.scanned_at AS BLOB)) <= ?7
+            AND (r.published_at IS NULL OR length(CAST(r.published_at AS BLOB)) <= ?7)
+            AND (r.creator_id IS NULL OR length(CAST(r.creator_id AS BLOB)) <= 64)",
             params![
                 project.to_string(),
                 study.to_string(),
                 source.to_string(),
-                origin.to_string()
+                origin.to_string(),
+                MAX_RESEARCH_TEXT_BYTES,
+                MAX_RESEARCH_PLATFORM_BYTES,
+                MAX_RESEARCH_DATE_BYTES,
             ],
             |row| {
                 let creator: Option<String> = row.get(0)?;
@@ -1593,6 +1606,23 @@ mod tests {
             assert_eq!(sources.len(), 1);
             assert_eq!(sources[0].origin_id, recorded[0].id.to_string());
             assert_eq!(sources[0].id, attached.id.to_string());
+            // Oversized upstream metadata must fail SQL admission, rather
+            // than materializing unbounded text during planning or analysis.
+            let db = Connection::open(services.store.path()).unwrap();
+            db.execute(
+                "UPDATE research_items SET title=?1 WHERE id=?2 AND project_id=?3",
+                params!["x".repeat(32_768), research_id.to_string(), project.to_string()],
+            )
+            .unwrap();
+            assert!(services
+                .start_study_research(project, study, vec![attached.id])
+                .is_err());
+            db.execute(
+                "UPDATE research_items SET title='Recorded metadata' WHERE id=?1 AND project_id=?2",
+                params![research_id.to_string(), project.to_string()],
+            )
+            .unwrap();
+            drop(db);
             let pending = services
                 .start_study_research(project, study, vec![attached.id])
                 .unwrap();
