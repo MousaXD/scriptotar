@@ -252,6 +252,76 @@ fn verified_charged_response(
     }))
 }
 
+
+/// Exact four-step request intent authenticated by Agent 05's research-bound
+/// writing plan. Construct these only from a trusted host snapshot and exact
+/// sealed wire request, never from a model response or public IPC.
+#[derive(Debug, Clone, Copy)]
+pub struct ExpectedChargedWritingStep<'a> {
+    pub step_id: &'a str,
+    pub idempotency_key: &'a str,
+    pub request_sha256: &'a str,
+}
+
+/// No separate SQLite connection: Agent 05 must call this under the very SAME
+/// v11 IMMEDIATE transaction that revalidates the approved research/Study and
+/// creates three immutable drafts. Missing/uncertain effects return an error,
+/// not permission to send again. This helper never mutates billing or drafts.
+///
+/// The caller must independently authenticate the original research artifact,
+/// source fingerprint, user approval, provider account, price revision and the
+/// derived exact prompt/HTTP bytes for each expected request fingerprint.
+pub fn load_four_sealed_effect_outcomes(
+    tx: &Transaction<'_>,
+    project: Uuid,
+    study: Uuid,
+    run_id: &str,
+    expectations: &[ExpectedChargedWritingStep<'_>; 4],
+) -> RepositoryResult<[SealedChargedResponse; 4]> {
+    const ORDER: [&str; 4] = ["angles", "draft-1", "draft-2", "draft-3"];
+    let run = verified_run_settlement_scope(tx, project, study, run_id)?;
+    let mut outputs = Vec::with_capacity(4);
+    for (expected, step) in expectations.iter().zip(ORDER) {
+        if expected.step_id != step
+            || !fingerprint_ok(expected.request_sha256)
+        {
+            return Err(invalid("canonical four-writing-step identity"));
+        }
+        let original_step = run
+            .steps
+            .iter()
+            .find(|record| record.id == step)
+            .ok_or_else(|| conflict("original writing run lacks one required step"))?;
+        if original_step.idempotency_key != expected.idempotency_key {
+            return Err(conflict("writing step effect key changed"));
+        }
+        let key = ExternalEffectKey {
+            project,
+            study,
+            run_id,
+            step_id: step,
+            idempotency_key: expected.idempotency_key,
+        };
+        let effect = checked(tx, key)?;
+        if effect.fingerprint != expected.request_sha256
+            || effect.provider != "openai"
+            || effect.status != ExternalEffectStatus::Completed
+        {
+            return Err(conflict("writing result is not sealed against the approved wire"));
+        }
+        let sealed = verified_charged_response(tx, key, &effect)?
+            .ok_or_else(|| conflict("writing step lacks original sealed response"))?;
+        if sealed.request_sha256 != expected.request_sha256 {
+            return Err(conflict("writing response request fingerprint changed"));
+        }
+        outputs.push(sealed);
+    }
+    outputs
+        .try_into()
+        .map_err(|_| RepositoryError::Storage("four-writing-step result shape changed".into()))
+}
+
+
 impl SqliteStore {
     /// Exact scoped, read-only recovery: no provider call, no new approval and
     /// no writing mutation. A missing checkpoint remains unresolved.
