@@ -1202,6 +1202,34 @@ fn targeted_revision_cannot_save_a_long_source_copy_or_partial_version() {
 }
 
 #[test]
+fn direct_sqlite_acceptance_rejects_forged_manual_edit_flags_without_partial_writes() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    // Normal model parsing always strips manually_edited. A direct sink
+    // caller must not be allowed to invent human approval or protected text.
+    batch.candidates[2].draft.beats[0].manually_edited = true;
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::Denied(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
+
+#[test]
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
