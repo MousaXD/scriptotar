@@ -31,7 +31,7 @@ function run(dir) {
 async function populate(dir, successful = true) {
   const root = join(dir, 'qa', 'evidence');
   const images = {};
-  for (let i = 0; i < 232; i += 1) {
+  for (let i = 0; i < 252; i += 1) {
     const name = String(i).padStart(3, '0') + '.png';
     // This deliberately tests only hashing/count/manifest logic, not image encoding.
     const bytes = Buffer.from('isolated verifier fixture ' + name);
@@ -40,7 +40,7 @@ async function populate(dir, successful = true) {
   }
   const report = {
     sha,
-    screenshotCount: 232,
+    screenshotCount: 252,
     results: Array.from({ length: 20 }, () => ({})),
     failures: successful ? [] : [{ scenario: 'fixture', error: 'simulated browser failure' }]
   };
@@ -70,6 +70,18 @@ test('legacy 140-image reports cannot masquerade as complete Light/System eviden
     const report = JSON.parse(await readFile(reportPath, 'utf8'));
     report.screenshotCount = 140;
     report.results = Array.from({ length: 12 }, () => ({}));
+    await writeFile(reportPath, JSON.stringify(report));
+    const result = run(dir);
+    assert.notEqual(result.status, 0, result.stdout + result.stderr);
+  });
+});
+
+test('previous 232-image reports cannot claim canonical Studio coverage', async () => {
+  await withEvidence(async (dir) => {
+    await populate(dir);
+    const reportPath = join(dir, 'qa', 'evidence', 'report.json');
+    const report = JSON.parse(await readFile(reportPath, 'utf8'));
+    report.screenshotCount = 232;
     await writeFile(reportPath, JSON.stringify(report));
     const result = run(dir);
     assert.notEqual(result.status, 0, result.stdout + result.stderr);
