@@ -163,7 +163,13 @@ impl StudyWritingContext {
                 .ok_or(WritingWorkflowError::InvalidContext(
                     "foreign evidence source",
                 ))?;
-            covered.insert(binding.study_source_id);
+            // Only actual attributable source content counts toward the
+            // three-original-source writing floor. Human observations are
+            // useful context, but three notes about one transcript must not
+            // impersonate three independent source excerpts.
+            if original_source_excerpt(item) {
+                covered.insert(binding.study_source_id);
+            }
             // A disputed/contradicted observation is not an eligible citation
             // or writing input. The canonical gateway already filters these;
             // enforce the exclusion again at the workflow boundary.
@@ -516,6 +522,16 @@ where
 /// both the orchestration path and the canonical SQLite sink: direct callers
 /// must not bypass the same source-copy and candidate-diversity requirements.
 /// This is a deterministic safety screen, not a plagiarism determination.
+fn original_source_excerpt(item: &EvidenceRef) -> bool {
+    !item.excerpt.trim().is_empty()
+        && matches!(
+            (item.kind, item.status),
+            (EvidenceKind::SocialTranscript, EvidenceStatus::Attributed)
+                | (EvidenceKind::IndependentDocument, EvidenceStatus::Attributed)
+                | (EvidenceKind::IndependentDocument, EvidenceStatus::Corroborated)
+        )
+}
+
 pub(super) fn enforce_candidate_originality(
     context: &StudyWritingContext,
     candidates: &[GeneratedCandidate],
@@ -566,7 +582,15 @@ pub(super) fn enforce_candidate_originality(
                 .any(|item| script_evidence.contains(item.id.as_str()))
             {
                 candidate_covered = true;
-                cited_sources.insert(line.source_id);
+                // An observation can support creative direction, but only
+                // cited original excerpts qualify for the three-source
+                // evidence promise across the batch.
+                if line.evidence.iter().any(|item| {
+                    script_evidence.contains(item.id.as_str())
+                        && original_source_excerpt(item)
+                }) {
+                    cited_sources.insert(line.source_id);
+                }
             }
         }
         if !candidate_covered {
