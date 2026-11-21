@@ -1,13 +1,13 @@
-//! Proposed additive v14 charged-response checkpoint.
+// Proposed additive v14 charged-response checkpoint.
 //!
-//! This is an intentionally staged post-v13 module: Agent 00 must register
-//! migration_charged_responses as schema v14 AFTER the approved v13 migration.
-//! Never invent a v13 slot or change historical v8/v10-v12 schema entries.
-//! The only writer is a trusted adapter which has authenticated a provider
-//! response AND exact usage evidence before calling this API. It is not IPC.
+// This is an intentionally staged post-v13 module: Agent 00 must register
+// migration_charged_responses as schema v14 AFTER the approved v13 migration.
+// Never invent a v13 slot or change historical v8/v10-v12 schema entries.
+// The only writer is a trusted adapter which has authenticated a provider
+// response AND exact usage evidence before calling this API. It is not IPC.
 //!
-//! No new request is sent by this module. A missing seal after a charged remote
-//! response is UNRESOLVED, not permission to retry or fabricate response data.
+// No new request is sent by this module. A missing seal after a charged remote
+// response is UNRESOLVED, not permission to retry or fabricate response data.
 use sha2::{Digest, Sha256};
 
 const MAX_CHARGED_RESPONSE_BYTES: usize = 400_000;
@@ -23,6 +23,7 @@ fn charged_step(step: &str) -> bool {
 
 /// Additive migration for the reviewed v13 -> v14 transition; it has no
 /// impact on historical provider effect and writing batch tables.
+#[allow(dead_code)] // Agent 00 registers the post-v13 migration on integration.
 pub(crate) fn migration_charged_responses(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute_batch(
         r#"
