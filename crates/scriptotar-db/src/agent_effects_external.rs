@@ -863,6 +863,88 @@ mod tests {
     }
 
     #[test]
+    fn v13_pre_send_cleanup_v8_conflict_rolls_back_v10_and_preserves_barrier() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let original = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: original.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+
+        // Simulate an independent recovery writer changing the v8 claim,
+        // after admission but before our owned guard's Drop. This v8
+        // transition must invalidate the pre-send cleanup as a unit.
+        assert_eq!(
+            other
+                .execute(
+                    "UPDATE agent_effects
+                     SET status='unknown',revision=revision+1
+                     WHERE idempotency_key=?1 AND status='reserved'",
+                    params![key.idempotency_key],
+                )
+                .unwrap(),
+            1
+        );
+
+        drop(guard); // Release must fail closed: no half-cancelled claim.
+        let after = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(after.status, ExternalEffectStatus::Reserved);
+        assert!(!after.cancel_requested);
+        assert_eq!(after.revision, original.revision);
+        let v8_status: String = other
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(v8_status, "unknown");
+        let retained: i64 = other
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier
+                 WHERE effect_idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, 1, "failed release erased the original lock");
+        assert!(other
+            .execute(
+                "UPDATE content_studies SET goal='not authorized' WHERE id=?1",
+                params![study.to_string()],
+            )
+            .is_err());
+        assert!(db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: original.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .is_err());
+    }
+
+    #[test]
     fn v13_cancellation_committed_before_barrier_admission_denies_paid_send() {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
