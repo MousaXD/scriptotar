@@ -172,6 +172,23 @@ describe('jobs workspace', () => {
     await waitFor(() => expect(alert).toHaveFocus());
   });
 
+  it('clears a stale URL rejection when a replacement supported URL is dropped', async () => {
+    const { container, onEnqueueUrl } = setup();
+    onEnqueueUrl.mockRejectedValueOnce(new Error('validation failed: research URL is invalid: only http and https are supported'));
+    const input = screen.getByRole('textbox', { name: 'Media URL' });
+    await fireEvent.input(input, { target: { value: 'file:///invalid.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    await screen.findByRole('alert');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    const target = container.querySelector('.ingestion-workspace') as HTMLElement;
+    await fireEvent.drop(target, { dataTransfer: { getData: (type: string) => type === 'text/plain' ? 'https://example.org/replacement' : '', files: [] } });
+    expect(input).toHaveValue('https://example.org/replacement');
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect(input).not.toHaveAttribute('aria-describedby', 'queue-action-error');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('announces Arabic filename-only drop denials without submitting an untrusted file', async () => {
     setLocale('ar');
     const { container, onEnqueueLocal } = setup();
