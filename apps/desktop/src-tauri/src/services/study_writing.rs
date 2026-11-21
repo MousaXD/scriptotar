@@ -780,7 +780,16 @@ fn originality_words(text: &str) -> Vec<String> {
             || character == '\u{0670}'
             || ('\u{06D6}'..='\u{06ED}').contains(&character)
             || ('\u{08D3}'..='\u{08FF}').contains(&character);
-        if is_format_mark || is_arabic_mark {
+        // Unicode direction controls can be inserted between every letter
+        // without changing visible Arabic/English words. Treat these as
+        // ignorable for originality admission, not token boundaries.
+        let is_bidi_control = character == '\u{061C}'
+            || character == '\u{200E}'
+            || character == '\u{200F}'
+            || character == '\u{2060}'
+            || ('\u{202A}'..='\u{202E}').contains(&character)
+            || ('\u{2066}'..='\u{2069}').contains(&character);
+        if is_format_mark || is_arabic_mark || is_bidi_control {
             continue;
         }
         let normalized = match character {
