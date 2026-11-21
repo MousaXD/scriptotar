@@ -1867,7 +1867,7 @@ mod tests {
             calls: 0,
         };
         let recovered = reopened
-            .generate_three_writing_with_boundary(
+            .generate_three_writing_offline_fixture(
                 &plan,
                 &mut no_approval,
                 &mut no_provider,
