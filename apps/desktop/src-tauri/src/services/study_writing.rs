@@ -208,7 +208,10 @@ impl StudyWritingContext {
             }
             let prefix = format!("research:{}:", approved.artifact_id);
             if self.evidence.is_empty()
-                || self.evidence.iter().any(|item| !item.id.starts_with(&prefix))
+                || self
+                    .evidence
+                    .iter()
+                    .any(|item| !item.id.starts_with(&prefix))
             {
                 return Err(WritingWorkflowError::InvalidContext(
                     "writing evidence was not supplied by the approved research artifact",
@@ -314,11 +317,9 @@ pub(super) fn reload_context<C: CurrentStudy>(
     context: &StudyWritingContext,
 ) -> WriteResult<StudyWritingContext> {
     match &context.approved_research {
-        Some(approved) => loader.load_for_research(
-            context.project_id,
-            context.study_id,
-            approved.artifact_id,
-        ),
+        Some(approved) => {
+            loader.load_for_research(context.project_id, context.study_id, approved.artifact_id)
+        }
         None => loader.load(context.project_id, context.study_id),
     }
 }
