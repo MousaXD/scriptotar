@@ -898,8 +898,11 @@ where
     let step = format!("revise-{}-{}", candidate.draft.id, beat_id);
     let proposed = execute_step(gate, provider, stop, plan, &step, &request)?;
     check_current(current, plan)?;
-    writing::parse_revision_proposal(&proposed, &input)
+    let replacement = writing::parse_revision_proposal(&proposed, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    // Do not expose copied source prose merely because the caller requested
+    // a preview. Human acceptance and SQLite CAS remain separate boundaries.
+    reject_extended_source_copy(&plan.context, &replacement.replacement_narration)?;
     Ok(proposed)
 }
 
