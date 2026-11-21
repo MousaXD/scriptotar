@@ -168,6 +168,7 @@
       // row or malformed run cannot be allowed to crash Svelte's each block or
       // expose an approval for a run with no authenticated selection.
       if (!Array.isArray(attached) || !Array.isArray(runs) ||
+          runs.some((run) => !run || !run.plan || !Array.isArray(run.plan.steps)) ||
           attached.some((source) => !source || typeof source.id !== 'string' ||
             !source.id || typeof source.available !== 'boolean' ||
             typeof source.originId !== 'string' ||
