@@ -43,6 +43,23 @@ describe('Verified v11 candidate comparison', () => {
     expect(screen.queryByText('Saved manual')).not.toBeInTheDocument();
   });
 
+  it('invalidates receipt-linked comparison when a candidate beyond the first three changes', async () => {
+    const { study, gateway, ids, projectId } = fixture();
+    const view = render(StudioCandidateCompare, { props: { study, gateway, projectId } });
+    const compare = screen.getByRole('button', { name: /Compare script candidates/ });
+    await fireEvent.click(compare);
+    expect(await screen.findByText('Saved generated-c')).toBeInTheDocument();
+    expect(compare).toHaveAttribute('aria-expanded', 'true');
+
+    // Generated C is the fourth current summary because a manual draft
+    // precedes the receipt; the Study revision alone is not enough to notice.
+    const edited = { ...study, drafts: study.drafts?.map(candidate =>
+      candidate.id === ids[2] ? { ...candidate, revision: 2 } : candidate) };
+    await view.rerender({ study: edited, gateway, projectId });
+    expect(compare).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
+  });
+
   it('refuses a foreign-project receipt before opening any candidate', async () => {
     const { study, gateway, read, batches, batch, projectId } = fixture();
     batches.mockResolvedValue([{ ...batch, projectId: 'foreign' }]);
