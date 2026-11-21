@@ -148,6 +148,19 @@ fn model_claim_of_corroboration_does_not_verify() {
 }
 
 #[test]
+fn repeated_evidence_id_never_recovers_authority_after_three_or_more_copies() {
+    let original = source("a", "one-origin");
+    let proposal = fact(std::slice::from_ref(&original));
+    for copies in [2, 3, 4] {
+        let ctx = scope(vec![original.clone(); copies]);
+        let result = evaluated(&ctx, &proposal);
+        assert_eq!(result.status, VerificationStatus::Blocked);
+        assert!(has(&result, FindingCode::UnknownCitation));
+        assert!(result.exact_citations.is_empty());
+    }
+}
+
+#[test]
 fn unknown_and_forged_citation_fail_closed() {
     let ctx = scope(vec![source("a", "one")]);
     let mut claim = fact(&ctx.evidence);
