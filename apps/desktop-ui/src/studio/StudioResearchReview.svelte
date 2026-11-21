@@ -100,11 +100,20 @@
   onMount(() => { void refresh(); });
 
   function scoped(run: StudyResearchRun): boolean {
-    return run.plan.project_id === projectId && run.plan.study_id === studyId &&
-      run.plan.steps.length === 1 && run.plan.steps[0].input.tool === 'analyze_evidence' &&
-      run.plan.steps[0].requires_approval === true &&
-      run.plan.steps[0].estimate?.tokens === 0 &&
-      run.plan.steps[0].estimate?.cost_microusd === 0;
+    const plan = run?.plan;
+    const steps = plan?.steps;
+    const step = Array.isArray(steps) ? steps[0] : undefined;
+    const ids = step?.input?.source_ids;
+    return !!plan && typeof plan.id === 'string' && !!plan.id &&
+      plan.project_id === projectId && plan.study_id === studyId &&
+      Array.isArray(steps) && steps.length === 1 &&
+      step?.input?.tool === 'analyze_evidence' &&
+      Array.isArray(ids) && ids.length >= 1 && ids.length <= 8 &&
+      ids.every((id) => typeof id === 'string' && !!id) &&
+      new Set(ids).size === ids.length &&
+      step.requires_approval === true &&
+      step.estimate?.tokens === 0 &&
+      step.estimate?.cost_microusd === 0;
   }
 
   function hasSelectedSources(): boolean {
@@ -155,6 +164,18 @@
         api.listStudyResearchRuns(projectId, studyId)
       ]);
       if (!alive || requestEpoch !== epoch) return;
+      // Treat adapter responses as untrusted until shape-checked. A null source
+      // row or malformed run cannot be allowed to crash Svelte's each block or
+      // expose an approval for a run with no authenticated selection.
+      if (!Array.isArray(attached) || !Array.isArray(runs) ||
+          attached.some((source) => !source || typeof source.id !== 'string' ||
+            !source.id || typeof source.available !== 'boolean' ||
+            typeof source.originId !== 'string' ||
+            typeof source.kind !== 'string' ||
+            typeof source.locator !== 'string' ||
+            typeof source.collectedAt !== 'string')) {
+        throw new Error(t.unavailable);
+      }
       sources = attached;
       const available = new Set(attached.filter((source) => source.available).map((source) => source.id));
       const prior = selectedIds.filter((id) => available.has(id));
@@ -168,7 +189,14 @@
       }
       if (activeRun?.state === 'completed') await openReport(activeRun, requestEpoch);
     } catch (cause) {
-      if (alive && requestEpoch === epoch) errorText = showError(cause);
+      if (alive && requestEpoch === epoch) {
+        // A partially loaded source index must not remain in the selection UI.
+        sources = [];
+        selectedIds = [];
+        activeRun = null;
+        report = null;
+        errorText = showError(cause);
+      }
     } finally {
       if (alive && requestEpoch === epoch) loading = false;
     }
