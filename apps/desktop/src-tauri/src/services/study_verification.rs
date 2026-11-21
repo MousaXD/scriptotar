@@ -463,6 +463,28 @@ fn typed_revision_matches(
     canonical == *supplied
 }
 
+/// Require a complete text-token boundary, not an arbitrary interior substring.
+/// Otherwise a model-supplied claim "5" would match a saved script saying "50",
+/// or an Arabic fragment inside a longer Arabic word. Preserve exact case,
+/// punctuation and Unicode bytes; this is still only a TEXT anchor, not truth.
+fn exact_visible_claim_span(text: &str, statement: &str) -> bool {
+    if statement.is_empty() || statement.len() > text.len() {
+        return false;
+    }
+    let Some(first) = statement.chars().next() else {
+        return false;
+    };
+    let Some(last) = statement.chars().next_back() else {
+        return false;
+    };
+    text.match_indices(statement).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + statement.len()..].chars().next();
+        (!first.is_alphanumeric() || before.is_none_or(|ch| !ch.is_alphanumeric()))
+            && (!last.is_alphanumeric() || after.is_none_or(|ch| !ch.is_alphanumeric()))
+    })
+}
+
 /// A structured assertion has not been inventoried against the saved script
 /// merely because its claim ID and candidate payload are stored together.
 /// Only exact text in the uniquely identified canonical narration/on-screen
@@ -485,11 +507,11 @@ fn bind_saved_claims_to_visible_script(
             && proposal.id == declared.id
             && proposal.beat_id == declared.beat_id
             && beat.is_some_and(|beat| {
-                beat.narration.contains(statement)
+                exact_visible_claim_span(&beat.narration, statement)
                     || beat
                         .on_screen_text
                         .as_deref()
-                        .is_some_and(|text| text.contains(statement))
+                        .is_some_and(|text| exact_visible_claim_span(text, statement))
             });
         if !anchored {
             proposal.kind = verification::ClaimKind::UnsupportedStatement;
@@ -2190,6 +2212,20 @@ mod authenticity_tests {
         assert!(unique_resolved_evidence(std::slice::from_ref(&first))
             .get(first.evidence_id.as_str())
             .is_some_and(Option::is_some));
+    }
+
+    #[test]
+    fn exact_claim_anchor_rejects_inside_word_or_number_in_english_and_arabic() {
+        assert!(exact_visible_claim_span("Exactly 5 customers", "5"));
+        assert!(!exact_visible_claim_span("Exactly 50 customers", "5"));
+        assert!(!exact_visible_claim_span("Evidence in classical wording", "class"));
+        assert!(exact_visible_claim_span("Evidence in classical wording", "classical"));
+        assert!(!exact_visible_claim_span("المعدل جيد", "معدل"));
+        assert!(exact_visible_claim_span("المعدل جيد", "المعدل"));
+        assert!(!exact_visible_claim_span("عدد ١٠٠", "١"));
+        assert!(exact_visible_claim_span("عدد ١٠٠", "١٠٠"));
+        assert!(!exact_visible_claim_span("a pinned fact", "Pinned"));
+        assert!(!exact_visible_claim_span("source", ""));
     }
 
     #[test]
