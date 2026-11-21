@@ -302,7 +302,8 @@
   {/if}
   {#if errorText}<p role="alert" class="studio-error">{errorText}</p>{/if}
   {#if report && !pendingEdits}
-    <div class="research-result" role="region" aria-label={t.reportLabel}>
+    <div class="research-result" role="region" aria-label={t.reportLabel}
+      dir={$locale === 'ar' ? 'rtl' : 'ltr'}>
       {#if report.feature_support.length}
         <details class="research-feature-support">
           <summary>{t.features}</summary>
