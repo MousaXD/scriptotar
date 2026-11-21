@@ -650,7 +650,8 @@ fn revision_preview_rejects_source_copy_without_mutating_an_accepted_draft() {
     context.evidence[0].excerpt = passage.into();
     let plan = prepare_three("revision-preview-copy", context.clone()).unwrap();
     current.0.replace(context);
-    let mut sink = SqlFixtureSink::open(&temp.path().join("preview-copy.sqlite"), current.0.clone());
+    let mut sink =
+        SqlFixtureSink::open(&temp.path().join("preview-copy.sqlite"), current.0.clone());
     let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
     let candidate = sink.get(ids[0]).candidates[0].clone();
     provider.responses.push_back(
