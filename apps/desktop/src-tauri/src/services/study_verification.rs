@@ -468,7 +468,10 @@ fn typed_revision_matches(
 /// or an Arabic fragment inside a longer Arabic word. Preserve exact case,
 /// punctuation and Unicode bytes; this is still only a TEXT anchor, not truth.
 fn exact_visible_claim_span(text: &str, statement: &str) -> bool {
-    if statement.is_empty() || statement.len() > text.len() {
+    if statement.is_empty()
+        || statement.len() > text.len()
+        || !statement.chars().any(char::is_alphanumeric)
+    {
         return false;
     }
     let Some(first) = statement.chars().next() else {
@@ -1254,15 +1257,15 @@ mod tests {
             from_study_evidence(&forged, &source, &bound).state,
             EvidenceState::Untrusted
         );
-        let mut partial_number = reference.clone();
-        partial_number.input.claim = "facts".into();
+        let mut partial_word = reference.clone();
+        partial_word.input.claim = "facts".into();
         assert_eq!(
-            from_study_evidence(&partial_number, &source, &bound).state,
+            from_study_evidence(&partial_word, &source, &bound).state,
             EvidenceState::Unreviewed
         );
-        partial_number.input.claim = "acts".into();
+        partial_word.input.claim = "acts".into();
         assert_eq!(
-            from_study_evidence(&partial_number, &source, &bound).state,
+            from_study_evidence(&partial_word, &source, &bound).state,
             EvidenceState::Untrusted
         );
         let mut fake_locator = reference.clone();
@@ -2237,6 +2240,7 @@ mod authenticity_tests {
         assert!(exact_visible_claim_span("عدد ١٠٠", "١٠٠"));
         assert!(!exact_visible_claim_span("a pinned fact", "Pinned"));
         assert!(!exact_visible_claim_span("source", ""));
+        assert!(!exact_visible_claim_span("A claim!", "!"));
     }
 
     #[test]
