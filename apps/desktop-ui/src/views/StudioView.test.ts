@@ -58,6 +58,38 @@ function mount(gateway?: StudioGateway, extra: Record<string, unknown> = {}) {
 }
 
 describe('Content Study Studio', () => {
+  it('shows the exact three saved v11 receipt draft IDs rather than only their titles', async () => {
+    const projectId = 'p-creator-lab';
+    const ids = ['canonical-draft-one', 'canonical-draft-two', 'canonical-draft-three'] as const;
+    const saved: ContentStudy = {
+      id: 'receipt-study', projectId, revision: 5,
+      brief: { ...emptyBrief(), title: 'Receipt-linked study' },
+      sources: [], draft: 'Saved candidate body', draftVersions: [],
+      draftId: ids[0], draftRevision: 1,
+      drafts: ids.map((id, index) => ({ id, title: 'Candidate ' + (index + 1), revision: 1 }))
+    };
+    const history = vi.fn(async () => [{
+      projectId, studyId: saved.id, runId: 'canonical-run',
+      draftIds: [...ids] as [string, string, string], committedAt: '2026-11-21T10:00:00Z'
+    }]);
+    const gateway: StudioGateway = {
+      listStudies: async () => [{ id: saved.id, projectId, brief: saved.brief, revision: saved.revision }],
+      createStudy: async () => saved,
+      getStudy: async () => structuredClone(saved),
+      saveStudy: async () => saved,
+      listStudyWritingBatches: history
+    };
+    mount(gateway);
+    const picker = await screen.findByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(picker).toBeEnabled());
+    await fireEvent.click(picker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Receipt-linked study' }));
+    await waitFor(() => expect(history).toHaveBeenCalledWith(projectId, saved.id));
+    for (const draftId of ids) {
+      expect(await screen.findByText(draftId)).toBeInTheDocument();
+    }
+  });
+
   it('freezes the outgoing draft while the next Study is loading and preserves its saved data', async () => {
     const { gateway, get } = studyFixture();
     const projectId = 'p-creator-lab';
