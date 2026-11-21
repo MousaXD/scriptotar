@@ -1600,7 +1600,9 @@ mod tests {
             .into_iter()
             .map(|row| row.id)
             .collect::<Vec<_>>();
-        let waiting = services.start_study_research(project, study, attached).unwrap();
+        let waiting = services
+            .start_study_research(project, study, attached)
+            .unwrap();
         assert_eq!(waiting.state, RunState::AwaitingApproval);
         let finished = services
             .decide_study_research(project, study, &waiting.plan.id, "approve")
@@ -1623,12 +1625,13 @@ mod tests {
         assert_eq!(seal.run_id, waiting.plan.id);
         assert_eq!(seal.sources.len(), 3);
         assert!(seal.sources.iter().all(|source| {
-            source.origin_sha256.len() == 64
-                && origins.contains(&source.origin_id)
+            source.origin_sha256.len() == 64 && origins.contains(&source.origin_id)
         }));
-        assert!(plan.context.evidence.iter().all(|item| {
-            item.id.starts_with(&format!("research:{artifact}:"))
-        }));
+        assert!(plan
+            .context
+            .evidence
+            .iter()
+            .all(|item| { item.id.starts_with(&format!("research:{artifact}:")) }));
         assert!(reopened
             .prepare_three_writing_plan_from_research(
                 project,
@@ -1655,12 +1658,7 @@ mod tests {
         )
         .unwrap();
         assert!(reopened
-            .prepare_three_writing_plan_from_research(
-                project,
-                study,
-                "source-changed",
-                artifact
-            )
+            .prepare_three_writing_plan_from_research(project, study, "source-changed", artifact)
             .is_err());
     }
 
