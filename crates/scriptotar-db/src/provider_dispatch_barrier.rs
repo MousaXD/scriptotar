@@ -373,15 +373,11 @@ impl SqliteStore {
                         if attempt != 1 {
                             false
                         } else {
-                            pre_send_abort = Some((
-                                key.clone(),
-                                run.clone(),
-                                step.clone(),
-                                attempt,
-                            ));
+                            pre_send_abort =
+                                Some((key.clone(), run.clone(), step.clone(), attempt));
                             true
                         }
-                    },
+                    }
                     // A terminal charge has a durable provider receipt; a
                     // certified nonexecution/cancellation has provider evidence.
                     Some((status, receipt, _))
