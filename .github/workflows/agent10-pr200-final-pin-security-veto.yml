@@ -1,0 +1,220 @@
+# Independent review of candidate as authenticated DATA, never a production workflow or source baseline update.
+name: Agent10 independent PR200 final source-pin and hostile Git-tree controls
+
+on:
+  push:
+    branches: [agent-10/p0-pr200-final-pin-adversarial-20261121]
+
+permissions:
+  contents: read
+
+jobs:
+  combined-source:
+    name: Exact final-pin source and hostile test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - name: Checkout independent test-only sources without saved credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Checkout exact PR200 candidate as inert data only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 5aadc5b685a1a0e3ef79fe7e1f128a5f343fc48c
+          path: .candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout immutable trusted guard as inert data only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .trusted-guard
+          persist-credentials: false
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+      - name: Authenticate original security tests, candidate Git parents, seven source Git blobs, guard and publisher paths
+        shell: bash
+        env:
+          TEST_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          stage=5aadc5b685a1a0e3ef79fe7e1f128a5f343fc48c
+          base=b12843c75764601248a69c0dd89ff753af8df366
+          reviewed=b6ec7b914b55007417e8191695e2213d4117a61c
+          test "$(git rev-parse HEAD)" = "$TEST_SHA"
+          test "$(git rev-parse HEAD:tests/defragmentation/security/agent10_png_inflater_bounded_negative.py)" = fa91864d38860f4c9801c97f6928d408ded23288
+          test "$(git rev-parse HEAD:tests/defragmentation/security/agent10_pr179_attached_memory_json_veto.py)" = 18c68ce74bb82581599a08b5120a6bb28b779a3b
+          for item in "agent10_png_inflater_bounded_negative.py:fa91864d38860f4c9801c97f6928d408ded23288" "agent10_pr179_attached_memory_json_veto.py:18c68ce74bb82581599a08b5120a6bb28b779a3b"; do
+            name="$(printf '%s' "$item" | cut -d: -f1)"
+            pin="$(printf '%s' "$item" | cut -d: -f2)"
+            test "$(git hash-object "tests/defragmentation/security/$name")" = "$pin"
+          done
+          test "$(git -C .candidate rev-parse HEAD)" = "$stage"
+          test "$(git -C .candidate show -s --format=%P "$reviewed")" = "b12843c75764601248a69c0dd89ff753af8df366 94f598d87543c9333dff6f489219cf314d77259f c5a5e74819718a87e7d40ac2d59480c9165502e0"
+          git -C .candidate merge-base --is-ancestor "$reviewed" "$stage"
+          test "$(git -C .candidate rev-list --count "$reviewed..$stage")" = 3
+          test "$(git -C .candidate rev-list --count --first-parent "$reviewed..$stage")" = 3
+          git -C .candidate cat-file -e "$base^{commit}"
+          git -C .candidate diff --quiet
+          actual="$(git -C .candidate diff --name-only "$base" "$stage" | sort)"
+          expected="$(printf '%s\n' \
+            .github/workflows/windows-tauri.yml \
+            .github/workflows/linux-tauri.yml \
+            .github/workflows/installed-webview-acceptance.yml \
+            tests/defragmentation/benchmarks/attached_memory_gate.py \
+            tests/defragmentation/benchmarks/test_attached_memory_gate.py \
+            tests/defragmentation/native-e2e/README.md \
+            tests/defragmentation/native-e2e/native_bidi_geometry_review.py \
+            tests/defragmentation/native-e2e/test_native_bidi_geometry_review.py \
+            tests/defragmentation/native-e2e/test_visual_observations.py \
+            tests/defragmentation/native-e2e/visual_observations.py | sort)"
+          test "$actual" = "$expected"
+          while IFS=: read -r path blob; do
+            test "$(git -C .candidate rev-parse "HEAD:$path")" = "$blob"
+            test "$(git -C .candidate hash-object "$path")" = "$blob"
+          done <<'PINS'
+          tests/defragmentation/native-e2e/README.md:20fc6cd2180afd8b5bbe129065734b9067a07472
+          tests/defragmentation/native-e2e/native_bidi_geometry_review.py:d025ee5d12485dca7bbc4c9586a6e31c94532a7b
+          tests/defragmentation/native-e2e/test_native_bidi_geometry_review.py:aff0d2fdb26577003131b5fbd9c7a7591824da8c
+          tests/defragmentation/native-e2e/visual_observations.py:7b3dc4e12b04acc0f052403c705e24e117f8d968
+          tests/defragmentation/native-e2e/test_visual_observations.py:abcbef2473996c0c9ca925817e977e2f48acd708
+          tests/defragmentation/benchmarks/attached_memory_gate.py:94aaa7a7ca7e6360a8a568966de6d7cc23ce72ec
+          tests/defragmentation/benchmarks/test_attached_memory_gate.py:0c0f94ccd137768beda4768c50c9daf33d4e73b6
+          PINS
+          for file in .github/workflows/tauri-next-release.yml apps/desktop-ui/package-lock.json apps/desktop-ui/scripts/guard-vite-build-patterns.mjs; do
+            test "$(git -C .candidate rev-parse "HEAD:$file")" = "$(git -C .candidate rev-parse "$base:$file")"
+          done
+          for wf in .github/workflows/windows-tauri.yml .github/workflows/linux-tauri.yml .github/workflows/installed-webview-acceptance.yml; do
+            case "$wf" in
+              .github/workflows/installed-webview-acceptance.yml) occurrences=2 ;;
+              *) occurrences=1 ;;
+            esac
+            test "$(git -C .candidate show "$reviewed:$wf" | grep -Fc 'reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0')" = "$occurrences"
+            test "$(grep -Fc 'reviewed=b6ec7b914b55007417e8191695e2213d4117a61c' ".candidate/$wf")" = "$occurrences"
+            # Git checkout on Windows uses CRLF; compare canonical Git blobs
+            # and separately authenticate normalized worktree bytes.
+            expected_blob="$(git -C .candidate show "$reviewed:$wf" | sed 's/reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0/reviewed=b6ec7b914b55007417e8191695e2213d4117a61c/g' | git hash-object --stdin)"
+            actual_blob="$(git -C .candidate rev-parse "HEAD:$wf")"
+            test "$expected_blob" = "$actual_blob"
+            test "$(git -C .candidate hash-object --path="$wf" "$wf")" = "$actual_blob"
+            grep -Fq 'persist-credentials: false' ".candidate/$wf"
+            grep -Fq '55ce3ac389b7e1fcab99b3a5acc84b526630af72' ".candidate/$wf"
+          done
+          test "$(git -C .trusted-guard rev-parse HEAD)" = 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          guard=apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          test "$(git -C .trusted-guard rev-parse "HEAD:$guard")" = 5c746abd3caf414ba2c80be825d66983312236c6
+          test "$(git -C .trusted-guard hash-object --path="$guard" "$guard")" = 5c746abd3caf414ba2c80be825d66983312236c6
+          git -C .trusted-guard diff --quiet -- "$guard"
+          echo "PASS FINAL EXACT-SHA: 7/7 SOURCE BLOBS + EXACT FOUR PIN REPLACEMENTS IN THREE WORKFLOWS + ORIGINAL GUARD"
+      - name: Trusted guard positive control (not approving stage for production execution)
+        shell: bash
+        run: |
+          node .trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace .candidate/apps/desktop-ui
+      - name: Select pinned stdlib Python after source authentication
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Exercise original malformed PNG/ZIP unit suite and 17-case attached-memory veto
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import unittest
+          from pathlib import Path
+          for path, name, count in [
+              (".candidate/tests/defragmentation/native-e2e", "test_visual_observations.py", 4),
+              (".candidate/tests/defragmentation/native-e2e", "test_native_bidi_geometry_review.py", 10),
+          ]:
+              suite = unittest.TestLoader().discover(path, pattern=name)
+              if suite.countTestCases() != count:
+                  raise RuntimeError(f"expected {count} original tests in {name}, saw {suite.countTestCases()}")
+              result = unittest.TextTestRunner(verbosity=2).run(suite)
+              if not result.wasSuccessful(): raise RuntimeError(f"original {name} failed")
+              print(f"PASS {count}/{count} {name}", flush=True)
+          PY
+          python tests/defragmentation/security/agent10_png_inflater_bounded_negative.py --candidate .candidate
+          python tests/defragmentation/security/agent10_pr179_attached_memory_json_veto.py --target .candidate
+      - name: Real committed Git-tree negative controls for source-pinning bypass
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=5aadc5b685a1a0e3ef79fe7e1f128a5f343fc48c
+          wd="$RUNNER_TEMP/pr200-negative-git-tree"
+          mkdir -p "$wd"
+          git -C .candidate worktree add --detach "$wd" "$stage"
+          trap 'git -C .candidate worktree remove --force "$wd" || true' EXIT
+          git -C "$wd" config user.name "Agent 10 disposable adversarial runner"
+          git -C "$wd" config user.email "agent10@example.invalid"
+          for path in \
+            apps/desktop/src-tauri/build.rs \
+            apps/desktop-ui/package.json \
+            apps/desktop-ui/package-lock.json \
+            Cargo.lock \
+            tests/defragmentation/native-e2e/visual_observations.py \
+            tests/defragmentation/benchmarks/attached_memory_gate.py \
+            scripts/prepare_mcp_tools.py \
+            .github/workflows/tauri-next-release.yml \
+            .github/workflows/agent10-unreviewed-extra.yml \
+            .github/CODEOWNERS; do
+            git -C "$wd" reset --hard "$stage" >/dev/null
+            git -C "$wd" clean -fd >/dev/null
+            mkdir -p "$(dirname "$wd/$path")"
+            printf '\n# AGENT10 UNSANCTIONED SOURCE CHANGE\n' >> "$wd/$path"
+            git -C "$wd" add -A
+            git -C "$wd" commit -m "malicious test mutation $path" >/dev/null
+            if git -C "$wd" diff --quiet "$stage" HEAD -- . \
+              ':(exclude).github/workflows/windows-tauri.yml' \
+              ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+              ':(exclude).github/workflows/linux-tauri.yml'; then
+              echo "::error::MUTATION BYPASSED reviewed stage: $path"
+              exit 1
+            fi
+            echo "EXPECTED REJECT: $path"
+          done
+          git -C "$wd" reset --hard "$stage" >/dev/null
+          git -C "$wd" clean -fd >/dev/null
+          git -C "$wd" rm -f tests/defragmentation/native-e2e/visual_observations.py >/dev/null
+          git -C "$wd" commit -m "malicious test source deletion" >/dev/null
+          if git -C "$wd" diff --quiet "$stage" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'; then
+            echo "::error::SOURCE DELETION BYPASSED"; exit 1
+          fi
+          echo "EXPECTED REJECT: source deletion"
+          git -C "$wd" reset --hard "$stage" >/dev/null
+          git -C "$wd" clean -fd >/dev/null
+          for wf in windows-tauri.yml linux-tauri.yml installed-webview-acceptance.yml; do
+            printf '\n# controlled reviewed baseline rotation test\n' >> "$wd/.github/workflows/$wf"
+          done
+          git -C "$wd" add -A
+          git -C "$wd" commit -m "positive three workflow literal exclusions" >/dev/null
+          git -C "$wd" diff --quiet "$stage" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'
+          echo "PASS 11/11 COMMITTED NEGATIVE GIT-TREE SOURCE MUTATIONS; 1 POSITIVE EXACT 3-WORKFLOW EXCLUSION"
+          # The excluded workflow paths themselves are NOT protected by Git diff.
+          # This is an intentionally observed policy vulnerability, not release approval.
+          git -C "$wd" reset --hard "$stage" >/dev/null
+          git -C "$wd" clean -fd >/dev/null
+          printf '\n# attacker controlled workflow change: independent settings must block merge\n' >> "$wd/.github/workflows/windows-tauri.yml"
+          git -C "$wd" add -A
+          git -C "$wd" commit -m "hostile in-exclusion workflow mutation" >/dev/null
+          if ! git -C "$wd" diff --quiet "$stage" HEAD -- . \
+            ':(exclude).github/workflows/windows-tauri.yml' \
+            ':(exclude).github/workflows/installed-webview-acceptance.yml' \
+            ':(exclude).github/workflows/linux-tauri.yml'; then
+            echo "::error::Unexpected scope rejection; investigate changed semantics"; exit 1
+          fi
+          echo "CONFIRMED POLICY GAP: edits WITHIN excluded workflow bypass scoped Git-diff and require independent required-checks/rulesets"
