@@ -1562,6 +1562,46 @@ mod tests {
             )
             .is_err());
 
+        // A real Study evidence UUID cannot endorse a forged excerpt or
+        // section in a separately saved immutable candidate manifest.
+        let mut forged_excerpt = candidate.clone();
+        forged_excerpt.lineage[0].evidence[0].excerpt =
+            "Invented quotation falsely attached to genuine evidence".into();
+        let forged_excerpt_body = export_candidate(&forged_excerpt);
+        let excerpt_draft = services
+            .store
+            .create_draft(
+                project,
+                study_id,
+                &forged_excerpt.draft.title,
+                &forged_excerpt_body,
+            )
+            .unwrap();
+        services
+            .store
+            .attach_source_to_draft(project, excerpt_draft.id, attached.id)
+            .unwrap();
+        db.execute(
+            "INSERT INTO study_writing_revisions(draft_id,version,structured_json)
+             VALUES(?1,1,?2)",
+            params![
+                excerpt_draft.id.to_string(),
+                serde_json::to_string(&forged_excerpt).unwrap()
+            ],
+        )
+        .unwrap();
+        let mut forged_excerpt_claims = forged_excerpt.draft.clone();
+        forged_excerpt_claims.id = excerpt_draft.id.to_string();
+        assert!(services
+            .verify_studio_claims_read_only(
+                project,
+                study_id,
+                study.revision,
+                1,
+                &forged_excerpt_claims,
+            )
+            .is_err());
+
         // A regular Studio text edit creates a real immutable revision, but
         // it intentionally has no typed manifest. The old review is stale;
         // matching the new revision number cannot rescue its old claims.
