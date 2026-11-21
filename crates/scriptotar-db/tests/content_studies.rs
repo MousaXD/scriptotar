@@ -904,7 +904,9 @@ fn remove_v13_from_legacy_fixture(conn: &Connection) {
         .unwrap();
     drop(statement);
     for name in names {
-        assert!(name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+        assert!(name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
         conn.execute_batch(&format!("DROP TRIGGER {name};"))
             .unwrap();
     }
