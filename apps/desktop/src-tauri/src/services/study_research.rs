@@ -541,16 +541,6 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     }
     #[cfg(not(unix))]
     fs::create_dir_all(directory).map_err(|_| storage())?;
-    if path.exists() {
-        let existing = read_bounded_report_file(&path)?;
-        return if existing == data {
-            Ok(())
-        } else {
-            Err(RepositoryError::Conflict(
-                "research artifact ID already exists".into(),
-            ))
-        };
-    }
     let temporary = directory.join(format!("{artifact_id}.{}.pending", Uuid::new_v4()));
     let result = (|| {
         let mut options = OpenOptions::new();
