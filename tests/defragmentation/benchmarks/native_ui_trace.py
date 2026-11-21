@@ -234,11 +234,15 @@ def main() -> None:
     parser.add_argument("--min-trials", type=int, default=10)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    if args.output.exists() or not args.output.parent.is_dir():
-        parser.error("output must not exist and parent must exist")
+    if args.output.exists() or args.output.is_symlink() or not args.output.parent.is_dir():
+        parser.error("output must not exist (including symlinks) and parent must exist")
     result = summarize_ui_trace(args.trace, args.source_sha, args.package_sha256,
                                 args.executable_sha256, min_trials=args.min_trials)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    # Exclusive creation also refuses an output created between preflight and
+    # the final write. Untrusted offline evidence must never clobber another file.
+    with args.output.open("x", encoding="utf-8") as stream:
+        json.dump(result, stream, indent=2)
+        stream.write("\n")
     print("Uncertified native UI format report: " + str(args.output))
 
 
