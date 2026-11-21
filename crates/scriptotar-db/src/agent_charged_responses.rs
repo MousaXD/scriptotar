@@ -218,17 +218,22 @@ impl SqliteStore {
         &self,
         key: ExternalEffectKey<'_>,
     ) -> RepositoryResult<Option<SealedChargedResponse>> {
-        let db = database(self)?;
-        let effect = checked(&db, key)?;
+        let mut db = database(self)?;
+        // One consistent read snapshot: a concurrent receipt+seal COMMIT must
+        // never become a mixed pre-commit effect / post-commit response read.
+        let tx = db.transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(db_error)?;
+        let effect = checked(&tx, key)?;
         if !charged_step(key.step_id) {
             return Err(invalid("charged writing step"));
         }
-        let sealed = verified_charged_response(&db, key, &effect)?;
+        let sealed = verified_charged_response(&tx, key, &effect)?;
         if effect.status == ExternalEffectStatus::Completed && sealed.is_none() {
             return Err(RepositoryError::Storage(
                 "completed paid step lacks original response: unresolved".into(),
             ));
         }
+        tx.commit().map_err(db_error)?;
         Ok(sealed)
     }
 
