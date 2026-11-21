@@ -429,6 +429,33 @@ fn scoped_recovery_effects(
                 "external effect recovery found an unowned run step".into(),
             ));
         }
+        // A raw SQL writer can corrupt the historical v8 fence without
+        // violating the v10 external-effect table's immutable identity guard.
+        // Do not turn such a mismatched effect into a plausible UNCERTAIN
+        // provider charge. The paired legacy fence is the only path from a
+        // reserved attempt to an actually applied billing receipt.
+        let legacy: (String, String, String, String, String) = db.query_row(
+            "SELECT project_id,study_id,run_id,step_id,status FROM agent_effects
+             WHERE idempotency_key=?1",
+            params![effect.idempotency_key],
+            |record| Ok((
+                record.get(0)?, record.get(1)?, record.get(2)?,
+                record.get(3)?, record.get(4)?,
+            )),
+        ).map_err(db_error)?;
+        if legacy.0 != project.to_string()
+            || legacy.1 != study.to_string()
+            || legacy.2 != run_id
+            || legacy.3 != effect.step_id
+            || (matches!(
+                effect.status,
+                ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+            ) && !matches!(legacy.4.as_str(), "reserved" | "unknown"))
+        {
+            return Err(RepositoryError::Storage(
+                "external effect and legacy dispatch fence disagree".into(),
+            ));
+        }
         effects.push(effect);
     }
     Ok(effects)
@@ -1308,6 +1335,35 @@ mod tests {
         assert_eq!(
             reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),0
         );
+    }
+
+    #[test]
+    fn recovery_refuses_corrupt_legacy_terminal_fence_for_dispatched_effect() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        let dispatched=db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        let path=dir.path().join("external.sqlite3");
+        let conn=rusqlite::Connection::open(&path).unwrap();
+
+        // Direct SQL can force an impossible v8 terminal write even though
+        // the provider still has only a DISPATCHED v10 record. The old v8
+        // transition trigger permits reserved -> applied; this is corruption,
+        // not authoritative evidence of payment.
+        conn.execute(
+            "UPDATE agent_effects SET status='applied',artifact_id='forged_receipt'
+             WHERE idempotency_key=?1",
+            params![key.idempotency_key],
+        ).unwrap();
+
+        assert!(db.inspect_external_effects_for_run(
+            project,study,&snap.plan.id
+        ).is_err());
+        assert!(db.recover_external_effects(project,study,&snap.plan.id).is_err(),
+            "v8 Applied must never be accepted as a dispatched/uncertain pair");
+        assert_eq!(db.get_external_effect(key).unwrap().unwrap(),dispatched,
+            "a rejected recovery must not mutate the genuine v10 dispatch");
+        assert!(db.mark_external_dispatched(key,dispatched.revision,1).is_err());
     }
 
     #[test]
