@@ -1557,6 +1557,66 @@ fn allows_distinct_scripts_that_share_short_common_phrases() {
 }
 
 #[test]
+fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let shared = "The opening describes how neighbors discover an old notebook at the town square and then follow its detailed instructions to plan a safe walking route together";
+    for (index, candidate) in batch.candidates.iter_mut().enumerate() {
+        candidate.draft.beats[0].narration = [
+            "Consider trees",
+            "Explore maps",
+            "Observe traffic",
+        ][index]
+            .into();
+        candidate.draft.beats[1].narration = shared.into();
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn source_copy_hidden_in_caption_is_rejected_before_any_sqlite_write() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The recorded speaker visits the community garden early each morning and gives a detailed tour of every vegetable bed before explaining which soil types are best suited for local seedlings";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.caption = Some(passage.into());
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn tampered_receipt_cannot_reconcile_unrelated_initial_drafts() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
