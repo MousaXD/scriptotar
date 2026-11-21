@@ -820,8 +820,25 @@ mod tests {
             assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
             conn.execute_batch(&format!("DROP TRIGGER {name};")).unwrap();
         }
+        // Reconstruct the original v8 transition trigger for a genuine
+        // pre-v12/pre-v13/pre-v14 database. A legacy upgrade fixture must
+        // not retain modern DDL while claiming an older migration ledger.
         conn.execute_batch(
-            "DROP TABLE provider_dispatch_barrier;
+            "DROP TRIGGER agent_effect_transition_guard;
+             CREATE TRIGGER agent_effect_transition_guard
+             BEFORE UPDATE OF status ON agent_effects
+             WHEN NOT (
+                 (OLD.status='reserved' AND NEW.status IN
+                     ('accepted','applied','not_applied','unknown'))
+                 OR (OLD.status='accepted' AND NEW.status IN
+                     ('applied','not_applied','unknown'))
+                 OR (OLD.status='unknown' AND NEW.status IN
+                     ('applied','not_applied'))
+             )
+             BEGIN SELECT RAISE(ABORT,
+                 'agent effect transition requires external evidence'); END;
+             DELETE FROM schema_migrations WHERE version = 14;
+             DROP TABLE provider_dispatch_barrier;
              DELETE FROM schema_migrations WHERE version = 13;",
         )
         .unwrap();
