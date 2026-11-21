@@ -1,0 +1,42 @@
+name: Agent10 independent v13 cross-process dispatch barrier
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent10-v13-dispatch-os-process.yml
+      - crates/scriptotar-db/tests/provider_dispatch_barrier_os_process.rs
+permissions:
+  contents: read
+jobs:
+  v13-actual-independent-process:
+    name: Original v13 OS-process trigger negative (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Confirm exact immutable Agent01 v13 and only new test files
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=31cccffcbd8f03bdca161d5dca822212742ba8b7
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/provider_dispatch_barrier.rs)" = 800b4a4e03230455d18b27b06f21c63676a50607
+          test "$(git rev-parse HEAD:crates/scriptotar-db/src/lib.rs)" = 70b43efa86a0fe1626efb49cb5be27add6be239f
+          EXPECTED="$(printf '%s\n' .github/workflows/agent10-v13-dispatch-os-process.yml crates/scriptotar-db/tests/provider_dispatch_barrier_os_process.rs | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS: Agent01 PR192 exact v13 source, two read-only Agent10 test paths"
+      - uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5
+      - name: Real SECOND OS process must be trigger-rejected then accepted after guard release
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p scriptotar-db --test provider_dispatch_barrier_os_process --locked -- --nocapture
+          echo "PASS: independent OS process SQLite mutation policy only. NOT provider or release certification."
