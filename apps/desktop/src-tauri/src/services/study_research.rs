@@ -1148,6 +1148,26 @@ pub(super) struct ResearchWritingSource {
     pub access: StudyResearchAccess,
 }
 
+/// Host-bound identity for one approved, canonical, replay-validated report.
+/// Its digest covers the exact serialized report used to build writing input;
+/// it is not a provider authorization token.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct AuthenticatedResearchIdentity {
+    pub project_id: Uuid,
+    pub study_id: Uuid,
+    pub artifact_id: Uuid,
+    pub report_sha256: String,
+}
+
+/// The identity must travel with the offline plan and be revalidated at every
+/// generation admission and before persisting the resulting writing batch.
+#[allow(dead_code)]
+pub(super) struct AuthenticatedResearchWritingPlan {
+    pub research: AuthenticatedResearchIdentity,
+    pub writing: super::study_writing::GenerationPlan,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ResearchWritingContext {
@@ -1301,6 +1321,54 @@ fn research_writing_from_report(
         limitations,
         source_text_is_untrusted_data: true,
     })
+}
+
+/// Bind a canonical current Study brief/source snapshot to the *actual*
+/// approved local research report. Never merge caller-supplied evidence or
+/// count duplicate attachment rows as independent transcript origins.
+#[allow(dead_code)]
+fn bind_research_to_current(
+    current: &super::study_writing::StudyWritingContext,
+    research: &ResearchWritingContext,
+) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+    use super::study_writing::WritingWorkflowError;
+    if current.project_id != research.project_id
+        || current.study_id != research.study_id
+        || !research.source_text_is_untrusted_data
+        || !research.meets_three_source_evidence_floor
+        || research.attributed_source_count < 3
+        || current.sources.len() != research.sources.len()
+    {
+        return Err(WritingWorkflowError::StaleContext);
+    }
+    let mut attachments = HashSet::new();
+    let mut origins = HashSet::new();
+    for source in &research.sources {
+        if !attachments.insert(source.study_source_id)
+            || !origins.insert(source.origin_id)
+            || !matches!(
+                source.access,
+                StudyResearchAccess::Available | StudyResearchAccess::Partial
+            )
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let matching = current.sources.iter().filter(|candidate| {
+            candidate.study_source_id == source.study_source_id
+                && candidate.origin_id == source.origin_id
+                && candidate.fingerprint == source.attachment_fingerprint
+                && candidate.source_revision == source.attachment_revision
+                && candidate.collected_at == source.collected_at
+        });
+        if matching.count() != 1 {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+    }
+    let mut bound = current.clone();
+    bound.evidence = research.evidence.clone();
+    bound.findings = research.findings.clone();
+    bound.validate()?;
+    Ok(bound)
 }
 
 fn research_run_error(error: RuntimeError) -> RepositoryError {
@@ -1512,6 +1580,80 @@ impl AppServices {
     ) -> RepositoryResult<ResearchWritingContext> {
         let report = read_study_research_artifact(self, project, study, artifact)?;
         research_writing_from_report(artifact, &report)
+    }
+
+    /// Offline Agent 05 handoff. The only source of research evidence is the
+    /// currently approved artifact, never independent gateway reconstruction.
+    /// No provider dispatch, approval mutation or paid effect happens here.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_from_approved_research(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        artifact: Uuid,
+        run_id: &str,
+    ) -> super::study_writing::WriteResult<AuthenticatedResearchWritingPlan> {
+        use super::study_writing::{prepare_three, CurrentStudy, WritingWorkflowError};
+        let report = read_study_research_artifact(self, project, study, artifact)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let report_bytes =
+            serde_json::to_vec(&report).map_err(|_| WritingWorkflowError::StaleContext)?;
+        let identity = AuthenticatedResearchIdentity {
+            project_id: project,
+            study_id: study,
+            artifact_id: artifact,
+            report_sha256: format!("{:x}", Sha256::digest(&report_bytes)),
+        };
+        let research = research_writing_from_report(artifact, &report)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let current = CurrentStudy::load(self, project, study)?;
+        let bound = bind_research_to_current(&current, &research)?;
+        let writing = prepare_three(run_id, bound)?;
+        // Refuse a changed report/source after building the prompt.
+        self.revalidate_approved_research_plan(&identity, &writing)?;
+        Ok(AuthenticatedResearchWritingPlan {
+            research: identity,
+            writing,
+        })
+    }
+
+    /// Mandatory checkpoint for Agent 05 before *each* provider step and for
+    /// Agent 02/05 before the durable three-draft commit. Offline only.
+    #[allow(dead_code)]
+    pub(super) fn revalidate_approved_research_plan(
+        &self,
+        identity: &AuthenticatedResearchIdentity,
+        plan: &super::study_writing::GenerationPlan,
+    ) -> super::study_writing::WriteResult<()> {
+        use super::study_writing::{CurrentStudy, WritingWorkflowError};
+        if identity.project_id != plan.context.project_id
+            || identity.study_id != plan.context.study_id
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let report = read_study_research_artifact(
+            self,
+            identity.project_id,
+            identity.study_id,
+            identity.artifact_id,
+        )
+        .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let bytes = serde_json::to_vec(&report).map_err(|_| WritingWorkflowError::StaleContext)?;
+        if format!("{:x}", Sha256::digest(&bytes)) != identity.report_sha256 {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let research = research_writing_from_report(identity.artifact_id, &report)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        let current = CurrentStudy::load(self, identity.project_id, identity.study_id)?;
+        let rebound = bind_research_to_current(&current, &research)?;
+        if rebound != plan.context {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let expected = super::study_writing::prepare_three(&plan.run_id, rebound)?;
+        if expected.angles_prompt != plan.angles_prompt {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        Ok(())
     }
 }
 
