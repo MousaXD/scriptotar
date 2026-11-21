@@ -658,12 +658,17 @@ fn arabic_output_and_locator_remain_intact() {
     drop(c);
     provider.responses =
         VecDeque::from([angles_json(), draft_json(1), draft_json(2), draft_json(3)]);
-    for (i, raw) in provider.responses.iter_mut().enumerate().skip(1) {
+    // Distinct source-grounded Arabic narratives, not a common sentence with
+    // only a changed sequence number. Near-duplicates must remain rejected.
+    let narrations = [
+        "هذه فكرة عربية أصلية تعرض خطوات تنظيم زيارة المكتبة وإعداد قائمة للكتب المناسبة للصغار",
+        "تبدأ القصة بلقاء سكان الحي حول خريطة المدرسة وتشرح كيفية عبور الطريق بأمان",
+        "يتابع النص تجربة فريق تطوعي يصنع حديقة مجتمعية ويشارك طرق رعاية النباتات المحلية",
+    ];
+    for (index, raw) in provider.responses.iter_mut().enumerate().skip(1) {
         let mut draft: serde_json::Value = serde_json::from_str(raw).unwrap();
         draft["language"] = json!("ar");
-        draft["beats"][0]["narration"] = json!(format!(
-            "هذه فكرة عربية أصلية مختلفة رقم {i} ونص جديد للمشاهدين"
-        ));
+        draft["beats"][0]["narration"] = json!(narrations[index - 1]);
         *raw = draft.to_string();
     }
     let mut sink = SqlFixtureSink::open(&temp.path().join("arabic.sqlite"), current.0.clone());
@@ -1499,7 +1504,9 @@ fn rejects_extended_verbatim_source_passage_before_atomic_acceptance() {
     );
     let receipts: i64 = Connection::open(db.path())
         .unwrap()
-        .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(receipts, 0);
 }
@@ -1617,7 +1624,10 @@ fn corrupted_initial_snapshot_blocks_recovery_without_harming_human_edits() {
         .execute(
             "UPDATE study_writing_revisions SET structured_json=?1
              WHERE draft_id=?2 AND version=1",
-            params![serde_json::to_string(&batch.candidates[1]).unwrap(), ids[0].to_string()],
+            params![
+                serde_json::to_string(&batch.candidates[1]).unwrap(),
+                ids[0].to_string()
+            ],
         )
         .unwrap();
     assert!(matches!(
@@ -1625,9 +1635,7 @@ fn corrupted_initial_snapshot_blocks_recovery_without_harming_human_edits() {
         Err(WritingWorkflowError::PersistFailed(_))
     ));
     assert_eq!(
-        db.get_draft(plan.context.project_id, ids[0])
-            .unwrap()
-            .body,
+        db.get_draft(plan.context.project_id, ids[0]).unwrap().body,
         "Editor-owned body after generation",
         "reconciliation must never overwrite human edits"
     );
@@ -1637,12 +1645,9 @@ fn generated_factual_claim_labels_never_enter_immutable_v1_as_reviewed() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
-    batch.candidates[0].draft.claims[0].status =
-        scriptotar_ai::writing::ClaimStatus::Disputed;
-    batch.candidates[1].draft.claims[0].status =
-        scriptotar_ai::writing::ClaimStatus::Opinion;
-    batch.candidates[2].draft.claims[0].status =
-        scriptotar_ai::writing::ClaimStatus::Unverified;
+    batch.candidates[0].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Disputed;
+    batch.candidates[1].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Opinion;
+    batch.candidates[2].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Unverified;
 
     let mut sink = CanonicalSqliteCandidateStore {
         store: &db,
@@ -1659,9 +1664,11 @@ fn generated_factual_claim_labels_never_enter_immutable_v1_as_reviewed() {
         .unwrap();
     let persisted: GeneratedBatch = serde_json::from_str(&raw).unwrap();
     for (candidate, id) in persisted.candidates.iter().zip(ids) {
-        assert!(candidate.draft.claims.iter().all(|claim| {
-            claim.status == scriptotar_ai::writing::ClaimStatus::Unverified
-        }));
+        assert!(candidate
+            .draft
+            .claims
+            .iter()
+            .all(|claim| { claim.status == scriptotar_ai::writing::ClaimStatus::Unverified }));
         let v1: String = connection
             .query_row(
                 "SELECT structured_json FROM study_writing_revisions
@@ -1707,12 +1714,9 @@ fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
         for claim in &mut candidate.draft.claims {
             claim.evidence_ids = vec!["e1".into()];
         }
-        candidate.lineage = study_writing::lineage_for(
-            &only_one.context,
-            &candidate.angle,
-            &candidate.draft,
-        )
-        .unwrap();
+        candidate.lineage =
+            study_writing::lineage_for(&only_one.context, &candidate.angle, &candidate.draft)
+                .unwrap();
     }
     assert!(matches!(
         study_writing::enforce_candidate_originality(
@@ -1873,10 +1877,8 @@ fn short_near_duplicate_prose_rejected_before_provider_batch_commit_and_retry() 
         draft_json(3),
     ]
     .into();
-    let mut sink = SqlFixtureSink::open(
-        &temp.path().join("short-angles.sqlite"),
-        current.0.clone(),
-    );
+    let mut sink =
+        SqlFixtureSink::open(&temp.path().join("short-angles.sqlite"), current.0.clone());
     assert!(matches!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
         Err(WritingWorkflowError::DuplicateOrSimilar)
@@ -1933,7 +1935,9 @@ fn short_near_duplicate_english_and_arabic_are_rejected_by_canonical_sqlite_sink
         );
         let count: i64 = Connection::open(db.path())
             .unwrap()
-            .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0, "rejected batch must not leave a receipt");
     }
