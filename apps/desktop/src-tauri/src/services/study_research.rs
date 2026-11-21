@@ -3,10 +3,10 @@
 //! All source IDs below are canonical study_sources.id, NOT platform URLs.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::Write,
-    path::PathBuf,
+    io::{Read, Write},
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -15,6 +15,9 @@ use scriptotar_agent::{
     Certainty, Engine, Estimate, ExecutionContext, Limits, Plan, PolicyGate, ProbeResult,
     RunSnapshot, RuntimeError, StepInput, StepOutput, StepPlan, ToolExecutor, ToolFailure,
     ToolKind, ToolReceipt, ToolRegistry,
+};
+use scriptotar_ai::writing::{
+    EvidenceKind, EvidenceLocator, EvidenceRef, EvidenceStatus, FindingKind, ResearchFinding,
 };
 use scriptotar_core::{
     ContentStudy, RepositoryError, RepositoryResult, ResearchItem, StudySourceKind,
@@ -29,10 +32,15 @@ use scriptotar_research::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::AppServices;
 
+// SQL bounds origin metadata before loading user-controlled text into Rust.
+const MAX_RESEARCH_TEXT_BYTES: i64 = 4_096;
+const MAX_RESEARCH_PLATFORM_BYTES: i64 = 128;
+const MAX_RESEARCH_DATE_BYTES: i64 = 128;
 const MAX_TRANSCRIPT_BYTES: i64 = 128_000;
 const MAX_SEGMENTS_JSON_BYTES: i64 = 128_000;
 const MAX_REPORT_BYTES: usize = 96_000;
@@ -98,7 +106,8 @@ fn scoped_study(
     if record.archived_at.is_some() {
         return Err(not_found());
     }
-    let active: bool = read_db(services)?
+    let db = read_db(services)?;
+    let active: bool = db
         .query_row(
             "SELECT EXISTS(
                 SELECT 1 FROM content_studies st
@@ -117,15 +126,20 @@ fn scoped_study(
         // Validate *both* exact source membership and admissible source kind
         // before requesting user approval, not only after effect reservation.
         let attached = services.store.get_study_source(project, study, *id)?;
-        if attached.reference_id.is_none()
-            || !matches!(
-                attached.kind,
-                StudySourceKind::ResearchItem | StudySourceKind::Transcript
-            )
+        let kind = match attached.kind {
+            StudySourceKind::ResearchItem => StudyResearchKind::ResearchItem,
+            StudySourceKind::Transcript => StudyResearchKind::Transcript,
+            _ => {
+                return Err(invalid(
+                    "research inspection requires a research item or transcript",
+                ));
+            }
+        };
+        let origin = attached.reference_id.ok_or_else(not_found)?;
+        if !attached.available
+            || origin_content_sha256(&db, project, study, *id, origin, kind)?.is_none()
         {
-            return Err(invalid(
-                "research inspection requires a research item or transcript",
-            ));
+            return Err(not_found());
         }
     }
     services.require_active_project(project)?;
@@ -149,12 +163,21 @@ fn research_row(
          JOIN research_items r ON r.id=ss.research_id AND r.project_id=ss.project_id
          WHERE ss.project_id=?1 AND ss.study_id=?2 AND ss.id=?3
            AND ss.kind='research_item' AND ss.reference_id=?4
-           AND ss.research_id=?4 AND st.archived_at IS NULL AND p.archived_at IS NULL",
+           AND ss.research_id=?4 AND st.archived_at IS NULL AND p.archived_at IS NULL
+            AND length(CAST(r.source_url AS BLOB)) <= ?5
+            AND length(CAST(r.platform AS BLOB)) <= ?6
+            AND (r.title IS NULL OR length(CAST(r.title AS BLOB)) <= ?5)
+            AND length(CAST(r.scanned_at AS BLOB)) <= ?7
+            AND (r.published_at IS NULL OR length(CAST(r.published_at AS BLOB)) <= ?7)
+            AND (r.creator_id IS NULL OR length(CAST(r.creator_id AS BLOB)) <= 64)",
             params![
                 project.to_string(),
                 study.to_string(),
                 source.to_string(),
-                origin.to_string()
+                origin.to_string(),
+                MAX_RESEARCH_TEXT_BYTES,
+                MAX_RESEARCH_PLATFORM_BYTES,
+                MAX_RESEARCH_DATE_BYTES,
             ],
             |row| {
                 let creator: Option<String> = row.get(0)?;
@@ -240,6 +263,27 @@ fn transcript_row(
     )
     .optional()
     .map_err(|_| storage())
+}
+
+/// A content-bound digest from the same bounded, project/Study-scoped rows
+/// used by research analysis. Revision timestamps alone are insufficient.
+fn origin_content_sha256(
+    db: &Connection,
+    project: Uuid,
+    study: Uuid,
+    source: Uuid,
+    origin: Uuid,
+    kind: StudyResearchKind,
+) -> RepositoryResult<Option<String>> {
+    let bytes = match kind {
+        StudyResearchKind::ResearchItem => research_row(db, project, study, source, origin)?
+            .map(|item| serde_json::to_vec(&item).map_err(|_| storage()))
+            .transpose()?,
+        StudyResearchKind::Transcript => transcript_row(db, project, study, source, origin)?
+            .map(|row| serde_json::to_vec(&row).map_err(|_| storage()))
+            .transpose()?,
+    };
+    Ok(bytes.map(|value| format!("{:x}", Sha256::digest(&value))))
 }
 
 fn parse_transcript(
@@ -332,6 +376,7 @@ fn inspect_selected(
     db.execute_batch("BEGIN DEFERRED TRANSACTION")
         .map_err(|_| storage())?;
     let mut sources = Vec::new();
+    let mut bindings = HashMap::new();
     for id in ids {
         let attachment = services.store.get_study_source(project, study, *id)?;
         let Some(reference_id) = attachment.reference_id else {
@@ -383,6 +428,16 @@ fn inspect_selected(
                 }
             }
         };
+        let sha256 = origin_content_sha256(&db, project, study, *id, reference_id, kind)?
+            .ok_or_else(not_found)?;
+        bindings.insert(
+            *id,
+            (
+                attachment.fingerprint.clone(),
+                attachment.source_revision.clone(),
+                sha256,
+            ),
+        );
         sources.push(StudySourceMaterial {
             project_id: project,
             study_id: study,
@@ -397,8 +452,16 @@ fn inspect_selected(
         });
     }
     db.execute_batch("COMMIT").map_err(|_| storage())?;
-    let report = analyze_study_sources(project, study, analyzed_at, sources)
+    let mut report = analyze_study_sources(project, study, analyzed_at, sources)
         .map_err(|_| invalid("invalid selected research data"))?;
+    for finding in &mut report.sources {
+        let (fingerprint, revision, sha256) = bindings
+            .remove(&finding.study_source_id)
+            .ok_or_else(storage)?;
+        finding.attachment_fingerprint = Some(fingerprint);
+        finding.attachment_revision = revision;
+        finding.origin_sha256 = Some(sha256);
+    }
     services.require_active_project(project)?;
     let current = services.store.get_study(project, study)?;
     if current.revision != record.revision || current.archived_at.is_some() {
@@ -442,12 +505,23 @@ fn artifact_path(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<
         .join(format!("{artifact_id}.json")))
 }
 
-fn load_envelope(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<ReportEnvelope> {
-    let path = artifact_path(services, artifact_id)?;
-    let bytes = fs::read(path).map_err(|_| not_found())?;
+/// Reads at most one byte past the hard artifact limit so a malicious or
+/// corrupted file cannot allocate its entire contents before admission.
+fn read_bounded_report_file(path: &Path) -> RepositoryResult<Vec<u8>> {
+    let file = fs::File::open(path).map_err(|_| not_found())?;
+    let mut bytes = Vec::new();
+    file.take((MAX_REPORT_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| storage())?;
     if bytes.len() > MAX_REPORT_BYTES {
         return Err(storage());
     }
+    Ok(bytes)
+}
+
+fn load_envelope(services: &AppServices, artifact_id: Uuid) -> RepositoryResult<ReportEnvelope> {
+    let path = artifact_path(services, artifact_id)?;
+    let bytes = read_bounded_report_file(&path)?;
     serde_json::from_slice(&bytes).map_err(|_| storage())
 }
 
@@ -467,16 +541,6 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
     }
     #[cfg(not(unix))]
     fs::create_dir_all(directory).map_err(|_| storage())?;
-    if path.exists() {
-        let existing = fs::read(&path).map_err(|_| storage())?;
-        return if existing == data {
-            Ok(())
-        } else {
-            Err(RepositoryError::Conflict(
-                "research artifact ID already exists".into(),
-            ))
-        };
-    }
     let temporary = directory.join(format!("{artifact_id}.{}.pending", Uuid::new_v4()));
     let result = (|| {
         let mut options = OpenOptions::new();
@@ -489,7 +553,24 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
         let mut handle = options.open(&temporary).map_err(|_| storage())?;
         handle.write_all(data).map_err(|_| storage())?;
         handle.sync_all().map_err(|_| storage())?;
-        fs::rename(&temporary, &path).map_err(|_| storage())?;
+        drop(handle);
+        // An existence check followed by rename can replace another process's
+        // completed artifact on Unix. Publish through a same-directory hard
+        // link instead: creation is atomic and fails if the ID already exists.
+        // On a same-byte racing publication, make the existing link durable
+        // before its caller is allowed to record an Applied receipt.
+        match fs::hard_link(&temporary, &path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if read_bounded_report_file(&path)? != data {
+                    return Err(RepositoryError::Conflict(
+                        "research artifact ID already exists".into(),
+                    ));
+                }
+            }
+            Err(_) => return Err(storage()),
+        }
+        fs::remove_file(&temporary).map_err(|_| storage())?;
         #[cfg(unix)]
         {
             // Make the directory entry durable before recording the SQLite
@@ -540,8 +621,20 @@ fn checked_report(
     study: Uuid,
     artifact: Uuid,
 ) -> RepositoryResult<ReportEnvelope> {
-    services.require_active_project(project)?;
     let saved = load_envelope(services, artifact)?;
+    checked_report_envelope(services, project, study, saved)
+}
+
+/// Inspect the exact already-read artifact bytes, including for the user-visible
+/// path that must authorize the checkpoint and receipt *before* local analysis.
+/// Do not reopen the path after authorization: a local file may be replaced.
+fn checked_report_envelope(
+    services: &AppServices,
+    project: Uuid,
+    study: Uuid,
+    saved: ReportEnvelope,
+) -> RepositoryResult<ReportEnvelope> {
+    services.require_active_project(project)?;
     if saved.project_id != project
         || saved.study_id != study
         || saved.report.project_id != project
@@ -568,15 +661,41 @@ fn checked_report(
         let source = services
             .store
             .get_study_source(project, study, finding.study_source_id)?;
-        if source.reference_id != Some(finding.reference_id)
+        let correct_kind = matches!(
+            (source.kind, finding.kind),
+            (
+                StudySourceKind::ResearchItem,
+                StudyResearchKind::ResearchItem
+            ) | (StudySourceKind::Transcript, StudyResearchKind::Transcript)
+        );
+        if !correct_kind
+            || !source.available
+            || source.reference_id != Some(finding.reference_id)
             || source.locator != finding.locator
-            || (!source.available
-                && matches!(
-                    finding.access,
-                    StudyResearchAccess::Available | StudyResearchAccess::Partial
-                ))
+            || source.collected_at != finding.collected_at
+            || Some(source.fingerprint.as_str()) != finding.attachment_fingerprint.as_deref()
+            || source.source_revision != finding.attachment_revision
+            || !matches!(
+                finding.access,
+                StudyResearchAccess::Available | StudyResearchAccess::Partial
+            )
         {
             return Err(not_found());
+        }
+        let actual_sha256 = origin_content_sha256(
+            &db,
+            project,
+            study,
+            finding.study_source_id,
+            finding.reference_id,
+            finding.kind,
+        )?;
+        if actual_sha256.as_deref() != finding.origin_sha256.as_deref()
+            || finding.origin_sha256.is_none()
+        {
+            return Err(RepositoryError::Conflict(
+                "source content changed since research analysis".into(),
+            ));
         }
         if let Some(expected) = finding.origin_revision.as_deref() {
             if !source.available
@@ -597,6 +716,15 @@ fn checked_report(
             return Err(not_found());
         }
     }
+    // An artifact file is mutable local data, not an authority for evidence.
+    // Regenerate its deterministic contents from currently authorized sources
+    // so edited JSON cannot inject fabricated claims or citations.
+    let (_, rebuilt) = inspect_selected(services, project, study, &ids, saved.report.analyzed_at)?;
+    if rebuilt != saved.report {
+        return Err(RepositoryError::Conflict(
+            "research artifact does not match canonical source material".into(),
+        ));
+    }
     services.require_active_project(project)?;
     Ok(saved)
 }
@@ -609,7 +737,63 @@ pub(super) fn read_study_research_artifact(
     study: Uuid,
     artifact: Uuid,
 ) -> RepositoryResult<StudyResearchReport> {
-    let saved = checked_report(services, project, study, artifact)?;
+    services.require_active_project(project)?;
+    let saved = load_envelope(services, artifact)?;
+    if saved.project_id != project || saved.study_id != study {
+        return Err(not_found());
+    }
+    // An Applied effect by itself does not prove the *selected sources*
+    // authorized by the human: verify the persisted run plan, its exact
+    // approved step and its output, not just a mutable report artifact.
+    let engine = build_study_research_engine(services, project, study)?;
+    let run = engine.get(&saved.run_id).map_err(research_run_error)?;
+    let report_ids: Vec<Uuid> = saved
+        .report
+        .sources
+        .iter()
+        .map(|source| source.study_source_id)
+        .collect();
+    let approved_ids = run
+        .plan
+        .steps
+        .first()
+        .and_then(|step| selected_ids(&step.input).ok());
+    // The observation time is factual provenance: it must be consistent
+    // with the persisted, user-approved actual dispatch, not merely an
+    // arbitrary timestamp in a locally editable report JSON file.
+    let dispatched_ms = run
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == scriptotar_agent::AuditKind::Dispatched
+                && event.step_id.as_deref() == Some(saved.step_id.as_str())
+        })
+        .map(|event| event.at_ms);
+    let analyzed_ms = u64::try_from(saved.report.analyzed_at.unix_seconds)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1_000))
+        .and_then(|ms| ms.checked_add(u64::from(saved.report.analyzed_at.nanosecond / 1_000_000)));
+    if !valid_research_run(&run, project, study)
+        || run.state != scriptotar_agent::RunState::Completed
+        || !run.steps[0].approved
+        || saved.report.analyzed_at.nanosecond >= 1_000_000_000
+        || !matches!(
+            (dispatched_ms, analyzed_ms),
+            (Some(dispatched), Some(analyzed)) if dispatched.abs_diff(analyzed) <= 10_000
+        )
+        || approved_ids.as_deref() != Some(report_ids.as_slice())
+        || run.steps.first().is_none_or(|step| {
+            step.idempotency_key != saved.idempotency_key
+                || step
+                    .output
+                    .as_ref()
+                    .is_none_or(|output| output.artifact_id != artifact.to_string())
+        })
+        || run.plan.steps[0].id != saved.step_id
+    {
+        return Err(not_found());
+    }
+
     // A file on disk is not itself an approved, completed agent action.
     // The user-facing read requires the *committed* ledger receipt. The
     // internal probe path can still inspect a reserved file to reconcile a
@@ -626,7 +810,11 @@ pub(super) fn read_study_research_artifact(
     {
         return Err(not_found());
     }
-    Ok(saved.report)
+    // No report/source analysis happened before the completed checkpoint,
+    // selected source IDs, step output and receipt were checked. Use the same
+    // captured bytes so the authorization cannot be raced by swapping files.
+    let validated = checked_report_envelope(services, project, study, saved)?;
+    Ok(validated.report)
 }
 
 #[derive(Clone)]
@@ -945,6 +1133,176 @@ pub struct StudyResearchSource {
     pub collected_at: String,
 }
 
+/// Read-only handoff for Agent 05's typed WritingInput. All text originates
+/// from a verified, approved and replay-checked canonical research report.
+/// A source without transcript evidence does not receive a fabricated citation.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ResearchWritingSource {
+    pub study_source_id: Uuid,
+    pub origin_id: Uuid,
+    pub source_sha256: String,
+    pub attachment_fingerprint: String,
+    pub attachment_revision: Option<String>,
+    pub collected_at: String,
+    pub access: StudyResearchAccess,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ResearchWritingContext {
+    pub project_id: Uuid,
+    pub study_id: Uuid,
+    pub sources: Vec<ResearchWritingSource>,
+    pub evidence: Vec<EvidenceRef>,
+    pub findings: Vec<ResearchFinding>,
+    /// Number of distinct actual origin transcripts with attributable text.
+    pub attributed_source_count: usize,
+    /// Agent 05 must also validate the canonical Study brief and current source
+    /// set. This is only the minimum local-evidence admission condition.
+    pub meets_three_source_evidence_floor: bool,
+    pub limitations: Vec<String>,
+    pub source_text_is_untrusted_data: bool,
+}
+
+fn research_writing_from_report(
+    artifact: Uuid,
+    report: &StudyResearchReport,
+) -> RepositoryResult<ResearchWritingContext> {
+    if !report.source_text_is_untrusted_data {
+        return Err(not_found());
+    }
+    let mut sources = Vec::new();
+    let mut evidence = Vec::new();
+    let mut findings = Vec::new();
+    let mut limitations = report.limitations.clone();
+    let mut truncated = false;
+    for source in &report.sources {
+        let content_hash = source.origin_sha256.clone().ok_or_else(not_found)?;
+        let fingerprint = source
+            .attachment_fingerprint
+            .clone()
+            .ok_or_else(not_found)?;
+        if !matches!(
+            source.access,
+            StudyResearchAccess::Available | StudyResearchAccess::Partial
+        ) {
+            return Err(not_found());
+        }
+        sources.push(ResearchWritingSource {
+            study_source_id: source.study_source_id,
+            origin_id: source.reference_id,
+            source_sha256: content_hash,
+            attachment_fingerprint: fingerprint,
+            attachment_revision: source.attachment_revision.clone(),
+            collected_at: source.collected_at.clone(),
+            access: source.access,
+        });
+        limitations.extend(
+            source
+                .limitations
+                .iter()
+                .map(|reason| format!("Source {}: {reason}", source.study_source_id)),
+        );
+        for (index, observation) in source.observations.iter().enumerate() {
+            if evidence.len() >= 40 || findings.len() >= 30 {
+                truncated = true;
+                break;
+            }
+            let anchor = &observation.evidence;
+            if anchor.study_source_id != source.study_source_id
+                || anchor.reference_id != source.reference_id
+                || anchor.transcript_id != source.reference_id
+                || anchor.locator != source.locator
+                || Some(anchor.transcript_revision.as_str()) != source.origin_revision.as_deref()
+                || anchor.excerpt.chars().count() > 160
+            {
+                return Err(not_found());
+            }
+            let section = match (anchor.segment_id.as_deref(), anchor.start_ms, anchor.end_ms) {
+                (Some(segment), Some(start), Some(end)) if start < end => {
+                    format!("Transcript segment {segment} ({start}-{end} ms)")
+                }
+                (None, None, None) => {
+                    "Untimed transcript excerpt; no verified segment/timecode".into()
+                }
+                _ => return Err(not_found()),
+            };
+            let id = format!("research:{artifact}:{}:{index}", source.study_source_id);
+            let is_literal = observation.beat.is_some();
+            evidence.push(EvidenceRef {
+                id: id.clone(),
+                locator: EvidenceLocator {
+                    source_id: source.reference_id.to_string(),
+                    canonical_url: None,
+                    timestamp_seconds: anchor
+                        .start_ms
+                        .and_then(|ms| u32::try_from(ms / 1_000).ok()),
+                    document_section: Some(section),
+                    collected_at: Some(source.collected_at.clone()),
+                },
+                excerpt: anchor.excerpt.clone(),
+                kind: EvidenceKind::SocialTranscript,
+                status: if is_literal {
+                    EvidenceStatus::Attributed
+                } else {
+                    EvidenceStatus::Unverified
+                },
+            });
+            findings.push(ResearchFinding {
+                id: format!(
+                    "research-finding:{artifact}:{}:{index}",
+                    source.study_source_id
+                ),
+                kind: FindingKind::CreativePattern,
+                statement: observation.statement.clone(),
+                evidence_ids: vec![id],
+                limitations: Some(format!(
+                    "Transcript-only {}; no independent factual verification. {}",
+                    if is_literal {
+                        "observation"
+                    } else {
+                        "hypothesis"
+                    },
+                    observation.limitations.join(" ")
+                )),
+            });
+        }
+    }
+    if truncated {
+        limitations.push(
+            "Research-to-writing evidence was bounded to 40 excerpts and 30 hypotheses.".into(),
+        );
+    }
+    let attributed_source_count = evidence
+        .iter()
+        .filter(|item| item.status == EvidenceStatus::Attributed)
+        .map(|item| item.locator.source_id.as_str())
+        .collect::<HashSet<_>>()
+        .len();
+    let meets_three_source_evidence_floor = attributed_source_count >= 3;
+    if !meets_three_source_evidence_floor {
+        limitations.push(
+            "Fewer than three distinct source transcripts have attributable excerpts; metadata-only source selections do not qualify for three-source writing.".into(),
+        );
+    }
+    limitations.push(
+        "Never infer visual frames, engagement outcomes, retention or verified factual claims from this research."
+            .into(),
+    );
+    Ok(ResearchWritingContext {
+        project_id: report.project_id,
+        study_id: report.study_id,
+        sources,
+        evidence,
+        findings,
+        attributed_source_count,
+        meets_three_source_evidence_floor,
+        limitations,
+        source_text_is_untrusted_data: true,
+    })
+}
+
 fn research_run_error(error: RuntimeError) -> RepositoryError {
     match error {
         RuntimeError::Store(scriptotar_agent::StoreError::NotFound) | RuntimeError::NotFound => {
@@ -966,6 +1324,9 @@ fn valid_research_run(run: &RunSnapshot, project: Uuid, study: Uuid) -> bool {
     run.plan.project_id == project.to_string()
         && run.plan.study_id == study.to_string()
         && run.plan.steps.len() == 1
+        // Persisted checkpoint data is not trusted to have a complete step
+        // record; reject malformed runs before reading run.steps[0].
+        && run.steps.len() == 1
         && run.plan.steps[0].id == "analyze_evidence"
         && matches!(&run.plan.steps[0].input, StepInput::AnalyzeEvidence { .. })
         && run.plan.steps[0].requires_approval
@@ -1138,6 +1499,20 @@ impl AppServices {
     ) -> RepositoryResult<StudyResearchReport> {
         read_study_research_artifact(self, project, study, artifact)
     }
+
+    /// Agent 05 calls this after fresh source/receipt verification, not with
+    /// caller-constructed DTO text. It is not a provider request or proof that
+    /// the three-source writing evidence quota has been satisfied.
+    #[allow(dead_code)]
+    pub(super) fn research_writing_context(
+        &self,
+        project: Uuid,
+        study: Uuid,
+        artifact: Uuid,
+    ) -> RepositoryResult<ResearchWritingContext> {
+        let report = read_study_research_artifact(self, project, study, artifact)?;
+        research_writing_from_report(artifact, &report)
+    }
 }
 
 #[cfg(test)]
@@ -1238,6 +1613,27 @@ mod tests {
             assert_eq!(sources.len(), 1);
             assert_eq!(sources[0].origin_id, recorded[0].id.to_string());
             assert_eq!(sources[0].id, attached.id.to_string());
+            // Oversized upstream metadata must fail SQL admission, rather
+            // than materializing unbounded text during planning or analysis.
+            let db = Connection::open(services.store.path()).unwrap();
+            db.execute(
+                "UPDATE research_items SET title=?1 WHERE id=?2 AND project_id=?3",
+                params![
+                    "x".repeat(32_768),
+                    research_id.to_string(),
+                    project.to_string()
+                ],
+            )
+            .unwrap();
+            assert!(services
+                .start_study_research(project, study, vec![attached.id])
+                .is_err());
+            db.execute(
+                "UPDATE research_items SET title='Recorded metadata' WHERE id=?1 AND project_id=?2",
+                params![research_id.to_string(), project.to_string()],
+            )
+            .unwrap();
+            drop(db);
             let pending = services
                 .start_study_research(project, study, vec![attached.id])
                 .unwrap();
@@ -1262,6 +1658,9 @@ mod tests {
                 .decide_study_research(project, study, &run_id, "approve")
                 .unwrap();
             assert_eq!(completed.state, RunState::Completed);
+            let mut malformed_checkpoint = completed.clone();
+            malformed_checkpoint.steps.clear();
+            assert!(!valid_research_run(&malformed_checkpoint, project, study));
             assert!(services
                 .decide_study_research(project, study, &run_id, "approve")
                 .is_err());
@@ -1315,6 +1714,74 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_report_publication_is_atomic_and_never_replaces_a_winner() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        for _ in 0..8 {
+            let artifact = Uuid::new_v4();
+            let left_service = services.clone();
+            let right_service = services.clone();
+            let barrier = Arc::new(Barrier::new(3));
+            let left_gate = Arc::clone(&barrier);
+            let right_gate = Arc::clone(&barrier);
+            let left = std::thread::spawn(move || {
+                left_gate.wait();
+                write_envelope(&left_service, artifact, b"left report bytes")
+            });
+            let right = std::thread::spawn(move || {
+                right_gate.wait();
+                write_envelope(&right_service, artifact, b"right report bytes")
+            });
+            barrier.wait();
+            let left_result = left.join().unwrap();
+            let right_result = right.join().unwrap();
+            assert_ne!(
+                left_result.is_ok(),
+                right_result.is_ok(),
+                "exactly one different-byte publication may win"
+            );
+            let (winner, loser) = if left_result.is_ok() {
+                (b"left report bytes".as_slice(), b"right report bytes".as_slice())
+            } else {
+                (b"right report bytes".as_slice(), b"left report bytes".as_slice())
+            };
+            let path = artifact_path(&services, artifact).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), winner);
+            assert!(write_envelope(&services, artifact, winner).is_ok());
+            assert!(write_envelope(&services, artifact, loser).is_err());
+            assert_eq!(fs::read(&path).unwrap(), winner);
+            let pending = fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|item| {
+                    item.path().extension().is_some_and(|ext| ext == "pending")
+                })
+                .count();
+            assert_eq!(pending, 0, "do not strand pending artifacts");
+        }
+    }
+
+    #[test]
+    fn oversized_cached_artifact_is_rejected_before_full_read() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("oversized.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len((MAX_REPORT_BYTES as u64) + 4_096).unwrap();
+        drop(file);
+        assert!(read_bounded_report_file(&path).is_err());
+
+        let exact = dir.path().join("exact-limit.json");
+        fs::write(&exact, vec![b'x'; MAX_REPORT_BYTES]).unwrap();
+        assert_eq!(
+            read_bounded_report_file(&exact).unwrap().len(),
+            MAX_REPORT_BYTES
+        );
+        assert!(read_bounded_report_file(&dir.path().join("missing.json")).is_err());
+    }
+
+    #[test]
     fn malformed_transcript_segments_never_gain_synthetic_timecodes() {
         let transcript_id = Uuid::new_v4();
         let malformed = parse_transcript(
@@ -1341,6 +1808,7 @@ mod tests {
 
     #[test]
     fn three_exact_selected_sources_retain_provenance_and_invalidate_transcript_edits() {
+        use scriptotar_agent::RunState;
         use scriptotar_core::ResearchRepository;
         let dir = TempDir::new().unwrap();
         let services = AppServices::new(dir.path()).unwrap();
@@ -1442,6 +1910,78 @@ mod tests {
             attached_transcript.id,
             attached_research[0].id,
         ];
+        // Genuine approved v8 run with three real selected attachments.
+        // Restart from disk is verified below after dropping the live service.
+        let awaiting = services
+            .start_study_research(project, study, selected.clone())
+            .unwrap();
+        assert_eq!(awaiting.state, RunState::AwaitingApproval);
+        let completed = services
+            .decide_study_research(project, study, &awaiting.plan.id, "approve")
+            .unwrap();
+        assert_eq!(completed.state, RunState::Completed);
+        let approved_artifact =
+            Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+        let approved_bridge = services
+            .research_writing_context(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(approved_bridge.sources.len(), 3);
+        assert!(!approved_bridge.evidence.is_empty());
+        assert_eq!(approved_bridge.attributed_source_count, 1);
+        assert!(!approved_bridge.meets_three_source_evidence_floor);
+        assert!(approved_bridge
+            .evidence
+            .iter()
+            .all(|observation| { observation.locator.source_id == transcript.to_string() }));
+        assert!(services
+            .research_writing_context(Uuid::new_v4(), study, approved_artifact)
+            .is_err());
+
+        // Even when all replacement observations are factually derived from
+        // canonical sources, an artifact cannot silently narrow/change the
+        // three sources for which the user approved this exact run.
+        let approved_path = artifact_path(&services, approved_artifact).unwrap();
+        let original_approved_bytes = fs::read(&approved_path).unwrap();
+        let mut swapped: ReportEnvelope = serde_json::from_slice(&original_approved_bytes).unwrap();
+        let (_, unapproved_report) = inspect_selected(
+            &services,
+            project,
+            study,
+            &selected[..2],
+            ObservationTimestamp::parse_rfc3339("2026-11-16T00:00:00Z").unwrap(),
+        )
+        .unwrap();
+        swapped.report = unapproved_report;
+        fs::write(&approved_path, serde_json::to_vec(&swapped).unwrap()).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
+        fs::write(&approved_path, &original_approved_bytes).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_ok());
+
+        // The report time controls metric freshness. Recreating a perfect
+        // canonical report for an invented day must still fail the immutable
+        // dispatch-time provenance check, even when source IDs all match.
+        let mut shifted: ReportEnvelope =
+            serde_json::from_slice(&fs::read(&approved_path).unwrap()).unwrap();
+        let earlier = ObservationTimestamp {
+            unix_seconds: shifted.report.analyzed_at.unix_seconds - 86_400,
+            nanosecond: shifted.report.analyzed_at.nanosecond,
+        };
+        shifted.report = inspect_selected(&services, project, study, &selected, earlier)
+            .unwrap()
+            .1;
+        fs::write(&approved_path, serde_json::to_vec(&shifted).unwrap()).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
+        fs::write(&approved_path, &original_approved_bytes).unwrap();
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_ok());
+
         let (revision, report) = inspect_selected(
             &services,
             project,
@@ -1482,6 +2022,27 @@ mod tests {
         assert_eq!(second.metrics.as_ref().unwrap().views, None);
 
         let artifact = Uuid::new_v4();
+        let bridge = research_writing_from_report(artifact, &report).unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert!(!bridge.evidence.is_empty());
+        assert!(bridge
+            .evidence
+            .iter()
+            .all(|item| item.locator.source_id == transcript.to_string()));
+        assert!(bridge.findings.iter().all(|item| {
+            item.kind == FindingKind::CreativePattern && item.evidence_ids.len() == 1
+        }));
+        assert!(bridge
+            .evidence
+            .iter()
+            .any(|item| { item.status == EvidenceStatus::Unverified }));
+        assert!(bridge.evidence.iter().any(|item| {
+            item.locator
+                .document_section
+                .as_deref()
+                .is_some_and(|section| section.contains("segment 0 (0-2000 ms)"))
+        }));
+        assert!(bridge.source_text_is_untrusted_data);
         let envelope = ReportEnvelope {
             project_id: project,
             study_id: study,
@@ -1494,6 +2055,46 @@ mod tests {
         write_envelope(&services, artifact, &serde_json::to_vec(&envelope).unwrap()).unwrap();
         assert!(checked_report(&services, project, study, artifact).is_ok());
         assert!(read_study_research_artifact(&services, project, study, artifact).is_err());
+        // A counter or transcript can change without a timestamp bump.
+        db.execute(
+            "UPDATE research_items SET view_count=99 WHERE id=?1",
+            params![research_items[0].id.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        assert!(services
+            .read_study_research_report(project, study, approved_artifact)
+            .is_err());
+        db.execute(
+            "UPDATE research_items SET view_count=0 WHERE id=?1",
+            params![research_items[0].id.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
+        db.execute(
+            "UPDATE transcripts SET text='Changed without timestamp bump' WHERE id=?1",
+            params![transcript.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        db.execute(
+            "UPDATE transcripts SET text='How does this work? But there is another way. Subscribe to follow.' WHERE id=?1",
+            params![transcript.to_string()],
+        )
+        .unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
+
+        // Reopening must never trust fabricated statements inserted in the
+        // persisted artifact by another local process.
+        let artifact_path = artifact_path(&services, artifact).unwrap();
+        let saved_bytes = fs::read(&artifact_path).unwrap();
+        let mut tampered: serde_json::Value = serde_json::from_slice(&saved_bytes).unwrap();
+        tampered["report"]["limitations"][0] =
+            serde_json::Value::String("Invented source citation".into());
+        fs::write(&artifact_path, serde_json::to_vec(&tampered).unwrap()).unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_err());
+        fs::write(&artifact_path, saved_bytes).unwrap();
+        assert!(checked_report(&services, project, study, artifact).is_ok());
         let other_study = services
             .store
             .create_study(project, "Other study", "")
@@ -1513,6 +2114,175 @@ mod tests {
         )
         .unwrap();
         assert!(checked_report(&services, project, study, artifact).is_err());
+
+        // The previous source revision was changed only by this test; restore
+        // it, close both SQLite handles and reopen from durable storage.
+        db.execute(
+            "UPDATE transcripts SET updated_at=?2 WHERE id=?1",
+            params![transcript.to_string(), timestamp],
+        )
+        .unwrap();
+        drop(db);
+        drop(services);
+        let restarted = AppServices::new(dir.path()).unwrap();
+        let saved = restarted
+            .read_study_research_report(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(saved.sources.len(), 3);
+        let bridge = restarted
+            .research_writing_context(project, study, approved_artifact)
+            .unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert!(!bridge.evidence.is_empty());
+        assert!(restarted
+            .read_study_research_report(Uuid::new_v4(), study, approved_artifact)
+            .is_err());
+    }
+
+    #[test]
+    fn three_real_timed_transcripts_prepare_original_local_writing_request() {
+        use scriptotar_agent::RunState;
+        use scriptotar_ai::writing::{CreativeBrief, WritingInput, WritingTask};
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .store
+            .create_study(project, "Three recorded transcripts", "")
+            .unwrap()
+            .id;
+        let timestamp = "2026-11-15T12:30:00Z";
+        let mut attached = Vec::new();
+        let mut origin_ids = Vec::new();
+        {
+            let db = Connection::open(services.store.path()).unwrap();
+            db.pragma_update(None, "foreign_keys", true).unwrap();
+            for index in 0..3 {
+                let original_source = Uuid::new_v4();
+                let media = Uuid::new_v4();
+                let transcript = Uuid::new_v4();
+                let locator = format!("/mock/three-source-{index}.mp4");
+                db.execute(
+                    "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+                     VALUES(?1,?2,'local_file',?3,'Offline original transcript',?4)",
+                    params![
+                        original_source.to_string(),
+                        project.to_string(),
+                        locator,
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+                     VALUES(?1,?2,?3,6.0,?4)",
+                    params![
+                        media.to_string(),
+                        original_source.to_string(),
+                        format!("/mock/three-source-{index}.mp4"),
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                let spoken = format!(
+                    "How can we make original tutorial {index}? First describe one method. Follow for more."
+                );
+                let segments = serde_json::json!([
+                    {"index":0,"start":0.0,"end":2.0,"text":spoken.clone()},
+                    {"index":1,"start":2.0,"end":4.0,"text":"A real timed explanation."},
+                    {"index":2,"start":4.0,"end":6.0,"text":"Return to the central question."}
+                ]);
+                db.execute(
+                    "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+                     VALUES(?1,?2,'en',?3,?4,?5,?5)",
+                    params![
+                        transcript.to_string(),
+                        media.to_string(),
+                        spoken,
+                        segments.to_string(),
+                        timestamp
+                    ],
+                )
+                .unwrap();
+                let source = services
+                    .store
+                    .add_study_source(
+                        project,
+                        study,
+                        &StudySourceInput {
+                            kind: StudySourceKind::Transcript,
+                            reference_id: Some(transcript),
+                            locator: None,
+                            manual_text: None,
+                            source_revision: None,
+                            uncertainty: None,
+                        },
+                    )
+                    .unwrap();
+                attached.push(source.id);
+                origin_ids.push(transcript);
+            }
+        }
+        let proposed = services
+            .start_study_research(project, study, attached)
+            .unwrap();
+        assert_eq!(proposed.state, RunState::AwaitingApproval);
+        let completed = services
+            .decide_study_research(project, study, &proposed.plan.id, "approve")
+            .unwrap();
+        assert_eq!(completed.state, RunState::Completed);
+        assert_eq!(completed.usage.reserved_cost_microusd, 0);
+        assert_eq!(completed.usage.reserved_tokens, 0);
+        let artifact =
+            Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+
+        drop(services);
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let bridge = reopened
+            .research_writing_context(project, study, artifact)
+            .unwrap();
+        assert_eq!(bridge.sources.len(), 3);
+        assert_eq!(bridge.attributed_source_count, 3);
+        assert!(bridge.meets_three_source_evidence_floor);
+        assert!(bridge.source_text_is_untrusted_data);
+        assert!(bridge
+            .findings
+            .iter()
+            .all(|finding| { finding.kind == FindingKind::CreativePattern }));
+        assert!(bridge.evidence.iter().all(|item| {
+            item.kind == EvidenceKind::SocialTranscript
+                && item.status != EvidenceStatus::Corroborated
+        }));
+
+        // This merely constructs a zero-cost structured writing request. It
+        // does not dispatch AI, verify any factual claim or save a draft.
+        let input = WritingInput {
+            brief: CreativeBrief {
+                goal: "Produce an original tutorial script".into(),
+                audience: "New learners".into(),
+                platform: "YouTube".into(),
+                language: "English".into(),
+                region: None,
+                dialect: None,
+                tone: None,
+                duration_seconds: 45,
+                objective: "Compare three original angles".into(),
+                desired_cta: None,
+                constraints: vec!["Do not infer unseen frames or retention".into()],
+                style_guide: None,
+            },
+            evidence: bridge.evidence,
+            findings: bridge.findings,
+            task: WritingTask::ProposeAngles { count: 3 },
+        };
+        let prompt = scriptotar_ai::writing::prepare_writing_request(&input)
+            .unwrap()
+            .prompt;
+        for id in origin_ids {
+            assert!(prompt.contains(&id.to_string()));
+        }
+        assert!(!prompt.is_empty());
     }
 
     #[test]
@@ -1612,6 +2382,9 @@ mod tests {
                 .unwrap()
                 .available
         );
+        assert!(reopened
+            .start_study_research(project, study, vec![source])
+            .is_err());
         assert!(checked_report(&reopened, project, study, artifact).is_err());
         reopened.store.archive_study(project, study).unwrap();
         assert!(checked_report(&reopened, project, study, artifact).is_err());

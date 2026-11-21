@@ -342,6 +342,28 @@ fn setup() -> (
 }
 
 #[test]
+fn copied_source_angle_stops_before_any_draft_provider_step() {
+    let (temp, _original_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The researcher describes the old town square in careful detail and follows three separate walking routes before comparing which crossing is safer for residents of the neighborhood";
+    let mut scoped = current.0.borrow().clone();
+    scoped.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("angle-copy-blocked", scoped.clone()).unwrap();
+    current.0.replace(scoped);
+    let mut proposed: serde_json::Value =
+        serde_json::from_str(provider.responses.front().unwrap()).unwrap();
+    proposed["angles"][0]["hook"] = json!(passage);
+    *provider.responses.front_mut().unwrap() = proposed.to_string();
+    let mut sink = SqlFixtureSink::open(&temp.path().join("bad-angle.sqlite"), current.0.clone());
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 1, "no draft request follows a copied angle");
+    assert_eq!(gate.attempts, 1);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
 fn three_distinct_source_linked_candidates_persist_reopen_export_without_rebilling() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     let path = temp.path().join("test.sqlite");
@@ -396,6 +418,22 @@ fn denied_approval_does_not_contact_provider_or_persist() {
         Err(WritingWorkflowError::Denied(_))
     ));
     assert_eq!(provider.calls, 0);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
+fn oversized_recorded_paid_result_never_dispatches_or_creates_drafts() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let recorded_key = format!("{}:angles:{}", plan.run_id, plan.angles_prompt.prompt);
+    gate.step_response.insert(recorded_key, "a".repeat(400_001));
+    let mut sink =
+        SqlFixtureSink::open(&temp.path().join("replay-limit.sqlite"), current.0.clone());
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(gate.attempts, 1);
+    assert_eq!(provider.calls, 0, "no provider retry for recorded output");
     assert_eq!(sink.count(), 0);
 }
 
@@ -621,6 +659,40 @@ fn separately_approved_revision_proposal_does_not_change_saved_text() {
 }
 
 #[test]
+fn revision_preview_rejects_source_copy_without_mutating_an_accepted_draft() {
+    let (temp, _original_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The original interview explains how the community chose each location along the path and describes a series of meetings held before neighbors agreed to revisit their walking plans together";
+    let mut context = current.0.borrow().clone();
+    context.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("revision-preview-copy", context.clone()).unwrap();
+    current.0.replace(context);
+    let mut sink =
+        SqlFixtureSink::open(&temp.path().join("preview-copy.sqlite"), current.0.clone());
+    let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
+    let candidate = sink.get(ids[0]).candidates[0].clone();
+    provider
+        .responses
+        .push_back(json!({"beat_id":"hook","replacement_narration":passage}).to_string());
+    assert!(matches!(
+        study_writing::propose_beat_revision(
+            &plan,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            study_writing::RevisionRequest {
+                candidate: &candidate,
+                beat_id: "hook",
+                feedback: "Make the hook clearer",
+            },
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 5);
+    assert_eq!(sink.get(ids[0]).candidates[0].draft, candidate.draft);
+}
+
+#[test]
 fn optional_model_review_is_advisory_not_a_verification_verdict() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
@@ -649,6 +721,44 @@ fn optional_model_review_is_advisory_not_a_verification_verdict() {
 }
 
 #[test]
+fn model_review_cannot_return_a_copied_source_excerpt() {
+    let (temp, _old_plan, current, mut gate, mut provider, stop) = setup();
+    let passage = "The original speaker described how residents planned the gathering and compared the walkways before asking their neighborhood group to review all possible crossing locations together at the community center";
+    let mut context = current.0.borrow().clone();
+    context.evidence[0].excerpt = passage.into();
+    let plan = prepare_three("review-copy", context.clone()).unwrap();
+    current.0.replace(context);
+    let mut sink = SqlFixtureSink::open(&temp.path().join("review-copy.sqlite"), current.0.clone());
+    let ids = generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink).unwrap();
+    let original = sink.get(ids[0]).candidates[0].clone();
+    provider.responses.push_back(
+        json!({
+            "findings":[{
+                "beat_id":"hook",
+                "concern":passage,
+                "recommendation":"Ask for independent verification",
+                "evidence_ids":["e1"],
+                "needs_human_review":false
+            }]
+        })
+        .to_string(),
+    );
+    assert!(matches!(
+        study_writing::review_candidate(
+            &plan,
+            &current,
+            &mut gate,
+            &mut provider,
+            &stop,
+            &original,
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(provider.calls, 5);
+    assert!(sink.get(ids[0]).candidates[0].review_findings.is_empty());
+}
+
+#[test]
 fn arabic_output_and_locator_remain_intact() {
     let (temp, _plan, current, mut gate, mut provider, stop) = setup();
     let mut c = current.0.borrow_mut();
@@ -658,12 +768,17 @@ fn arabic_output_and_locator_remain_intact() {
     drop(c);
     provider.responses =
         VecDeque::from([angles_json(), draft_json(1), draft_json(2), draft_json(3)]);
-    for (i, raw) in provider.responses.iter_mut().enumerate().skip(1) {
+    // Distinct source-grounded Arabic narratives, not a common sentence with
+    // only a changed sequence number. Near-duplicates must remain rejected.
+    let narrations = [
+        "هذه فكرة عربية أصلية تعرض خطوات تنظيم زيارة المكتبة وإعداد قائمة للكتب المناسبة للصغار",
+        "تبدأ القصة بلقاء سكان الحي حول خريطة المدرسة وتشرح كيفية عبور الطريق بأمان",
+        "يتابع النص تجربة فريق تطوعي يصنع حديقة مجتمعية ويشارك طرق رعاية النباتات المحلية",
+    ];
+    for (index, raw) in provider.responses.iter_mut().enumerate().skip(1) {
         let mut draft: serde_json::Value = serde_json::from_str(raw).unwrap();
         draft["language"] = json!("ar");
-        draft["beats"][0]["narration"] = json!(format!(
-            "هذه فكرة عربية أصلية مختلفة رقم {i} ونص جديد للمشاهدين"
-        ));
+        draft["beats"][0]["narration"] = json!(narrations[index - 1]);
         *raw = draft.to_string();
     }
     let mut sink = SqlFixtureSink::open(&temp.path().join("arabic.sqlite"), current.0.clone());
@@ -1110,6 +1225,175 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
 }
 
 #[test]
+fn targeted_revision_cannot_save_a_long_source_copy_or_partial_version() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, _plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The neighborhood researcher describes each stage of the morning gathering and then explains which residents reviewed the proposal before suggesting that the whole community revisit the map together";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let mut latest = batch.context.clone();
+    latest.study_revision += 1;
+    current.0.replace(latest.clone());
+
+    let original = &batch.candidates[0];
+    let before = original.draft.beats[0].narration.clone();
+    let proposal = json!({"beat_id":"hook","replacement_narration":passage}).to_string();
+    assert!(matches!(
+        apply_reviewed_beat_revision(
+            original,
+            &latest,
+            &proposal,
+            "hook",
+            "Revise only the opening",
+            &before,
+            false,
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+
+    // Bypass the proposal parser and attempt direct SQLite acceptance with
+    // an otherwise structurally valid targeted replacement.
+    let mut bypass = original.clone();
+    bypass.draft.beats[0].narration = passage.into();
+    bypass.draft.beats[0].evidence_ids.clear();
+    for claim in &mut bypass.draft.claims {
+        if claim.beat_id == "hook" {
+            claim.status = scriptotar_ai::writing::ClaimStatus::Unverified;
+            claim.evidence_ids.clear();
+        }
+    }
+    assert!(matches!(
+        study_writing::VersionedCandidateStore::save_revision(
+            &mut sink, &latest, ids[0], 1, &before, "hook", &bypass
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().revision, 1);
+    assert_eq!(
+        db.list_draft_versions(latest.project_id, ids[0])
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn direct_sqlite_acceptance_rejects_forged_manual_edit_flags_without_partial_writes() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    // Normal model parsing always strips manually_edited. A direct sink
+    // caller must not be allowed to invent human approval or protected text.
+    batch.candidates[2].draft.beats[0].manually_edited = true;
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
+
+#[test]
+fn revision_sqlite_cas_rejects_forged_lineage_quality_and_review_history() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let mut latest = plan.context.clone();
+    latest.study_revision += 1;
+    current.0.replace(latest.clone());
+
+    let original = &batch.candidates[0];
+    let before = original.draft.beats[0].narration.clone();
+    let response = json!({
+        "beat_id": "hook",
+        "replacement_narration": "A uniquely revised introduction for our community explainer"
+    })
+    .to_string();
+    let legitimate = apply_reviewed_beat_revision(
+        original,
+        &latest,
+        &response,
+        "hook",
+        "Improve the opening",
+        &before,
+        false,
+    )
+    .unwrap();
+    let mut missing_lineage = legitimate.clone();
+    missing_lineage.lineage.clear();
+    let mut fabricated_audit = legitimate.clone();
+    fabricated_audit.audit.duration.words += 1;
+    let mut fabricated_review = legitimate.clone();
+    fabricated_review
+        .review_findings
+        .push(scriptotar_ai::writing::ReviewFinding {
+            beat_id: Some("cta".into()),
+            concern: "Invented model review".into(),
+            recommendation: "Misleading advice".into(),
+            evidence_ids: vec![],
+            needs_human_review: true,
+        });
+
+    for candidate in [&missing_lineage, &fabricated_audit, &fabricated_review] {
+        assert!(matches!(
+            study_writing::VersionedCandidateStore::save_revision(
+                &mut sink, &latest, ids[0], 1, &before, "hook", candidate
+            ),
+            Err(WritingWorkflowError::InvalidContext(_))
+        ));
+        assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().revision, 1);
+        assert_eq!(
+            db.list_draft_versions(latest.project_id, ids[0])
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    // A genuine transformation still commits exactly one new immutable
+    // version, proving the guard targets forged metadata, not normal edits.
+    let next = study_writing::VersionedCandidateStore::save_revision(
+        &mut sink,
+        &latest,
+        ids[0],
+        1,
+        &before,
+        "hook",
+        &legitimate,
+    )
+    .unwrap();
+    assert_eq!(next, 2);
+}
+
+#[test]
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
@@ -1127,7 +1411,7 @@ fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     ));
     assert!(matches!(
         sink.commit_three(&missing),
-        Err(WritingWorkflowError::InvalidContext(_))
+        Err(WritingWorkflowError::InvalidResponse(_))
     ));
     assert!(db
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
@@ -1223,7 +1507,7 @@ fn canonical_store_rejects_duplicate_script_prose_without_partial_writes() {
     };
     assert!(matches!(
         sink.commit_three(&batch),
-        Err(WritingWorkflowError::InvalidContext(_))
+        Err(WritingWorkflowError::DuplicateOrSimilar)
     ));
     assert!(db
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
@@ -1260,6 +1544,41 @@ fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
     assert_eq!(provider.calls, 4, "must never silently rebill failed stage");
     assert_eq!(gate.step_response.len(), 3, "previous paid receipts remain");
     assert_eq!(sink.count(), 0);
+}
+
+#[test]
+fn four_recorded_outputs_repair_local_batch_rollback_without_a_fifth_provider_call() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let path = temp.path().join("recorded-replay.sqlite");
+    let mut sink = SqlFixtureSink::open(&path, current.0.clone());
+    sink.fail_at = Some(1);
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(gate.step_response.len(), 4);
+    assert_eq!(sink.count(), 0);
+    drop(sink);
+
+    // This fixture intentionally represents an already-authenticated set of
+    // recorded responses. The production v14 storage and receipt attestations
+    // remain Agent 02/00 work; a vanished billed response MUST stay uncertain.
+    let mut reopened = SqlFixtureSink::open(&path, current.0.clone());
+    provider.fail_on = Some(5);
+    let ids = generate_three(
+        &plan,
+        &current,
+        &mut gate,
+        &mut provider,
+        &stop,
+        &mut reopened,
+    )
+    .unwrap();
+    assert_eq!(provider.calls, 4, "recorded outcomes must never resend");
+    assert_eq!(gate.step_response.len(), 4);
+    assert_eq!(reopened.count(), 3);
+    assert_eq!(reopened.get(ids[0]).candidates.len(), 3);
 }
 
 #[test]
@@ -1460,4 +1779,763 @@ fn disputed_observation_cannot_enter_writing_plan_or_canonical_acceptance() {
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn rejects_extended_verbatim_source_passage_before_atomic_acceptance() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The recorded discussion begins with a careful introduction to the neighborhood, explores the ordinary choices people encounter every morning, and finishes with several specific questions for local residents";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.beats[0].narration = passage.into();
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1,
+        "a rejected result must not advance Study revision"
+    );
+    let receipts: i64 = Connection::open(db.path())
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(receipts, 0);
+}
+
+#[test]
+fn rejects_near_duplicate_prose_despite_different_angle_ids_and_titles() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let first = "Start with a small question about the town square, then introduce the three practical choices, explain why the first route is easy to follow, show the helpful neighborhood map, and invite residents to compare what they observed.";
+    let second = first.replace("helpful neighborhood map", "useful neighborhood map");
+    batch.candidates[0].draft.beats[0].narration = first.into();
+    batch.candidates[1].draft.beats[0].narration = second;
+    assert_ne!(
+        batch.candidates[0].draft.beats[0].narration,
+        batch.candidates[1].draft.beats[0].narration
+    );
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
+
+#[test]
+fn allows_distinct_scripts_that_share_short_common_phrases() {
+    let (_temp, _db, _plan, _current, mut batch) = canonical_batch_fixture();
+    // Shared calls to action are expected: the primary narrated mechanisms
+    // must remain distinct even when routine short phrases overlap.
+    batch.candidates[0].draft.beats[1].narration = "Share your opinion".into();
+    batch.candidates[1].draft.beats[1].narration = "Share your opinion".into();
+    batch.candidates[2].draft.beats[1].narration = "Share your opinion".into();
+    study_writing::enforce_candidate_originality(&batch.context, &batch.candidates).unwrap();
+}
+
+#[test]
+fn identical_long_caption_cannot_disguise_three_short_distinct_voiceovers() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    // Each spoken opening is distinct, but all the substantive on-screen
+    // script content is cloned. A batch must reject that as near-duplicate.
+    let shared = "Imagine a neighborhood meeting where three different families compare their walking routes. First they collect observations, next they mark important crossings on a printed map, then they discuss how to make the route safer for the children. The group writes the results on a common board and gathers feedback from more residents before making their final plan together.";
+    for candidate in &mut batch.candidates {
+        candidate.draft.caption = Some(shared.into());
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let shared = "The opening describes how neighbors discover an old notebook at the town square and then follow its detailed instructions to plan a safe walking route together";
+    let hooks = ["Consider trees", "Explore maps", "Observe traffic"];
+    for (index, candidate) in batch.candidates.iter_mut().enumerate() {
+        candidate.draft.beats[0].narration = hooks[index].into();
+        candidate.draft.beats[1].narration = shared.into();
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn arabic_harakat_zero_width_and_bidi_controls_cannot_hide_duplicate_scripts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let plain = "في هذا الحي نراجع ثلاث خطوات بسيطة قبل زيارة المكتبة مع أصدقائنا اليوم";
+    let decorated = plain
+        .chars()
+        .map(|character| {
+            if character.is_alphabetic() {
+                format!("{character}\u{064E}\u{200D}\u{200F}\u{2067}")
+            } else {
+                character.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    batch.candidates[0].draft.beats[0].narration = plain.into();
+    batch.candidates[1].draft.beats[0].narration = decorated;
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn source_copy_hidden_in_caption_is_rejected_before_any_sqlite_write() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The recorded speaker visits the community garden early each morning and gives a detailed tour of every vegetable bed before explaining which soil types are best suited for local seedlings";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.caption = Some(passage.into());
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn three_user_observations_do_not_replace_three_original_source_excerpts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let mut synthetic = context();
+    for evidence in &mut synthetic.evidence[1..] {
+        evidence.kind = EvidenceKind::CreativeObservation;
+        evidence.status = EvidenceStatus::Unverified;
+    }
+    assert!(matches!(
+        prepare_three("notes-are-not-origins", synthetic),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    for evidence in &mut batch.context.evidence[1..] {
+        evidence.kind = EvidenceKind::CreativeObservation;
+        evidence.status = EvidenceStatus::Unverified;
+    }
+    current.0.replace(batch.context.clone());
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn writing_batch_cannot_cite_only_observations_from_two_original_sources() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    for index in 1..3 {
+        let original = &batch.context.evidence[index];
+        let mut note = original.clone();
+        note.id = format!("observation-{}", index);
+        note.kind = EvidenceKind::CreativeObservation;
+        note.status = EvidenceStatus::Unverified;
+        note.excerpt = format!("Unverified creative note for source {}", index);
+        batch.context.evidence.push(note);
+        let note_id = format!("observation-{}", index);
+        let candidate = &mut batch.candidates[index];
+        candidate.angle.evidence_ids = vec![note_id.clone()];
+        candidate.draft.beats[0].evidence_ids = vec![note_id.clone()];
+        candidate.draft.claims[0].evidence_ids = vec![note_id];
+        candidate.lineage =
+            study_writing::lineage_for(&batch.context, &candidate.angle, &candidate.draft).unwrap();
+    }
+    // There are three genuine excerpts attached to the Study, but the output
+    // cites only one: two other draft claims refer to user-authored notes.
+    batch.context.validate().unwrap();
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn copied_source_split_between_caption_and_on_screen_text_is_rejected() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "Residents gathered near the old library to compare walking paths and discuss safer crossings during their first neighborhood meeting";
+    let words: Vec<_> = passage.split_whitespace().collect();
+    assert!(words.len() < 22);
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.caption = Some(words[..10].join(" "));
+    batch.candidates[0].draft.beats[0].on_screen_text = Some(words[10..].join(" "));
+    // Neither individual visible field has the 12-token source-copy window.
+    assert!(words[..10].len() < 12 && words[10..].len() < 12);
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn copied_source_claim_assertion_is_rejected_at_direct_sqlite_acceptance() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The local guide described several ways to organize a neighborhood meeting and explained why each family should bring written questions before considering the next proposal together";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].draft.claims[0].assertion = passage.into();
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn tampered_receipt_cannot_reconcile_unrelated_initial_drafts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    // Simulate post-write disk corruption. Real v11 schema deliberately
+    // prevents this UPDATE; dropping the trigger is only test fault injection.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute_batch("DROP TRIGGER study_writing_batches_immutable_update")
+        .unwrap();
+    let swapped = [ids[1], ids[0], ids[2]];
+    connection
+        .execute(
+            "UPDATE study_writing_batches SET draft_ids_json=?1 WHERE run_id=?2",
+            params![serde_json::to_string(&swapped).unwrap(), batch.run_id],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert!(matches!(
+        store.commit_three(&batch),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3,
+        "a bad receipt must not create a second batch"
+    );
+}
+
+#[test]
+fn corrupted_initial_snapshot_blocks_recovery_without_harming_human_edits() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    db.update_draft(
+        plan.context.project_id,
+        ids[0],
+        1,
+        "Editor title",
+        "Editor-owned body after generation",
+    )
+    .unwrap();
+    // Change the *immutable initial structured provenance* only as a
+    // fault-injection test; it must never be accepted as the original batch.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute_batch("DROP TRIGGER study_writing_revisions_immutable_update")
+        .unwrap();
+    connection
+        .execute(
+            "UPDATE study_writing_revisions SET structured_json=?1
+             WHERE draft_id=?2 AND version=1",
+            params![
+                serde_json::to_string(&batch.candidates[1]).unwrap(),
+                ids[0].to_string()
+            ],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.get_draft(plan.context.project_id, ids[0]).unwrap().body,
+        "Editor-owned body after generation",
+        "reconciliation must never overwrite human edits"
+    );
+}
+#[test]
+fn generated_factual_claim_labels_never_enter_immutable_v1_as_reviewed() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Disputed;
+    batch.candidates[1].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Opinion;
+    batch.candidates[2].draft.claims[0].status = scriptotar_ai::writing::ClaimStatus::Unverified;
+
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let connection = Connection::open(db.path()).unwrap();
+    let raw: String = connection
+        .query_row(
+            "SELECT payload_json FROM study_writing_batches WHERE run_id=?1",
+            params![batch.run_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let persisted: GeneratedBatch = serde_json::from_str(&raw).unwrap();
+    for (candidate, id) in persisted.candidates.iter().zip(ids) {
+        assert!(candidate
+            .draft
+            .claims
+            .iter()
+            .all(|claim| { claim.status == scriptotar_ai::writing::ClaimStatus::Unverified }));
+        let v1: String = connection
+            .query_row(
+                "SELECT structured_json FROM study_writing_revisions
+                 WHERE draft_id=?1 AND version=1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let initial: study_writing::GeneratedCandidate = serde_json::from_str(&v1).unwrap();
+        assert_eq!(&initial, candidate);
+    }
+    // Exact-run reconcile must still be safe after normalizing forged labels.
+    assert_eq!(sink.recover_committed(&plan).unwrap(), Some(ids));
+}
+#[test]
+fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].angle.evidence_ids.clear();
+    for beat in &mut batch.candidates[0].draft.beats {
+        beat.evidence_ids.clear();
+    }
+    for claim in &mut batch.candidates[0].draft.claims {
+        claim.evidence_ids.clear();
+    }
+    batch.candidates[0].lineage.clear();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+
+    let (_temp2, db2, plan2, current2, mut only_one) = canonical_batch_fixture();
+    for candidate in &mut only_one.candidates {
+        candidate.angle.evidence_ids = vec!["e1".into()];
+        for beat in &mut candidate.draft.beats {
+            beat.evidence_ids = vec!["e1".into()];
+        }
+        for claim in &mut candidate.draft.claims {
+            claim.evidence_ids = vec!["e1".into()];
+        }
+        candidate.lineage =
+            study_writing::lineage_for(&only_one.context, &candidate.angle, &candidate.draft)
+                .unwrap();
+    }
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&only_one.context, &only_one.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut second_sink = CanonicalSqliteCandidateStore {
+        store: &db2,
+        current: &current2,
+    };
+    assert!(matches!(
+        second_sink.commit_three(&only_one),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(
+        db.get_study(plan.context.project_id, plan.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+    assert_eq!(
+        db2.get_study(plan2.context.project_id, plan2.context.study_id)
+            .unwrap()
+            .revision,
+        1
+    );
+}
+#[test]
+fn canonical_sink_revalidates_duplicate_beat_ids_without_partial_writes() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    let existing_beat_id = batch.candidates[0].draft.beats[0].id.clone();
+    batch.candidates[0].draft.beats[1].id = existing_beat_id;
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn recovery_requires_original_source_links_but_accepts_later_human_attachments() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, batch) = canonical_batch_fixture();
+    let mut store = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = store.commit_three(&batch).unwrap();
+    let primary = batch.candidates[0].lineage[0].source_id;
+    let additional = plan.context.sources[1].study_source_id;
+    assert_ne!(primary, additional);
+
+    // The editor may attach a new, available source after acceptance.
+    db.attach_source_to_draft(plan.context.project_id, ids[0], additional)
+        .unwrap();
+    assert_eq!(store.recover_committed(&plan).unwrap(), Some(ids));
+
+    // But removing an original generated citation must invalidate recovery;
+    // a later human attachment cannot stand in for lost original provenance.
+    let connection = Connection::open(db.path()).unwrap();
+    connection
+        .execute(
+            "DELETE FROM draft_source_links
+             WHERE project_id=?1 AND draft_id=?2 AND study_source_id=?3",
+            params![
+                plan.context.project_id.to_string(),
+                ids[0].to_string(),
+                primary.to_string()
+            ],
+        )
+        .unwrap();
+    assert!(matches!(
+        store.recover_committed(&plan),
+        Err(WritingWorkflowError::PersistFailed(_))
+    ));
+    assert_eq!(
+        db.list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .len(),
+        3,
+        "failed reconciliation must never regenerate a batch"
+    );
+}
+
+#[test]
+fn direct_sqlite_acceptance_rejects_invalid_angle_outline() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].angle.outline.clear();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn direct_sqlite_acceptance_refuses_forged_generated_review_locators() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0]
+        .review_findings
+        .push(scriptotar_ai::writing::ReviewFinding {
+            beat_id: Some("nonexistent-beat".into()),
+            concern: "Invented evaluation".into(),
+            recommendation: "Refer to a source outside the Study".into(),
+            evidence_ids: vec!["foreign-evidence".into()],
+            needs_human_review: false,
+        });
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn short_near_duplicate_prose_rejected_before_provider_batch_commit_and_retry() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let first = "A neighbor finds the map and explains three easy ways to reach school.";
+    let second = "A neighbor finds the map and explains three simple ways to reach school.";
+    let updated = |index: usize, narration: &str| {
+        let mut draft: serde_json::Value = serde_json::from_str(&draft_json(index)).unwrap();
+        draft["beats"][0]["narration"] = json!(narration);
+        draft.to_string()
+    };
+    provider.responses = [
+        angles_json(),
+        updated(1, first),
+        updated(2, second),
+        draft_json(3),
+    ]
+    .into();
+    let mut sink =
+        SqlFixtureSink::open(&temp.path().join("short-angles.sqlite"), current.0.clone());
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(sink.count(), 0);
+    // Four durable successful mock responses can be read again, but must
+    // never cause another paid request or create an accepted bad batch.
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::DuplicateOrSimilar)
+    ));
+    assert_eq!(provider.calls, 4);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
+fn short_near_duplicate_english_and_arabic_are_rejected_by_canonical_sqlite_sink() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let english = (
+        "A neighbor finds the map and explains three easy ways to reach school.",
+        "A neighbor finds the map and explains three simple ways to reach school.",
+    );
+    let arabic = (
+        "في هذا الحي نراجع ثلاث خطوات بسيطة قبل زيارة المكتبة مع أصدقائنا اليوم",
+        "في هذا الحي نراجع ثلاث خطوات سهلة قبل زيارة المكتبة مع أصدقائنا اليوم",
+    );
+    for (first, second) in [english, arabic] {
+        let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+        batch.candidates[0].draft.beats[0].narration = first.into();
+        batch.candidates[1].draft.beats[0].narration = second.into();
+        assert!(matches!(
+            study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+            Err(WritingWorkflowError::DuplicateOrSimilar)
+        ));
+        let mut sink = CanonicalSqliteCandidateStore {
+            store: &db,
+            current: &current,
+        };
+        assert!(matches!(
+            sink.commit_three(&batch),
+            Err(WritingWorkflowError::DuplicateOrSimilar)
+        ));
+        assert!(db
+            .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.get_study(plan.context.project_id, plan.context.study_id)
+                .unwrap()
+                .revision,
+            1
+        );
+        let count: i64 = Connection::open(db.path())
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM study_writing_batches", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "rejected batch must not leave a receipt");
+    }
+}
+
+#[test]
+fn genuinely_different_short_scripts_can_share_a_common_cta() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, _plan, current, mut batch) = canonical_batch_fixture();
+    batch.candidates[0].draft.beats[0].narration =
+        "A school volunteer shares a personal diary about making friends in the town.".into();
+    batch.candidates[1].draft.beats[0].narration =
+        "Compare ticket costs and write a practical checklist before taking the bus.".into();
+    batch.candidates[2].draft.beats[0].narration =
+        "Follow the old river bridge to discover a surprising community tradition.".into();
+    for candidate in &mut batch.candidates {
+        candidate.draft.beats[1].narration = "Share your opinion about this idea.".into();
+    }
+    study_writing::enforce_candidate_originality(&batch.context, &batch.candidates).unwrap();
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert_eq!(sink.commit_three(&batch).unwrap().len(), 3);
 }
