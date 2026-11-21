@@ -76,7 +76,7 @@ describe('Verified v11 candidate comparison', () => {
     expect(compare).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
-    expect(screen.getByText(/unsaved/i)).toBeInTheDocument();
+    expect(screen.getByText('Save Study changes before comparing saved script candidates.')).toBeInTheDocument();
     await fireEvent.click(compare);
     expect(choose).not.toHaveBeenCalled();
 
