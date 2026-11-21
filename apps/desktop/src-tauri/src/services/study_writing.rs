@@ -394,7 +394,17 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
         return Err(WritingWorkflowError::Cancelled);
     }
     match gate.begin(&plan.run_id, &plan.context, step, request)? {
-        StepAdmission::Recorded { response_json } => Ok(response_json),
+        StepAdmission::Recorded { response_json } => {
+            // Even authenticated persisted outputs must obey the same bounds
+            // as live provider responses before any JSON parse or draft save.
+            // The future receipt loader should independently bound SQLite IO.
+            if response_json.len() > 400_000 || response_json.chars().count() > 100_000 {
+                return Err(WritingWorkflowError::InvalidResponse(
+                    "recorded provider output exceeds bound".into(),
+                ));
+            }
+            Ok(response_json)
+        }
         StepAdmission::Dispatch { effect_key } => {
             if stop.cancelled() {
                 gate.abandon_before_dispatch(&effect_key)?;
@@ -404,7 +414,7 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
                 Ok(response) => {
                     // Fail closed on malformed/oversized receipt: do not retry
                     // a possibly billable call after an uncertain outcome.
-                    if response.text.chars().count() > 100_000 {
+                    if response.text.len() > 400_000 || response.text.chars().count() > 100_000 {
                         gate.mark_uncertain(&effect_key)?;
                         return Err(WritingWorkflowError::InvalidResponse(
                             "provider output exceeds bound".into(),
