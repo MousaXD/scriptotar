@@ -1650,6 +1650,84 @@ fn source_copy_hidden_in_caption_is_rejected_before_any_sqlite_write() {
 }
 
 #[test]
+fn three_user_observations_do_not_replace_three_original_source_excerpts() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let mut synthetic = context();
+    for evidence in &mut synthetic.evidence[1..] {
+        evidence.kind = EvidenceKind::CreativeObservation;
+        evidence.status = EvidenceStatus::Unverified;
+    }
+    assert!(matches!(
+        prepare_three("notes-are-not-origins", synthetic),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    for evidence in &mut batch.context.evidence[1..] {
+        evidence.kind = EvidenceKind::CreativeObservation;
+        evidence.status = EvidenceStatus::Unverified;
+    }
+    current.0.replace(batch.context.clone());
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn writing_batch_cannot_cite_only_observations_from_two_original_sources() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
+    for index in 1..3 {
+        let original = &batch.context.evidence[index];
+        let mut note = original.clone();
+        note.id = format!("observation-{}", index);
+        note.kind = EvidenceKind::CreativeObservation;
+        note.status = EvidenceStatus::Unverified;
+        note.excerpt = format!("Unverified creative note for source {}", index);
+        batch.context.evidence.push(note);
+        let note_id = format!("observation-{}", index);
+        let candidate = &mut batch.candidates[index];
+        candidate.angle.evidence_ids = vec![note_id.clone()];
+        candidate.draft.beats[0].evidence_ids = vec![note_id.clone()];
+        candidate.draft.claims[0].evidence_ids = vec![note_id];
+        candidate.lineage =
+            study_writing::lineage_for(&batch.context, &candidate.angle, &candidate.draft)
+                .unwrap();
+    }
+    // There are three genuine excerpts attached to the Study, but the output
+    // cites only one: two other draft claims refer to user-authored notes.
+    batch.context.validate().unwrap();
+    current.0.replace(batch.context.clone());
+    assert!(matches!(
+        study_writing::enforce_candidate_originality(&batch.context, &batch.candidates),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    assert!(matches!(
+        sink.commit_three(&batch),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert!(db
+        .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
 fn tampered_receipt_cannot_reconcile_unrelated_initial_drafts() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
