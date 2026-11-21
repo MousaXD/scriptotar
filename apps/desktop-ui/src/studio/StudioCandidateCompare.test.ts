@@ -60,6 +60,51 @@ describe('Verified v11 candidate comparison', () => {
     expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
   });
 
+  it('hides saved candidates and blocks their actions when the visible Study becomes dirty', async () => {
+    const { study, gateway, projectId } = fixture();
+    const choose = vi.fn();
+    const view = render(StudioCandidateCompare, {
+      props: { study, gateway, projectId, pendingEdits: false, onChoose: choose }
+    });
+    const compare = screen.getByRole('button', { name: /Compare script candidates/ });
+    await fireEvent.click(compare);
+    expect(await screen.findByText('Saved generated-c')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Edit this candidate' })).toHaveLength(3);
+
+    await view.rerender({ study, gateway, projectId, pendingEdits: true, onChoose: choose });
+    expect(compare).toBeDisabled();
+    expect(compare).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByText('Saved generated-c')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+    expect(screen.getByText(/unsaved/i)).toBeInTheDocument();
+    await fireEvent.click(compare);
+    expect(choose).not.toHaveBeenCalled();
+
+    await view.rerender({ study, gateway, projectId, pendingEdits: false, onChoose: choose });
+    expect(compare).toBeEnabled();
+  });
+
+  it('drops an in-flight candidate read when unsaved edits invalidate its snapshot', async () => {
+    const { study, gateway, read, projectId } = fixture();
+    let releaseReads: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    read.mockImplementation(async (_project, _study, draftId) => {
+      await gate;
+      return { ...study, draftId, draftRevision: 1, draft: 'Saved ' + draftId };
+    });
+    const view = render(StudioCandidateCompare, {
+      props: { study, gateway, projectId, pendingEdits: false }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: /Compare script candidates/ }));
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    await view.rerender({ study, gateway, projectId, pendingEdits: true });
+    releaseReads?.();
+    await Promise.resolve();
+    expect(screen.getByRole('button', { name: /Compare script candidates/ })).toBeDisabled();
+    expect(screen.queryByText('Saved generated-a')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
+  });
+
   it('refuses a foreign-project receipt before opening any candidate', async () => {
     const { study, gateway, read, batches, batch, projectId } = fixture();
     batches.mockResolvedValue([{ ...batch, projectId: 'foreign' }]);
