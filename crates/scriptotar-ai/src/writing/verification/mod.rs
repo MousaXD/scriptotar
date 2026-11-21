@@ -392,13 +392,12 @@ fn review_matches(
 pub fn verify_claims(ctx: &VerificationContext, proposals: &[ClaimProposal]) -> VerificationReport {
     let mut by_id = HashMap::new();
     for evidence in ctx.evidence.iter().take(MAX_EVIDENCE + 1) {
-        // Duplicate IDs are deliberately ambiguous, so lookup will fail.
-        if by_id
-            .insert(evidence.evidence_id.as_str(), Some(evidence))
-            .is_some()
-        {
-            by_id.insert(evidence.evidence_id.as_str(), None);
-        }
+        // Once an ID is ambiguous, later duplicates may never restore a
+        // supposedly authoritative entry. Reject every duplicate count.
+        by_id
+            .entry(evidence.evidence_id.as_str())
+            .and_modify(|entry| *entry = None)
+            .or_insert(Some(evidence));
     }
     let invalid_batch = proposals.len() > MAX_CLAIMS
         || ctx.evidence.len() > MAX_EVIDENCE
