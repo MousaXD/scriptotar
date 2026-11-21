@@ -318,14 +318,16 @@ impl SqliteStore {
                         effect_attempt,effect_provider,effect_wire_sha256
                  FROM provider_dispatch_barrier WHERE singleton=1 AND token=?1",
                 params![token],
-                |row| Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                )),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
             )
             .optional()
             .map_err(storage_error)?;
@@ -367,7 +369,8 @@ impl SqliteStore {
                 };
                 if !safe {
                     return Err(RepositoryError::Conflict(
-                        "unresolved or unauthenticated provider attempt retains scope freeze".into(),
+                        "unresolved or unauthenticated provider attempt retains scope freeze"
+                            .into(),
                     ));
                 }
             }
