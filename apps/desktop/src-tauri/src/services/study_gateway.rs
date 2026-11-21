@@ -1334,7 +1334,7 @@ impl super::study_writing::CurrentStudy for AppServices {
             || !verified.meets_three_source_evidence_floor
             || verified.attributed_source_count < 3
             || !verified.source_text_is_untrusted_data
-            || verified.sources.len() != base.sources.len()
+            || !(3..=base.sources.len()).contains(&verified.sources.len())
         {
             return Err(WritingWorkflowError::StaleContext);
         }
@@ -1365,6 +1365,11 @@ impl super::study_writing::CurrentStudy for AppServices {
         }
         seals.sort_by_key(|source| source.study_source_id);
         let mut bound = base.clone();
+        // The user may explicitly approve three of a larger attached Study
+        // collection; never expand writing evidence to unapproved attachments.
+        bound
+            .sources
+            .retain(|source| selected.contains(&source.study_source_id));
         bound.approved_research = Some(ApprovedResearch {
             artifact_id,
             run_id: verified.approved_run_id,
