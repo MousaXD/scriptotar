@@ -63,10 +63,33 @@ def sample_png_rgb(png: bytes, x: int = SAMPLE_X, y: int = SAMPLE_Y) -> tuple[tu
     if not ended or width is None or not compressed:
         raise ValueError("Incomplete PNG")
     stride = width * channels
+    # Never use zlib.decompressobj().flush() on an untrusted PNG: it
+    # unconditionally expands the remaining IDAT bytes with NO output cap.
+    # A CRC-valid small IDAT can contain far more pixels than IHDR declares.
+    expected_scan_bytes = (stride + 1) * height
     inflater = zlib.decompressobj()
-    scan = inflater.decompress(bytes(compressed), (stride+1)*(y+1)+1)
-    scan += inflater.flush()
-    if len(scan) != (stride+1)*height:
+    scan = bytearray()
+    for offset in range(0, len(compressed), 64 * 1024):
+        pending = bytes(compressed[offset:offset + 64 * 1024])
+        while pending:
+            # The +1 detects an overlong stream before materializing an
+            # unbounded decompression bomb, including on the last IDAT block.
+            remaining = expected_scan_bytes + 1 - len(scan)
+            if remaining <= 0:
+                raise ValueError("PNG scanline length mismatch")
+            output = inflater.decompress(pending, remaining)
+            scan.extend(output)
+            if len(scan) > expected_scan_bytes:
+                raise ValueError("PNG scanline length mismatch")
+            if inflater.unused_data:
+                raise ValueError("PNG zlib stream has trailing compressed data")
+            next_pending = inflater.unconsumed_tail
+            if len(next_pending) == len(pending) and not output:
+                raise ValueError("PNG inflater made no forward progress")
+            pending = next_pending
+        if inflater.eof and offset + 64 * 1024 < len(compressed):
+            raise ValueError("PNG zlib stream has trailing compressed data")
+    if not inflater.eof or len(scan) != expected_scan_bytes:
         raise ValueError("PNG scanline length mismatch")
     last = bytearray(stride)
     for row in range(y+1):

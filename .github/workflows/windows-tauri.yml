@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0
+          reviewed=b6ec7b914b55007417e8191695e2213d4117a61c
           git fetch --no-tags --depth=1 origin "$reviewed"
           test "$(git cat-file -t "$reviewed")" = commit
           # This PR is reviewed for TWO workflow edits only. Fail closed for

@@ -3,9 +3,34 @@ import json
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 import zlib
 from pathlib import Path
+
+
+class GuardedInflater:
+    """Reject unbounded inflater operations, even if a decoder later errors."""
+
+    def __init__(self, real, declared_scan_bytes):
+        self._inner = real()
+        self._limit = declared_scan_bytes + 1
+        self.largest_response = 0
+
+    def decompress(self, encoded, max_length=0):
+        if not 0 < max_length <= self._limit:
+            raise AssertionError("PNG inflate must have a declared output cap")
+        decoded = self._inner.decompress(encoded, max_length)
+        self.largest_response = max(self.largest_response, len(decoded))
+        if len(decoded) > self._limit:
+            raise AssertionError("PNG inflated beyond declared scanline budget")
+        return decoded
+
+    def flush(self, *args):
+        raise AssertionError("Unbounded zlib flush is prohibited")
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
 
 from visual_observations import analyze, sample_png_rgb
 
@@ -73,6 +98,46 @@ class NativeVisualNoncertifyingTests(unittest.TestCase):
             self.assertEqual(size, (451, 201))
         with self.assertRaises(ValueError):
             sample_png_rgb(make_png((13, 17, 22))[:-6])
+
+    def test_idat_overinflation_is_capped_before_allocation(self):
+        width, height = 451, 201
+        declared = (width * 3 + 1) * height
+        # Malicious but CRC-valid IDAT contains many more decoded scanlines
+        # than IHDR promises. The compressed stream remains tiny.
+        malicious = zlib.compress(b"\x00" * (13 * 1024 * 1024), 9)
+
+        def chunk(kind, payload):
+            return (struct.pack(">I", len(payload)) + kind + payload +
+                    struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+
+        ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        hostile_png = (b"\x89PNG\r\n\x1a\n" +
+                       chunk(b"IHDR", ihdr) + chunk(b"IDAT", malicious) +
+                       chunk(b"IEND", b""))
+        valid_png = make_png((13, 17, 22), mode=2)
+        original_decompressobj = zlib.decompressobj
+        guards = []
+
+        def guarded_decompressor(*args, **kwargs):
+            guard = GuardedInflater(lambda: original_decompressobj(*args, **kwargs), declared)
+            guards.append(guard)
+            return guard
+
+        with patch.object(zlib, "decompressobj", side_effect=guarded_decompressor):
+            self.assertEqual(sample_png_rgb(valid_png)[0], (13, 17, 22))
+            with self.assertRaisesRegex(ValueError, "PNG scanline length mismatch"):
+                sample_png_rgb(hostile_png)
+        self.assertEqual(len(guards), 2)
+        self.assertTrue(all(g.largest_response <= declared + 1 for g in guards))
+
+        # Stream integrity is checked, too: appended bytes and missing zlib
+        # trailer must be rejected even if pixel count happens to match.
+        raw = (b"\x00" + bytes((13, 17, 22)) * width) * height
+        for encoded in (zlib.compress(raw) + b"TRAIL", zlib.compress(raw)[:-5]):
+            forged = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) +
+                      chunk(b"IDAT", encoded) + chunk(b"IEND", b""))
+            with self.assertRaisesRegex(ValueError, "PNG"):
+                sample_png_rgb(forged)
 
     def test_theme_observations_never_certify_full_visual_or_rtl(self):
         with tempfile.TemporaryDirectory() as temp:
