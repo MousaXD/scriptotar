@@ -624,6 +624,19 @@ pub(super) fn enforce_candidate_originality(
                 generated_text.push(shot.purpose.as_str());
             }
         }
+        for claim in &candidate.draft.claims {
+            generated_text.push(claim.assertion.as_str());
+        }
+        for finding in &candidate.review_findings {
+            generated_text.push(finding.concern.as_str());
+            generated_text.push(finding.recommendation.as_str());
+        }
+        generated_text.push(candidate.angle.hook.as_str());
+        generated_text.push(candidate.angle.approach.as_str());
+        generated_text.push(candidate.angle.promise.as_str());
+        for beat in &candidate.angle.outline {
+            generated_text.push(beat.intent.as_str());
+        }
         if generated_text.iter().any(|text| {
             originality_words(text)
                 .windows(SOURCE_WINDOW)
