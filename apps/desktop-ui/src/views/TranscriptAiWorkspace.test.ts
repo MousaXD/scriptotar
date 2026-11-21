@@ -200,18 +200,21 @@ describe('AI Studio request isolation', () => {
     expect(screen.getByRole('heading', { name: 'المطالبة المنشأة' })).toBeInTheDocument();
     const task = screen.getByRole('combobox', { name: 'المهمة' });
     expect(task).toHaveTextContent('تحليل الانتشار');
+    await fireEvent.click(task);
+    await fireEvent.click(screen.getByRole('option', { name: 'أفكار افتتاحيات جذابة' }));
 
     await fireEvent.input(screen.getByPlaceholderText('ألصق نص التفريغ أو البحث، أو حمّله…'), {
       target: { value: 'مقتطف أصلي' }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'إنشاء المطالبة' }));
     await waitFor(() => expect(buildAiPrompt).toHaveBeenCalledWith(expect.objectContaining({
-      task: 'Viral breakdown', sourceText: 'مقتطف أصلي', apiKey: undefined, baseUrl: undefined
+      task: 'Hook ideas', sourceText: 'مقتطف أصلي', apiKey: undefined, baseUrl: undefined
     })));
 
     await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
     expect(screen.getByRole('status')).toHaveTextContent('الإرسال بمفتاحك غير متاح');
     expect(screen.getByText(/الإرسال المباشر بمفتاحك معطّل/)).toBeInTheDocument();
+    expect(screen.getByText(/لا يُقبل مفتاح API في هذا الوضع/)).toBeInTheDocument();
     expect(screen.getByLabelText('مفتاح API')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'التشغيل عبر API (غير متاح)' })).toBeDisabled();
     expect(runAi).not.toHaveBeenCalled();
