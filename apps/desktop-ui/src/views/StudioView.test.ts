@@ -345,8 +345,13 @@ describe('Content Study Studio', () => {
 
     view.unmount();
     mount(gateway);
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Arabic launch' }));
+    // Opening the persisted picker is intentionally disabled while the
+    // asynchronous Study index is loading. Wait for the real ready state,
+    // rather than clicking a disabled combobox and assuming its listbox opened.
+    const reopenPicker = screen.getByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(reopenPicker).toBeEnabled());
+    await fireEvent.click(reopenPicker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Arabic launch' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' })).toHaveValue('مرحبا بكم في الإطلاق');
     expect(screen.getAllByText('Hook breakdown — Arabic sample').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Version 2' }));
@@ -386,8 +391,13 @@ describe('Content Study Studio', () => {
 
     view.unmount();
     mount(gateway);
-    await fireEvent.click(screen.getByRole('combobox', { name: 'Open study' }));
-    await fireEvent.click(screen.getByRole('option', { name: 'Revision history' }));
+    // Opening the persisted picker is intentionally disabled while the
+    // asynchronous Study index is loading. Wait for the real ready state,
+    // rather than clicking a disabled combobox and assuming its listbox opened.
+    const reopenPicker = screen.getByRole('combobox', { name: 'Open study' });
+    await waitFor(() => expect(reopenPicker).toBeEnabled());
+    await fireEvent.click(reopenPicker);
+    await fireEvent.click(await screen.findByRole('option', { name: 'Revision history' }));
     expect(await screen.findByRole('textbox', { name: 'Script draft' }))
       .toHaveValue('First original script');
   });
