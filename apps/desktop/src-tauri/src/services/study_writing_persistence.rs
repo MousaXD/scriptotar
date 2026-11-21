@@ -682,6 +682,24 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
                 "revision modified untouched beats or citation statuses",
             ));
         }
+        // A caller bypassing the typed revision helper must not attach forged
+        // source links, quality findings or provider-review history to an
+        // otherwise valid one-beat edit. Derive these from canonical inputs.
+        let expected_lineage = lineage_for(context, &original.angle, &expected)?;
+        let expected_audit =
+            writing::audit_draft(&expected, &context.brief, &context.evidence);
+        let expected_reviews = original
+            .review_findings
+            .iter()
+            .filter(|finding| finding.beat_id.as_deref() != Some(beat_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        if reviewed.lineage != expected_lineage
+            || reviewed.audit != expected_audit
+            || reviewed.review_findings != expected_reviews
+        {
+            return Err(denied("revision forged lineage, audit or review history"));
+        }
         if body.matches(previous_beat_text).count() != 1 {
             return Err(WritingWorkflowError::StaleContext);
         }
