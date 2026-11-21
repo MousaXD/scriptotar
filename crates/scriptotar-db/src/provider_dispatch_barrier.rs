@@ -63,7 +63,11 @@ pub(crate) fn migration_13(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         BEGIN SELECT RAISE(ABORT, 'dispatch barrier cannot be updated'); END;",
     )?;
     for table in FREEZE_TABLES {
-        for (verb, suffix) in [("INSERT", "insert"), ("UPDATE", "update"), ("DELETE", "delete")] {
+        for (verb, suffix) in [
+            ("INSERT", "insert"),
+            ("UPDATE", "update"),
+            ("DELETE", "delete"),
+        ] {
             // Identifiers are static reviewed code, never user-controlled.
             tx.execute_batch(&format!(
                 "CREATE TRIGGER provider_dispatch_barrier_{table}_{suffix}
@@ -126,7 +130,9 @@ impl SqliteStore {
                 .bytes()
                 .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
         {
-            return Err(RepositoryError::Validation("invalid provider scope digest".into()));
+            return Err(RepositoryError::Validation(
+                "invalid provider scope digest".into(),
+            ));
         }
         let token = Uuid::new_v4().to_string();
         let mut connection = self.connection()?;
@@ -216,7 +222,10 @@ mod tests {
             "DELETE FROM content_studies WHERE title='Freeze fixture'",
             "INSERT INTO projects(id,name,created_at) VALUES('new-project','Other','2026-11-21')",
         ] {
-            assert!(other.execute_batch(sql).is_err(), "scope writer escaped barrier: {sql}");
+            assert!(
+                other.execute_batch(sql).is_err(),
+                "scope writer escaped barrier: {sql}"
+            );
         }
         assert!(db
             .acquire_provider_dispatch_barrier(project, study, &"b".repeat(64))
