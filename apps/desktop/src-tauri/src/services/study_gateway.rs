@@ -573,6 +573,10 @@ impl AppServices {
         // production AppServices loader enforces approved research at the sink.
         struct OfflineStudy<'a>(&'a AppServices);
         impl super::study_writing::CurrentStudy for OfflineStudy<'_> {
+            fn require_approved_research_for_acceptance(&self) -> bool {
+                false
+            }
+
             fn load(
                 &self,
                 project: Uuid,
