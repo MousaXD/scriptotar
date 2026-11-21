@@ -185,6 +185,7 @@ public static class NativeWebViewWindow {
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder buffer, int length);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     public static void NativeScrollUp(int x, int y) {
@@ -563,7 +564,7 @@ function Get-InstalledSemanticLayout([IntPtr]$hwnd, [string[]]$labels,
   }
 }
 
-function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [IntPtr]$topLevelHwnd, [string]$purpose, [int]$count = 12) {
+function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [IntPtr]$topLevelHwnd, [int]$expectedPid, [string]$purpose, [int]$count = 12) {
   # Real installed WebView2 keyboard actions and UIA focus, not DOM simulation.
   # This is read-only review evidence and NEVER an automatic RTL/visual PASS.
   $observation = [ordered]@{
@@ -573,6 +574,10 @@ function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [IntPtr]$topLevelHwnd, [str
     certifies_rtl_or_visual = $false
   }
   try {
+    if ($topLevelHwnd -eq [IntPtr]::Zero -or $expectedPid -le 0 -or
+        [NativeWebViewWindow]::ProcessId($topLevelHwnd) -ne [uint32]$expectedPid) {
+      throw 'Refusing native Tab: top-level HWND is not owned by installed process'
+    }
     $owner = [System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
     if (-not $owner) { throw 'Installed WebView2 UIA owner not available for focus audit' }
     $rootId = ($owner.GetRuntimeId() -join ',')
@@ -580,7 +585,15 @@ function Save-InstalledNativeTabOrder([IntPtr]$hwnd, [IntPtr]$topLevelHwnd, [str
     if (-not [NativeWebViewWindow]::SetForegroundWindow($topLevelHwnd)) {
       throw 'Installed top-level desktop window could not be foregrounded for native Tab'
     }
+    Start-Sleep -Milliseconds 180
     for ($i = 0; $i -lt $count; $i++) {
+      # SendKeys targets the desktop foreground window, not a nominated HWND.
+      # Confirm that the genuine installed top-level HWND still owns focus
+      # BEFORE each real keyboard event; otherwise stop without sending.
+      if ([NativeWebViewWindow]::GetForegroundWindow() -ne $topLevelHwnd -or
+          [NativeWebViewWindow]::ProcessId($topLevelHwnd) -ne [uint32]$expectedPid) {
+        throw "Refusing Tab $($i + 1): installed WebView2 lost foreground ownership"
+      }
       [System.Windows.Forms.SendKeys]::SendWait('{TAB}')
       Start-Sleep -Milliseconds 180
       $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
@@ -1916,7 +1929,7 @@ try {
         Click-InstalledControl $arabicHwnd 'الاستوديو' ([System.Windows.Automation.ControlType]::Button)
         Wait-InstalledStudioPageText $arabicHwnd 'الاستوديو'
         Save-UnverifiedWindow ([System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)) (Join-Path $EvidenceDir 'windows-arabic-reopened.png')
-        Save-InstalledNativeTabOrder $arabicHwnd $proc.MainWindowHandle 'arabic_reopened_native_tab_order'
+        Save-InstalledNativeTabOrder $arabicHwnd $proc.MainWindowHandle $proc.Id 'arabic_reopened_native_tab_order'
 
         Choose-InstalledOption $arabicHwnd 'لغة الواجهة' 'EN'
         Wait-InstalledComboValue $arabicHwnd 'Interface language' 'EN'
