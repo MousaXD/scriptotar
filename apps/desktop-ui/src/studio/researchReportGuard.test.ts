@@ -46,8 +46,7 @@ describe('Study research report display scope', () => {
     const missingSource = { ...report, sources: [null] } as unknown as StudyResearchReport;
     expect(valid(missingSource)).toBe(false);
     const malformedObservation = structuredClone(report);
-    malformedObservation.sources[0].observations = [null] as unknown as
-      typeof malformedObservation.sources[0]['observations'];
+    malformedObservation.sources[0].observations = [null as never];
     expect(valid(malformedObservation)).toBe(false);
   });
 
