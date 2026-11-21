@@ -422,6 +422,22 @@ fn denied_approval_does_not_contact_provider_or_persist() {
 }
 
 #[test]
+fn oversized_recorded_paid_result_never_dispatches_or_creates_drafts() {
+    let (temp, plan, current, mut gate, mut provider, stop) = setup();
+    let recorded_key = format!("{}:angles:{}", plan.run_id, plan.angles_prompt.prompt);
+    gate.step_response
+        .insert(recorded_key, "a".repeat(400_001));
+    let mut sink = SqlFixtureSink::open(&temp.path().join("replay-limit.sqlite"), current.0.clone());
+    assert!(matches!(
+        generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(gate.attempts, 1);
+    assert_eq!(provider.calls, 0, "no provider retry for recorded output");
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
 fn external_provider_failure_is_uncertain_and_must_not_replay() {
     let (temp, plan, current, mut gate, mut provider, stop) = setup();
     provider.fail_on = Some(2);
