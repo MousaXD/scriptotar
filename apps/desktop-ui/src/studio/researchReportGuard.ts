@@ -32,6 +32,10 @@ export function matchesResearchReportScope(
       requested.some((id) => typeof id !== 'string' || !id) ||
       new Set(requested).size !== requested.length ||
       !report || report.project_id !== projectId || report.study_id !== studyId ||
+      !Array.isArray(attached) || attached.some((source) =>
+        !source || typeof source.id !== 'string' || !source.id ||
+        typeof source.available !== 'boolean') ||
+      new Set(attached.map((source) => source.id)).size !== attached.length ||
       report.source_text_is_untrusted_data !== true ||
       !Array.isArray(report.sources) || report.sources.length !== requested.length ||
       !Array.isArray(report.feature_support) || report.feature_support.length > 8 ||
