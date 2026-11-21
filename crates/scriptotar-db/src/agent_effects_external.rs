@@ -1039,6 +1039,48 @@ mod tests {
     }
 
     #[test]
+    fn charged_receipt_without_three_script_batch_remains_blocked_after_restart() {
+        let (dir,db,project,study,snap)=setup();
+        let key=identity(&snap,project,study);
+        let ready=reserve(&db,&snap,project,study);
+        db.mark_external_dispatched(key,ready.revision,1).unwrap();
+        // Provider has billed and authenticated usage, but the host crashes
+        // before Agent 05 can durably save its three-script v11 batch.
+        let charged=db.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("charged_no_batch_request"),
+            receipt_id:"charged_no_batch_receipt",
+            tokens:135,cost_microusd:800,
+        }).unwrap();
+        drop(db);
+        let path=dir.path().join("external.sqlite3");
+        let reopened=SqliteStore::open(&path).unwrap();
+        let conn=rusqlite::Connection::open(&path).unwrap();
+        let batches:i64=conn.query_row(
+            "SELECT COUNT(*) FROM study_writing_batches WHERE run_id=?1",
+            params![snap.plan.id],|r|r.get(0),
+        ).unwrap();
+        assert_eq!(batches,0,"paid output is absent and must not be invented");
+        assert_eq!(
+            reopened.recover_external_effects(project,study,&snap.plan.id).unwrap(),0
+        );
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),charged);
+        assert!(matches!(
+            reopened.reserve_external_effect(key,fp(),"openai",limits()).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        assert!(reopened.mark_external_dispatched(key,charged.revision,1).is_err());
+        assert!(reopened.prepare_external_retry(key,charged.revision).is_err());
+        // The v10/v12 receipt is immutable and the only safe next step is
+        // manual reconciliation or recovery of the ORIGINAL sealed output.
+        assert!(reopened.reconcile_external_effect(key,1,ExternalResolution::Completed {
+            provider_request_id:Some("charged_no_batch_request"),
+            receipt_id:"charged_no_batch_receipt",
+            tokens:135,cost_microusd:800,
+        }).is_ok());
+        assert_eq!(reopened.get_external_effect(key).unwrap().unwrap(),charged);
+    }
+
+    #[test]
     fn concurrent_claimers_only_one_fresh_and_fingerprint_cannot_change() {
         let (_dir,db,project,study,snap)=setup();
         let barrier=Arc::new(Barrier::new(3));
