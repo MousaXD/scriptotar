@@ -1523,8 +1523,8 @@ mod tests {
         assert!(CurrentStudy::load(&services, project, study_id).is_err());
     }
 
-    /// A real approved research run, not similar independently extracted
-    /// transcript material, must shape the canonical original-writing plan.
+    /// A real approved three-source research subset, not a similar-looking
+    /// independently extracted four-source Study, must shape the writing plan.
     #[test]
     fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
         use scriptotar_agent::RunState;
@@ -1540,7 +1540,7 @@ mod tests {
         db.pragma_update(None, "foreign_keys", true).unwrap();
         let mut selected = Vec::new();
         let mut origins = Vec::new();
-        for index in 0..3 {
+        for index in 0..4 {
             let source = Uuid::new_v4();
             let media = Uuid::new_v4();
             let transcript = Uuid::new_v4();
@@ -1603,6 +1603,7 @@ mod tests {
             .list_study_sources(project, study)
             .unwrap()
             .into_iter()
+            .take(3)
             .map(|row| row.id)
             .collect::<Vec<_>>();
         let waiting = services
@@ -1629,6 +1630,7 @@ mod tests {
         assert_eq!(seal.artifact_id, artifact);
         assert_eq!(seal.run_id, waiting.plan.id);
         assert_eq!(seal.sources.len(), 3);
+        assert_eq!(plan.context.sources.len(), 3, "writing excludes the fourth unapproved origin");
         assert!(seal.sources.iter().all(|source| {
             source.origin_sha256.len() == 64 && origins.contains(&source.origin_id)
         }));
@@ -1659,7 +1661,7 @@ mod tests {
         db.execute(
             "UPDATE transcripts SET text='Substituted content with unchanged timestamp'
              WHERE id=?1",
-            rusqlite::params![origins[0].to_string()],
+            rusqlite::params![seal.sources[0].origin_id.to_string()],
         )
         .unwrap();
         assert!(reopened
