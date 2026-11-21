@@ -26,7 +26,7 @@ ACTIONS = frozenset({
     "project_switch", "study_create", "study_open",
     "source_select", "source_navigation", "transcript_navigation",
     "research_navigation", "draft_open", "draft_version_restore",
-    "candidate_typing", "candidate_save", "candidate_reopen",
+    "draft_export", "candidate_typing", "candidate_save", "candidate_reopen",
     "gui_interaction",
 })
 ALLOWED_KEYS = frozenset({
