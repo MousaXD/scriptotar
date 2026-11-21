@@ -532,6 +532,36 @@ fn original_source_excerpt(item: &EvidenceRef) -> bool {
         )
 }
 
+/// Targeted revisions are independently screened so a provider cannot put a
+/// long copied transcript passage into a later version of a valid original.
+/// The direct SQLite revision sink repeats this check under its write lock.
+pub(super) fn reject_extended_source_copy(
+    context: &StudyWritingContext,
+    replacement: &str,
+) -> WriteResult<()> {
+    const WINDOW: usize = 12;
+    let words = originality_words(replacement);
+    if words.len() < WINDOW {
+        return Ok(());
+    }
+    let candidate_windows: HashSet<Vec<String>> =
+        words.windows(WINDOW).map(<[String]>::to_vec).collect();
+    for item in &context.evidence {
+        if matches!(
+            item.kind,
+            EvidenceKind::SocialTranscript | EvidenceKind::IndependentDocument
+        ) && originality_words(&item.excerpt)
+            .windows(WINDOW)
+            .any(|source| candidate_windows.contains(source))
+        {
+            return Err(WritingWorkflowError::InvalidResponse(
+                "revision reproduces an extended source passage".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn enforce_candidate_originality(
     context: &StudyWritingContext,
     candidates: &[GeneratedCandidate],
@@ -916,6 +946,7 @@ pub fn apply_reviewed_beat_revision(
     };
     let proposal = writing::parse_revision_proposal(response_json, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    reject_extended_source_copy(context, &proposal.replacement_narration)?;
     let updated = writing::apply_beat_revision(
         &candidate.draft,
         &BeatRevision {
