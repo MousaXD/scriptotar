@@ -94,3 +94,12 @@ All isolation is presentational. Underlying dates, source IDs, project/Study own
 - **No screenshot baseline approved**; the new Arabic legacy-Studio rendering must be captured and reviewed on this new exact SHA, not inferred from old `c2f6f0f` artifact. Linux WebKitGTK / Windows WebView2 remain Agent 07 independent acceptance. Trusted source gates are untouched and prior packaging is NO-GO before native launch.
 
 **No main merge/release or paid AI egress. All exact-current-head test and independent native/visual gates must pass before Agent00 integration.**
+
+
+## 2026-11-21 — Canonical Studio Chromium QA blind spot closed (new source; not yet certified)
+
+- An exact-source QA audit identified that the previous 232-PNG matrix navigated with `A` to the **legacy** `AiStudioView`, while the project's real Content Study `StudioView` requires shortcut `S`. The Studio navigation-rail highlight was not reliable proof of the rendered view.
+- Existing visual QA now separately exercises and screenshots **both** routes on the same original 20 width/locale/appearance scenarios. The new `studio` capture uses production keyboard `S` and asserts visible `.studio-host:not([hidden]) .studio-workspace` and absence of the legacy AI panel; `ai-studio` asserts the legacy panel. This is source QA, not an installed WebView assertion.
+- Expected screenshot inventory rises from **232 to 252 PNGs**, still **20 workspace combinations**. All browser verifier, manual baseline approval and metrics-comparison image counts now fail closed for previous 232-image reports. A synthetic verifier regression asserts old 232/20 evidence is insufficient. No automatic baseline approval.
+- The prior 232/20 source SHA `07b14cf82246fdab78d313905bd4dfc2970a1f80` remains historical PASS, **not** a PASS for this new QA source. Require exact-new-head CI, real 252 PNG artifact, sampled independent visual review, and installed Agent07 native certification. Do not change native package guards or paid sending controls.
+- Agent06 latest `a1d0408845080de5861bdbbbea9abf103ec0c502` is distinct from the older Studio source staged in Agent00 offline PR212; Agent00 must recombine and revalidate both approved exact sources before main integration.
