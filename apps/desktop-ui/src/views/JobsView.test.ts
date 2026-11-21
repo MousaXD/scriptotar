@@ -39,6 +39,7 @@ describe('jobs workspace', () => {
 
   it('accepts URL entry and preserves URL submission', async () => {
     const { onEnqueueUrl } = setup();
+    expect(screen.getByRole('textbox', { name: 'Media URL' })).toHaveAttribute('dir', 'ltr');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Media URL' }), { target: { value: 'https://example.com/clip' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
     await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/clip', expect.stringMatching(/^[0-9a-f]{32}$/)));
@@ -97,7 +98,7 @@ describe('jobs workspace', () => {
     expect(currentId).toMatch(/^[0-9a-f]{32}$/);
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveAttribute('aria-label',
-      'Invalid media URL. Only HTTP and HTTPS URLs are supported. · request ' + currentId);
+      'Invalid media URL. Only HTTP and HTTPS URLs are supported. · Request ID: ' + currentId);
     expect(alert).toHaveTextContent('Request ID: ' + currentId);
     await waitFor(() => expect(alert).toHaveFocus());
 
@@ -108,7 +109,25 @@ describe('jobs workspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
     const newer = await screen.findByRole('alert');
     expect(newer).not.toHaveTextContent('Request ID:');
-    expect(newer).not.toHaveAttribute('aria-label', expect.stringContaining(' · request '));
+    expect(newer).not.toHaveAttribute('aria-label', expect.stringContaining(' · Request ID: '));
+  });
+
+  it('announces the real host-echoed request identity in Arabic without changing its bytes', async () => {
+    setLocale('ar');
+    const { onEnqueueUrl } = setup();
+    onEnqueueUrl.mockImplementationOnce(async (_url: string, requestId?: string) => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_MEDIA_URL:' + requestId);
+    });
+    const input = screen.getByRole('textbox', { name: 'رابط الوسائط' });
+    expect(input).toHaveAttribute('dir', 'ltr');
+    await fireEvent.input(input, { target: { value: 'file:///denied.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'إضافة الرابط للطابور' }));
+    const requestId = onEnqueueUrl.mock.calls[0]?.[1] as string;
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveAttribute('aria-label',
+      'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط. · معرّف الطلب: ' + requestId);
+    expect(alert.querySelector('bdi')).toHaveTextContent(requestId);
+    expect(alert.querySelector('bdi')).toHaveAttribute('dir', 'ltr');
   });
 
   it('allows cancel, retry and open completed transcript without hiding failure details', async () => {
@@ -148,7 +167,49 @@ describe('jobs workspace', () => {
     expect(screen.getByRole('textbox', { name: 'Media URL' })).toHaveValue('https://example.com/video');
     await fireEvent.drop(target, { dataTransfer: { getData: () => '', files: [{ name: 'untrusted.mp4' }] } });
     expect(onEnqueueLocal).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('A dropped filename is not a usable file path');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('A dropped filename is not a usable file path');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it('clears a stale URL rejection when a replacement supported URL is dropped', async () => {
+    const { container, onEnqueueUrl } = setup();
+    onEnqueueUrl.mockRejectedValueOnce(new Error('validation failed: research URL is invalid: only http and https are supported'));
+    const input = screen.getByRole('textbox', { name: 'Media URL' });
+    await fireEvent.input(input, { target: { value: 'file:///invalid.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
+    await screen.findByRole('alert');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+
+    const target = container.querySelector('.ingestion-workspace') as HTMLElement;
+    await fireEvent.drop(target, { dataTransfer: { getData: (type: string) => type === 'text/plain' ? 'https://example.org/replacement' : '', files: [] } });
+    expect(input).toHaveValue('https://example.org/replacement');
+    expect(input).not.toHaveAttribute('aria-invalid');
+    expect(input).not.toHaveAttribute('aria-describedby', 'queue-action-error');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('announces Arabic filename-only drop denials without submitting an untrusted file', async () => {
+    setLocale('ar');
+    const { container, onEnqueueLocal } = setup();
+    const target = container.querySelector('.ingestion-workspace') as HTMLElement;
+    await fireEvent.drop(target, { dataTransfer: { getData: () => '', files: [{ name: 'وهمي.mp4' }] } });
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('اسم الملف وحده ليس مساراً صالحاً.');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(onEnqueueLocal).not.toHaveBeenCalled();
+  });
+
+  it('keeps Arabic queue filtering and paging actions localized', async () => {
+    setLocale('ar');
+    const { container } = setup(Array.from({ length: 65 }, (_, i) => job(String(i), 'completed')));
+    await fireEvent.click(screen.getByRole('button', { name: /تحتاج انتباهاً/ }));
+    expect(screen.getByText('لا توجد مهام بهذه الحالة')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'عرض كل المهام' }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(30);
+    await fireEvent.click(screen.getByRole('button', { name: /عرض المزيد من المهام/ }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(60);
   });
 
 
@@ -172,6 +233,7 @@ describe('jobs workspace', () => {
   it('keeps manual paths behind a disclosure and submits them unchanged', async () => {
     const { onEnqueueLocal } = setup();
     await fireEvent.click(screen.getByText('Advanced: enter a local path manually'));
+    expect(screen.getByRole('textbox', { name: 'Manual local media path' })).toHaveAttribute('dir', 'ltr');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Manual local media path' }), { target: { value: '/home/media/movie.mp4' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Queue path' }));
     await waitFor(() => expect(onEnqueueLocal).toHaveBeenCalledWith('/home/media/movie.mp4'));

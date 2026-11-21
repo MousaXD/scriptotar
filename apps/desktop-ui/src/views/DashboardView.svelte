@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import type { AiRun, Creator, Job, Project, TranscriptSummary } from '../types';
   import { translator } from '../i18n/translate';
   import JobRow from '../components/JobRow.svelte';
@@ -17,6 +18,9 @@
   let projectName = '';
   let projectCreating = false;
   let projectError = '';
+  let projectErrorElement: HTMLParagraphElement | undefined;
+  let projectNameInput: HTMLInputElement | undefined;
+  let newProjectButton: HTMLButtonElement | undefined;
 
   $: active = jobs.filter((job) => activeStates.has(job.state));
   $: attention = jobs.filter((job) => job.state === 'failed' || job.state === 'interrupted');
@@ -24,22 +28,27 @@
   $: attentionPreview = attention.slice(0, 6 - Math.min(active.length, 2));
   $: currentJobs = [...attentionPreview, ...active.slice(0, 6 - attentionPreview.length)];
 
-  function openProjectForm() {
+  async function openProjectForm() {
     projectError = '';
     projectFormOpen = true;
+    await tick();
+    projectNameInput?.focus();
   }
 
-  function closeProjectForm() {
+  async function closeProjectForm() {
     if (projectCreating) return;
     projectFormOpen = false;
     projectName = '';
     projectError = '';
+    await tick();
+    newProjectButton?.focus();
   }
 
   async function createProject() {
     const name = projectName.trim();
     if (!name) {
       projectError = $translator('project.required');
+      projectNameInput?.focus();
       return;
     }
     projectCreating = true;
@@ -50,6 +59,8 @@
       projectName = '';
     } catch (cause) {
       projectError = cause instanceof Error ? cause.message : $translator('project.createFailed');
+      await tick();
+      projectErrorElement?.focus();
     } finally {
       projectCreating = false;
     }
@@ -65,7 +76,7 @@
     <button type="button" class="button primary" on:click={() => onNavigate('jobs')}>
       {$translator('queue.addJob')}
     </button>
-    <button type="button" class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
+    <button bind:this={newProjectButton} type="button" class="button secondary" on:click={openProjectForm}>{$translator('project.new')}</button>
   </div>
 </header>
 
@@ -74,8 +85,8 @@
     <h2>{$translator('project.createTitle')}</h2>
     <form on:submit|preventDefault={createProject}>
       <label for="dashboard-project-name">{$translator('project.name')}</label>
-      <input id="dashboard-project-name" bind:value={projectName} maxlength="120" autocomplete="off" disabled={projectCreating} placeholder={$translator('project.namePlaceholder')} />
-      {#if projectError}<p role="alert" class="project-error">{projectError}</p>{/if}
+      <input bind:this={projectNameInput} id="dashboard-project-name" bind:value={projectName} maxlength="120" autocomplete="off" disabled={projectCreating} placeholder={$translator('project.namePlaceholder')} />
+      {#if projectError}<p bind:this={projectErrorElement} tabindex="-1" role="alert" dir="auto" class="project-error">{projectError}</p>{/if}
       <div class="project-form-actions">
         <button type="button" class="button secondary" on:click={closeProjectForm} disabled={projectCreating}>{$translator('project.cancel')}</button>
         <button type="submit" class="button primary" disabled={projectCreating}>{projectCreating ? $translator('project.creating') : $translator('project.create')}</button>
@@ -172,7 +183,6 @@
   .project-heading p { margin: 5px 0 0; color: var(--color-text-muted); font-size: var(--text-sm); }
   .header-actions, .project-form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .header-actions { justify-content: flex-end; }
-  .header-actions .text-button { min-height: var(--control-height); padding-inline: var(--space-2); }
   .project-create { margin-bottom: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
   .project-create h2 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
   .project-create form { display: grid; gap: var(--space-2); max-width: 600px; }

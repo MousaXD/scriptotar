@@ -11,7 +11,9 @@ const output = resolve(root, 'qa', 'evidence');
 const origin = 'http://127.0.0.1:4173';
 const widths = [1440, 1100, 760];
 const locales = ['en', 'ar'];
-const themes = ['dark', 'system'];
+// Exercise explicit Light even when the OS prefers Dark; System is separately
+// exercised with an OS Light preference. Both must remain distinct from Dark.
+const themes = ['dark', 'light', 'system'];
 const views = [
   { name: 'dashboard', key: 'd', index: 0 },
   { name: 'research', key: 'r', index: 1 },
@@ -19,7 +21,10 @@ const views = [
   { name: 'transcript', key: 't', index: 3 },
   { name: 'ai-studio', key: 'a', index: 4 },
   { name: 'library', key: 'l', index: 5 },
-  { name: 'settings', key: ',', index: null }
+  { name: 'settings', key: ',', index: null },
+  // Content Study Studio uses S; legacy Copy Prompt AI tools use A.
+  // Capture both real production routes, not merely the shared Studio nav highlight.
+  { name: 'studio', key: 's', index: 4 }
 ];
 const failures = [];
 const results = [];
@@ -63,6 +68,19 @@ async function routeTo(page, view) {
     const viewId = view.name === 'ai-studio' ? 'studio' : view.name;
     await page.locator(`.primary-nav button[data-view-id="${viewId}"][aria-current="page"]`)
       .waitFor({ timeout: 5000 });
+  }
+  if (view.name === 'ai-studio') {
+    // The A shortcut opens legacy Copy Prompt, not Content Study Studio.
+    await page.locator('#workspace-main .ai-head h1').waitFor({ state: 'visible', timeout: 5000 });
+  }
+  if (view.name === 'studio') {
+    // Keyboard S must reach the canonical project-local Studio workspace.
+    // A selected rail icon alone is not evidence the new Studio rendered.
+    await page.locator('#workspace-main .studio-host:not([hidden]) .studio-workspace')
+      .waitFor({ state: 'visible', timeout: 10000 });
+    if (await page.locator('#workspace-main .ai-head').count()) {
+      recordFailure('studio-route', 'Legacy AI tools rendered instead of Content Study Studio');
+    }
   }
   return performance.now() - start;
 }
@@ -245,6 +263,9 @@ async function checkKeyboard(page, label) {
   if (!focus.present || !focus.visible) recordFailure(label + '/focus', JSON.stringify(focus));
 }
 async function runWorkspace(browser, width, locale, theme) {
+  // A separate System/Dark OS case verifies the media-query branch without
+  // saving an unrecognized preference in the application's local settings.
+  const appearance = theme === 'system-dark' ? 'system' : theme;
   const label = [width, locale, theme].join('-');
   const context = await browser.newContext({
     viewport: { width, height: width === 760 ? 820 : 900 },
@@ -256,7 +277,7 @@ async function runWorkspace(browser, width, locale, theme) {
   await context.addInitScript(({ language, appearance }) => {
     localStorage.setItem('scriptotar.uiLanguage', language);
     localStorage.setItem('scriptotar.appearance', appearance);
-  }, { language: locale, appearance: theme });
+  }, { language: locale, appearance });
   const page = await context.newPage();
   const pageErrors = [];
   page.on('pageerror', (error) => pageErrors.push(String(error)));
@@ -275,7 +296,7 @@ async function runWorkspace(browser, width, locale, theme) {
       recordFailure(label + '/rtl', 'Body direction differs from selected locale: ' + computedDirection);
     }
     const activeTheme = await page.locator('html').getAttribute('data-theme');
-    if (activeTheme !== theme) recordFailure(label, 'Theme mismatch: ' + activeTheme);
+    if (activeTheme !== appearance) recordFailure(label, 'Theme mismatch: ' + activeTheme);
     const samples = [];
     for (const view of views) {
       const navigationMs = await routeTo(page, view);
@@ -287,7 +308,35 @@ async function runWorkspace(browser, width, locale, theme) {
       await checkSwitchesAndPopovers(page, label + '/' + view.name);
       await checkCustomSelectKeyboard(page, label + '/' + view.name);
       samples.push({ view: view.name, navigationMs });
+      if (view.name === 'settings' && width === 760) {
+        // Every section anchor must be discoverable without horizontal scrolling
+        // in both document directions, not just present in the DOM.
+        const navVisibility = await page.locator('.settings-nav').evaluate((nav) => {
+          const bounds = nav.getBoundingClientRect();
+          const links = [...nav.querySelectorAll('a')];
+          return {
+            clipped: links.filter((link) => {
+              const item = link.getBoundingClientRect();
+              return item.left < bounds.left - 1 || item.right > bounds.right + 1 ||
+                item.width === 0 || item.height === 0;
+            }).map((link) => link.textContent?.trim()),
+            scrollOverflow: nav.scrollWidth > nav.clientWidth + 1
+          };
+        });
+        if (navVisibility.scrollOverflow || navVisibility.clipped.length) {
+          recordFailure(label + '/settings-nav-visibility', JSON.stringify(navVisibility));
+        }
+      }
       if (view.name === 'research') {
+        // The narrower EN/AR capture form must not compress "Save watchlist"
+        // into individual word fragments. Browser-only geometry assertion.
+        if (width === 760) {
+          const saveButton = page.locator('.research-capture button[type="button"]').first();
+          const bounds = await saveButton.boundingBox();
+          if (!bounds || bounds.width < 140) {
+            recordFailure(label + '/research-save-width', 'Save watchlist action is too narrow for a readable label');
+          }
+        }
         const search = page.locator('#workspace-main .search-field input').first();
         await search.fill('qa-absent-research-000000000');
         await page.locator('.research-table').waitFor({ state: 'hidden', timeout: 5000 });
@@ -392,6 +441,10 @@ try {
   for (const width of widths) for (const locale of locales) for (const theme of themes) {
     await runWorkspace(browser, width, locale, theme);
   }
+  // System also needs the OS Dark branch; one desktop width in both locales
+  // is sufficient to catch a dark-preference regression without duplicating
+  // the entire visual matrix across all three viewport widths.
+  for (const locale of locales) await runWorkspace(browser, 1100, locale, 'system-dark');
   for (const locale of locales) for (const theme of themes) {
     for (const state of ['loading', 'error']) await runBootState(browser, locale, theme, state);
   }
@@ -401,14 +454,20 @@ try {
   if (browser) await browser.close();
   try { process.kill(-server.pid, 'SIGTERM'); } catch { server.kill(); }
 }
+// Each workspace renders all eight views (including canonical Studio and legacy AI tools) and four purposeful variants
+// (Research empty, Transcript no matches, Library empty and MCP Settings).
+// Each locale/appearance pair also renders loading and error boot states.
+const expectedScreenshotCount = widths.length * locales.length * themes.length *
+  (views.length + 4) + locales.length * themes.length * 2 +
+  locales.length * (views.length + 4); // additional System + OS Dark desktop samples
 const report = {
   generatedAt: new Date().toISOString(),
   sha: process.env.QA_TESTED_SHA || process.env.GITHUB_SHA || 'local-unpinned',
   baselineSha: 'f741244634b5143602a21a554094a498a0005b11',
   scope: 'Chromium browser / production Vite bundle / built-in mock client; driver wall-clock metrics, NOT native Tauri',
-  screenshotCount, failures, results
+  screenshotCount, expectedScreenshotCount, failures, results
 };
 await writeFile(resolve(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 console.log('Rendered screenshots: ' + screenshotCount +
   '; checked combinations: ' + results.length + '; failures: ' + failures.length);
-if (failures.length || screenshotCount !== 140) process.exitCode = 1;
+if (failures.length || screenshotCount !== expectedScreenshotCount) process.exitCode = 1;

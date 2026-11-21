@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMockClient, mockBootstrap } from '../api/mockClient';
 import type { Transcript } from '../types';
 import TranscriptView from './TranscriptView.svelte';
+import { setLocale } from '../i18n';
 import AiStudioView from './AiStudioView.svelte';
 
-beforeEach(() => window.localStorage.clear());
+beforeEach(() => { window.localStorage.clear(); setLocale('en'); });
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -147,9 +148,78 @@ describe('Transcript reader workspace', () => {
     expect(content.querySelectorAll('button.timestamp')).toHaveLength(2);
     expect(screen.getByText('local://arabic-hook.mp4')).toBeInTheDocument();
   });
+  it('localizes ownership mismatch and focuses its real denial without displaying foreign content', async () => {
+    setLocale('ar');
+    const original = mockBootstrap.transcripts[0];
+    const api = createMockClient({
+      getTranscript: async () => ({ ...original, projectId: 'foreign-project' })
+    });
+    render(TranscriptView, { props: { api, transcripts: [original], selectedId: original.id } });
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('لا يطابق المشروع');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(screen.queryByTestId('transcript-content')).not.toBeInTheDocument();
+  });
+
+  it('keeps Arabic reader labels translated and isolates mixed-script metadata and timestamps', async () => {
+    setLocale('ar');
+    const transcript: Transcript = {
+      ...mockBootstrap.transcripts[0],
+      title: 'Scriptotar — مقابلة المبدع',
+      segments: Array.from({ length: 142 }, (_, index) => ({
+        id: 'ar-segment-' + index,
+        startSeconds: index * 4,
+        endSeconds: index * 4 + 3,
+        text: 'المقطع Scriptotar ' + index
+      }))
+    };
+    const onUseInStudio = vi.fn();
+    const api = createMockClient({ getTranscript: async () => transcript });
+    render(TranscriptView, { props: { api, transcripts: [transcript], selectedId: transcript.id, onUseInStudio } });
+    const content = await screen.findByTestId('transcript-content');
+    expect(screen.getByRole('heading', { name: transcript.title })).toHaveAttribute('dir', 'auto');
+    expect(content.querySelector('button.timestamp')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'البحث في النص المفرغ' })).toHaveAttribute('dir', 'auto');
+    expect(screen.getByRole('button', { name: 'عرض مقاطع تفريغ إضافية' })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'استخدام في الاستوديو' }));
+    expect(onUseInStudio).toHaveBeenCalledWith(transcript.id);
+  });
 });
 
 describe('AI Studio request isolation', () => {
+  it('localizes legacy AI Studio controls in Arabic without changing prompt task identities or enabling paid API sending', async () => {
+    setLocale('ar');
+    const buildAiPrompt = vi.fn(async () => 'مطالبة تجريبية محلية');
+    const runAi = vi.fn(async () => 'unauthorized');
+    const api = createMockClient({ buildAiPrompt, runAi });
+    render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });
+
+    expect(screen.getByRole('heading', { name: 'إعداد المطالبة' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'سياق المصدر' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'موجز الكتابة الإبداعية' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'المطالبة المنشأة' })).toBeInTheDocument();
+    const task = screen.getByRole('combobox', { name: 'المهمة' });
+    expect(task).toHaveTextContent('تحليل الانتشار');
+    await fireEvent.click(task);
+    await fireEvent.click(screen.getByRole('option', { name: 'أفكار افتتاحيات جذابة' }));
+
+    await fireEvent.input(screen.getByPlaceholderText('ألصق نص التفريغ أو البحث، أو حمّله…'), {
+      target: { value: 'مقتطف أصلي' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'إنشاء المطالبة' }));
+    await waitFor(() => expect(buildAiPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      task: 'Hook ideas', sourceText: 'مقتطف أصلي', apiKey: undefined, baseUrl: undefined
+    })));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
+    expect(screen.getByRole('status')).toHaveTextContent('الإرسال بمفتاحك غير متاح');
+    expect(screen.getByText(/الإرسال المباشر بمفتاحك معطّل/)).toBeInTheDocument();
+    expect(screen.getByText(/لا يُقبل مفتاح API في هذا الوضع/)).toBeInTheDocument();
+    expect(screen.getByLabelText('مفتاح API')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'التشغيل عبر API (غير متاح)' })).toBeDisabled();
+    expect(runAi).not.toHaveBeenCalled();
+  });
+
   it('keeps a completed prompt when changing between Copy Prompt and BYOK', async () => {
     const api = createMockClient();
     render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });

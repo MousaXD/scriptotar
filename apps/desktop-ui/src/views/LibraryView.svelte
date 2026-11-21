@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { translator } from '../i18n/translate';
   import Select from '../components/ui/Select.svelte';
   import { locale } from '../i18n';
@@ -15,6 +16,7 @@
   let sort: 'newest' | 'title' | 'type' = 'newest';
   let page = 1;
   let actionError = '';
+  let actionErrorElement: HTMLParagraphElement | undefined;
 
   $: isArabic = $locale === 'ar';
   $: normalizedQuery = query.trim().toLocaleLowerCase();
@@ -76,6 +78,8 @@
       await onOpen(item);
     } catch (cause) {
       actionError = cause instanceof Error ? cause.message : $translator('library.openFailed');
+      await tick();
+      actionErrorElement?.focus();
     }
   }
 </script>
@@ -89,7 +93,7 @@
   <div class="library-toolbar">
     <label class="search-field library-search">
       <span class="sr-only">{$translator('library.search')}</span>
-      <input aria-label={$translator('library.search')} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={$translator('library.searchPlaceholder')} />
+      <input dir="auto" aria-label={$translator('library.search')} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={$translator('library.searchPlaceholder')} />
     </label>
     <div class="sort-select">
       <Select label={$translator('library.sortControl')} value={sort}
@@ -113,6 +117,8 @@
     <span aria-live="polite">{$translator(visible.length === 1 ? 'library.oneResult' : 'library.manyResults', { count: visible.length })}</span>
   </div>
 
+  {#if actionError}<p class="status-copy library-error" role="alert" tabindex="-1" dir="auto" bind:this={actionErrorElement} data-i18n-ignore>{actionError}</p>{/if}
+
   {#if visible.length === 0}
     <div class="library-empty">
       <strong>{$translator('library.emptyTitle')}</strong>
@@ -135,19 +141,19 @@
         <button class="library-item" type="button" aria-label={$translator('library.openItem', { kind: kindLabel(item.kind), title: item.title })} on:click={() => open(item)}>
           <span class={'kind-icon kind-' + item.kind.toLowerCase().replaceAll(' ', '-')} aria-hidden="true">{item.kind.slice(0, 1)}</span>
           <span class="library-copy">
-            <strong title={item.title}>{item.title}</strong>
-            <small><span class="kind-label">{kindLabel(item.kind)}</span><span class="library-subtitle" title={item.subtitle}>{item.subtitle}</span></small>
+            <strong dir="auto" title={item.title}>{item.title}</strong>
+            <small><span class="kind-label">{kindLabel(item.kind)}</span><span class="library-subtitle" dir="auto" title={item.subtitle}>{item.subtitle}</span></small>
           </span>
-          <span class="library-meta">{platformLabel(item.platform)}</span>
-          <span class="library-meta metric-copy">{item.metric || '—'}</span>
-          <span class="library-date">{item.date}</span>
+          <span class="library-meta" dir="auto">{platformLabel(item.platform)}</span>
+          <span class="library-meta metric-copy" dir="auto">{item.metric || '—'}</span>
+          <span class="library-date" dir="ltr">{item.date}</span>
           <span class="open-arrow" aria-hidden="true">›</span>
         </button>
       {/each}
     </div>
     {#if totalPages > 1}
       <nav class="page-controls" aria-label={isArabic ? 'صفحات المكتبة' : 'Library pages'}>
-        <span>{isArabic ? 'الصفحة' : 'Page'} {currentPage} / {totalPages}</span>
+        <span>{isArabic ? 'الصفحة' : 'Page'} <bdi dir="ltr">{currentPage} / {totalPages}</bdi></span>
         <div>
           <button type="button" disabled={currentPage === 1} on:click={() => page = currentPage - 1}>{isArabic ? 'السابق' : 'Previous'}</button>
           <button type="button" disabled={currentPage === totalPages} on:click={() => page = currentPage + 1}>{isArabic ? 'التالي' : 'Next'}</button>
@@ -156,8 +162,6 @@
     {/if}
   {/if}
 </section>
-
-{#if actionError}<p class="status-copy library-error" role="alert" data-i18n-ignore>{actionError}</p>{/if}
 
 <style>
   .library-empty .clear-filters { margin-block-start: var(--space-3); }
@@ -195,7 +199,7 @@
   .library-empty { padding: 34px 22px; }
   .library-empty strong { font-size: 14px; }
   .library-empty p { margin: 6px 0 0; color: var(--color-text-muted); }
-  .library-error { margin-top: 12px; font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .library-error { margin: 8px 14px; font-size: var(--text-sm); overflow-wrap: anywhere; }
   .page-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-top: 1px solid var(--color-border); color: var(--color-text-muted); font-size: var(--text-sm); }
   .page-controls > div { display: flex; gap: 8px; }
   .page-controls button { min-height: 34px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-raised); }

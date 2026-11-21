@@ -38,14 +38,14 @@ function libraryItems(count: number): LibraryItem[] {
   }));
 }
 
-function mountResearch(items: ResearchItem[], options: { onQueue?: (ids: string[]) => Promise<void> | void; onScan?: (url: string, limit: number) => Promise<void> | void; watchlistStatuses?: WatchlistStatus[] } = {}) {
+function mountResearch(items: ResearchItem[], options: { onQueue?: (ids: string[]) => Promise<void> | void; onScan?: (url: string, limit: number) => Promise<void> | void; onSave?: (url: string, limit: number) => Promise<void> | void; watchlistStatuses?: WatchlistStatus[] } = {}) {
   return render(ResearchView, {
     props: {
       items,
       watchlistStatuses: options.watchlistStatuses || [],
       onQueue: options.onQueue || vi.fn(),
       onScan: options.onScan || vi.fn(),
-      onSave: vi.fn()
+      onSave: options.onSave || vi.fn()
     }
   });
 }
@@ -120,6 +120,8 @@ describe('Research workspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Queue selected (201)' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Queue disk unavailable');
     expect(screen.getByRole('alert')).toHaveTextContent('200 submitted; remaining selection preserved');
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveFocus());
+    expect(screen.getByRole('alert')).toHaveAttribute('dir', 'auto');
     expect(screen.getByText('Selected: 1')).toBeInTheDocument();
     expect(onQueue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole('button', { name: 'Queue selected (1)' })).toBeEnabled();
@@ -197,6 +199,22 @@ describe('Research workspace', () => {
     expect(screen.getByTestId('research-r-0')).toHaveTextContent('YouTube');
   });
 
+  it('focuses Arabic watchlist-save failures while preserving host diagnostics and URL bytes', async () => {
+    setLocale('ar');
+    const onSave = vi.fn().mockRejectedValueOnce(new Error('Host permission denied: /home/مسار'));
+    mountResearch([], { onSave });
+    const input = screen.getByRole('textbox', { name: 'رابط ملف المنشئ' });
+    await fireEvent.input(input, { target: { value: 'https://example.org/منشئ' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'حفظ قائمة المتابعة' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Host permission denied: /home/مسار');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    expect(alert).toHaveAttribute('tabindex', '-1');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(onSave).toHaveBeenCalledWith('https://example.org/منشئ', 25);
+    expect(screen.getByRole('button', { name: 'حفظ قائمة المتابعة' })).toBeEnabled();
+  });
+
   it('handles scan failures without silently swallowing backend errors', async () => {
     const onScan = vi.fn().mockRejectedValue(new Error('Provider unavailable'));
     mountResearch([], { onScan });
@@ -204,7 +222,10 @@ describe('Research workspace', () => {
       target: { value: 'https://youtube.com/@creator' }
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Scan profile' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Provider unavailable');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Provider unavailable');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert).toHaveAttribute('dir', 'auto');
     expect(onScan).toHaveBeenCalledWith('https://youtube.com/@creator', 25);
     expect(screen.getByRole('button', { name: 'Scan profile' })).toBeEnabled();
   });
@@ -259,6 +280,91 @@ describe('Library workspace', () => {
     expect(button).toHaveTextContent('Original creator title');
     expect(screen.getByText('محلي')).toBeInTheDocument();
     await fireEvent.click(button);
-    expect(await screen.findByRole('alert')).toHaveTextContent('Artifact offline');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Artifact offline');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(alert.previousElementSibling).toHaveClass('library-result-bar');
+  });
+});
+
+
+describe('Arabic mixed-direction isolation in data-heavy views', () => {
+  it('isolates Library titles and metadata while keeping ISO dates and pagination in LTR order', async () => {
+    setLocale('ar');
+    const rows = libraryItems(76);
+    rows[0] = {
+      ...rows[0],
+      title: 'مراجعة 2026 / One',
+      subtitle: 'مشروع A-17',
+      metric: '1,200 views',
+      date: '2026-11-21'
+    };
+    render(LibraryView, { props: { items: rows, onOpen: vi.fn() } });
+    const first = document.querySelector('.library-item')!;
+    expect(first.querySelector('.library-copy strong')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.library-subtitle')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.metric-copy')).toHaveAttribute('dir', 'auto');
+    expect(first.querySelector('.library-date')).toHaveAttribute('dir', 'ltr');
+    expect(first.querySelector('.library-date')).toHaveTextContent('2026-11-21');
+    expect(document.querySelector('.page-controls bdi')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'البحث في المكتبة' })).toHaveAttribute('dir', 'auto');
+  });
+
+  it('isolates Research creator names, duration, source dates and diagnostic timestamps', () => {
+    setLocale('ar');
+    const source = researchItems(1);
+    source[0].title = 'فيديو 2026 / Creator';
+    source[0].creator = 'صانع A-17';
+    source[0].durationSeconds = 125;
+    mountResearch(source, { watchlistStatuses: [{
+      watchlistId: 'w-rtl', projectId: 'project-a', label: 'قناة A-17',
+      state: 'retry_scheduled', lastError: 'Timeout: stream #42',
+      nextRetryAt: '2026-11-21T12:30:00Z'
+    }] });
+    const item = screen.getByTestId('research-r-0');
+    expect(item.querySelector('.media-copy strong')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.creator-name')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.source-platform bdi')).toHaveAttribute('dir', 'auto');
+    expect(item.querySelector('.metric-date bdi')).toHaveAttribute('dir', 'ltr');
+    expect(item.querySelector('.metric-duration bdi')).toHaveAttribute('dir', 'ltr');
+    expect(item.querySelector('.metric-duration bdi')).toHaveTextContent('2:05');
+    const diagnostics = screen.getByTestId('watchlist-status-w-rtl');
+    expect(diagnostics.querySelector('.watch-health-title-row strong')).toHaveAttribute('dir', 'auto');
+    expect(diagnostics.querySelector('.watch-error')).toHaveAttribute('dir', 'auto');
+    expect(diagnostics.querySelector('time')).toHaveAttribute('dir', 'ltr');
+    expect(screen.getByRole('textbox', { name: 'تصفية البحث' })).toHaveAttribute('dir', 'auto');
+  });
+});
+
+describe('Research page checkbox accessibility', () => {
+  it('updates mixed selection across page changes without showing stale native state', async () => {
+    mountResearch(researchItems(62));
+    const selectPage = screen.getByRole('checkbox', { name: 'Select page' }) as HTMLInputElement;
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Video 1' }));
+    expect(selectPage.indeterminate).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(selectPage.indeterminate).toBe(false);
+    expect(selectPage).toHaveAttribute('aria-checked', 'false');
+    await fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(selectPage.indeterminate).toBe(true);
+    expect(selectPage).toHaveAttribute('aria-checked', 'mixed');
+  });
+
+  it('announces mixed state for a partially selected page and selects remaining rows', async () => {
+    mountResearch(researchItems(3));
+    const selectPage = screen.getByRole('checkbox', { name: 'Select page' });
+    expect(selectPage).toHaveAttribute('aria-checked', 'false');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(false);
+    await fireEvent.click(screen.getByRole('checkbox', { name: 'Select Video 1' }));
+    expect(selectPage).toHaveAttribute('aria-checked', 'mixed');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(true);
+    expect(selectPage).toHaveClass('partial');
+    await fireEvent.click(selectPage);
+    expect(selectPage).toBeChecked();
+    expect(selectPage).toHaveAttribute('aria-checked', 'true');
+    expect((selectPage as HTMLInputElement).indeterminate).toBe(false);
+    expect(selectPage).not.toHaveClass('partial');
+    expect(screen.getByText('Selected: 3')).toBeInTheDocument();
   });
 });

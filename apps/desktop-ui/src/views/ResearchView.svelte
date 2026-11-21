@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
@@ -40,6 +41,7 @@
   let queuing = false;
   let status = '';
   let statusError = false;
+  let statusElement: HTMLParagraphElement | undefined;
 
   $: isArabic = $locale === 'ar';
   $: numberLocale = isArabic ? 'ar' : 'en';
@@ -61,6 +63,7 @@
   $: selectablePageItems = pageItems.filter((item) => !item.queued);
   $: selectedCount = items.filter((item) => selected.has(item.id) && !item.queued).length;
   $: pageSelected = selectablePageItems.length > 0 && selectablePageItems.every((item) => selected.has(item.id));
+  $: pagePartiallySelected = !pageSelected && selectablePageItems.some((item) => selected.has(item.id));
   $: attentionCount = watchlistStatuses.filter((item) => item.state === 'failed' || item.state === 'retry_scheduled').length;
 
   function metric(value?: number) {
@@ -91,6 +94,17 @@
     else selected.add(id);
   }
 
+  // HTMLInputElement.indeterminate is the native mixed-state signal used by
+  // accessibility APIs. aria-checked alone is not enough for a real checkbox.
+  // Keep it in sync when pagination, filtering or source queue state changes.
+  function syncMixedPageSelection(node: HTMLInputElement, mixed: boolean) {
+    node.indeterminate = mixed;
+    return {
+      update(next: boolean) { node.indeterminate = next; },
+      destroy() { node.indeterminate = false; }
+    };
+  }
+
   function togglePageSelection() {
     const next = new Set(selected);
     for (const item of selectablePageItems) {
@@ -115,6 +129,14 @@
     page = 1;
   }
 
+  async function focusActionError() {
+    // A failed scan, watchlist save, or queue batch can originate from a
+    // keyboard-activated button. Focus the existing diagnostic after render,
+    // without hiding or rewriting the backend error.
+    await tick();
+    if (statusError && status) statusElement?.focus();
+  }
+
   async function scan() {
     if (!profileUrl.trim() || scanning || saving) return;
     scanning = true;
@@ -126,6 +148,7 @@
     } catch (error) {
       statusError = true;
       status = (isArabic ? 'تعذر فحص الملف: ' : 'Research scan unavailable: ') + (error instanceof Error ? error.message : String(error));
+      await focusActionError();
     } finally {
       scanning = false;
     }
@@ -142,6 +165,7 @@
     } catch (error) {
       statusError = true;
       status = (isArabic ? 'تعذر حفظ قائمة المتابعة: ' : 'Watchlist save failed: ') + (error instanceof Error ? error.message : String(error));
+      await focusActionError();
     } finally {
       saving = false;
     }
@@ -169,6 +193,7 @@
       const detail = error instanceof Error ? error.message : String(error);
       status = (isArabic ? 'تعذر الإضافة إلى الطابور: ' : 'Queue unavailable: ') + detail
         + (completed ? (isArabic ? ' (' + completed + ' أُرسلت؛ وبقي التحديد المتبقي)' : ' (' + completed + ' submitted; remaining selection preserved)') : '');
+      await focusActionError();
     } finally {
       queuing = false;
     }
@@ -186,7 +211,7 @@
 </section>
 
 <form class="panel research-capture" on:submit|preventDefault={scan}>
-  <label class="url-field"><span>{isArabic ? 'رابط المنشئ / الملف الشخصي' : 'Creator / profile URL'}</span><input type="text" inputmode="url" bind:value={profileUrl} placeholder="https://…" aria-label={isArabic ? 'رابط ملف المنشئ' : 'Creator profile URL'} spellcheck="false" /></label>
+  <label class="url-field"><span>{isArabic ? 'رابط المنشئ / الملف الشخصي' : 'Creator / profile URL'}</span><input type="text" inputmode="url" dir="ltr" bind:value={profileUrl} placeholder="https://…" aria-label={isArabic ? 'رابط ملف المنشئ' : 'Creator profile URL'} spellcheck="false" /></label>
   <div class="small-field">
     <Select label={isArabic ? 'حد الفحص' : 'Scan limit'} value={String(limit)}
       options={[10, 25, 50, 100].map((value) => ({ value: String(value), label: String(value) }))}
@@ -196,11 +221,11 @@
   <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? (isArabic ? 'جارٍ الحفظ…' : 'Saving…') : (isArabic ? 'حفظ قائمة المتابعة' : 'Save watchlist')}</button>
 </form>
 
-{#if status}<p class="status-copy action-status" role={statusError ? 'alert' : 'status'}>{status}</p>{/if}
+{#if status}<p class="status-copy action-status" role={statusError ? 'alert' : 'status'} tabindex={statusError ? -1 : undefined} dir="auto" bind:this={statusElement}>{status}</p>{/if}
 
 <section class="panel research-panel" aria-label={isArabic ? 'نتائج البحث' : 'Research results'}>
   <div class="filter-bar">
-    <label class="search-field research-search"><span class="sr-only">{isArabic ? 'تصفية البحث' : 'Filter research'}</span><input aria-label={isArabic ? 'تصفية البحث' : 'Filter research'} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={isArabic ? 'تصفية العنوان أو المنشئ…' : 'Filter title or creator…'} /></label>
+    <label class="search-field research-search"><span class="sr-only">{isArabic ? 'تصفية البحث' : 'Filter research'}</span><input dir="auto" aria-label={isArabic ? 'تصفية البحث' : 'Filter research'} value={query} on:input={(event) => updateQuery(event.currentTarget.value)} placeholder={isArabic ? 'تصفية العنوان أو المنشئ…' : 'Filter title or creator…'} /></label>
     <Select label={isArabic ? 'مرشح المنصة' : 'Platform filter'} value={platform}
       options={[{ value: 'All', label: isArabic ? 'الكل' : 'All' }, ...platforms.map((option) => ({ value: option, label: option }))]}
       onChange={updatePlatform} />
@@ -218,7 +243,7 @@
 
   <div class="selection-bar">
     <label class="select-page">
-      <input type="checkbox" checked={pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
+      <input type="checkbox" checked={pageSelected} class:partial={pagePartiallySelected} use:syncMixedPageSelection={pagePartiallySelected} aria-checked={pagePartiallySelected ? 'mixed' : pageSelected} disabled={selectablePageItems.length === 0} on:change={togglePageSelection} aria-label={isArabic ? 'تحديد عناصر الصفحة' : 'Select page'} />
       <span>{isArabic ? 'تحديد الصفحة' : 'Select page'}</span>
     </label>
     <span class="selection-count" aria-live="polite">{isArabic ? 'محدد: ' : 'Selected: '}{selectedCount}</span>
@@ -255,23 +280,23 @@
               <div class="thumbnail-placeholder" aria-hidden="true">{item.platform.slice(0, 1)}</div>
             {/if}
             <div class="media-copy">
-              <strong title={item.title}>{item.title}</strong>
-              <small><span class="creator-name">{item.creator}</span><span class="source-platform">{item.platform}</span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
+              <strong dir="auto" title={item.title}>{item.title}</strong>
+              <small><span class="creator-name" dir="auto">{item.creator}</span><span class="source-platform"><bdi dir="auto">{item.platform}</bdi></span>{#if item.queued}<span class="queued-flag">{isArabic ? 'في الطابور' : 'Queued'}</span>{/if}</small>
               {#if onUseInStudio}<button type="button" class="text-action" on:click={() => onUseInStudio?.(item)}>{isArabic ? 'استخدام في الاستوديو' : 'Use in Studio'}</button>{/if}
-              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: {rateLabel(item)}</small>{/if}
+              {#if observedInteractionRate(item) !== null}<small class="derived-metric" title={isArabic ? 'الإعجابات والتعليقات مقسومة على المشاهدات المرصودة؛ لا تعني أفراداً فريدين أو علاقة سببية' : 'Likes plus comments divided by observed views; not unique people or causal performance'}>{isArabic ? 'التفاعلات / المشاهدات' : 'Interactions / views'}: <bdi dir="ltr">{rateLabel(item)}</bdi></small>{/if}
             </div>
           </div>
           <div class="metric metric-views" role="cell"><span class="mobile-metric-label">{isArabic ? 'المشاهدات' : 'Views'}</span><strong>{metric(item.views)}</strong></div>
           <span class="metric metric-likes" role="cell"><span class="mobile-metric-label">{isArabic ? 'الإعجابات' : 'Likes'}</span>{metric(item.likes)}</span>
           <span class="metric metric-comments" role="cell"><span class="mobile-metric-label">{isArabic ? 'التعليقات' : 'Comments'}</span>{metric(item.comments)}</span>
-          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">{isArabic ? 'التاريخ' : 'Date'}</span>{item.publishedAt || '—'}</span>
-          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">{isArabic ? 'المدة' : 'Duration'}</span>{duration(item.durationSeconds)}</span>
+          <span class="metric metric-date" role="cell"><span class="mobile-metric-label">{isArabic ? 'التاريخ' : 'Date'}</span><bdi dir="ltr">{item.publishedAt || '—'}</bdi></span>
+          <span class="metric metric-duration" role="cell"><span class="mobile-metric-label">{isArabic ? 'المدة' : 'Duration'}</span><bdi dir="ltr">{duration(item.durationSeconds)}</bdi></span>
         </div>
       {/each}
     </div>
     {#if totalPages > 1}
       <nav class="page-controls" aria-label={isArabic ? 'صفحات البحث' : 'Research pages'}>
-        <span>{isArabic ? 'الصفحة' : 'Page'} {currentPage} / {totalPages}</span>
+        <span>{isArabic ? 'الصفحة' : 'Page'} <bdi dir="ltr">{currentPage} / {totalPages}</bdi></span>
         <div>
           <button type="button" disabled={currentPage === 1} on:click={() => page = currentPage - 1}>{isArabic ? 'السابق' : 'Previous'}</button>
           <button type="button" disabled={currentPage === totalPages} on:click={() => page = currentPage + 1}>{isArabic ? 'التالي' : 'Next'}</button>
@@ -293,18 +318,18 @@
       {#each watchlistStatuses as watchlist (watchlist.watchlistId)}
         <article class={'watch-health-card state-' + watchlist.state} data-testid={'watchlist-status-' + watchlist.watchlistId}>
           <div class="watch-health-title-row">
-            <strong>{watchlist.label}</strong>
+            <strong dir="auto">{watchlist.label}</strong>
             <span class="watch-state">{isArabic ? arabicStateLabel[watchlist.state] : stateLabel[watchlist.state]}</span>
           </div>
-          {#if watchlist.lastError}<p class="watch-error" role="status">{watchlist.lastError}</p>{/if}
+          {#if watchlist.lastError}<p class="watch-error" role="status" dir="auto">{watchlist.lastError}</p>{/if}
           {#if watchlist.nextRetryAt}
-            <p class="retry-time"><span>{isArabic ? 'المحاولة التالية' : 'Next retry'}</span> <time>{displayTime(watchlist.nextRetryAt)}</time></p>
+            <p class="retry-time"><span>{isArabic ? 'المحاولة التالية' : 'Next retry'}</span> <time dir="ltr">{displayTime(watchlist.nextRetryAt)}</time></p>
           {/if}
           <details class="watch-diagnostics">
             <summary>{isArabic ? 'تفاصيل التحديث' : 'Refresh details'}</summary>
             <dl>
-              <div><dt>{isArabic ? 'آخر محاولة' : 'Last attempt'}</dt><dd>{displayTime(watchlist.lastAttemptAt)}</dd></div>
-              <div><dt>{isArabic ? 'آخر نجاح' : 'Last success'}</dt><dd>{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر محاولة' : 'Last attempt'}</dt><dd dir="ltr">{displayTime(watchlist.lastAttemptAt)}</dd></div>
+              <div><dt>{isArabic ? 'آخر نجاح' : 'Last success'}</dt><dd dir="ltr">{displayTime(watchlist.lastSuccessfulScanAt)}</dd></div>
             </dl>
           </details>
         </article>
@@ -336,6 +361,9 @@
   .select-page input, .check-only input { appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0; width: 18px; height: 18px; margin: 0; border: 1.5px solid var(--color-border-strong); border-radius: 5px; background: var(--color-surface-raised); cursor: pointer; }
   .select-page input:checked, .check-only input:checked { background: var(--color-signal); border-color: var(--color-signal-strong); }
   .select-page input:checked::after, .check-only input:checked::after { content: ''; position: absolute; width: 5px; height: 9px; inset-inline-start: 5px; top: 2px; border: solid var(--color-signal-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  /* A partially selected page must not look or announce itself as completely empty. */
+  .select-page input.partial { background: var(--color-signal); border-color: var(--color-signal-strong); }
+  .select-page input.partial::after { content: ''; position: absolute; width: 8px; height: 2px; inset-inline-start: 4px; top: 7px; background: var(--color-signal-ink); }
   .select-page input:focus-visible, .check-only input:focus-visible { outline: 2px solid var(--color-signal-strong); outline-offset: 3px; }
   .select-page input:disabled, .check-only input:disabled { opacity: .5; cursor: not-allowed; }
   .selection-count { color: var(--color-text-muted); white-space: nowrap; }
@@ -388,10 +416,10 @@
   .watch-diagnostics dl div { display: flex; justify-content: space-between; gap: 12px; }
   .watch-diagnostics dd { margin: 0; text-align: end; color: var(--color-text); }
   @media (max-width: 980px) {
-    .research-capture { grid-template-columns: minmax(0, 1fr) 96px; }
-    /* At 760px the Arabic save-watchlist action exceeds the fixed 96px track:
-       keep the full label readable instead of forcing inline overflow. */
-    .research-capture button { width: 100%; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+    /* Keep the save action and the scan-limit control wide enough in EN/AR;
+       the previous 96px track split individual words into vertical fragments. */
+    .research-capture { grid-template-columns: minmax(0, 1fr) minmax(152px, 190px); }
+    .research-capture button { width: 100%; min-width: 0; white-space: normal; overflow-wrap: normal; }
     .filter-bar { flex-wrap: wrap; }
     .research-search { flex-basis: 100%; }
   }

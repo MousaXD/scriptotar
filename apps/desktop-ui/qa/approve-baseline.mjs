@@ -11,12 +11,12 @@ const directory = resolve(process.cwd(), 'qa');
 const evidence = resolve(directory, 'evidence');
 const report = JSON.parse(await readFile(resolve(evidence, 'report.json'), 'utf8'));
 if (report.sha !== sha || !Array.isArray(report.failures) || report.failures.length ||
-    !Array.isArray(report.results) || report.results.length !== 12 ||
-    report.screenshotCount !== 140) {
+    !Array.isArray(report.results) || report.results.length !== 20 ||
+    report.screenshotCount !== 252) {
   throw new Error('Refusing unpinned, incomplete or failing screenshot evidence.');
 }
 const images = (await readdir(evidence)).filter((name) => name.endsWith('.png')).sort();
-if (images.length !== 140) throw new Error('Expected 140 real rendered screenshots.');
+if (images.length !== 252) throw new Error('Expected 252 real rendered screenshots.');
 const screenshots = {};
 for (const name of images) {
   screenshots[name] = createHash('sha256')

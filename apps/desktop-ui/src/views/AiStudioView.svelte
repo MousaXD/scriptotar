@@ -33,8 +33,14 @@
   let apiKey = '';
   let prompt = '';
   let result = '';
-  let status = 'Prompt-only mode keeps the generated prompt local.';
+  let status = $translator('ai.status.local');
   let busy = false;
+
+  // Keep literal backend task identities unchanged; translate only their labels.
+  const taskLabelKeys = [
+    'ai.ui.taskViral', 'ai.ui.taskHooks', 'ai.ui.taskScript', 'ai.ui.taskRemix',
+    'ai.ui.taskContent', 'ai.ui.taskCaption', 'ai.ui.taskVoice', 'ai.ui.taskBroll'
+  ] as const;
 
   const paceWordsPerSec = {
     slow: 2.1,
@@ -82,7 +88,7 @@
     promptGeneration += 1;
     building = false;
     invalidateRun();
-    status = mode === 'copy' ? 'Prompt-only mode keeps the generated prompt local.' : 'BYOK sending is unavailable until per-request consent, price limits and durable usage receipts are certified. Use Copy Prompt.';
+    status = mode === 'copy' ? $translator('ai.status.local') : $translator('ai.status.byok');
   }
 
   function sourceInputChanged() {
@@ -96,7 +102,7 @@
     selectedTranscriptId = id;
     sourceSelectionProjectId = id === 'manual' ? '' : transcripts.find((transcript) => transcript.id === id)?.projectId ?? '';
     sourceError = '';
-    status = 'Source changed. Build a prompt for the current context.';
+    status = $translator('ai.status.sourceChanged');
     const generation = ++sourceLoadGeneration;
     if (id === 'manual') {
       sourceLoading = false;
@@ -107,10 +113,10 @@
     sourceText = '';
     try {
       const expected = transcripts.find((transcript) => transcript.id === id);
-      if (!expected) throw new Error('The selected transcript is no longer in this project.');
+      if (!expected) throw new Error($translator('ai.error.sourceMissing'));
       const transcript = await api.getTranscript(id);
       if (transcript.id !== id || transcript.projectId !== expected.projectId) {
-        throw new Error('Loaded transcript did not match the selected project and source ID.');
+        throw new Error($translator('ai.error.sourceMismatch'));
       }
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
         const current = transcripts.find((item) => item.id === id);
@@ -122,7 +128,7 @@
       }
     } catch (cause) {
       if (generation === sourceLoadGeneration && selectedTranscriptId === id) {
-        sourceError = cause instanceof Error ? cause.message : 'Could not load transcript source.';
+        sourceError = cause instanceof Error ? cause.message : $translator('ai.error.sourceLoadFailed');
       }
     } finally {
       if (generation === sourceLoadGeneration) sourceLoading = false;
@@ -146,11 +152,11 @@
       if (generation === promptGeneration) {
         prompt = next;
         builtPrompt = next;
-        status = 'Prompt built locally. Nothing has been sent to an AI provider.';
+        status = $translator('ai.status.built');
       }
     } catch (error) {
       if (generation === promptGeneration) {
-        status = `Could not build prompt: ${error instanceof Error ? error.message : 'Unknown error'}`;
+        status = $translator('ai.status.buildFailed', { detail: error instanceof Error ? error.message : $translator('ai.status.unknownError') });
       }
     } finally {
       if (generation === promptGeneration) building = false;
@@ -159,14 +165,14 @@
   async function copyText(value: string, label: string) {
     if (!value) return;
     if (!navigator.clipboard?.writeText) {
-      status = 'Clipboard access is unavailable in this runtime. Select the text and copy it manually.';
+      status = $translator('ai.status.clipboardUnavailable');
       return;
     }
     try {
       await navigator.clipboard.writeText(value);
-      status = `${label} copied to the clipboard.`;
+      status = $translator('ai.status.copied', { label });
     } catch (error) {
-      status = `Copy failed: ${error instanceof Error ? error.message : 'clipboard access was denied'}`;
+      status = $translator('ai.status.copyFailed', { detail: error instanceof Error ? error.message : $translator('ai.status.clipboardDenied') });
     }
   }
   function redactProviderError(cause: unknown, submittedKey: string): string {
@@ -186,14 +192,14 @@
     if (busy || building || sourceLoading || sourceError) return;
     if (mode === 'copy') {
       await buildPrompt();
-      if (prompt) status = 'Copy Prompt mode is ready for manual use elsewhere.';
+      if (prompt) status = $translator('ai.status.ready');
       return;
     }
-    if (provider === 'Local (coming later)') { status = 'Local provider execution is not available yet.'; return; }
-    if (!model.trim()) { status = 'Enter a model for the selected provider.'; return; }
-    if (!apiKey.trim()) { status = 'Enter an API key for this session, or switch to Copy Prompt.'; return; }
+    if (provider === 'Local (coming later)') { status = $translator('ai.status.noLocal'); return; }
+    if (!model.trim()) { status = $translator('ai.status.needModel'); return; }
+    if (!apiKey.trim()) { status = $translator('ai.status.needKey'); return; }
     if (prompt && prompt !== builtPrompt) {
-      status = 'The edited prompt preview is for copying only. Build the prompt again before running with API.';
+      status = $translator('ai.status.editedPreview');
       return;
     }
     const generation = ++runGeneration;
@@ -201,10 +207,10 @@
     busy = true;
     try {
       const output = await api.runAi(request);
-      if (generation === runGeneration) { result = output; status = `Finished with ${request.provider}.`; }
+      if (generation === runGeneration) { result = output; status = $translator('ai.status.finished', { provider: request.provider }); }
     } catch (error) {
       if (generation === runGeneration) {
-        status = `AI request failed: ${redactProviderError(error, request.apiKey || '')}`;
+        status = $translator('ai.status.requestFailed', { detail: redactProviderError(error, request.apiKey || '') });
       }
     } finally {
       if (generation === runGeneration) busy = false;
@@ -213,18 +219,18 @@
 </script>
 
 <section class="view-head ai-head">
-  <h1>AI Studio</h1>
-  <div class="mode-switch compact-mode" role="group" aria-label="AI mode">
-    <button type="button" class:active={mode === 'copy'} aria-pressed={mode === 'copy'} on:click={() => chooseMode('copy')}>Copy Prompt</button>
+  <h1>{$translator('nav.ai')}</h1>
+  <div class="mode-switch compact-mode" role="group" aria-label={$translator('ai.ui.mode')}>
+    <button type="button" class:active={mode === 'copy'} aria-pressed={mode === 'copy'} on:click={() => chooseMode('copy')}>{$translator('ai.ui.copyMode')}</button>
     <button type="button" class:active={mode === 'byok'} aria-pressed={mode === 'byok'} on:click={() => chooseMode('byok')}>BYOK</button>
   </div>
 </section>
 
 <section class="panel ai-setup">
-  <div class="setup-heading"><h2>Prompt setup</h2><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
+  <div class="setup-heading"><h2>{$translator('ai.ui.setup')}</h2><p data-i18n-ignore>{mode === 'copy' ? $translator('ai.localBoundary') : $translator('ai.sessionBoundary')}</p></div>
   <div class="ai-config-grid" class:byok-mode={mode === 'byok'}>
-    <Select label="Task" value={task}
-      options={['Viral breakdown', 'Hook ideas', 'New short-form script', 'Structure remix', 'Content ideas', 'Caption + CTA', 'Voice profile', 'B-roll shot list'].map((value) => ({ value, label: value }))}
+    <Select label={$translator('ai.ui.task')} value={task}
+      options={['Viral breakdown', 'Hook ideas', 'New short-form script', 'Structure remix', 'Content ideas', 'Caption + CTA', 'Voice profile', 'B-roll shot list'].map((value, index) => ({ value, label: $translator(taskLabelKeys[index]) }))}
       onChange={(next) => { task = next; invalidatePrompt(); }} />
     <Select label={$translator('ai.speakingRate')} value={pace}
       options={[
@@ -233,17 +239,20 @@
         { value: 'fast', label: $translator('ai.paceFast') }
       ]} onChange={(next) => { pace = next as typeof pace; }} />
     {#if mode === 'byok'}
-      <Select label="AI provider" value={provider}
-        options={['OpenAI', 'Anthropic', 'Gemini', 'OpenAI-compatible', 'Local (coming later)'].map((value) => ({ value, label: value }))}
+      <Select label={$translator('ai.ui.provider')} value={provider}
+        options={['OpenAI', 'Anthropic', 'Gemini', 'OpenAI-compatible', 'Local (coming later)'].map((value) => ({
+          value, label: value === 'OpenAI-compatible' ? $translator('ai.ui.openaiCompatible') :
+            value === 'Local (coming later)' ? $translator('ai.ui.localComing') : value
+        }))}
         onChange={chooseProvider} />
-      <label><span>Model</span><input bind:value={model} on:input={invalidatePrompt} /></label>
+      <label><span>{$translator('ai.ui.model')}</span><input bind:value={model} on:input={invalidatePrompt} /></label>
     {/if}
   </div>
   {#if mode === 'byok'}
     <div class="byok-strip" data-testid="byok-fields">
-      <label><span>API key · pending certification</span><input aria-label="API key" type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" disabled placeholder="Provider sending unavailable" /></label>
-      {#if provider === 'OpenAI-compatible'}<label><span>Base URL</span><input bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
-      <p>Direct BYOK sending is disabled until consent and spending safeguards are certified. Build and copy a prompt instead; no API key is needed.</p>
+      <label><span>{$translator('ai.ui.keyDisabled')}</span><input aria-label={$translator('ai.ui.keyLabel')} type="password" bind:value={apiKey} on:input={invalidateRun} autocomplete="off" disabled placeholder={$translator('ai.ui.keyPlaceholder')} /></label>
+      {#if provider === 'OpenAI-compatible'}<label><span>{$translator('ai.ui.baseUrl')}</span><input dir="ltr" bind:value={baseUrl} on:input={invalidateRun} placeholder="https://…" /></label>{/if}
+      <p>{$translator('ai.ui.byokDisclosure')}</p>
     </div>
   {/if}
 </section>
@@ -251,7 +260,7 @@
 <div class="ai-workspace">
   <section class="panel ai-source">
     <div class="panel-head">
-      <div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>Source context</h2></div>
+      <div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.source')}</span><h2>{$translator('ai.ui.sourceHeading')}</h2></div>
       <div class="timer-badge-group">
         <span class="brief-count" data-i18n-ignore>{$translator('ai.wordCount', { words: sourceWords, chars: sourceChars })}</span>
         <span class="timer-chip" data-i18n-ignore>{$translator('ai.estimatedDuration', { duration: formatSpeakingDuration(sourceSpeakingSeconds) })}</span>
@@ -267,56 +276,56 @@
     </div>
     {#if selectedTranscriptId !== 'manual' && selectedTranscript && selectedTranscript.projectId === sourceSelectionProjectId}
       <div class="source-lineage" data-testid="ai-source-lineage">
-        <strong>{selectedTranscript.title}</strong>
-        <span>{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
-        <span>Transcript ID: <code>{selectedTranscript.id}</code>{sourceLoading ? ' · Loading exact source…' : sourceError ? ' · Source unavailable' : sourceEdited ? ' · Locally edited excerpt' : ' · Exact loaded source'}</span>
+        <strong dir="auto">{selectedTranscript.title}</strong>
+        <span dir="auto">{selectedTranscript.language} · {selectedTranscript.platform} · {selectedTranscript.source}</span>
+        <span>{$translator('ai.ui.transcriptId')} <code dir="ltr">{selectedTranscript.id}</code>{sourceLoading ? ' · ' + $translator('ai.ui.loadingExact') : sourceError ? ' · ' + $translator('ai.ui.sourceUnavailable') : sourceEdited ? ' · ' + $translator('ai.ui.editedExcerpt') : ' · ' + $translator('ai.ui.exactSource')}</span>
       </div>
     {:else if transcripts.length === 0}
       <div class="source-lineage muted-lineage" data-i18n-ignore>{$translator('ai.sourceNone')}</div>
     {/if}
-    {#if sourceLoading}<div class="source-loading-skeleton" role="status" aria-label="Loading transcript source"><span></span><span></span></div>{/if}
+    {#if sourceLoading}<div class="source-loading-skeleton" role="status" aria-label={$translator('ai.ui.loadingSource')}><span></span><span></span></div>{/if}
     {#if sourceError}
-      <p class="status-copy" role="alert">{sourceError}</p>
-      <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>Retry transcript load</button>
+      <p class="status-copy" role="alert" dir="auto">{sourceError}</p>
+      <button class="text-button" on:click={() => loadSource(selectedTranscriptId)}>{$translator('ai.ui.retrySource')}</button>
     {/if}
-    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} dir="auto" placeholder="Paste or load transcript/research text…"></textarea>
+    <textarea bind:value={sourceText} on:input={sourceInputChanged} disabled={sourceLoading} dir="auto" placeholder={$translator('ai.ui.sourcePlaceholder')}></textarea>
   </section>
 
   <section class="panel brief-panel">
-    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.direction')}</span><h2>Creative brief</h2></div><span class="brief-count" data-i18n-ignore>{$translator('ai.briefFilled', { count: briefFields })}</span></div>
+    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.direction')}</span><h2>{$translator('ai.ui.briefHeading')}</h2></div><span class="brief-count" data-i18n-ignore>{$translator('ai.briefFilled', { count: briefFields })}</span></div>
     <div class="ai-brief-grid">
-      <label><span>Topic / goal</span><input bind:value={topic} on:input={invalidatePrompt} /></label>
-      <label><span>Audience</span><input bind:value={audience} on:input={invalidatePrompt} /></label>
-      <label><span>Target duration</span><input bind:value={duration} on:input={invalidatePrompt} /></label>
-      <label><span>CTA</span><input bind:value={cta} on:input={invalidatePrompt} /></label>
-      <label class="wide"><span>Voice / style instructions</span><input bind:value={voice} on:input={invalidatePrompt} /></label>
+      <label><span>{$translator('ai.ui.topic')}</span><input bind:value={topic} on:input={invalidatePrompt} /></label>
+      <label><span>{$translator('ai.ui.audience')}</span><input bind:value={audience} on:input={invalidatePrompt} /></label>
+      <label><span>{$translator('ai.ui.duration')}</span><input bind:value={duration} on:input={invalidatePrompt} /></label>
+      <label><span>{$translator('ai.ui.cta')}</span><input bind:value={cta} on:input={invalidatePrompt} /></label>
+      <label class="wide"><span>{$translator('ai.ui.voice')}</span><input bind:value={voice} on:input={invalidatePrompt} /></label>
     </div>
   </section>
 
   <section class="panel ai-prompt">
-    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>Generated prompt</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
-    <textarea bind:value={prompt} dir="auto" placeholder="Build a prompt to preview it here…"></textarea>
-    {#if mode === 'byok'}<p class="prompt-note">Edits here are available for copying, but BYOK builds its request from the source and brief fields above.</p>{/if}
+    <div class="panel-head"><div><span class="eyebrow" data-i18n-ignore>{$translator('ai.step.artifact')}</span><h2>{$translator('ai.ui.promptHeading')}</h2></div>{#if prompt}<span class="ready-chip" data-i18n-ignore>{$translator('ai.ready')}</span>{/if}</div>
+    <textarea bind:value={prompt} dir="auto" placeholder={$translator('ai.ui.promptPlaceholder')}></textarea>
+    {#if mode === 'byok'}<p class="prompt-note">{$translator('ai.ui.promptNote')}</p>{/if}
   </section>
 </div>
 
 <div class="ai-action-bar">
-  <span class="status-copy" role="status" aria-live="polite">{status}</span>
+  <span class="status-copy" role="status" aria-live="polite" dir="auto">{status}</span>
   <div class="ai-actions">
-    <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, 'Prompt')}>Copy prompt</button>
-    <button class="button primary" disabled={busy || building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? 'Building…' : 'Build prompt'}</button>
-    {#if mode === 'byok'}<button class="button secondary run-button" disabled aria-label="Run with API (unavailable)" title="Requires certified provider approval and usage receipts">Run with API (unavailable)</button>{/if}
+    <button class="button secondary" disabled={!prompt} on:click={() => copyText(prompt, $translator('ai.ui.promptNoun'))}>{$translator('ai.ui.copyPrompt')}</button>
+    <button class="button primary" disabled={busy || building || sourceLoading || !!sourceError} on:click={buildPrompt}>{building ? $translator('ai.ui.building') : $translator('ai.ui.buildPrompt')}</button>
+    {#if mode === 'byok'}<button class="button secondary run-button" disabled aria-label={$translator('ai.ui.runUnavailable')} title={$translator('ai.ui.runHelp')}>{$translator('ai.ui.runUnavailable')}</button>{/if}
   </div>
 </div>
 
 {#if result}
   <section class="panel result-card">
     <div class="panel-head">
-      <div><span class="eyebrow">Result</span><h2>AI result</h2></div>
+      <div><span class="eyebrow">{$translator('ai.ui.resultEyebrow')}</span><h2>{$translator('ai.ui.resultHeading')}</h2></div>
       <div class="result-head-actions">
         <span class="brief-count" data-i18n-ignore>{$translator('ai.wordCount', { words: resultWords, chars: resultChars })}</span>
         <span class="timer-chip" data-i18n-ignore>{$translator('ai.scriptDuration', { duration: formatSpeakingDuration(resultSpeakingSeconds) })}</span>
-        <button class="text-button" on:click={() => copyText(result, 'Result')}>Copy result</button>
+        <button class="text-button" on:click={() => copyText(result, $translator('ai.ui.resultNoun'))}>{$translator('ai.ui.copyResult')}</button>
       </div>
     </div>
     <div class="result-copy" dir="auto">{result}</div>

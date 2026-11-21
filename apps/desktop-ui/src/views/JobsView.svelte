@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { locale } from '../i18n';
   import { translator } from '../i18n/translate';
   import type { Job, JobState } from '../types';
   import { hasNativeFileDrop, subscribeToNativeFileDrop } from '../tauriRuntime';
@@ -177,6 +176,17 @@
     if (event.currentTarget === event.target) dragActive = false;
   }
 
+  async function announceDropError(message: string) {
+    // Unlike a URL submission, dropped files have no focused input to carry
+    // the error. Focus the existing alert after Svelte renders it.
+    actionStatus = '';
+    urlRejected = false;
+    urlDenialId = '';
+    actionError = message;
+    await tick();
+    if (actionError === message) actionErrorElement?.focus();
+  }
+
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     dragActive = false;
@@ -185,8 +195,10 @@
     const urls = extractUrlsFromText(text);
     if (urls.length) {
       sourceUrl = urls[0];
-      actionStatus = $translator('queue.dropLink', { url: urls[0] });
+      urlRejected = false;
+      urlDenialId = '';
       actionError = '';
+      actionStatus = $translator('queue.dropLink', { url: urls[0] });
       return;
     }
     // Web File.name is not a filesystem path. Native Tauri drop events provide paths;
@@ -195,9 +207,7 @@
     const dropped = Array.from(event.dataTransfer.files ?? []);
     const paths = dropped.map((file) => (file as File & { path?: string }).path).filter((path): path is string => Boolean(path));
     if (paths.length) acceptDroppedPaths(paths);
-    else if (dropped.length) actionError = $locale === 'ar'
-      ? 'اسم الملف وحده ليس مساراً صالحاً. استخدم «اختيار فيديو» لتحديد ملف محلي.'
-      : 'A dropped filename is not a usable file path. Choose video to select a local file.';
+    else if (dropped.length) void announceDropError($translator('queue.dropFilePathRequired'));
   }
 
   onMount(() => {
@@ -215,7 +225,7 @@
     }).catch((error) => {
       dragActive = false;
       nativeDropAvailable = false;
-      actionError = error instanceof Error ? error.message : $translator('queue.nativeDropFailed');
+      void announceDropError(error instanceof Error ? error.message : $translator('queue.nativeDropFailed'));
     });
     return () => { disposed = true; unlisten?.(); };
   });
@@ -264,7 +274,7 @@
     <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
       <form class="url-form" on:submit|preventDefault={enqueueUrl}>
         <label for="queue-url">{$translator('queue.supportedUrl')}</label>
-        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <input id="queue-url" dir="ltr" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; urlDenialId = ''; actionError = ''; actionStatus = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
         <div class="capture-actions">
           <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
           <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
@@ -275,13 +285,13 @@
   <details class="advanced-path">
     <summary>{$translator('queue.advancedPath')}</summary>
     <form on:submit|preventDefault={enqueueManualPath}>
-      <input aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" disabled={busy} />
+      <input dir="ltr" aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" disabled={busy} />
       <button class="button secondary" type="submit" disabled={busy || !manualPath.trim()}>{$translator('queue.queuePath')}</button>
     </form>
   </details>
 </section>
 
-{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · request ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="ltr"> Request ID: {urlDenialId}</small>{/if}</p>{/if}
+{#if actionError}<p id="queue-action-error" bind:this={actionErrorElement} tabindex="-1" class="queue-feedback error-message" role="alert" aria-live="assertive" aria-atomic="true" aria-label={actionError + (urlDenialId ? ' · ' + $translator('queue.requestId') + ' ' + urlDenialId : '')} dir="auto" data-i18n-ignore>{actionError}{#if urlDenialId}<small dir="auto"> {$translator('queue.requestId')} <bdi dir="ltr">{urlDenialId}</bdi></small>{/if}</p>{/if}
 {#if actionStatus}<p class="queue-feedback" role="status" data-i18n-ignore>{actionStatus}</p>{/if}
 
 <section class="queue-workspace" aria-label={$translator('queue.heading')}>
@@ -299,9 +309,9 @@
     {#if visible.length === 0}
       {#if jobs.length > 0 && filter !== 'all'}
         <div class="queue-filter-empty">
-          <strong>{$locale === 'ar' ? 'لا توجد مهام بهذه الحالة' : 'No jobs in this filter'}</strong>
+          <strong>{$translator('queue.noJobsInFilter')}</strong>
           <button type="button" class="button secondary" on:click={() => changeFilter('all')}>
-            {$locale === 'ar' ? 'عرض كل المهام' : 'Show all jobs'}
+            {$translator('queue.showAllJobs')}
           </button>
         </div>
       {:else}
@@ -320,7 +330,7 @@
       {/each}
       {#if shown.length < visible.length}
         <button type="button" class="show-more" on:click={() => pageSize += 30}>
-          {$locale === 'ar' ? 'عرض المزيد من المهام' : 'Show more jobs'} ({visible.length - shown.length})
+          {$translator('queue.showMoreJobs')} ({visible.length - shown.length})
         </button>
       {/if}
     {/if}
