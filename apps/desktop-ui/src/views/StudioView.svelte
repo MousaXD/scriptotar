@@ -1374,7 +1374,7 @@
       </section>
     {/if}
     {#if record && !loading}
-      {#key projectId + ':' + record.id}
+      {#key projectId + ':' + record.id + ':' + record.revision}
         <StudioResearchReview {api} {projectId} studyId={record.id} />
       {/key}
     {/if}
