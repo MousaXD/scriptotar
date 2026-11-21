@@ -1277,8 +1277,50 @@ def capture_native_tab_order(report: dict, ax: AxWebKit, key: str, count: int = 
     try:
         if not ax.web_document():
             raise NativeUnavailable("Installed process has no AT-SPI web document")
+        # A desktop-wide Tab is unsafe unless the real installed window is
+        # the verified recipient. Never infer ownership from a web document
+        # alone, or type into a different application after focus changes.
+        visible = command("xdotool", "search", "--onlyvisible",
+                          "--pid", str(ax.pid), check=False)
+        titled = []
+        for xid in visible.stdout.split():
+            title = command("xdotool", "getwindowname", xid, check=False)
+            if title.returncode == 0 and "scriptotar" in title.stdout.lower():
+                titled.append(xid)
+        if len(titled) != 1:
+            raise NativeUnavailable(
+                f"Expected one visible installed Scriptotar X11 window "
+                f"for PID {ax.pid}, got {titled!r}"
+            )
+        target = titled[0]
+        observation["installed_x11_window"] = target
+        activated = command("xdotool", "windowactivate", target, check=False)
+        if activated.returncode != 0:
+            raise NativeUnavailable("Cannot activate installed X11 window for Tab audit")
+
+        def owns_keyboard() -> bool:
+            active = command("xdotool", "getactivewindow", check=False)
+            if active.returncode == 0 and active.stdout.strip() == target:
+                return True
+            focused_window = command("xdotool", "getwindowfocus", check=False)
+            return (focused_window.returncode == 0
+                    and focused_window.stdout.strip() == target)
+
+        deadline = time.monotonic() + 3
+        while not owns_keyboard() and time.monotonic() < deadline:
+            time.sleep(0.15)
+        if not owns_keyboard():
+            raise NativeUnavailable("Refusing Tab: installed X11 window lacks keyboard focus")
+
         for tab_index in range(count):
-            command("xdotool", "key", "--clearmodifiers", "Tab")
+            if not owns_keyboard():
+                raise NativeUnavailable(
+                    f"Refusing Tab {tab_index + 1}: installed X11 window lost focus"
+                )
+            delivered = command("xdotool", "key", "--clearmodifiers", "Tab",
+                                check=False)
+            if delivered.returncode != 0:
+                raise NativeUnavailable(f"Native Tab {tab_index + 1} delivery failed")
             time.sleep(0.18)
             focused = []
             for node in ax.nodes():
