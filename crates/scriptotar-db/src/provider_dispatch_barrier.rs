@@ -213,6 +213,45 @@ impl Drop for ProviderDispatchBarrier {
     }
 }
 
+/// Additive correction to the original v8 single-send fence. The historical
+/// v8 migration remains byte-identical: upgraded databases gain a narrowly
+/// proof-gated UNKNOWN -> RESERVED retry edge, never a generic UNKNOWN reset.
+/// v13 STILL requires exact RESERVED in both v8 and v10 for paid admission.
+pub(crate) fn migration_14(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        r#"
+DROP TRIGGER agent_effect_transition_guard;
+CREATE TRIGGER agent_effect_transition_guard BEFORE UPDATE OF status ON agent_effects
+WHEN NOT (
+    (OLD.status='reserved' AND NEW.status IN
+        ('accepted','applied','not_applied','unknown'))
+    OR (OLD.status='accepted' AND NEW.status IN
+        ('applied','not_applied','unknown'))
+    OR (OLD.status='unknown' AND NEW.status IN ('applied','not_applied'))
+    OR (
+        OLD.status='unknown' AND NEW.status='reserved'
+        AND OLD.artifact_id IS NULL
+        AND EXISTS (
+            SELECT 1 FROM agent_external_effects e
+            WHERE e.idempotency_key=OLD.idempotency_key
+              AND e.run_id=OLD.run_id
+              AND e.project_id=OLD.project_id
+              AND e.study_id=OLD.study_id
+              AND e.step_id=OLD.step_id
+              AND e.status='not_executed'
+              AND e.attempt BETWEEN 1 AND 2
+              AND e.cancel_requested=0
+              AND e.reconciliation_id IS NOT NULL
+              AND length(e.reconciliation_id) BETWEEN 1 AND 128
+              AND e.actual_tokens=0 AND e.actual_cost_microusd=0
+        )
+    )
+)
+BEGIN SELECT RAISE(ABORT,'agent effect transition requires external evidence'); END;
+"#,
+    )
+}
+
 impl SqliteStore {
     /// Unbound freeze for offline host-scope and database regression tests.
     /// This is not accepted by the production sealed dispatch authority.
