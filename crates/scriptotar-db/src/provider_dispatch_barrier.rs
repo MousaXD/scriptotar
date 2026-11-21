@@ -483,7 +483,11 @@ impl SqliteStore {
             // proven-nonexecution retry must restore UNKNOWN to preserve
             // the history of its earlier dispatched attempt. The gate is
             // already removed, and both updates commit atomically.
-            let legacy_status = if attempt == 1 { "not_applied" } else { "unknown" };
+            let legacy_status = if attempt == 1 {
+                "not_applied"
+            } else {
+                "unknown"
+            };
             let legacy = tx
                 .execute(
                     "UPDATE agent_effects
