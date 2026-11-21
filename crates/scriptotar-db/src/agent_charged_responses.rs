@@ -92,6 +92,11 @@ CREATE TRIGGER charged_response_required_for_completion
             AND s.cost_microusd=NEW.actual_cost_microusd
       )
     BEGIN SELECT RAISE(ABORT,'charged writing completion requires sealed response'); END;
+CREATE TRIGGER charged_response_no_precompleted_insert
+    BEFORE INSERT ON agent_external_effects
+    WHEN NEW.step_id IN ('angles','draft-1','draft-2','draft-3')
+      AND NEW.status <> 'reserved'
+    BEGIN SELECT RAISE(ABORT,'charged writing effects must begin reserved'); END;
 "#,
     )
 }
@@ -218,7 +223,13 @@ impl SqliteStore {
         if !charged_step(key.step_id) {
             return Err(invalid("charged writing step"));
         }
-        verified_charged_response(&db, key, &effect)
+        let sealed = verified_charged_response(&db, key, &effect)?;
+        if effect.status == ExternalEffectStatus::Completed && sealed.is_none() {
+            return Err(RepositoryError::Storage(
+                "completed paid step lacks original response: unresolved".into(),
+            ));
+        }
+        Ok(sealed)
     }
 
     /// One SQLite IMMEDIATE transaction commits: immutable raw response bytes,
