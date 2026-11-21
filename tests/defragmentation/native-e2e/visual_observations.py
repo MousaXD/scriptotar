@@ -70,6 +70,31 @@ def _finite_float(value: str) -> float:
     return parsed
 
 
+def _preflight_zip_footer(snapshot: bytes) -> None:
+    """Reject excessive ZIP directory counts BEFORE ZipFile creates ZipInfo.
+
+    The bounded outer snapshot is already read, but ZipFile's constructor
+    materializes central-directory records before _preflight_members() can
+    inspect them. Limit the advertised count at the original EOCD footer.
+    ZIP64/multidisk/ambiguous footers are not required for these small native
+    evidence archives and fail closed rather than creating a large index.
+    """
+    # End Of Central Directory is 22 bytes plus at most 65535 comment bytes.
+    offset = snapshot.rfind(b"PK\\x05\\x06", max(0, len(snapshot) - 65557))
+    if offset < 0 or len(snapshot) - offset < 22:
+        raise ValueError("Missing native evidence ZIP end directory")
+    (disk, directory_disk, disk_entries, total_entries, directory_bytes,
+     directory_offset, comment_bytes) = struct.unpack_from("<HHHHIIH", snapshot, offset + 4)
+    if (offset + 22 + comment_bytes != len(snapshot) or
+            disk != 0 or directory_disk != 0 or
+            disk_entries != total_entries or
+            total_entries == 0 or total_entries > MAX_MEMBERS or
+            directory_bytes == 0 or directory_bytes == 0xffffffff or
+            directory_offset == 0xffffffff or
+            total_entries == 0xffff):
+        raise ValueError("Unsafe or excessive native ZIP directory metadata")
+
+
 def _preflight_members(z: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
     """Deny hostile ZIP metadata before opening or inflating any member."""
     entries = z.infolist()
@@ -220,6 +245,7 @@ def analyze(archive: Path, exact_sha: str) -> dict:
     if not HEX_SHA.fullmatch(exact_sha):
         raise ValueError("Invalid 40-character exact source SHA")
     snapshot = _read_archive_snapshot(archive)
+    _preflight_zip_footer(snapshot)
     with zipfile.ZipFile(io.BytesIO(snapshot)) as z:
         names = _preflight_members(z)
         report = json.loads(
