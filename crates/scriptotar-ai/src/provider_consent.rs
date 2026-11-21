@@ -1633,6 +1633,7 @@ mod tests {
         let (entered_tx, entered_rx) = mpsc::channel();
         let (resume_tx, resume_rx) = mpsc::channel();
         let (mutated_tx, mutated_rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
         let fence = PausedSettlement {
             entered: entered_tx,
             resume: Mutex::new(resume_rx),
@@ -1647,9 +1648,11 @@ mod tests {
             entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             // The provider has replied, but the durable receipt still waits.
             threads.spawn(|| {
+                started_tx.send(()).unwrap();
                 authority.0.lock().unwrap().material_digest = "b".repeat(64);
                 mutated_tx.send(()).unwrap();
             });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             assert!(
                 mutated_rx.recv_timeout(Duration::from_millis(75)).is_err(),
                 "source mutation completed while receipt settlement was pending"
