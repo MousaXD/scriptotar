@@ -1,0 +1,45 @@
+name: Agent10 exact PR198 post-regex raw ZIP regression proof
+on:
+  pull_request:
+    paths:
+      - .github/workflows/agent10-pr198-final-raw-zip.yml
+      - tests/defragmentation/native-e2e/test_agent10_raw_zip_directory_final.py
+permissions:
+  contents: read
+jobs:
+  independent-exact:
+    name: Exact PR198 ZIP raw-directory safety (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Reject changed original PR198 Git blobs and any non-test diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=db584639dbf89b0b26c90054b31c4564f9935c1b
+          git merge-base --is-ancestor "$BASE" HEAD
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/visual_observations.py)" = c49521e8baf7b32c21c6c839eb5ab6d5c2d49432
+          test "$(git rev-parse HEAD:tests/defragmentation/native-e2e/test_visual_observations.py)" = bd1bddabeff3b330404e7897d26afa8d2048e3d4
+          EXPECTED="$(printf '%s\n' .github/workflows/agent10-pr198-final-raw-zip.yml tests/defragmentation/native-e2e/test_agent10_raw_zip_directory_final.py | LC_ALL=C sort)"
+          OBSERVED="$(git diff --name-only "$BASE" HEAD | LC_ALL=C sort)"
+          test "$EXPECTED" = "$OBSERVED"
+          echo "PASS original PR198 immutable blobs, ancestry, test-only delta"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Independent forgery and canonical original parser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_agent10_raw_zip_directory_final.py' -v
+          python -m unittest discover -s tests/defragmentation/native-e2e -p 'test_visual_observations.py' -v
+          echo "PASS no-network parser unit safety, NOT installed WebView certification"
