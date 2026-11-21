@@ -16,7 +16,7 @@ use scriptotar_ai::{
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
     ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation,
-    ExternalResolution, SqliteStore,
+    ExternalResolution, ProviderDispatchBarrier, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -45,14 +45,14 @@ fn consent_error(error: ConsentError) -> RepositoryError {
     RepositoryError::Validation(format!("AI provider consent: {error:?}"))
 }
 
-/// Existing Studio writes and project switching already serialize on
-/// AppServices::active_project. Holding that SAME lock across dispatch admission
-/// ensures those mutations cannot slip between the authoritative scope read
-/// and the provider send. This is a process-local guard, not a distributed lock:
-/// paid network transport remains disabled until all origin writers and external
-/// mutation paths have been audited against this boundary.
+/// Scope authorization uses both AppServices' project-selection mutex and a
+/// durable SQLite-wide writer barrier. The latter is committed before the
+/// canonical Study snapshot is rebuilt; v13 triggers reject external connection
+/// mutations of protected source/Study inputs until the send guard is dropped.
+/// This is not protection against an attacker executing arbitrary DDL on the DB.
 struct HostScopeDispatchGuard<'a> {
     _project_lock: MutexGuard<'a, Uuid>,
+    db_barrier: ProviderDispatchBarrier,
     scope: StudyScope,
 }
 
@@ -62,6 +62,10 @@ impl ScopeDispatchGuard for HostScopeDispatchGuard<'_> {
     }
 
     fn now_ms(&self) -> Result<u64, ConsentError> {
+        // A removed or replaced persisted barrier is never authority to send.
+        self.db_barrier
+            .verify()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| ConsentError::Expired)?
@@ -150,12 +154,21 @@ impl ScopeAuthority for AppServices {
         if *project_lock != project {
             return Err(ConsentError::WrongProjectOrStudy);
         }
+        // Commit an exclusive DB-wide freeze after acquiring the host mutex.
+        // SQLite IMMEDIATE admission waits for earlier writers, and v13
+        // triggers reject subsequent cross-connection changes. Re-read only
+        // AFTER the freeze commits, not before it.
+        let db_barrier = self
+            .store
+            .acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         let fresh = self.consent_scope_locked(project, study)?;
         if fresh != *scope {
             return Err(ConsentError::ChangedContext);
         }
         Ok(Box::new(HostScopeDispatchGuard {
             _project_lock: project_lock,
+            db_barrier,
             scope: fresh,
         }))
     }
