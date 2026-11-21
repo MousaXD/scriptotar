@@ -576,26 +576,20 @@ pub(super) fn enforce_candidate_originality(
         }
         let mut candidate_covered = false;
         for line in &candidate.lineage {
-            if line
-                .evidence
-                .iter()
-                .any(|item| script_evidence.contains(item.id.as_str()))
-            {
+            // Every candidate must cite at least one attributable original
+            // excerpt, not merely a creator note or metadata observation.
+            // The batch must additionally cite three distinct such origins.
+            if line.evidence.iter().any(|item| {
+                script_evidence.contains(item.id.as_str())
+                    && original_source_excerpt(item)
+            }) {
                 candidate_covered = true;
-                // An observation can support creative direction, but only
-                // cited original excerpts qualify for the three-source
-                // evidence promise across the batch.
-                if line.evidence.iter().any(|item| {
-                    script_evidence.contains(item.id.as_str())
-                        && original_source_excerpt(item)
-                }) {
-                    cited_sources.insert(line.source_id);
-                }
+                cited_sources.insert(line.source_id);
             }
         }
         if !candidate_covered {
             return Err(WritingWorkflowError::InvalidResponse(
-                "candidate has no source-grounded script evidence".into(),
+                "candidate has no attributable original source citation".into(),
             ));
         }
         let narration = candidate
