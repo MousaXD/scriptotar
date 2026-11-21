@@ -1634,11 +1634,7 @@ impl AppServices {
             return Err(WritingWorkflowError::StaleContext);
         }
         let research = self
-            .research_writing_context(
-                identity.project_id,
-                identity.study_id,
-                identity.artifact_id,
-            )
+            .research_writing_context(identity.project_id, identity.study_id, identity.artifact_id)
             .map_err(|_| WritingWorkflowError::StaleContext)?;
         if &research.identity != identity {
             return Err(WritingWorkflowError::StaleContext);
@@ -2432,13 +2428,15 @@ mod tests {
             sources: bridge
                 .sources
                 .iter()
-                .map(|source| super::super::study_writing::SelectedWritingSource {
-                    study_source_id: source.study_source_id,
-                    origin_id: source.origin_id,
-                    fingerprint: source.attachment_fingerprint.clone(),
-                    source_revision: source.attachment_revision.clone(),
-                    collected_at: source.collected_at.clone(),
-                })
+                .map(
+                    |source| super::super::study_writing::SelectedWritingSource {
+                        study_source_id: source.study_source_id,
+                        origin_id: source.origin_id,
+                        fingerprint: source.attachment_fingerprint.clone(),
+                        source_revision: source.attachment_revision.clone(),
+                        collected_at: source.collected_at.clone(),
+                    },
+                )
                 .collect(),
             brief: input.brief.clone(),
             evidence: Vec::new(),
