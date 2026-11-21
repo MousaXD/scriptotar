@@ -1550,13 +1550,17 @@
                   <small>{batch.committedAt}</small></div>
                 <div class="draft-actions">
                   {#each batch.draftIds as candidateId, index (candidateId)}
-                    <button type="button" class="button secondary"
-                      disabled={busy || saving || loading || importingSavedResult ||
-                        !record.drafts?.some((item) => item.id === candidateId)}
-                      on:click={() => void openDraft(candidateId)}>
-                      {record.drafts?.find((item) => item.id === candidateId)?.title ||
-                        (t.writingCandidate + ' ' + (index + 1))}
-                    </button>
+                    <div class="writing-candidate-entry">
+                      <button type="button" class="button secondary"
+                        disabled={busy || saving || loading || importingSavedResult ||
+                          !record.drafts?.some((item) => item.id === candidateId)}
+                        on:click={() => void openDraft(candidateId)}>
+                        {record.drafts?.find((item) => item.id === candidateId)?.title ||
+                          (t.writingCandidate + ' ' + (index + 1))}
+                      </button>
+                      <!-- Exact saved v11 receipt ID; never substitute a title or index. -->
+                      <code dir="ltr">{candidateId}</code>
+                    </div>
                   {/each}
                   <button type="button" class="button secondary"
                     disabled={!!exportingBatchId || busy || saving || dirty || loading || importingSavedResult ||
@@ -1818,6 +1822,8 @@
   .studio-progress strong { font-weight: 700; color: var(--color-text-muted); }
   .studio-heading, .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   .studio-actions, .draft-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .writing-candidate-entry { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+  .writing-candidate-entry code { max-width: 225px; overflow-wrap: anywhere; unicode-bidi: isolate; font-size: var(--text-xs); color: var(--color-text-muted); }
   .studio-candidates { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; margin-block: 12px; }
   .studio-candidates > :global(*) { min-width: 180px; }
   .angle-review { display: grid; gap: 10px; margin-block: 14px; }
