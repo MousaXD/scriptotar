@@ -353,10 +353,7 @@ fn copied_source_angle_stops_before_any_draft_provider_step() {
         serde_json::from_str(provider.responses.front().unwrap()).unwrap();
     proposed["angles"][0]["hook"] = json!(passage);
     *provider.responses.front_mut().unwrap() = proposed.to_string();
-    let mut sink = SqlFixtureSink::open(
-        &temp.path().join("bad-angle.sqlite"),
-        current.0.clone(),
-    );
+    let mut sink = SqlFixtureSink::open(&temp.path().join("bad-angle.sqlite"), current.0.clone());
     assert!(matches!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
         Err(WritingWorkflowError::InvalidResponse(_))
@@ -1196,7 +1193,12 @@ fn targeted_revision_cannot_save_a_long_source_copy_or_partial_version() {
         Err(WritingWorkflowError::InvalidResponse(_))
     ));
     assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().revision, 1);
-    assert_eq!(db.list_draft_versions(latest.project_id, ids[0]).unwrap().len(), 1);
+    assert_eq!(
+        db.list_draft_versions(latest.project_id, ids[0])
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
