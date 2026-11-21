@@ -296,6 +296,13 @@ impl StudyWritingContext {
 pub trait CurrentStudy {
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext>;
 
+    /// The real host requires approved research even for callers that bypass
+    /// generation and invoke the canonical SQLite sink directly. Offline
+    /// contract fixtures have no paid provider and remain explicitly separate.
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        false
+    }
+
     /// This must authenticate a completed, user-approved AnalyzeEvidence run,
     /// its Applied effect and source-content digests on EVERY invocation. The
     /// default fails closed: ordinary CurrentStudy cannot impersonate research.
