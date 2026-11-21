@@ -1354,9 +1354,7 @@ fn revision_sqlite_cas_rejects_forged_lineage_quality_and_review_history() {
     let mut fabricated_audit = legitimate.clone();
     fabricated_audit.audit.duration.words += 1;
     let mut fabricated_review = legitimate.clone();
-    fabricated_review
-        .review_findings
-        .push(scriptotar_ai::writing::ReviewFinding {
+    fabricated_review.review_findings.push(scriptotar_ai::writing::ReviewFinding {
             beat_id: Some("cta".into()),
             concern: "Invented model review".into(),
             recommendation: "Misleading advice".into(),
