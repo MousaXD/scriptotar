@@ -635,12 +635,12 @@ fn unique_resolved_evidence(
 ) -> HashMap<&str, Option<&ResolvedEvidence>> {
     let mut by_id = HashMap::new();
     for evidence in resolved {
-        if by_id
-            .insert(evidence.evidence_id.as_str(), Some(evidence))
-            .is_some()
-        {
-            by_id.insert(evidence.evidence_id.as_str(), None);
-        }
+        // Once an ID is ambiguous, it stays ambiguous even if a third or
+        // later duplicate appears. Never restore the last entry as trusted.
+        by_id
+            .entry(evidence.evidence_id.as_str())
+            .and_modify(|entry| *entry = None)
+            .or_insert(Some(evidence));
     }
     by_id
 }
@@ -1094,6 +1094,11 @@ impl AppServices {
         // Unknown IDs are deliberately retained as invalid citations so the
         // report records attempted forgery rather than silently dropping them.
         let known = unique_resolved_evidence(&ctx.evidence);
+        if known.values().any(Option::is_none) {
+            return Err(RepositoryError::Conflict(
+                "ambiguous resolved evidence identity in saved draft".into(),
+            ));
+        }
         // The extractor caps generated proposals. Refuse a saved manifest
         // that would silently omit declared claims from the returned report.
         if draft.claims.len() > 128 || draft.beats.len() > 128 {
@@ -1183,6 +1188,38 @@ mod tests {
     use super::*;
     use scriptotar_core::StudySourceKind;
     use scriptotar_core::{EvidenceInput, EvidenceReference, StudySource};
+
+    #[test]
+    fn repeated_evidence_identity_stays_ambiguous_after_three_or_more_occurrences() {
+        let evidence = ResolvedEvidence {
+            evidence_id: "repeated-source-id".into(),
+            source_id: Uuid::new_v4().to_string(),
+            project_id: Uuid::new_v4().to_string(),
+            study_id: Uuid::new_v4().to_string(),
+            source_version: None,
+            locator: ExactLocator {
+                locator: "untrusted".into(),
+                segment_id: None,
+                timestamp_millis: None,
+                modality: Modality::DocumentText,
+            },
+            excerpt: "an observation".into(),
+            kind: SourceKind::ManualNote,
+            state: EvidenceState::Untrusted,
+            relation: EvidenceRelation::Unassessed,
+            independent_origin: None,
+            collected_at_epoch: None,
+            expires_at_epoch: None,
+        };
+        for repeated_count in [2, 3, 4] {
+            let records = vec![evidence.clone(); repeated_count];
+            let matched = unique_resolved_evidence(&records);
+            assert!(matched.get("repeated-source-id").is_some_and(Option::is_none));
+        }
+        let once = [evidence];
+        let matched = unique_resolved_evidence(&once);
+        assert!(matched.get("repeated-source-id").is_some_and(Option::is_some));
+    }
 
     #[test]
     fn creator_observation_never_becomes_independently_reviewed() {
