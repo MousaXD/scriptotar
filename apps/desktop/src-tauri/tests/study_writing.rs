@@ -1215,7 +1215,7 @@ fn direct_sqlite_acceptance_rejects_forged_manual_edit_flags_without_partial_wri
     };
     assert!(matches!(
         sink.commit_three(&batch),
-        Err(WritingWorkflowError::Denied(_))
+        Err(WritingWorkflowError::InvalidContext(_))
     ));
     assert!(db
         .list_draft_summaries(plan.context.project_id, plan.context.study_id, 200)
