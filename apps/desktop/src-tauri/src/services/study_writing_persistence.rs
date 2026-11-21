@@ -651,6 +651,9 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
         {
             return Err(denied("empty or unchanged revision"));
         }
+        // Direct callers cannot evade the same source-copy barrier applied
+        // to model suggestions; this runs before any version/body mutation.
+        super::study_writing::reject_extended_source_copy(context, replacement)?;
         // The typed writing primitive clears claims/citations made stale by
         // changed narration, and preserves all other beats. Verify that exact
         // transformation rather than trusting arbitrary model-provided JSON.
