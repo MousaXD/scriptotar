@@ -1,0 +1,118 @@
+# Agent11 RESEARCH ONLY: determine if Node 22's experimental V8 fallback
+# protects the ACTUAL locked picomatch 4.0.7 parser (NOT a published fix).
+# Preserve original 19/10/12 hard contracts; no lock or production code edits.
+name: Agent11 Node22 V8 nonbacktracking fallback against picomatch (no release approval)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-node-v8-nonbacktracking-fallback-experiment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-node22-experimental-fallback:
+    name: Actual locked 4.0.7 + Node22 V8 flags (Linux, fail closed)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact Scriptotar research commit without token
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Node 22 original build runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch immutable original reviewed source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Fetch unchanged original 19-case ReDoS test corpus
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 292e408087d8b48bc012e52d1f3e7ab0c8b89650
+          path: .agent11-original-exploit
+          sparse-checkout: |
+            apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Immutable source and guard boundary BEFORE npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git -C .agent11-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Original locked npm dependency installation (NO patched parser)
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Prove flags work ONLY via direct Node CLI; run bounded bare-regexp positive control
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          if NODE_OPTIONS='--enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000' node -e 'console.log(1)' 2>node-options-error.txt; then
+            echo "Unexpected: V8 flags were accepted through NODE_OPTIONS; verify before assuming child process propagation"
+          else
+            echo "NODE_OPTIONS behavior: $(cat node-options-error.txt)"
+          fi
+          timeout 3s node --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000 -e 'const r=/(a+)+$/; const x="a".repeat(36)+"!";if(r.test(x))process.exit(1);console.log("V8-FALLBACK BARE-REGEX CONTROL PASS")'
+          test "$(node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version")" = "4.0.7"
+          node - <<'NODE'
+          const p=require('./apps/desktop-ui/node_modules/picomatch');
+          for(const pat of ['+([ab]|b)','+(@(+([ab])))','+(a*)']) {
+            const src=p.makeRe(pat).source;
+            console.log('ORIGINAL PICOMATCH GENERATED REGEXP:',JSON.stringify({pattern:pat,source:src,containsLookahead:src.includes('(?=')||src.includes('(?!')}));
+          }
+          NODE
+      - name: Actual original vulnerable picomatch patterns with command-line V8 flags and hard subprocess deadlines
+        shell: bash
+        run: |
+          set +e
+          failures=0
+          patterns=('+([ab]|b)' '+(a*)' '+(@(+([ab])))')
+          for pat in "${patterns[@]}"; do
+            if [ "$pat" = '+([ab]|b)' ]; then input="$(printf 'b%.0s' {1..36})/"; else input="$(printf 'a%.0s' {1..36})/"; fi
+            echo "SOURCE EXACT V8 FALLBACK PICOMATCH TEST: $pat"
+            timeout 2s node --enable-experimental-regexp-engine-on-excessive-backtracks --regexp-backtracks-before-fallback=1000 -e '
+              const pm=require("./apps/desktop-ui/node_modules/picomatch");
+              const pat=process.argv[1], input=process.argv[2];
+              const regex=pm.makeRe(pat);
+              console.log(JSON.stringify({pat,regex:regex.source,hasLookahead:regex.source.includes("(?=")||regex.source.includes("(?!")}));
+              const result=pm.isMatch(input,pat);
+              console.log(JSON.stringify({result,expected:false}));
+              if(result!==false)process.exitCode=3;
+            ' "$pat" "$input"
+            exitcode=$?
+            if [ "$exitcode" -ne 0 ]; then
+              echo "NO-GO CASE: pattern=$pat, bounded-child-exit=$exitcode (124 is timeout)"
+              failures=$((failures+1))
+            fi
+          done
+          set -e
+          echo "NODE22 V8 FALLBACK ACTUAL PICOMATCH: $failures/3 vulnerable original cases failed bounded isolated evaluation"
+          if [ "$failures" -ne 0 ]; then
+            echo "NO-GO: experimental V8 fallback is not a deployable general picomatch parser remediation"
+            exit 1
+          fi
+          echo "Only three finite examples pass; this would NOT prove safety of full parser or optional flags"

@@ -1,0 +1,155 @@
+# Agent 11: independent unchanged source-probe check of remaining upstream v4 proposals.
+# TEST-ONLY; NEVER merge or distribute patched npm source; release NO-GO.
+name: Agent11 unassessed upstream v4 picomatch parser PR277 (strict hard gate)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-picomatch-final-v4-upstream-proposals.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proposed-parser-evaluation:
+    name: Original unchanged security, matcher and native RegExp contracts (${{ matrix.os }}, upstream #${{ matrix.pr }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Prior #237/#238/#254 results remain immutable in #44788415580.
+          # New upstream #277 candidate; disposable-node_modules evaluation only against official locked 4.0.7.
+          - { pr: '277', sha: 'a2ac5967ed7e5547cea5aa031e9f7e81b8972511', os: 'ubuntu-22.04' }
+          - { pr: '277', sha: 'a2ac5967ed7e5547cea5aa031e9f7e81b8972511', os: 'windows-2022' }
+    steps:
+      - name: Checkout exact Scriptotar research SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up pinned Node 22 on both hosts
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check independent native RegExp test source identity and syntax
+        shell: bash
+        run: |
+          test "$(git hash-object tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs)" = "3c1d9b7fa860a8247f73566d7dfc0f5135a3a0c8"
+          node --check tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs
+      - name: Checkout pinned original untouched 19-case parser exploit corpus
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 292e408087d8b48bc012e52d1f3e7ab0c8b89650
+          path: .agent11-original-exploit
+          sparse-checkout: |
+            apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Checkout independent original trusted first-party source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Checkout v4 upstream PR original immutable HEAD, not mutable main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: micromatch/picomatch
+          ref: refs/pull/${{ matrix.pr }}/head
+          path: .agent11-upstream-v4
+          persist-credentials: false
+      - name: Verify source/pin identities and run reviewed guard BEFORE package scripts
+        shell: bash
+        env:
+          EXP_SOURCE: ${{ github.sha }}
+          EXPECT_UPSTREAM: ${{ matrix.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXP_SOURCE"
+          test "$(git -C .agent11-original-exploit rev-parse HEAD)" = "292e408087d8b48bc012e52d1f3e7ab0c8b89650"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git -C .agent11-upstream-v4 rev-parse HEAD)" = "$EXPECT_UPSTREAM"
+          test "$(git -C .agent11-upstream-v4 hash-object lib/parse.js)" = "a59932ccf6210970bf73514e30b3336a2adf13fa"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          test "$(git hash-object .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs)" = "e1d4f227c9ee0d4069c823dbd8b5fec711d67228"
+          test "$(git hash-object .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs)" = "5c746abd3caf414ba2c80be825d66983312236c6"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs)" = "c126c5de32a3bb5f1ff5c322185b8c3a16dde404"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs)" = "f4fa56c4075d02df2eb1fc34a463cdc7958c173c"
+          test "$(git hash-object tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs)" = "76b23ead7bd208cda1f3e38d39991f2962d15c07"
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install actual original exact-lock picomatch v4.0.7
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Preserve explicit original npm audit observation (not a parser fix)
+        shell: bash
+        working-directory: apps/desktop-ui
+        run: npm audit --audit-level=high
+      - name: Attach original immutable security corpus and run unchanged matcher baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          cp .agent11-original-exploit/apps/desktop-ui/scripts/probe-picomatch-redos.mjs apps/desktop-ui/scripts/probe-picomatch-redos.mjs
+          test "$(node -p "require('./apps/desktop-ui/node_modules/picomatch/package.json').version")" = "4.0.7"
+          node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs baseline
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs baseline
+      - name: Apply ONLY exact upstream parser to disposable runner node_modules (not package)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .agent11-upstream-v4/lib/parse.js
+          cp .agent11-upstream-v4/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo "Disposable experimental parser source only; no package publishing or production lock override"
+      - name: Execute ALL three original hard security and compatibility gates (fail closed)
+        shell: bash
+        run: |
+          set +e
+          node tests/defragmentation/security/agent11_picomatch_legacy_semantics.mjs candidate
+          matcher_exit=$?
+          (cd apps/desktop-ui && node scripts/probe-picomatch-redos.mjs --assert-patched --extended)
+          original19_exit=$?
+          node tests/defragmentation/security/agent11_picomatch_extended_adversarial.mjs
+          extended12_exit=$?
+          node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
+          differential_exit=$?
+          node tests/defragmentation/security/agent11_parser_native_regexp_contract.mjs
+          native_escape_exit=$?
+          set -e
+          echo "ORIGINAL 10-case matcher contract exit: $matcher_exit"
+          echo "IMMUTABLE original 19-case security exit: $original19_exit"
+          echo "Distinct expanded 12-case security exit: $extended12_exit"
+          echo "Original 4.0.7 180x84 matcher/capture differential exit: $differential_exit"
+          echo "Native makeRe/prototype/reconstructed RegExp contract exit: $native_escape_exit"
+          if [ "$matcher_exit" -ne 0 ] || [ "$original19_exit" -ne 0 ] || [ "$extended12_exit" -ne 0 ] || [ "$differential_exit" -ne 0 ] || [ "$native_escape_exit" -ne 0 ]; then
+            echo "NO-GO: upstream candidate failed at least one hard contract; do not merge or package"
+            exit 1
+          fi
+      - name: Only if ALL independent contracts pass, check project Svelte and TS
+        working-directory: apps/desktop-ui
+        shell: bash
+        run: npm run check
+      - name: Only if ALL independent contracts pass, run frontend unit tests
+        working-directory: apps/desktop-ui
+        shell: bash
+        run: npm test
+      - name: Only if ALL independent contracts pass, run production Vite frontend build
+        working-directory: apps/desktop-ui
+        shell: bash
+        run: npm run build

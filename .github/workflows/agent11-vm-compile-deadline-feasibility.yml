@@ -1,0 +1,74 @@
+# Agent11 separate original picomatch compile method timeout proof only.
+# Not a complete parser fix, not a release gate. Main-realm busy spin invoked
+# from a VM is executed in an OS-killable child to prove its deadline behavior.
+name: Agent11 VM compile/scan deadline feasibility (test-only NO-GO)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-vm-compile-deadline-feasibility.yml'
+      - 'tests/defragmentation/security/agent11_vm_compile_guard_candidate.cjs'
+      - 'tests/defragmentation/security/agent11_vm_compile_guard_eval.mjs'
+      - 'tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compiler-guard-source-exact:
+    name: Original 4.0.7 compile/scan API + external sync VM timeout (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - name: Checkout test-only source exact SHA without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set Node22 original toolchain runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout original immutable trusted source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Confirm reviewed source, exact lock and source trust before npm ci
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node --check tests/defragmentation/security/agent11_vm_compile_guard_candidate.cjs
+          node --check tests/defragmentation/security/agent11_vm_compile_guard_eval.mjs
+          node --check tests/defragmentation/security/agent11_vm_regex_wrapper_candidate.cjs
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+      - name: Install exact official original npm dependency tree, no overrides
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Execute bounded original compilation API and out-of-realm JS call proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tests/defragmentation/security/agent11_vm_compile_guard_eval.mjs
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+          echo 'Only experimental method calls bounded in a test process; no engine/container/resource guarantee.'

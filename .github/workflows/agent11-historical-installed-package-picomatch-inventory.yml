@@ -1,0 +1,164 @@
+# Agent11 historical installed-artifact INVENTORY ONLY, not a parser repair.
+# Original packages built by owner integration 50ed956...; do not re-label them
+# as packages built from the current or future integration branch HEAD.
+name: Agent11 historical installed-payload picomatch inventory (no release approval)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-historical-installed-package-picomatch-inventory.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-original-deb:
+    name: Original packaged Linux deb file inventory
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify original immutable workflow run points to reviewed integration source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860" --jq .head_sha)" = "50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860" --jq .conclusion)" = "success"
+          # Pin the IMMUTABLE artifact ID and GitHub post-upload digest, rather
+          # than trusting that a name-only lookup belongs to this original run.
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14629728341" --jq .workflow_run.id)" = "44736655860"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14629728341" --jq .digest)" = "sha256:7ea435e3fe916809129a28ad597878ba5bd58791c5df6fdb766c8bb03b5f9c2f"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44736655860/artifacts" --jq '.artifacts[] | select(.name == "scriptotar-linux-tauri") | .id')" = "14629728341"
+      - name: Download original Linux release package artifact by exact run and name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p original-linux-artifact
+          gh run download 44736655860 --repo "$GITHUB_REPOSITORY" --name scriptotar-linux-tauri --dir original-linux-artifact
+      - name: Verify embedded SHA256 manifests and enumerate original deb archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd original-linux-artifact
+          test -s SHA256SUMS.txt
+          test -s DEB-CONTENTS.txt
+          sha256sum --check SHA256SUMS.txt
+          mapfile -t debs < <(find . -maxdepth 1 -name 'Scriptotar-Next-*-amd64.deb' -type f -print)
+          test "${#debs[@]}" = 1
+          dpkg-deb --contents "${debs[0]}" > independently-enumerated-DEB-CONTENTS.txt
+          cmp DEB-CONTENTS.txt independently-enumerated-DEB-CONTENTS.txt
+          test "$(wc -l < independently-enumerated-DEB-CONTENTS.txt)" -gt 5
+          for required in transcription-runtime mcp-tools scriptotar-engine; do
+            grep -q "$required" independently-enumerated-DEB-CONTENTS.txt
+          done
+          if grep -Ein '(node_modules|picomatch|tinyglobby|/fdir([./[:space:]]|$))' independently-enumerated-DEB-CONTENTS.txt; then
+            echo 'REVIEW REQUIRED: Matcher/development-tool path exists in ORIGINAL deb archive' >&2
+            exit 1
+          fi
+          echo "PASS: $(wc -l < independently-enumerated-DEB-CONTENTS.txt) original deb entries; no matcher package path"
+          echo "SCOPE: original integration SHA 50ed956...; file PATH inventory only; not compiled code scan; vulnerable Vite build-time unchanged"
+      - name: Preserve inventory evidence only (not whole installer)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: agent11-original-deb-payload-inventory
+          path: |
+            original-linux-artifact/independently-enumerated-DEB-CONTENTS.txt
+            original-linux-artifact/SHA256SUMS.txt
+          retention-days: 7
+          if-no-files-found: warn
+
+  windows-original-nsis:
+    name: Original installed Windows NSIS file inventory
+    runs-on: windows-2022
+    timeout-minutes: 22
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify original immutable workflow run points to reviewed integration source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/44736655842" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Original Windows run metadata could not be fetched' }
+          if ($run.head_sha -ne '50ed95608fc742db4a7cf1bdd2ac04fa8c5457e6' -or $run.conclusion -ne 'success') {
+            throw 'Original Windows run is not the approved immutable source/build'
+          }
+          $artifact = gh api "repos/$env:GITHUB_REPOSITORY/actions/artifacts/14630097202" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $artifact.id -ne 14630097202 -or
+              $artifact.workflow_run.id -ne 44736655842 -or
+              $artifact.digest -ne 'sha256:cba3d855e84e11693299ac1025cd37ab92ad3f974699312d153cf7d1bfb10a67') {
+            throw 'Original Windows artifact immutable identity/digest mismatch'
+          }
+          $artifactList = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/44736655842/artifacts" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate original Windows artifacts' }
+          $named = @($artifactList.artifacts | Where-Object { $_.name -eq 'scriptotar-windows-tauri' })
+          if ($named.Count -ne 1 -or $named[0].id -ne 14630097202) {
+            throw 'Original Windows artifact name does not uniquely map to pinned immutable artifact ID'
+          }
+      - name: Download original Windows NSIS artifact by exact run and name
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force original-windows-artifact | Out-Null
+          gh run download 44736655842 --repo $env:GITHUB_REPOSITORY --name scriptotar-windows-tauri --dir original-windows-artifact
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub artifact download failed' }
+      - name: Verify original installer SHA256, perform genuine silent install and inspect filenames
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path 'original-windows-artifact').Path
+          $filename = 'Scriptotar-Next-1.4.1-x64-setup.exe'
+          $installer = Join-Path $root $filename
+          $checksumPath = Join-Path $root 'SHA256SUMS.txt'
+          if (-not (Test-Path -LiteralPath $installer) -or -not (Test-Path -LiteralPath $checksumPath)) {
+            throw 'Original installer or accompanying checksum missing'
+          }
+          $expected = ((Get-Content -LiteralPath $checksumPath) | Where-Object { $_ -match [regex]::Escape($filename) })
+          if (@($expected).Count -ne 1) { throw 'Ambiguous original SHA256SUMS manifest' }
+          $actualHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($expected.Trim() -ne "$actualHash  $filename") { throw 'Original installer checksum mismatch' }
+
+          $installDir = Join-Path $env:RUNNER_TEMP 'scriptotar-agent11-original-install-inventory'
+          if (Test-Path -LiteralPath $installDir) { throw 'Refusing to overwrite existing install target' }
+          $process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installDir") -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Original NSIS installer failed with exit $($process.ExitCode)" }
+          if (-not (Test-Path -LiteralPath $installDir -PathType Container)) {
+            throw 'NSIS installer returned success but did not create target'
+          }
+
+          $entries = @(Get-ChildItem -LiteralPath $installDir -Force -Recurse)
+          if ($entries.Count -lt 5) { throw 'Installed file inventory unexpectedly empty' }
+          $paths = @($entries | ForEach-Object {
+            $_.FullName.Substring($installDir.Length).TrimStart([char[]]@('\','/')).Replace('\','/')
+          })
+          $paths | Sort-Object | Set-Content -Encoding utf8 'agent11-NSIS-original-file-inventory.txt'
+          $bad = @($paths | Where-Object { $_ -match '(?i)(^|/)(node_modules|picomatch|tinyglobby|fdir)(/|\.|$)' })
+          if ($bad.Count -gt 0) {
+            Write-Host ($bad -join [Environment]::NewLine)
+            throw 'REVIEW REQUIRED: Matcher or development-tool path in the original installed NSIS payload'
+          }
+          foreach ($needed in @('transcription-runtime','mcp-tools','scriptotar-desktop.exe')) {
+            if (-not @($paths | Where-Object { $_ -like "*$needed*" }).Count) {
+              throw "Mandatory installed-app positive control missing: $needed"
+            }
+          }
+          Write-Host "PASS: $($entries.Count) original installed NSIS paths; no matcher package path"
+          Write-Host 'SCOPE: exact old integration SHA only, filename inventory NOT embedded binary/Javascript scan; no release approval'
+      - name: Preserve installed-file listing evidence only (not installer)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: agent11-original-nsis-payload-inventory
+          path: agent11-NSIS-original-file-inventory.txt
+          retention-days: 7
+          if-no-files-found: warn

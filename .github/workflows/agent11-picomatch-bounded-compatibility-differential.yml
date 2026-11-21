@@ -1,0 +1,84 @@
+# Agent11 test harness validation, not a parser fix. Uses baseline original npm
+# picomatch 4.0.7 and a source-pinned upstream candidate in disposable node_modules.
+name: Agent11 finite picomatch public API differential (#238 only; no parser release approval)
+
+on:
+  push:
+    branches:
+      - agent-11/p0-picomatch-candidate-evaluation-20261120
+    paths:
+      - '.github/workflows/agent11-picomatch-bounded-compatibility-differential.yml'
+      - 'tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-pinned-public-api-compatibility:
+    name: Preserve original matcher and capture semantics in bounded examples
+    runs-on: ubuntu-22.04
+    timeout-minutes: 14
+    steps:
+      - name: Checkout source at exact test SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set Node 22 runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Checkout independently reviewed immutable prebuild source guard
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: MousaXD/scriptotar
+          ref: 55ce3ac389b7e1fcab99b3a5acc84b526630af72
+          path: .agent11-trusted-guard
+          sparse-checkout: |
+            apps/desktop-ui/scripts/guard-vite-build-patterns.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Checkout upstream PR238 immutable parser source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: micromatch/picomatch
+          ref: refs/pull/238/head
+          path: .agent11-upstream-pr238
+          persist-credentials: false
+      - name: Verify immutable pins and guarded first-party source BEFORE npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git -C .agent11-trusted-guard rev-parse HEAD)" = "55ce3ac389b7e1fcab99b3a5acc84b526630af72"
+          test "$(git -C .agent11-upstream-pr238 rev-parse HEAD)" = "44f192261f312ddf236cb7bdc05d8f22663f98f9"
+          test "$(git hash-object apps/desktop-ui/package-lock.json)" = "eebc9228dd404f0b9f9bd55f2665ab3e00fe9dfa"
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --self-test
+          node .agent11-trusted-guard/apps/desktop-ui/scripts/guard-vite-build-patterns.mjs --workspace apps/desktop-ui
+          node --check tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs
+      - name: Install real original npm-locked parser 4.0.7
+        shell: bash
+        run: npm ci --prefix apps/desktop-ui
+      - name: Produce bounded original published 4.0.7 public API baseline
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs baseline
+      - name: Substitute only immutable PR238 lib/parse.js in disposable node_modules
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .agent11-upstream-pr238/lib/parse.js apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          node --check apps/desktop-ui/node_modules/picomatch/lib/parse.js
+          git diff --exit-code -- apps/desktop-ui/package.json apps/desktop-ui/package-lock.json
+      - name: Fail closed if limited public API matcher/capture behavior changed
+        shell: bash
+        run: node tests/defragmentation/security/agent11_picomatch_bounded_semantics_diff.mjs candidate
+      - name: Never promote this limited finite test to independent parser/release security approval
+        shell: bash
+        run: |
+          echo 'Finite short-input matcher API compatibility only. Complete 19/12 strict parser-security tests previously FAILED.'
+          echo 'Issue #129 OPEN; no reviewed patched tarball; not a release gate.'
