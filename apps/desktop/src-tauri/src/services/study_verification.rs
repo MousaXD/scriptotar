@@ -1369,8 +1369,7 @@ mod tests {
         // Exercise the exact production gateway observation representation,
         // the compatible historical raw UUID, and a same-ID fake section.
         let mut gateway_observation = candidate.lineage[0].evidence[0].clone();
-        gateway_observation.excerpt =
-            format!("Unverified user observation: {}", cited.input.claim);
+        gateway_observation.excerpt = format!("Unverified user observation: {}", cited.input.claim);
         gateway_observation.locator.collected_at = Some(cited.created_at.clone());
         gateway_observation.kind = EvidenceKind::CreativeObservation;
         assert!(exact_observation_lineage(
