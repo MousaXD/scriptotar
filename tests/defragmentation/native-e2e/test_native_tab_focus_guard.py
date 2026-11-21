@@ -51,14 +51,14 @@ class KeyboardTransport:
         self.commands.append(args)
         action = args[1] if len(args) > 1 else ""
         if action == "search":
-            return subprocess.CompletedProcess(args, 0, "88\\n", "")
+            return subprocess.CompletedProcess(args, 0, "88\n", "")
         if action == "getwindowname":
             return subprocess.CompletedProcess(args, 0, "Scriptotar", "")
         if action == "windowactivate":
             return subprocess.CompletedProcess(args, 0, "", "")
         if action in ("getactivewindow", "getwindowfocus"):
             owned = self.tabs < self.focus_after_tabs
-            return subprocess.CompletedProcess(args, 0, "88\\n" if owned else "999\\n", "")
+            return subprocess.CompletedProcess(args, 0, "88\n" if owned else "999\n", "")
         if action == "key":
             if args[-1] != "Tab":
                 raise AssertionError("Unexpected keyboard input")
@@ -70,10 +70,10 @@ class KeyboardTransport:
 class NativeTabInputGuardTests(unittest.TestCase):
     def run_probe(self, transport, count=3):
         report = {}
-        with patch.object(linux_webkit, "command", side_effect=transport), \\
-             patch.object(linux_webkit.time, "sleep", return_value=None), \\
-             patch.object(linux_webkit.time, "monotonic",
-                          side_effect=iter([0, 4, 5, 6, 7, 8, 9, 10, 11, 12])):
+        with (patch.object(linux_webkit, "command", side_effect=transport),
+              patch.object(linux_webkit.time, "sleep", return_value=None),
+              patch.object(linux_webkit.time, "monotonic",
+                           side_effect=iter([0, 4, 5, 6, 7, 8, 9, 10, 11, 12]))):
             linux_webkit.capture_native_tab_order(
                 report, FakeInstalledAx(), "arabic_reopened_native_tab_order", count
             )
