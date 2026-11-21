@@ -118,7 +118,13 @@
       new Set(ids).size === ids.length &&
       step.requires_approval === true &&
       step.estimate?.tokens === 0 &&
-      step.estimate?.cost_microusd === 0;
+      step.estimate?.cost_microusd === 0 &&
+      (run.state !== 'completed' ||
+        (run.steps[0].state === 'completed' && run.steps[0].approved === true &&
+          typeof run.steps[0].output?.artifact_id === 'string' &&
+          !!run.steps[0].output?.artifact_id &&
+          run.steps[0].output.tokens === 0 &&
+          run.steps[0].output.cost_microusd === 0));
   }
 
   function hasSelectedSources(): boolean {
@@ -188,7 +194,12 @@
       const prior = selectedIds.filter((id) => available.has(id));
       selectedIds = (prior.length ? prior : attached.filter((source) => source.available)
         .slice(0, 8).map((source) => source.id));
-      activeRun = runs.find(scoped) ?? null;
+      // The returned history is newest-first. Do not silently skip a
+      // malformed newer run and reopen an unrelated older approval instead.
+      if (runs.length > 25 || (runs[0] && !scoped(runs[0]))) {
+        throw new Error(t.unavailable);
+      }
+      activeRun = runs[0] ?? null;
       if (activeRun?.state === 'awaiting_approval') {
         // The pending approval is for the saved immutable run selection, not a
         // freshly auto-selected set of sources after reopening Studio.
