@@ -438,7 +438,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         // This catches edited transcript text, changed observations, withdrawn
         // sources, revised briefs and project switches rather than trusting a
         // stale serialized payload or the Study revision alone.
-        if self.current.load(project, study)? != batch.context {
+        if self.current.load_for_context(&batch.context)? != batch.context {
             return Err(WritingWorkflowError::StaleContext);
         }
 
