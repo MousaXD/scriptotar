@@ -167,7 +167,32 @@ describe('jobs workspace', () => {
     expect(screen.getByRole('textbox', { name: 'Media URL' })).toHaveValue('https://example.com/video');
     await fireEvent.drop(target, { dataTransfer: { getData: () => '', files: [{ name: 'untrusted.mp4' }] } });
     expect(onEnqueueLocal).not.toHaveBeenCalled();
-    expect(screen.getByRole('alert')).toHaveTextContent('A dropped filename is not a usable file path');
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('A dropped filename is not a usable file path');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it('announces Arabic filename-only drop denials without submitting an untrusted file', async () => {
+    setLocale('ar');
+    const { container, onEnqueueLocal } = setup();
+    const target = container.querySelector('.ingestion-workspace') as HTMLElement;
+    await fireEvent.drop(target, { dataTransfer: { getData: () => '', files: [{ name: 'وهمي.mp4' }] } });
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('اسم الملف وحده ليس مساراً صالحاً.');
+    expect(alert).toHaveAttribute('dir', 'auto');
+    await waitFor(() => expect(alert).toHaveFocus());
+    expect(onEnqueueLocal).not.toHaveBeenCalled();
+  });
+
+  it('keeps Arabic queue filtering and paging actions localized', async () => {
+    setLocale('ar');
+    const { container } = setup(Array.from({ length: 65 }, (_, i) => job(String(i), 'completed')));
+    await fireEvent.click(screen.getByRole('button', { name: /تحتاج انتباهاً/ }));
+    expect(screen.getByText('لا توجد مهام بهذه الحالة')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'عرض كل المهام' }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(30);
+    await fireEvent.click(screen.getByRole('button', { name: /عرض المزيد من المهام/ }));
+    expect(container.querySelectorAll('[data-testid^="job-"]')).toHaveLength(60);
   });
 
 
