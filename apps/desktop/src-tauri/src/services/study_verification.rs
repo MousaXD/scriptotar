@@ -258,6 +258,48 @@ fn from_study_evidence(
     }
 }
 
+/// Stable, domain-separated identity for exactly the currently observed Study,
+/// citations, source-access flags, source content and draft-source links.
+/// This is a local snapshot fingerprint, not a publisher signature or truth
+/// certificate. Canonical sorting avoids storage query-order dependencies.
+fn evidence_snapshot_digest(
+    study: &scriptotar_core::ContentStudy,
+    sources: &[scriptotar_core::StudySource],
+    references: &[scriptotar_core::EvidenceReference],
+    bindings: &HashMap<Uuid, HostSourceBinding>,
+    links: &HashSet<Uuid>,
+) -> RepositoryResult<String> {
+    let mut ordered_sources = sources.iter().collect::<Vec<_>>();
+    ordered_sources.sort_by_key(|source| source.id);
+    let mut ordered_references = references.iter().collect::<Vec<_>>();
+    ordered_references.sort_by_key(|reference| reference.id);
+    let source_versions = ordered_sources
+        .iter()
+        .map(|source| {
+            (
+                source.id,
+                bindings
+                    .get(&source.id)
+                    .and_then(|binding| binding.content_sha256.as_deref()),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut ordered_links = links.iter().copied().collect::<Vec<_>>();
+    ordered_links.sort();
+    let payload = serde_json::to_vec(&(
+        study,
+        ordered_sources,
+        ordered_references,
+        source_versions,
+        ordered_links,
+    ))
+    .map_err(|error| RepositoryError::Storage(error.to_string()))?;
+    Ok(verification::canonical_source_sha256(&[
+        b"scriptotar/study-evidence-snapshot/v1",
+        &payload,
+    ]))
+}
+
 /// The version ID is part of this local, domain-separated snapshot digest.
 /// It proves equality of saved bytes, not independent factual correctness.
 fn saved_version_digest(
@@ -457,12 +499,87 @@ fn source_attribution(state: EvidenceState) -> SourceAttribution {
     }
 }
 
+/// Unsupported script portions are exposed rather than silently treated as
+/// covered by a few structured claim annotations. These are candidate text
+/// regions, not an NLP-generated inventory of every factual assertion.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UnassessedPortionKind {
+    Narration,
+    OnScreenText,
+    ShotSuggestion,
+    CallToAction,
+    Caption,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UnassessedDraftPortion {
+    pub beat_id: Option<String>,
+    pub kind: UnassessedPortionKind,
+    pub preview: String,
+}
+
+fn unassessed_draft_portions(
+    draft: &writing::ScriptDraft,
+) -> (Vec<UnassessedDraftPortion>, usize) {
+    const MAX_PORTIONS: usize = 128;
+    let mut portions = Vec::new();
+    let mut omitted = 0;
+    let mut record = |beat_id: Option<&str>, kind, text: &str| {
+        if text.trim().is_empty() {
+            return;
+        }
+        if portions.len() == MAX_PORTIONS {
+            omitted += 1;
+        } else {
+            portions.push(UnassessedDraftPortion {
+                beat_id: beat_id.map(str::to_owned),
+                kind,
+                preview: text.chars().take(240).collect(),
+            });
+        }
+    };
+    for beat in &draft.beats {
+        record(
+            Some(&beat.id),
+            UnassessedPortionKind::Narration,
+            &beat.narration,
+        );
+        if let Some(on_screen) = &beat.on_screen_text {
+            record(
+                Some(&beat.id),
+                UnassessedPortionKind::OnScreenText,
+                on_screen,
+            );
+        }
+        for shot in &beat.shots {
+            record(
+                Some(&beat.id),
+                UnassessedPortionKind::ShotSuggestion,
+                &shot.visual,
+            );
+        }
+    }
+    if let Some(cta) = &draft.cta {
+        record(None, UnassessedPortionKind::CallToAction, cta);
+    }
+    if let Some(caption) = &draft.caption {
+        record(None, UnassessedPortionKind::Caption, caption);
+    }
+    (portions, omitted)
+}
+
 /// No part of this read-only result constitutes permission to publish.
 #[derive(Debug, Clone, Serialize)]
 pub struct SavedDraftVerification {
     pub draft_version_id: String,
     pub draft_version_sha256: String,
+    /// The exact Study/evidence/source bytes and access-state snapshot used.
+    pub evidence_snapshot_sha256: String,
     pub claim_sources: Vec<ClaimSourceNavigation>,
+    /// Script text not independently inventoried or certified by claim IDs.
+    pub unassessed_portions: Vec<UnassessedDraftPortion>,
+    pub omitted_unassessed_portions: usize,
     pub report: VerificationReport,
 }
 
@@ -610,7 +727,11 @@ impl AppServices {
                 ));
             }
             for item in &line.evidence {
-                if !saved_lineage_id_matches_source(&item.id, source, &evidence_source_map) {
+                let locator_source = Uuid::parse_str(&item.locator.source_id).ok();
+                if !saved_lineage_id_matches_source(&item.id, source, &evidence_source_map)
+                    || (locator_source != Some(source.id)
+                        && locator_source != source.reference_id)
+                {
                     return Err(RepositoryError::Conflict(
                         "saved claim evidence is attributed to the wrong source".into(),
                     ));
@@ -818,10 +939,22 @@ impl AppServices {
                 })
             })
             .collect();
+        let evidence_snapshot_sha256 = evidence_snapshot_digest(
+            &study,
+            &sources,
+            &references,
+            &source_bindings,
+            &linked_sources,
+        )?;
+        let (unassessed_portions, omitted_unassessed_portions) =
+            unassessed_draft_portions(draft);
         let result = SavedDraftVerification {
             draft_version_id: saved_version.id.to_string(),
             draft_version_sha256: saved_version_digest(project_id, study_id, &saved_version),
+            evidence_snapshot_sha256,
             claim_sources,
+            unassessed_portions,
+            omitted_unassessed_portions,
             report: verification::verify_claims(&ctx, &claims),
         };
         snapshot
