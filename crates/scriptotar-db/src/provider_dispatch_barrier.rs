@@ -319,9 +319,8 @@ impl SqliteStore {
         let (run, step, key, attempt, provider, wire) = owner.ok_or_else(|| {
             RepositoryError::Conflict("provider dispatch barrier token is not current".into())
         })?;
-        if let (Some(run), Some(step), Some(key), Some(attempt), Some(provider), Some(wire)) =
-            (run, step, key, attempt, provider, wire)
-        {
+        match (run, step, key, attempt, provider, wire) {
+            (Some(run), Some(step), Some(key), Some(attempt), Some(provider), Some(wire)) => {
             let outcome: Option<(String, Option<String>, Option<String>)> = tx
                 .query_row(
                     "SELECT status,receipt_id,reconciliation_id
@@ -356,6 +355,13 @@ impl SqliteStore {
             if !safe {
                 return Err(RepositoryError::Conflict(
                     "unresolved or unauthenticated provider attempt retains scope freeze".into(),
+                ));
+            }
+            }
+            (None, None, None, None, None, None) => {}
+            _ => {
+                return Err(RepositoryError::Conflict(
+                    "partially missing provider effect ownership cannot be released".into(),
                 ));
             }
         }
