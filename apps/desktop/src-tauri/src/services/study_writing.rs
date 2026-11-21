@@ -676,11 +676,14 @@ pub(super) fn enforce_candidate_originality(
         for beat in &candidate.angle.outline {
             generated_text.push(beat.intent.as_str());
         }
-        if generated_text.iter().any(|text| {
-            originality_words(text)
-                .windows(SOURCE_WINDOW)
-                .any(|window| source_windows.contains(window))
-        }) {
+        // Check across visible field boundaries as well. Splitting a
+        // transcript passage into a short caption and an on-screen label
+        // must not defeat the 12-word verbatim-copy threshold.
+        let visible_words = originality_words(&generated_text.join(" "));
+        if visible_words
+            .windows(SOURCE_WINDOW)
+            .any(|window| source_windows.contains(window))
+        {
             return Err(WritingWorkflowError::InvalidResponse(
                 "script reproduces an extended source passage".into(),
             ));
