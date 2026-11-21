@@ -302,7 +302,8 @@
 
   @media (max-width: 1000px) {
     .settings-layout { grid-template-columns: 1fr; }
-    .settings-nav { position: static; display: flex; gap: 4px; overflow-x: auto; }
+    /* A clipped horizontal strip hid the last EN/AR Settings section at 760px. */
+    .settings-nav { position: static; display: flex; flex-wrap: wrap; gap: 4px; overflow-x: visible; }
     .settings-nav-title { display: none; }
     .settings-nav a { flex: 0 0 auto; border: 1px solid var(--border); background: var(--surface); }
   }
