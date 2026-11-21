@@ -20,10 +20,10 @@ use scriptotar_ai::{
 use serde_json::json;
 use study_writing::{
     apply_reviewed_beat_revision, copy_angles_prompt, export_candidate, generate_three,
-    prepare_three, AtomicCandidateStore, CurrentStudy, DurablePermissionBoundary, GeneratedBatch,
-    ApprovedResearch, ApprovedResearchSource, GenerationPlan, SelectedWritingSource,
-    StepAdmission, StopSignal, StudyWritingContext,
-    WriteResult, WritingTextProvider, WritingWorkflowError,
+    prepare_three, ApprovedResearch, ApprovedResearchSource, AtomicCandidateStore, CurrentStudy,
+    DurablePermissionBoundary, GeneratedBatch, GenerationPlan, SelectedWritingSource,
+    StepAdmission, StopSignal, StudyWritingContext, WriteResult, WritingTextProvider,
+    WritingWorkflowError,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -268,7 +268,10 @@ impl CurrentStudy for MutableStudy {
         artifact_id: Uuid,
     ) -> WriteResult<StudyWritingContext> {
         let ctx = self.load(project_id, study_id)?;
-        if ctx.approved_research.as_ref().map(|research| research.artifact_id)
+        if ctx
+            .approved_research
+            .as_ref()
+            .map(|research| research.artifact_id)
             != Some(artifact_id)
         {
             return Err(WritingWorkflowError::StaleContext);
@@ -437,13 +440,21 @@ fn changing_approved_source_content_after_angles_blocks_remaining_paid_steps() {
     let changed = current.0.clone();
     provider.on_call = Some(Box::new(move |count| {
         if count == 1 {
-            changed.borrow_mut().approved_research.as_mut().unwrap().sources[0]
+            changed
+                .borrow_mut()
+                .approved_research
+                .as_mut()
+                .unwrap()
+                .sources[0]
                 .origin_sha256 = "f".repeat(64);
         }
     }));
     let mut gate = FixtureBoundary::new();
     let temp = TempDir::new().unwrap();
-    let mut sink = SqlFixtureSink::open(&temp.path().join("research-stale.sqlite"), current.0.clone());
+    let mut sink = SqlFixtureSink::open(
+        &temp.path().join("research-stale.sqlite"),
+        current.0.clone(),
+    );
     assert!(matches!(
         generate_three(
             &plan,
