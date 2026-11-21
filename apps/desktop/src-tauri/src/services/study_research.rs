@@ -699,13 +699,7 @@ fn checked_report_envelope(
     // An artifact file is mutable local data, not an authority for evidence.
     // Regenerate its deterministic contents from currently authorized sources
     // so edited JSON cannot inject fabricated claims or citations.
-    let (_, rebuilt) = inspect_selected(
-        services,
-        project,
-        study,
-        &ids,
-        saved.report.analyzed_at,
-    )?;
+    let (_, rebuilt) = inspect_selected(services, project, study, &ids, saved.report.analyzed_at)?;
     if rebuilt != saved.report {
         return Err(RepositoryError::Conflict(
             "research artifact does not match canonical source material".into(),
