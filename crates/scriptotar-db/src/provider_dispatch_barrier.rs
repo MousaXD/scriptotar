@@ -334,6 +334,11 @@ impl SqliteStore {
         let (run, step, key, attempt, provider, wire) = owner.ok_or_else(|| {
             RepositoryError::Conflict("provider dispatch barrier token is not current".into())
         })?;
+        // A normal host abort before the durable DISPATCHED CAS may safely
+        // cancel this exact first attempt while releasing its barrier. The
+        // DELETE + both v10/v8 updates are one IMMEDIATE transaction: no
+        // independent writer sees a window with an unlocked RESERVED effect.
+        let mut pre_send_abort: Option<(String, String, String, i64)> = None;
         match (run, step, key, attempt, provider, wire) {
             (Some(run), Some(step), Some(key), Some(attempt), Some(provider), Some(wire)) => {
                 let outcome: Option<(String, Option<String>, Option<String>)> = tx
@@ -350,7 +355,22 @@ impl SqliteStore {
                 let safe = match outcome {
                     // No successful DISPATCHED CAS: this bound attempt cannot
                     // have made a provider request through the certified path.
-                    Some((status, _, _)) if status == "reserved" => true,
+                    Some((status, _, _)) if status == "reserved" => {
+                        // Only an original never-dispatched attempt can be
+                        // closed here. A later retry has earlier billed history
+                        // and requires independent durable recovery.
+                        if attempt != 1 {
+                            false
+                        } else {
+                            pre_send_abort = Some((
+                                key.clone(),
+                                run.clone(),
+                                step.clone(),
+                                attempt,
+                            ));
+                            true
+                        }
+                    },
                     // A terminal charge has a durable provider receipt; a
                     // certified nonexecution/cancellation has provider evidence.
                     Some((status, receipt, _))
@@ -391,6 +411,40 @@ impl SqliteStore {
             return Err(RepositoryError::Conflict(
                 "provider dispatch barrier did not match owner token".into(),
             ));
+        }
+        if let Some((key, run, step, attempt)) = pre_send_abort {
+            let now = now_rfc3339();
+            let cancelled = tx
+                .execute(
+                    "UPDATE agent_external_effects
+                     SET status='cancelled',cancel_requested=1,
+                         revision=revision+1,updated_at=?1
+                     WHERE idempotency_key=?2 AND run_id=?3 AND step_id=?4
+                       AND attempt=?5 AND status='reserved' AND cancel_requested=0",
+                    params![now, key, run, step, attempt],
+                )
+                .map_err(storage_error)?;
+            if cancelled != 1 {
+                return Err(RepositoryError::Conflict(
+                    "provider reservation changed before safe pre-send cancellation".into(),
+                ));
+            }
+            // The original v8 claim must also become terminal in the SAME
+            // commit; otherwise checkpoint recovery could misread an orphan.
+            let legacy = tx
+                .execute(
+                    "UPDATE agent_effects
+                     SET status='not_applied',revision=revision+1,updated_at=?1
+                     WHERE idempotency_key=?2 AND run_id=?3 AND step_id=?4
+                       AND status='reserved'",
+                    params![now, key, run, step],
+                )
+                .map_err(storage_error)?;
+            if legacy != 1 {
+                return Err(RepositoryError::Conflict(
+                    "v8 durable claim changed before safe pre-send cancellation".into(),
+                ));
+            }
         }
         tx.commit().map_err(storage_error)
     }
