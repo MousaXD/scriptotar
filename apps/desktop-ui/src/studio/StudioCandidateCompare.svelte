@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import { locale } from '../i18n';
   import type { ContentStudy, DraftCandidate, StudioGateway } from './contract';
+  import { sameRefs } from './selection';
   import { workflowStrings } from './workflowStrings';
 
   export let study: ContentStudy | null = null;
@@ -69,10 +70,13 @@
       }
       const result = await Promise.all(selected.map(async candidate => {
         const item = await gateway.getStudy(projectId, current.id, candidate.id);
-        if (item.id !== current.id || item.projectId !== projectId ||
+        if (!item || item.id !== current.id || item.projectId !== projectId ||
             item.revision !== current.revision ||
+            // A returned candidate body must use exactly the Study attachments
+            // whose saved revision the user chose, not a switched source set.
+            !Array.isArray(item.sources) || !sameRefs(item.sources, current.sources) ||
             item.draftId !== candidate.id || item.draftRevision !== candidate.revision ||
-            !item.drafts?.some(d => d.id === candidate.id)) {
+            !item.drafts?.some(d => d.id === candidate.id && d.revision === candidate.revision)) {
           throw new Error(t.comparisonError);
         }
         return { candidate, content: item.draft, revision: item.draftRevision };
