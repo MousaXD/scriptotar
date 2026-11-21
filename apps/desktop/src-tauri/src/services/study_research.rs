@@ -563,7 +563,24 @@ fn write_envelope(services: &AppServices, artifact_id: Uuid, data: &[u8]) -> Rep
         let mut handle = options.open(&temporary).map_err(|_| storage())?;
         handle.write_all(data).map_err(|_| storage())?;
         handle.sync_all().map_err(|_| storage())?;
-        fs::rename(&temporary, &path).map_err(|_| storage())?;
+        drop(handle);
+        // An existence check followed by rename can replace another process's
+        // completed artifact on Unix. Publish through a same-directory hard
+        // link instead: creation is atomic and fails if the ID already exists.
+        // On a same-byte racing publication, make the existing link durable
+        // before its caller is allowed to record an Applied receipt.
+        match fs::hard_link(&temporary, &path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if read_bounded_report_file(&path)? != data {
+                    return Err(RepositoryError::Conflict(
+                        "research artifact ID already exists".into(),
+                    ));
+                }
+            }
+            Err(_) => return Err(storage()),
+        }
+        fs::remove_file(&temporary).map_err(|_| storage())?;
         #[cfg(unix)]
         {
             // Make the directory entry durable before recording the SQLite
@@ -1704,6 +1721,56 @@ mod tests {
             Some(artifact.to_string().as_str())
         );
         assert!(read_study_research_artifact(&restarted, Uuid::new_v4(), study, artifact).is_err());
+    }
+
+    #[test]
+    fn concurrent_report_publication_is_atomic_and_never_replaces_a_winner() {
+        use std::sync::{Arc, Barrier};
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        for _ in 0..8 {
+            let artifact = Uuid::new_v4();
+            let left_service = services.clone();
+            let right_service = services.clone();
+            let barrier = Arc::new(Barrier::new(3));
+            let left_gate = Arc::clone(&barrier);
+            let right_gate = Arc::clone(&barrier);
+            let left = std::thread::spawn(move || {
+                left_gate.wait();
+                write_envelope(&left_service, artifact, b"left report bytes")
+            });
+            let right = std::thread::spawn(move || {
+                right_gate.wait();
+                write_envelope(&right_service, artifact, b"right report bytes")
+            });
+            barrier.wait();
+            let left_result = left.join().unwrap();
+            let right_result = right.join().unwrap();
+            assert_ne!(
+                left_result.is_ok(),
+                right_result.is_ok(),
+                "exactly one different-byte publication may win"
+            );
+            let (winner, loser) = if left_result.is_ok() {
+                (b"left report bytes".as_slice(), b"right report bytes".as_slice())
+            } else {
+                (b"right report bytes".as_slice(), b"left report bytes".as_slice())
+            };
+            let path = artifact_path(&services, artifact).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), winner);
+            assert!(write_envelope(&services, artifact, winner).is_ok());
+            assert!(write_envelope(&services, artifact, loser).is_err());
+            assert_eq!(fs::read(&path).unwrap(), winner);
+            let pending = fs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|item| {
+                    item.path().extension().is_some_and(|ext| ext == "pending")
+                })
+                .count();
+            assert_eq!(pending, 0, "do not strand pending artifacts");
+        }
     }
 
     #[test]
