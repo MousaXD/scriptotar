@@ -1892,7 +1892,12 @@ mod tests {
         assert_eq!(provider.calls, 0);
         permit.approved = true;
         let stored = services
-            .generate_three_offline_fixture_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .generate_three_offline_fixture_with_boundary(
+                &plan,
+                &mut permit,
+                &mut provider,
+                &NeverStop,
+            )
             .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
