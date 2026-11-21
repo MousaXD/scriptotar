@@ -1562,13 +1562,9 @@ fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
 
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
     let shared = "The opening describes how neighbors discover an old notebook at the town square and then follow its detailed instructions to plan a safe walking route together";
+    let hooks = ["Consider trees", "Explore maps", "Observe traffic"];
     for (index, candidate) in batch.candidates.iter_mut().enumerate() {
-        candidate.draft.beats[0].narration = [
-            "Consider trees",
-            "Explore maps",
-            "Observe traffic",
-        ][index]
-            .into();
+        candidate.draft.beats[0].narration = hooks[index].into();
         candidate.draft.beats[1].narration = shared.into();
     }
     assert!(matches!(
@@ -1816,10 +1812,7 @@ fn ungrounded_candidate_and_single_source_batch_cannot_be_committed() {
                 .unwrap();
     }
     assert!(matches!(
-        study_writing::enforce_candidate_originality(
-            &only_one.context,
-            &only_one.candidates
-        ),
+        study_writing::enforce_candidate_originality(&only_one.context, &only_one.candidates),
         Err(WritingWorkflowError::InvalidResponse(_))
     ));
     let mut second_sink = CanonicalSqliteCandidateStore {
