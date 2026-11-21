@@ -100,7 +100,12 @@ jobs:
             esac
             test "$(git -C .candidate show "$reviewed:$wf" | grep -Fc 'reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0')" = "$occurrences"
             test "$(grep -Fc 'reviewed=b6ec7b914b55007417e8191695e2213d4117a61c' ".candidate/$wf")" = "$occurrences"
-            git -C .candidate show "$reviewed:$wf" | sed 's/reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0/reviewed=b6ec7b914b55007417e8191695e2213d4117a61c/g' | cmp - ".candidate/$wf"
+            # Git checkout on Windows uses CRLF; compare canonical Git blobs
+            # and separately authenticate normalized worktree bytes.
+            expected_blob="$(git -C .candidate show "$reviewed:$wf" | sed 's/reviewed=e48bfc6848000a4c2b49cf26b8d68da504172df0/reviewed=b6ec7b914b55007417e8191695e2213d4117a61c/g' | git hash-object --stdin)"
+            actual_blob="$(git -C .candidate rev-parse "HEAD:$wf")"
+            test "$expected_blob" = "$actual_blob"
+            test "$(git -C .candidate hash-object --path="$wf" "$wf")" = "$actual_blob"
             grep -Fq 'persist-credentials: false' ".candidate/$wf"
             grep -Fq '55ce3ac389b7e1fcab99b3a5acc84b526630af72' ".candidate/$wf"
           done
