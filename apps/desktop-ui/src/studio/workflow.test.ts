@@ -176,13 +176,19 @@ describe('saved candidate comparison', () => {
     expect(choose).toHaveBeenCalledWith('d-1');
   });
 
-  it('labels unsaved edits without inserting them into the saved comparison', async () => {
-    const { gateway } = comparisonGateway();
+  it('blocks saved comparison while Study edits are unsaved', async () => {
+    const { gateway, getStudy } = comparisonGateway();
     render(StudioCandidateCompare, { props: {
       projectId: 'p1', study: fixture(), gateway, pendingEdits: true
     } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Compare script candidates (3)' }));
-    expect(await screen.findByText('Unsaved edits are not part of this saved comparison.')).toBeInTheDocument();
+    const compare = screen.getByRole('button', { name: 'Compare script candidates (3)' });
+    expect(compare).toBeDisabled();
+    expect(compare).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Save Study changes before comparing saved script candidates.');
+    await fireEvent.click(compare);
+    expect(getStudy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Edit this candidate' })).not.toBeInTheDocument();
     expect(screen.queryByText('Unsaved local draft')).not.toBeInTheDocument();
   });
 
