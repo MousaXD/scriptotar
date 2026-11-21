@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { locale } from '../i18n';
   import Select from '../components/ui/Select.svelte';
   import type { ResearchItem, WatchlistOperationalState, WatchlistStatus } from '../types';
@@ -40,6 +41,7 @@
   let queuing = false;
   let status = '';
   let statusError = false;
+  let statusElement: HTMLParagraphElement | undefined;
 
   $: isArabic = $locale === 'ar';
   $: numberLocale = isArabic ? 'ar' : 'en';
@@ -127,6 +129,14 @@
     page = 1;
   }
 
+  async function focusActionError() {
+    // A failed scan, watchlist save, or queue batch can originate from a
+    // keyboard-activated button. Focus the existing diagnostic after render,
+    // without hiding or rewriting the backend error.
+    await tick();
+    if (statusError && status) statusElement?.focus();
+  }
+
   async function scan() {
     if (!profileUrl.trim() || scanning || saving) return;
     scanning = true;
@@ -138,6 +148,7 @@
     } catch (error) {
       statusError = true;
       status = (isArabic ? 'تعذر فحص الملف: ' : 'Research scan unavailable: ') + (error instanceof Error ? error.message : String(error));
+      await focusActionError();
     } finally {
       scanning = false;
     }
@@ -154,6 +165,7 @@
     } catch (error) {
       statusError = true;
       status = (isArabic ? 'تعذر حفظ قائمة المتابعة: ' : 'Watchlist save failed: ') + (error instanceof Error ? error.message : String(error));
+      await focusActionError();
     } finally {
       saving = false;
     }
@@ -181,6 +193,7 @@
       const detail = error instanceof Error ? error.message : String(error);
       status = (isArabic ? 'تعذر الإضافة إلى الطابور: ' : 'Queue unavailable: ') + detail
         + (completed ? (isArabic ? ' (' + completed + ' أُرسلت؛ وبقي التحديد المتبقي)' : ' (' + completed + ' submitted; remaining selection preserved)') : '');
+      await focusActionError();
     } finally {
       queuing = false;
     }
@@ -208,7 +221,7 @@
   <button type="button" class="button secondary" disabled={scanning || saving || !profileUrl.trim()} on:click={save}>{saving ? (isArabic ? 'جارٍ الحفظ…' : 'Saving…') : (isArabic ? 'حفظ قائمة المتابعة' : 'Save watchlist')}</button>
 </form>
 
-{#if status}<p class="status-copy action-status" role={statusError ? 'alert' : 'status'}>{status}</p>{/if}
+{#if status}<p class="status-copy action-status" role={statusError ? 'alert' : 'status'} tabindex={statusError ? -1 : undefined} dir="auto" bind:this={statusElement}>{status}</p>{/if}
 
 <section class="panel research-panel" aria-label={isArabic ? 'نتائج البحث' : 'Research results'}>
   <div class="filter-bar">
