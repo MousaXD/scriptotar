@@ -20,9 +20,10 @@ use scriptotar_ai::{
 use serde_json::json;
 use study_writing::{
     apply_reviewed_beat_revision, copy_angles_prompt, export_candidate, generate_three,
-    prepare_three, AtomicCandidateStore, CurrentStudy, DurablePermissionBoundary, GeneratedBatch,
-    GenerationPlan, SelectedWritingSource, StepAdmission, StopSignal, StudyWritingContext,
-    WriteResult, WritingTextProvider, WritingWorkflowError,
+    prepare_three, ApprovedResearch, ApprovedResearchSource, AtomicCandidateStore, CurrentStudy,
+    DurablePermissionBoundary, GeneratedBatch, GenerationPlan, SelectedWritingSource,
+    StepAdmission, StopSignal, StudyWritingContext, WriteResult, WritingTextProvider,
+    WritingWorkflowError,
 };
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -37,6 +38,7 @@ fn context() -> StudyWritingContext {
         project_id: Uuid::new_v4(),
         study_id: Uuid::new_v4(),
         study_revision: 5,
+        approved_research: None,
         sources: ids
             .iter()
             .map(|(study_source_id, origin_id)| SelectedWritingSource {
@@ -83,6 +85,34 @@ fn context() -> StudyWritingContext {
             .collect(),
         findings: vec![],
     }
+}
+
+/// Test-only sealed shape. Only AppServices may authenticate the real
+/// completed research run, Applied effect and source digests in production.
+fn approved_context() -> StudyWritingContext {
+    let mut value = context();
+    let artifact = Uuid::new_v4();
+    value.approved_research = Some(ApprovedResearch {
+        artifact_id: artifact,
+        run_id: "approved-research-1".into(),
+        sources: value
+            .sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| ApprovedResearchSource {
+                study_source_id: source.study_source_id,
+                origin_id: source.origin_id,
+                origin_sha256: format!("{:064x}", index + 1),
+                attachment_fingerprint: source.fingerprint.clone(),
+                attachment_revision: source.source_revision.clone(),
+                collected_at: source.collected_at.clone(),
+            })
+            .collect(),
+    });
+    for evidence in &mut value.evidence {
+        evidence.id = format!("research:{artifact}:{}", evidence.id);
+    }
+    value
 }
 
 fn angles_json() -> String {
@@ -223,10 +253,32 @@ impl DurablePermissionBoundary for FixtureBoundary {
 
 struct MutableStudy(Rc<RefCell<StudyWritingContext>>);
 impl CurrentStudy for MutableStudy {
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        false
+    }
+
     fn load(&self, project_id: Uuid, study_id: Uuid) -> WriteResult<StudyWritingContext> {
         let ctx = self.0.borrow().clone();
         if ctx.project_id != project_id || ctx.study_id != study_id {
             return Err(WritingWorkflowError::InvalidContext("foreign project"));
+        }
+        Ok(ctx)
+    }
+
+    fn load_for_research(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        artifact_id: Uuid,
+    ) -> WriteResult<StudyWritingContext> {
+        let ctx = self.load(project_id, study_id)?;
+        if ctx
+            .approved_research
+            .as_ref()
+            .map(|research| research.artifact_id)
+            != Some(artifact_id)
+        {
+            return Err(WritingWorkflowError::StaleContext);
         }
         Ok(ctx)
     }
@@ -342,6 +394,87 @@ fn setup() -> (
 }
 
 #[test]
+fn bound_research_identity_rejects_forged_attachment_and_other_artifact() {
+    let mut bound = approved_context();
+    bound.validate().unwrap();
+    bound.approved_research.as_mut().unwrap().sources[0].origin_sha256 = "0".into();
+    assert!(matches!(
+        bound.validate(),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+
+    let mut bound = approved_context();
+    bound.evidence[0].id = "transcript:unapproved:excerpt".into();
+    assert!(matches!(
+        bound.validate(),
+        Err(WritingWorkflowError::InvalidContext(_))
+    ));
+
+    let bound = approved_context();
+    let plan = prepare_three("research-id-refusal", bound.clone()).unwrap();
+    let current = MutableStudy(Rc::new(RefCell::new(bound.clone())));
+    let mut gate = FixtureBoundary::new();
+    let mut provider = FixtureProvider::good();
+    let temp = TempDir::new().unwrap();
+    let mut sink = SqlFixtureSink::open(&temp.path().join("research.sqlite"), current.0.clone());
+    // A different CurrentStudy implementation cannot silently claim that its
+    // ordinary source read authenticates the specific research artifact.
+    let fixed = study_writing::FixedStudy(&bound);
+    assert!(matches!(
+        generate_three(
+            &plan,
+            &fixed,
+            &mut gate,
+            &mut provider,
+            &study_writing::NeverStop,
+            &mut sink
+        ),
+        Err(WritingWorkflowError::Denied(_))
+    ));
+    assert_eq!(provider.calls, 0);
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
+fn changing_approved_source_content_after_angles_blocks_remaining_paid_steps() {
+    let bound = approved_context();
+    let plan = prepare_three("research-changed-after-angles", bound.clone()).unwrap();
+    let current = MutableStudy(Rc::new(RefCell::new(bound)));
+    let mut provider = FixtureProvider::good();
+    let changed = current.0.clone();
+    provider.on_call = Some(Box::new(move |count| {
+        if count == 1 {
+            changed
+                .borrow_mut()
+                .approved_research
+                .as_mut()
+                .unwrap()
+                .sources[0]
+                .origin_sha256 = "f".repeat(64);
+        }
+    }));
+    let mut gate = FixtureBoundary::new();
+    let temp = TempDir::new().unwrap();
+    let mut sink = SqlFixtureSink::open(
+        &temp.path().join("research-stale.sqlite"),
+        current.0.clone(),
+    );
+    assert!(matches!(
+        generate_three(
+            &plan,
+            &current,
+            &mut gate,
+            &mut provider,
+            &study_writing::NeverStop,
+            &mut sink
+        ),
+        Err(WritingWorkflowError::StaleContext)
+    ));
+    assert_eq!(provider.calls, 1, "no second charge after research changed");
+    assert_eq!(sink.count(), 0);
+}
+
+#[test]
 fn copied_source_angle_stops_before_any_draft_provider_step() {
     let (temp, _original_plan, current, mut gate, mut provider, stop) = setup();
     let passage = "The researcher describes the old town square in careful detail and follows three separate walking routes before comparing which crossing is safer for residents of the neighborhood";
@@ -444,7 +577,7 @@ fn external_provider_failure_is_uncertain_and_must_not_replay() {
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
     assert_eq!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
-        Err(WritingWorkflowError::ProviderFailed)
+        Err(WritingWorkflowError::UncertainEffect)
     );
     assert_eq!(sink.count(), 0);
     provider.fail_on = None;
@@ -1530,7 +1663,7 @@ fn failure_after_three_paid_stages_preserves_receipts_and_blocks_rebilling() {
     let mut sink = SqlFixtureSink::open(&temp.path().join("test.sqlite"), current.0.clone());
     assert_eq!(
         generate_three(&plan, &current, &mut gate, &mut provider, &stop, &mut sink),
-        Err(WritingWorkflowError::ProviderFailed)
+        Err(WritingWorkflowError::UncertainEffect)
     );
     assert_eq!(gate.step_response.len(), 3);
     assert_eq!(gate.uncertain.len(), 1);

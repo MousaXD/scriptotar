@@ -490,6 +490,7 @@ impl AppServices {
     /// Private production entrypoint: reconstruct canonical request material
     /// directly from the active Study, never from a browser-supplied context.
     /// The returned plan is offline; no paid call or Tauri IPC is registered.
+    #[cfg(test)] // Legacy no-cost fixtures must not be a production entrypoint.
     #[allow(dead_code)]
     pub(super) fn prepare_three_writing_plan(
         &self,
@@ -500,6 +501,24 @@ impl AppServices {
         use super::study_writing::CurrentStudy;
         let current = CurrentStudy::load(self, project_id, study_id)?;
         super::study_writing::prepare_three(run_id, current)
+    }
+
+    /// Authoritative production writing plan: the user-selected research
+    /// artifact must be the exact completed, Applied AnalyzeEvidence outcome.
+    /// The private loader rechecks source bytes, digest, selection, revision,
+    /// original transcript locators and research run on every later step.
+    #[allow(dead_code)]
+    pub(super) fn prepare_three_writing_plan_from_research(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        run_id: &str,
+        approved_artifact_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::GenerationPlan> {
+        use super::study_writing::CurrentStudy;
+        let verified =
+            CurrentStudy::load_for_research(self, project_id, study_id, approved_artifact_id)?;
+        super::study_writing::prepare_three(run_id, verified)
     }
 
     /// Production service orchestration seam: canonical CurrentStudy +
@@ -523,11 +542,56 @@ impl AppServices {
         P: super::study_writing::WritingTextProvider,
         S: super::study_writing::StopSignal,
     {
+        if plan.context.approved_research.is_none() {
+            return Err(super::study_writing::WritingWorkflowError::Denied(
+                "approved research artifact is required for production generation".into(),
+            ));
+        }
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
             current: self,
         };
         super::study_writing::generate_three(plan, self, boundary, provider, stop, &mut sink)
+    }
+
+    /// Offline integration fixtures retain the old CurrentStudy-only path.
+    /// This method is not compiled into the installed production executable.
+    #[cfg(test)]
+    fn generate_three_offline_fixture_with_boundary<B, P, S>(
+        &self,
+        plan: &super::study_writing::GenerationPlan,
+        boundary: &mut B,
+        provider: &mut P,
+        stop: &S,
+    ) -> super::study_writing::WriteResult<[Uuid; 3]>
+    where
+        B: super::study_writing::DurablePermissionBoundary,
+        P: super::study_writing::WritingTextProvider,
+        S: super::study_writing::StopSignal,
+    {
+        // Keep the controlled no-cost integration test canonical while the
+        // production AppServices loader enforces approved research at the sink.
+        struct OfflineStudy<'a>(&'a AppServices);
+        impl super::study_writing::CurrentStudy for OfflineStudy<'_> {
+            fn require_approved_research_for_acceptance(&self) -> bool {
+                false
+            }
+
+            fn load(
+                &self,
+                project: Uuid,
+                study: Uuid,
+            ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext>
+            {
+                super::study_writing::CurrentStudy::load(self.0, project, study)
+            }
+        }
+        let fixture = OfflineStudy(self);
+        let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &self.store,
+            current: &fixture,
+        };
+        super::study_writing::generate_three(plan, &fixture, boundary, provider, stop, &mut sink)
     }
 
     /// Private production v11 sink: three new drafts, immutable versions,
@@ -539,7 +603,12 @@ impl AppServices {
         &self,
         batch: &super::study_writing::GeneratedBatch,
     ) -> super::study_writing::WriteResult<[Uuid; 3]> {
-        use super::study_writing::AtomicCandidateStore;
+        use super::study_writing::{AtomicCandidateStore, WritingWorkflowError};
+        if batch.context.approved_research.is_none() {
+            return Err(WritingWorkflowError::Denied(
+                "approved research artifact is required for batch persistence".into(),
+            ));
+        }
         let mut sink = super::study_writing_persistence::CanonicalSqliteCandidateStore {
             store: &self.store,
             current: self,
@@ -1195,6 +1264,10 @@ impl AppServices {
  * transport admission still need Agent 01's host-wide shared guard.
  */
 impl super::study_writing::CurrentStudy for AppServices {
+    fn require_approved_research_for_acceptance(&self) -> bool {
+        true
+    }
+
     fn load(
         &self,
         project_id: Uuid,
@@ -1259,6 +1332,81 @@ impl super::study_writing::CurrentStudy for AppServices {
             &canonical_sources,
             input,
         )
+    }
+
+    fn load_for_research(
+        &self,
+        project_id: Uuid,
+        study_id: Uuid,
+        artifact_id: Uuid,
+    ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+        use super::study_writing::{
+            ApprovedResearch, ApprovedResearchSource, CurrentStudy, WritingWorkflowError,
+        };
+        // The ordinary canonical Study view supplies the persisted brief and
+        // exact current attachment membership, never the research findings.
+        let base = CurrentStudy::load(self, project_id, study_id)?;
+        let verified = self
+            .research_writing_context(project_id, study_id, artifact_id)
+            .map_err(|_| WritingWorkflowError::StaleContext)?;
+        if verified.approved_artifact_id != artifact_id
+            || verified.approved_run_id.is_empty()
+            || verified.project_id != project_id
+            || verified.study_id != study_id
+            || !verified.meets_three_source_evidence_floor
+            || verified.attributed_source_count < 3
+            || !verified.source_text_is_untrusted_data
+            || !(3..=base.sources.len()).contains(&verified.sources.len())
+        {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        let mut selected = HashSet::new();
+        let mut origins = HashSet::new();
+        let mut seals = Vec::with_capacity(verified.sources.len());
+        for source in &verified.sources {
+            if !selected.insert(source.study_source_id)
+                || !origins.insert(source.origin_id)
+                || !base.sources.iter().any(|candidate| {
+                    candidate.study_source_id == source.study_source_id
+                        && candidate.origin_id == source.origin_id
+                        && candidate.fingerprint == source.attachment_fingerprint
+                        && candidate.source_revision == source.attachment_revision
+                        && candidate.collected_at == source.collected_at
+                })
+            {
+                return Err(WritingWorkflowError::StaleContext);
+            }
+            seals.push(ApprovedResearchSource {
+                study_source_id: source.study_source_id,
+                origin_id: source.origin_id,
+                origin_sha256: source.source_sha256.clone(),
+                attachment_fingerprint: source.attachment_fingerprint.clone(),
+                attachment_revision: source.attachment_revision.clone(),
+                collected_at: source.collected_at.clone(),
+            });
+        }
+        seals.sort_by_key(|source| source.study_source_id);
+        let mut bound = base.clone();
+        // The user may explicitly approve three of a larger attached Study
+        // collection; never expand writing evidence to unapproved attachments.
+        bound
+            .sources
+            .retain(|source| selected.contains(&source.study_source_id));
+        bound.approved_research = Some(ApprovedResearch {
+            artifact_id,
+            run_id: verified.approved_run_id,
+            sources: seals,
+        });
+        bound.evidence = verified.evidence;
+        bound.findings = verified.findings;
+        // Compare a second complete canonical view to reject changes while
+        // the approved report was loaded. Agent 01's shared dispatch/SQLite
+        // barrier still owns cross-process mutation linearization at send.
+        if CurrentStudy::load(self, project_id, study_id)? != base {
+            return Err(WritingWorkflowError::StaleContext);
+        }
+        bound.validate()?;
+        Ok(bound)
     }
 }
 
@@ -1395,6 +1543,353 @@ mod tests {
             )
             .unwrap();
         assert!(CurrentStudy::load(&services, project, study_id).is_err());
+    }
+
+    /// A real approved three-source research subset, not a similar-looking
+    /// independently extracted four-source Study, must shape the writing plan.
+    #[test]
+    fn host_binds_exact_applied_research_artifact_and_denies_origin_edit() {
+        use super::super::study_writing::{
+            AtomicCandidateStore, DurablePermissionBoundary, GeneratedBatch, NeverStop,
+            StepAdmission, StudyWritingContext, WriteResult, WritingTextProvider,
+            WritingWorkflowError,
+        };
+        use scriptotar_agent::RunState;
+        use scriptotar_ai::{AiRequest, AiResponse};
+        use std::collections::HashMap;
+
+        /// Recorded outputs here are zero-egress test fixtures, NOT v14
+        /// authenticated charged-provider outcomes.
+        struct RecordedFixture {
+            replies: HashMap<String, String>,
+        }
+        impl DurablePermissionBoundary for RecordedFixture {
+            fn begin(
+                &mut self,
+                _run: &str,
+                _context: &StudyWritingContext,
+                step: &str,
+                _request: &AiRequest,
+            ) -> WriteResult<StepAdmission> {
+                self.replies
+                    .get(step)
+                    .cloned()
+                    .map(|response_json| StepAdmission::Recorded { response_json })
+                    .ok_or(WritingWorkflowError::UncertainEffect)
+            }
+            fn record_response(&mut self, _effect_key: &str, _response: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+            fn mark_uncertain(&mut self, _effect_key: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+            fn abandon_before_dispatch(&mut self, _effect_key: &str) -> WriteResult<()> {
+                Err(WritingWorkflowError::UncertainEffect)
+            }
+        }
+        struct NeverDispatch;
+        impl WritingTextProvider for NeverDispatch {
+            fn generate(&mut self, _request: &AiRequest) -> Result<AiResponse, ()> {
+                panic!("recorded test outcomes must never send a new provider request");
+            }
+        }
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let created = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study = Uuid::parse_str(&created.id).unwrap();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        let mut selected = Vec::new();
+        let mut origins = Vec::new();
+        for index in 0..4 {
+            let source = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            db.execute(
+                "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+                 VALUES(?1,?2,'local_file',?3,'Original transcript','2026-11-15T12:30:00Z')",
+                rusqlite::params![
+                    source.to_string(),
+                    project.to_string(),
+                    format!("/mock/bridge-{index}.mp4")
+                ],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+                 VALUES(?1,?2,?3,6.0,'2026-11-15T12:30:00Z')",
+                rusqlite::params![
+                    media.to_string(),
+                    source.to_string(),
+                    format!("/mock/bridge-{index}.mp4")
+                ],
+            )
+            .unwrap();
+            let spoken = format!(
+                "How can we make original tutorial {index}? First describe one method. Follow for more."
+            );
+            let segments = serde_json::json!([
+                {"index":0,"start":0.0,"end":2.0,"text":spoken.clone()},
+                {"index":1,"start":2.0,"end":4.0,"text":"A real timed explanation."},
+                {"index":2,"start":4.0,"end":6.0,"text":"Return to the central question."}
+            ]);
+            db.execute(
+                "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+                 VALUES(?1,?2,'en',?3,?4,'2026-11-15T12:30:00Z','2026-11-15T12:30:00Z')",
+                rusqlite::params![transcript.to_string(), media.to_string(), spoken, segments.to_string()],
+            )
+            .unwrap();
+            origins.push(transcript);
+            selected.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+        services
+            .save_studio_study(
+                project,
+                study,
+                created.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(selected),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        let attached = services
+            .store
+            .list_study_sources(project, study)
+            .unwrap()
+            .into_iter()
+            .take(3)
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        let waiting = services
+            .start_study_research(project, study, attached)
+            .unwrap();
+        assert_eq!(waiting.state, RunState::AwaitingApproval);
+        let finished = services
+            .decide_study_research(project, study, &waiting.plan.id, "approve")
+            .unwrap();
+        assert_eq!(finished.state, RunState::Completed);
+        let artifact =
+            Uuid::parse_str(&finished.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+        drop(services);
+        let reopened = AppServices::new(dir.path()).unwrap();
+        let plan = reopened
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "authenticated-bridge",
+                artifact,
+            )
+            .unwrap();
+        let seal = plan.context.approved_research.as_ref().unwrap();
+        // A direct internal call to the genuine canonical v11 SQLite sink
+        // must not turn otherwise-valid transcript-first Study evidence into
+        // a paid-generation batch without an approved research identity.
+        let unapproved =
+            super::super::study_writing::CurrentStudy::load(&reopened, project, study).unwrap();
+        assert!(unapproved.approved_research.is_none());
+        let mut sink = super::super::study_writing_persistence::CanonicalSqliteCandidateStore {
+            store: &reopened.store,
+            current: &reopened,
+        };
+        let bypass = GeneratedBatch {
+            run_id: "unapproved-direct-sink".into(),
+            context: unapproved,
+            candidates: Vec::new(),
+        };
+        assert!(matches!(
+            sink.commit_three(&bypass),
+            Err(WritingWorkflowError::Denied(_))
+        ));
+        assert!(reopened
+            .store
+            .list_draft_summaries(project, study, 200)
+            .unwrap()
+            .is_empty());
+        assert_eq!(seal.artifact_id, artifact);
+        assert_eq!(seal.run_id, waiting.plan.id);
+        assert_eq!(seal.sources.len(), 3);
+        assert_eq!(
+            plan.context.sources.len(),
+            3,
+            "writing excludes the fourth unapproved origin"
+        );
+        assert!(seal.sources.iter().all(|source| {
+            source.origin_sha256.len() == 64 && origins.contains(&source.origin_id)
+        }));
+        assert!(plan
+            .context
+            .evidence
+            .iter()
+            .all(|item| { item.id.starts_with(&format!("research:{artifact}:")) }));
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "wrong-artifact",
+                Uuid::new_v4()
+            )
+            .is_err());
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(
+                Uuid::new_v4(),
+                study,
+                "wrong-project",
+                artifact
+            )
+            .is_err());
+
+        // Same timestamp / same attachment ID is not enough to preserve the
+        // original source's content digest or the user's research approval.
+        let modified_origin = seal.sources[0].origin_id;
+        let original_text: String = db
+            .query_row(
+                "SELECT text FROM transcripts WHERE id=?1",
+                rusqlite::params![modified_origin.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        db.execute(
+            "UPDATE transcripts SET text='Substituted content with unchanged timestamp'
+             WHERE id=?1",
+            rusqlite::params![seal.sources[0].origin_id.to_string()],
+        )
+        .unwrap();
+        assert!(reopened
+            .prepare_three_writing_plan_from_research(project, study, "source-changed", artifact)
+            .is_err());
+        // Restore the same original bytes without modifying approved research
+        // identity. All four explicitly recorded test outcomes can now pass
+        // through the actual host and v11 SQLite sink with no provider call.
+        db.execute(
+            "UPDATE transcripts SET text=?1 WHERE id=?2",
+            rusqlite::params![original_text, modified_origin.to_string()],
+        )
+        .unwrap();
+        let mut distinct_origins = HashSet::new();
+        let selected_evidence = plan
+            .context
+            .evidence
+            .iter()
+            .filter(|item| {
+                item.status == WritingEvidenceStatus::Attributed
+                    && distinct_origins.insert(item.locator.source_id.clone())
+            })
+            .map(|item| item.id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(selected_evidence.len(), 3);
+        let e = &selected_evidence;
+        let angles = serde_json::json!({
+            "angles": [
+                {"id":"contrast","approach":"contrast two decisions",
+                 "hook":"One neighborhood, two different choices",
+                 "promise":"Discover a useful contrast",
+                 "outline":[{"role":"hook","intent":"compare options","estimated_seconds":10}],
+                 "evidence_ids":[e[0]]},
+                {"id":"journey","approach":"a personal learning diary",
+                 "hook":"A notebook changed my weekend route",
+                 "promise":"An original journey of discovery",
+                 "outline":[{"role":"hook","intent":"share a journey","estimated_seconds":12}],
+                 "evidence_ids":[e[1]]},
+                {"id":"guide","approach":"practical preparation",
+                 "hook":"Build your own helpful checklist",
+                 "promise":"Simple grounded guidance",
+                 "outline":[{"role":"hook","intent":"teach practical steps","estimated_seconds":9}],
+                 "evidence_ids":[e[2]]}
+            ]
+        })
+        .to_string();
+        let draft = |index: usize, angle: &str, evidence: &str, narration: &str| {
+            serde_json::json!({
+                "id":format!("draft-{index}"),
+                "angle_id":angle,
+                "title":format!("Original research script {index}"),
+                "language":"Arabic",
+                "beats":[
+                    {"id":"hook","role":"hook","narration":narration,
+                     "on_screen_text":null,"shots":[],"evidence_ids":[evidence],
+                     "manually_edited":true},
+                    {"id":"cta","role":"cta",
+                     "narration":"Invite others to share their experiences.",
+                     "on_screen_text":null,"shots":[],"evidence_ids":[],
+                     "manually_edited":false}
+                ],
+                "cta":"Share your own story",
+                "caption":"Source-grounded original narration",
+                "claims":[{"id":"claim-a","beat_id":"hook",
+                           "assertion":"The transcript addresses this topic",
+                           "status":"unverified","evidence_ids":[evidence]}]
+            })
+            .to_string()
+        };
+        let mut gate = RecordedFixture {
+            replies: HashMap::from([
+                ("angles".into(), angles),
+                ("draft-1".into(), draft(1, "contrast", &e[0],
+                    "Two routes reveal different community experiences across the neighborhood.")),
+                ("draft-2".into(), draft(2, "journey", &e[1],
+                    "I followed my small notebook to discover a quiet walking route.")),
+                ("draft-3".into(), draft(3, "guide", &e[2],
+                    "First gather examples, next compare options, then share practical advice.")),
+            ]),
+        };
+        let mut provider = NeverDispatch;
+        let committed = reopened
+            .generate_three_writing_with_boundary(&plan, &mut gate, &mut provider, &NeverStop)
+            .unwrap();
+        assert_eq!(committed.len(), 3);
+        assert_eq!(committed.iter().collect::<HashSet<_>>().len(), 3);
+        assert_eq!(
+            reopened
+                .list_studio_writing_batches(project, study)
+                .unwrap()
+                .len(),
+            1,
+        );
+        drop(reopened);
+        // After accepting the three immutable version-one drafts, a source
+        // can be changed or revoked. That must block all *new* writing, but
+        // never turn a lost commit reply into another paid dispatch.
+        db.execute(
+            "UPDATE transcripts SET text='Source changed after canonical batch save'
+             WHERE id=?1",
+            rusqlite::params![modified_origin.to_string()],
+        )
+        .unwrap();
+        gate.replies.clear();
+        let restarted = AppServices::new(dir.path()).unwrap();
+        assert!(restarted
+            .prepare_three_writing_plan_from_research(
+                project,
+                study,
+                "fresh-after-revocation",
+                artifact,
+            )
+            .is_err());
+        let recovered = restarted
+            .generate_three_writing_with_boundary(&plan, &mut gate, &mut provider, &NeverStop)
+            .unwrap();
+        assert_eq!(
+            recovered, committed,
+            "read-only restart replay is exact-once"
+        );
+        assert_eq!(
+            restarted
+                .list_studio_writing_batches(project, study)
+                .unwrap()
+                .len(),
+            1,
+        );
     }
 
     /// Genuine AppServices + canonical transcripts + four controlled no-cost
@@ -1614,7 +2109,7 @@ mod tests {
             steps: 0,
         };
         assert!(matches!(
-            services.generate_three_writing_with_boundary(
+            services.generate_three_offline_fixture_with_boundary(
                 &plan,
                 &mut permit,
                 &mut provider,
@@ -1625,7 +2120,12 @@ mod tests {
         assert_eq!(provider.calls, 0);
         permit.approved = true;
         let stored = services
-            .generate_three_writing_with_boundary(&plan, &mut permit, &mut provider, &NeverStop)
+            .generate_three_offline_fixture_with_boundary(
+                &plan,
+                &mut permit,
+                &mut provider,
+                &NeverStop,
+            )
             .unwrap();
         assert_eq!(provider.calls, 4);
         assert_eq!(permit.steps, 4);
@@ -1720,7 +2220,7 @@ mod tests {
             calls: 0,
         };
         let recovered = reopened
-            .generate_three_writing_with_boundary(
+            .generate_three_offline_fixture_with_boundary(
                 &plan,
                 &mut no_approval,
                 &mut no_provider,

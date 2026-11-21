@@ -194,6 +194,13 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         fail_after: Option<usize>,
     ) -> WriteResult<[Uuid; 3]> {
         batch.context.validate()?;
+        if self.current.require_approved_research_for_acceptance()
+            && batch.context.approved_research.is_none()
+        {
+            return Err(WritingWorkflowError::Denied(
+                "the production v11 sink requires approved research".into(),
+            ));
+        }
         if batch.candidates.len() != 3
             || batch.run_id.is_empty()
             || batch.run_id.len() > 128
@@ -438,7 +445,7 @@ impl<C: CurrentStudy> CanonicalSqliteCandidateStore<'_, C> {
         // This catches edited transcript text, changed observations, withdrawn
         // sources, revised briefs and project switches rather than trusting a
         // stale serialized payload or the Study revision alone.
-        if self.current.load(project, study)? != batch.context {
+        if super::study_writing::reload_context(self.current, &batch.context)? != batch.context {
             return Err(WritingWorkflowError::StaleContext);
         }
 
@@ -629,7 +636,7 @@ impl<C: CurrentStudy> VersionedCandidateStore for CanonicalSqliteCandidateStore<
             .optional()
             .map_err(error)?
             .ok_or(WritingWorkflowError::StaleContext)?;
-        if self.current.load(context.project_id, context.study_id)? != *context {
+        if super::study_writing::reload_context(self.current, context)? != *context {
             return Err(WritingWorkflowError::StaleContext);
         }
         let original: GeneratedCandidate = serde_json::from_str(&snapshot).map_err(|_| {

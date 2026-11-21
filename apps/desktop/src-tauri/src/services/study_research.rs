@@ -731,12 +731,12 @@ fn checked_report_envelope(
 
 /// Agent 00 may expose this only via a project- and Study-scoped, read-only API.
 /// Rechecks source availability; it is NOT a prompt or an approved provider call.
-pub(super) fn read_study_research_artifact(
+fn read_study_research_artifact_with_identity(
     services: &AppServices,
     project: Uuid,
     study: Uuid,
     artifact: Uuid,
-) -> RepositoryResult<StudyResearchReport> {
+) -> RepositoryResult<(StudyResearchReport, String)> {
     services.require_active_project(project)?;
     let saved = load_envelope(services, artifact)?;
     if saved.project_id != project || saved.study_id != study {
@@ -814,7 +814,20 @@ pub(super) fn read_study_research_artifact(
     // selected source IDs, step output and receipt were checked. Use the same
     // captured bytes so the authorization cannot be raced by swapping files.
     let validated = checked_report_envelope(services, project, study, saved)?;
-    Ok(validated.report)
+    Ok((validated.report, validated.run_id))
+}
+
+/// Preserve the existing public read contract; the private writing bridge
+/// additionally receives the authenticated research run ID from the SAME
+/// validated envelope, never a second untrusted artifact lookup.
+pub(super) fn read_study_research_artifact(
+    services: &AppServices,
+    project: Uuid,
+    study: Uuid,
+    artifact: Uuid,
+) -> RepositoryResult<StudyResearchReport> {
+    read_study_research_artifact_with_identity(services, project, study, artifact)
+        .map(|(report, _)| report)
 }
 
 #[derive(Clone)]
@@ -1153,6 +1166,8 @@ pub(super) struct ResearchWritingSource {
 pub(super) struct ResearchWritingContext {
     pub project_id: Uuid,
     pub study_id: Uuid,
+    pub approved_artifact_id: Uuid,
+    pub approved_run_id: String,
     pub sources: Vec<ResearchWritingSource>,
     pub evidence: Vec<EvidenceRef>,
     pub findings: Vec<ResearchFinding>,
@@ -1293,6 +1308,8 @@ fn research_writing_from_report(
     Ok(ResearchWritingContext {
         project_id: report.project_id,
         study_id: report.study_id,
+        approved_artifact_id: artifact,
+        approved_run_id: String::new(),
         sources,
         evidence,
         findings,
@@ -1510,8 +1527,11 @@ impl AppServices {
         study: Uuid,
         artifact: Uuid,
     ) -> RepositoryResult<ResearchWritingContext> {
-        let report = read_study_research_artifact(self, project, study, artifact)?;
-        research_writing_from_report(artifact, &report)
+        let (report, approved_run_id) =
+            read_study_research_artifact_with_identity(self, project, study, artifact)?;
+        let mut context = research_writing_from_report(artifact, &report)?;
+        context.approved_run_id = approved_run_id;
+        Ok(context)
     }
 }
 
