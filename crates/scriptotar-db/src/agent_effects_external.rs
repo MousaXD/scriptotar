@@ -919,9 +919,11 @@ mod tests {
             },
         );
         assert!(result.is_err(), "v13 admitted a no-longer-reserved v8 claim");
-        assert!(db
-            .mark_external_dispatched(key, reserved.revision, reserved.attempt)
-            .is_err(), "v10 CAS ignored changed v8 single-send state");
+        assert!(
+            db.mark_external_dispatched(key, reserved.revision, reserved.attempt)
+                .is_err(),
+            "v10 CAS ignored changed v8 single-send state"
+        );
         let effect = db.get_external_effect(key).unwrap().unwrap();
         assert_eq!(effect.status, ExternalEffectStatus::Reserved);
         assert_eq!(effect.revision, reserved.revision);
