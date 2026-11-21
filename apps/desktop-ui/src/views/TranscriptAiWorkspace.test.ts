@@ -187,6 +187,36 @@ describe('Transcript reader workspace', () => {
 });
 
 describe('AI Studio request isolation', () => {
+  it('localizes legacy AI Studio controls in Arabic without changing prompt task identities or enabling paid API sending', async () => {
+    setLocale('ar');
+    const buildAiPrompt = vi.fn(async () => 'مطالبة تجريبية محلية');
+    const runAi = vi.fn(async () => 'unauthorized');
+    const api = createMockClient({ buildAiPrompt, runAi });
+    render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });
+
+    expect(screen.getByRole('heading', { name: 'إعداد المطالبة' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'سياق المصدر' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'موجز الكتابة الإبداعية' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'المطالبة المنشأة' })).toBeInTheDocument();
+    const task = screen.getByRole('combobox', { name: 'المهمة' });
+    expect(task).toHaveTextContent('تحليل الانتشار');
+
+    await fireEvent.input(screen.getByPlaceholderText('ألصق نص التفريغ أو البحث، أو حمّله…'), {
+      target: { value: 'مقتطف أصلي' }
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'إنشاء المطالبة' }));
+    await waitFor(() => expect(buildAiPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      task: 'Viral breakdown', sourceText: 'مقتطف أصلي', apiKey: undefined, baseUrl: undefined
+    })));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'BYOK' }));
+    expect(screen.getByRole('status')).toHaveTextContent('الإرسال بمفتاحك غير متاح');
+    expect(screen.getByText(/الإرسال المباشر بمفتاحك معطّل/)).toBeInTheDocument();
+    expect(screen.getByLabelText('مفتاح API')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'التشغيل عبر API (غير متاح)' })).toBeDisabled();
+    expect(runAi).not.toHaveBeenCalled();
+  });
+
   it('keeps a completed prompt when changing between Copy Prompt and BYOK', async () => {
     const api = createMockClient();
     render(AiStudioView, { props: { api, transcripts: mockBootstrap.transcripts } });
