@@ -1195,7 +1195,7 @@ mod tests {
         assert_eq!(fence.settled.load(Ordering::SeqCst), 1);
         assert_eq!(
             fence.original_responses.lock().unwrap().as_slice(),
-            &[intent.prompt.clone()]
+            std::slice::from_ref(&intent.prompt)
         );
         assert_eq!(
             fence.receipts.lock().unwrap().clone(),
