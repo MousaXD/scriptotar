@@ -1115,6 +1115,66 @@ fn canonical_targeted_revision_cas_preserves_other_beats_and_manual_editor_versi
 }
 
 #[test]
+fn targeted_revision_cannot_save_a_long_source_copy_or_partial_version() {
+    use study_writing_persistence::CanonicalSqliteCandidateStore;
+
+    let (_temp, db, _plan, current, mut batch) = canonical_batch_fixture();
+    let passage = "The neighborhood researcher describes each stage of the morning gathering and then explains which residents reviewed the proposal before suggesting that the whole community revisit the map together";
+    batch.context.evidence[0].excerpt = passage.into();
+    batch.candidates[0].lineage = study_writing::lineage_for(
+        &batch.context,
+        &batch.candidates[0].angle,
+        &batch.candidates[0].draft,
+    )
+    .unwrap();
+    current.0.replace(batch.context.clone());
+    let mut sink = CanonicalSqliteCandidateStore {
+        store: &db,
+        current: &current,
+    };
+    let ids = sink.commit_three(&batch).unwrap();
+    let mut latest = batch.context.clone();
+    latest.study_revision += 1;
+    current.0.replace(latest.clone());
+
+    let original = &batch.candidates[0];
+    let before = original.draft.beats[0].narration.clone();
+    let proposal = json!({"beat_id":"hook","replacement_narration":passage}).to_string();
+    assert!(matches!(
+        apply_reviewed_beat_revision(
+            original,
+            &latest,
+            &proposal,
+            "hook",
+            "Revise only the opening",
+            &before,
+            false,
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+
+    // Bypass the proposal parser and attempt direct SQLite acceptance with
+    // an otherwise structurally valid targeted replacement.
+    let mut bypass = original.clone();
+    bypass.draft.beats[0].narration = passage.into();
+    bypass.draft.beats[0].evidence_ids.clear();
+    for claim in &mut bypass.draft.claims {
+        if claim.beat_id == "hook" {
+            claim.status = scriptotar_ai::writing::ClaimStatus::Unverified;
+            claim.evidence_ids.clear();
+        }
+    }
+    assert!(matches!(
+        study_writing::VersionedCandidateStore::save_revision(
+            &mut sink, &latest, ids[0], 1, &before, "hook", &bypass
+        ),
+        Err(WritingWorkflowError::InvalidResponse(_))
+    ));
+    assert_eq!(db.get_draft(latest.project_id, ids[0]).unwrap().revision, 1);
+    assert_eq!(db.list_draft_versions(latest.project_id, ids[0]).unwrap().len(), 1);
+}
+
+#[test]
 fn canonical_batch_rejects_forged_source_excerpt_without_any_partial_draft() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
