@@ -636,10 +636,8 @@ pub(super) fn enforce_candidate_originality(
             } else {
                 (VERY_SHORT_SCRIPT_WINDOW, 2, 80)
             };
-            let left_shingles: HashSet<Vec<String>> = left_words
-                .windows(window)
-                .map(<[String]>::to_vec)
-                .collect();
+            let left_shingles: HashSet<Vec<String>> =
+                left_words.windows(window).map(<[String]>::to_vec).collect();
             let right_shingles: HashSet<Vec<String>> = right_words
                 .windows(window)
                 .map(<[String]>::to_vec)
