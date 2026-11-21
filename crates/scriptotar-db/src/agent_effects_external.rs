@@ -793,6 +793,76 @@ mod tests {
     }
 
     #[test]
+    fn v13_first_attempt_aborted_before_send_is_atomically_cancelled_at_guard_release() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: reserved.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        let external = rusqlite::Connection::open(db.path()).unwrap();
+        assert!(external
+            .execute(
+                "UPDATE agent_external_effects SET cancel_requested=1
+                 WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .is_err());
+        // The host rejects the request before the durable DISPATCHED CAS.
+        // A token-owned guard drop must settle both ledgers and release the
+        // gate in one IMMEDIATE transaction, not leave an orphan reservation.
+        drop(guard);
+        let effect = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Cancelled);
+        assert!(effect.cancel_requested);
+        assert_eq!(effect.revision, reserved.revision + 1);
+        let legacy: String = external
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy, "not_applied");
+        let still_frozen: i64 = external
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_frozen, 0);
+        assert!(db
+            .mark_external_dispatched(key, effect.revision, effect.attempt)
+            .is_err());
+        assert!(matches!(
+            db.reserve_external_effect(key, fp(), "openai", limits()).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE content_studies SET goal='safe after no-send' WHERE id=?1",
+                    params![study.to_string()],
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
     fn v13_cancellation_committed_before_barrier_admission_denies_paid_send() {
         let (_dir, db, project, study, snapshot) = setup();
         let key = identity(&snapshot, project, study);
