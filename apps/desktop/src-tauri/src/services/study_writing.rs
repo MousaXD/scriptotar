@@ -931,6 +931,13 @@ where
     check_current(current, plan)?;
     let review = writing::parse_review(&proposed, &input)
         .map_err(|e| WritingWorkflowError::InvalidResponse(e.to_string()))?;
+    // An optional model review remains user-visible even when the caller
+    // does not persist it. Apply the same transcript-copy protection before
+    // returning the advisory text, not only at the later SQLite sink.
+    for finding in &review.findings {
+        reject_extended_source_copy(&plan.context, &finding.concern)?;
+        reject_extended_source_copy(&plan.context, &finding.recommendation)?;
+    }
     let mut updated = candidate.clone();
     updated.review_findings = review.findings;
     Ok(updated)
