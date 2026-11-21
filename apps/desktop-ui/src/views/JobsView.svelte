@@ -195,8 +195,10 @@
     const urls = extractUrlsFromText(text);
     if (urls.length) {
       sourceUrl = urls[0];
-      actionStatus = $translator('queue.dropLink', { url: urls[0] });
+      urlRejected = false;
+      urlDenialId = '';
       actionError = '';
+      actionStatus = $translator('queue.dropLink', { url: urls[0] });
       return;
     }
     // Web File.name is not a filesystem path. Native Tauri drop events provide paths;
@@ -272,7 +274,7 @@
     <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
       <form class="url-form" on:submit|preventDefault={enqueueUrl}>
         <label for="queue-url">{$translator('queue.supportedUrl')}</label>
-        <input id="queue-url" dir="ltr" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <input id="queue-url" dir="ltr" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; urlDenialId = ''; actionError = ''; actionStatus = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
         <div class="capture-actions">
           <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
           <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
