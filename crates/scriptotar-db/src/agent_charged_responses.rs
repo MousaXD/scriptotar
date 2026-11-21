@@ -416,8 +416,13 @@ mod charged_response_regressions {
     use scriptotar_core::{Project, ProjectRepository};
     use tempfile::TempDir;
 
-    fn fixture(
+    fn fixture(step: &str) -> (TempDir, SqliteStore, Uuid, Uuid, RunSnapshot) {
+        fixture_with_limit(step, 400000)
+    }
+
+    fn fixture_with_limit(
         step: &str,
+        approved_bytes: u64,
     ) -> (TempDir, SqliteStore, Uuid, Uuid, RunSnapshot) {
         let temp = TempDir::new().unwrap();
         let db = SqliteStore::open(temp.path().join("charged.sqlite3")).unwrap();
@@ -438,7 +443,7 @@ mod charged_response_regressions {
                 estimate: Estimate {
                     tokens: 500,
                     cost_microusd: 2500,
-                    max_output_bytes: 400000,
+                    max_output_bytes: approved_bytes,
                     cpu_ms: 1,
                     peak_memory_mib: 1,
                 },
@@ -450,7 +455,7 @@ mod charged_response_regressions {
                 max_tokens: 500,
                 max_cost_microusd: 2500,
                 max_elapsed_ms: 60000,
-                max_output_bytes: 400000,
+                max_output_bytes: approved_bytes,
                 max_cpu_ms: 100,
                 max_peak_memory_mib: 4,
             },
@@ -617,6 +622,25 @@ mod charged_response_regressions {
             .settle_authenticated_charged_response(receipt(k, "late authentic result"))
             .unwrap();
         assert_eq!(restored.response, "late authentic result");
+    }
+
+    #[test]
+    fn saved_step_byte_budget_is_enforced_even_below_global_limit() {
+        let (_temp, db, project, study, run) = fixture_with_limit("angles", 9);
+        let k = key(&run, project, study);
+        dispatch(&db, k);
+        assert!(db
+            .settle_authenticated_charged_response(receipt(k, "1234567890"))
+            .is_err());
+        assert!(db.read_sealed_charged_response(k).unwrap().is_none());
+        assert_eq!(
+            db.get_external_effect(k).unwrap().unwrap().status,
+            ExternalEffectStatus::Dispatched
+        );
+        let sealed = db
+            .settle_authenticated_charged_response(receipt(k, "123456789"))
+            .unwrap();
+        assert_eq!(sealed.response.len(), 9);
     }
 
     #[test]
