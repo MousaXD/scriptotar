@@ -71,6 +71,18 @@ The current production OpenAI wire candidate always identifies its provider as `
 
 This is deliberately narrow. The generic `ExternalEffectProvider` host seam now requires its declared canonical provider namespace to match the existing effect and currently admits only `openai`; it is **not** a certified production egress path. Future independently reviewed provider adapters need typed provider/account-aware namespaces with Agent 00/01/10 sign-off. No schema migration, public provider command, credential storage or unapproved transport was enabled.
 
+## Further deterministic failure-order tests (21 Nov continuation)
+
+Three additional persisted SQLite tests cover the remaining high-impact race and post-charge failure states:
+
+- `two_independent_connections_same_late_receipt_settle_once`: two separately opened connections deliver the exact same late provider completion concurrently. Only one v12 request tombstone and one receipt tombstone survive; both callbacks return the same canonical completion, with no second revision or charge.
+- `cancellation_racing_late_receipt_never_hides_verified_charge`: cancellation competes with authenticated completion across connections. Either cancellation records a still-chargeable intent or it loses to an immutable completed receipt; v8 must remain Applied after the verified charge.
+- `charged_receipt_without_three_script_batch_remains_blocked_after_restart`: simulates the still-unfixed Agent 05 crash window by persisting an authenticated charge while `study_writing_batches` is empty. Restart cannot reserve another fresh effect, re-dispatch, prepare a retry or create output. The missing scripts are an explicit recovery blocker, not authorization for another provider call.
+
+These are **guard tests for a known failure**, not an implementation of atomic v10/v12 receipt plus v11 output persistence. A complete paid writing transaction requires an owner-reviewed data contract for saving the original authenticated provider output and consuming it with an exact writing batch. No output fabrication and no network retry are allowed.
+
+**Validation chronology:** exact head `4036afd6022d8d53acd9b82c1576f8d15a0d30d0` completed 6/8 workflows green (Rust foundation including workspace tests, CI, migration, security, independent provider-race and MCP E2E). Linux and Windows packaging **failed** at trusted-source scope guards; neither installer was certified. Subsequent test additions require all checks to rerun on their new exact SHA. Never count an earlier success as proof of later commits.
+
 ## Remaining blockers / Agent 00 and 10 handoff
 
 - **Agent 00:** run Rustfmt, Clippy and host/DB suites on this exact branch SHA, then integrate the narrowly reviewed host changes into #114. Ensure the actual shipped provider command still returns the hard-disabled error; do not enable paid egress.
