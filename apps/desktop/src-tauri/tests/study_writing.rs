@@ -1701,7 +1701,7 @@ fn long_shared_cta_cannot_hide_duplicate_scripts_at_sqlite_acceptance() {
 }
 
 #[test]
-fn arabic_harakat_and_invisible_marks_cannot_bypass_duplicate_screen() {
+fn arabic_harakat_zero_width_and_bidi_controls_cannot_hide_duplicate_scripts() {
     use study_writing_persistence::CanonicalSqliteCandidateStore;
 
     let (_temp, db, plan, current, mut batch) = canonical_batch_fixture();
@@ -1710,7 +1710,7 @@ fn arabic_harakat_and_invisible_marks_cannot_bypass_duplicate_screen() {
         .chars()
         .map(|character| {
             if character.is_alphabetic() {
-                format!("{character}\u{064E}\u{200D}")
+                format!("{character}\u{064E}\u{200D}\u{200F}\u{2067}")
             } else {
                 character.to_string()
             }
