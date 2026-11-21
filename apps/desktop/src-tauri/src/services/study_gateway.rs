@@ -1450,6 +1450,151 @@ mod tests {
     }
 
     #[test]
+    fn approved_applied_research_rebuilds_writing_plan_and_denies_revocation() {
+        use super::super::study_writing::{research_artifact_id, CurrentStudy};
+        use scriptotar_agent::RunState;
+
+        let dir = TempDir::new().unwrap();
+        let services = AppServices::new(dir.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(project, example_brief())
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.pragma_update(None, "foreign_keys", true).unwrap();
+        let timestamp = "2026-11-15T12:30:00Z";
+        let mut refs = Vec::new();
+        for index in 0..3 {
+            let original = Uuid::new_v4();
+            let media = Uuid::new_v4();
+            let transcript = Uuid::new_v4();
+            db.execute(
+                "INSERT INTO sources(id,project_id,source_type,locator,title,created_at)
+                 VALUES(?1,?2,'local_file',?3,'Recorded original',?4)",
+                rusqlite::params![
+                    original.to_string(),
+                    project.to_string(),
+                    format!("/mock/applied-writing-{index}.mp4"),
+                    timestamp
+                ],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO media(id,source_id,local_path,duration_seconds,created_at)
+                 VALUES(?1,?2,?3,6.0,?4)",
+                rusqlite::params![
+                    media.to_string(),
+                    original.to_string(),
+                    format!("/mock/applied-writing-{index}.mp4"),
+                    timestamp
+                ],
+            )
+            .unwrap();
+            let text = format!(
+                "How does the original lesson {index} work? First compare one technique. Follow for more."
+            );
+            let segments = serde_json::json!([
+                {"index":0,"start":0.0,"end":2.0,"text":text.clone()},
+                {"index":1,"start":2.0,"end":4.0,"text":"A second real source segment."},
+                {"index":2,"start":4.0,"end":6.0,"text":"One final original question."}
+            ]);
+            db.execute(
+                "INSERT INTO transcripts(id,media_id,language,text,segments_json,created_at,updated_at)
+                 VALUES(?1,?2,'en',?3,?4,?5,?5)",
+                rusqlite::params![
+                    transcript.to_string(),
+                    media.to_string(),
+                    text,
+                    segments.to_string(),
+                    timestamp
+                ],
+            )
+            .unwrap();
+            refs.push(UiStudioSourceRef {
+                kind: "transcript".into(),
+                id: transcript.to_string(),
+            });
+        }
+        let saved = services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(refs.clone()),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+        let selected = services
+            .list_study_research_sources(project, study_id)
+            .unwrap()
+            .into_iter()
+            .map(|source| Uuid::parse_str(&source.id).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(selected.len(), 3);
+        let pending = services
+            .start_study_research(project, study_id, selected)
+            .unwrap();
+        assert_eq!(pending.state, RunState::AwaitingApproval);
+        assert!(services
+            .prepare_approved_three_writing_plan(
+                project,
+                study_id,
+                "three-real-sources",
+                Uuid::new_v4(),
+            )
+            .is_err());
+        let completed = services
+            .decide_study_research(project, study_id, &pending.plan.id, "approve")
+            .unwrap();
+        assert_eq!(completed.state, RunState::Completed);
+        let artifact =
+            Uuid::parse_str(&completed.steps[0].output.as_ref().unwrap().artifact_id).unwrap();
+        let plan = services
+            .prepare_approved_three_writing_plan(
+                project,
+                study_id,
+                "three-real-sources",
+                artifact,
+            )
+            .unwrap();
+        assert_eq!(research_artifact_id(&plan.context.evidence).unwrap(), Some(artifact));
+        assert_eq!(plan.context.sources.len(), 3);
+        assert!(plan.angles_prompt.prompt.contains(&artifact.to_string()));
+        assert!(plan.angles_prompt.prompt.contains("sha256="));
+        assert_eq!(
+            CurrentStudy::load_for_context(&services, &plan.context).unwrap(),
+            plan.context
+        );
+
+        // Source authorization changes invalidate the *approved* research
+        // receipt, even if the caller still holds the old generation plan.
+        services
+            .revoke_studio_source_access(
+                project,
+                study_id,
+                saved.revision,
+                "transcript",
+                Uuid::parse_str(&refs[0].id).unwrap(),
+            )
+            .unwrap();
+        assert!(CurrentStudy::load_for_context(&services, &plan.context).is_err());
+        assert!(services
+            .prepare_approved_three_writing_plan(
+                project,
+                study_id,
+                "three-real-sources-new",
+                artifact,
+            )
+            .is_err());
+    }
+
+    #[test]
     fn current_writing_context_uses_real_scoped_sources_and_rejects_revocation() {
         use super::super::study_writing::{prepare_three, CurrentStudy};
 
