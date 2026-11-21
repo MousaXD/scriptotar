@@ -39,6 +39,7 @@ describe('jobs workspace', () => {
 
   it('accepts URL entry and preserves URL submission', async () => {
     const { onEnqueueUrl } = setup();
+    expect(screen.getByRole('textbox', { name: 'Media URL' })).toHaveAttribute('dir', 'ltr');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Media URL' }), { target: { value: 'https://example.com/clip' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
     await waitFor(() => expect(onEnqueueUrl).toHaveBeenCalledWith('https://example.com/clip', expect.stringMatching(/^[0-9a-f]{32}$/)));
@@ -97,7 +98,7 @@ describe('jobs workspace', () => {
     expect(currentId).toMatch(/^[0-9a-f]{32}$/);
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveAttribute('aria-label',
-      'Invalid media URL. Only HTTP and HTTPS URLs are supported. · request ' + currentId);
+      'Invalid media URL. Only HTTP and HTTPS URLs are supported. · Request ID: ' + currentId);
     expect(alert).toHaveTextContent('Request ID: ' + currentId);
     await waitFor(() => expect(alert).toHaveFocus());
 
@@ -108,7 +109,25 @@ describe('jobs workspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Queue URL' }));
     const newer = await screen.findByRole('alert');
     expect(newer).not.toHaveTextContent('Request ID:');
-    expect(newer).not.toHaveAttribute('aria-label', expect.stringContaining(' · request '));
+    expect(newer).not.toHaveAttribute('aria-label', expect.stringContaining(' · Request ID: '));
+  });
+
+  it('announces the real host-echoed request identity in Arabic without changing its bytes', async () => {
+    setLocale('ar');
+    const { onEnqueueUrl } = setup();
+    onEnqueueUrl.mockImplementationOnce(async (_url: string, requestId?: string) => {
+      throw new Error('SCRIPTOTAR_DENIAL:INVALID_MEDIA_URL:' + requestId);
+    });
+    const input = screen.getByRole('textbox', { name: 'رابط الوسائط' });
+    expect(input).toHaveAttribute('dir', 'ltr');
+    await fireEvent.input(input, { target: { value: 'file:///denied.mp4' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'إضافة الرابط للطابور' }));
+    const requestId = onEnqueueUrl.mock.calls[0]?.[1] as string;
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveAttribute('aria-label',
+      'رابط الوسائط غير صالح. يُسمح بروابط HTTP وHTTPS فقط. · معرّف الطلب: ' + requestId);
+    expect(alert.querySelector('bdi')).toHaveTextContent(requestId);
+    expect(alert.querySelector('bdi')).toHaveAttribute('dir', 'ltr');
   });
 
   it('allows cancel, retry and open completed transcript without hiding failure details', async () => {
@@ -172,6 +191,7 @@ describe('jobs workspace', () => {
   it('keeps manual paths behind a disclosure and submits them unchanged', async () => {
     const { onEnqueueLocal } = setup();
     await fireEvent.click(screen.getByText('Advanced: enter a local path manually'));
+    expect(screen.getByRole('textbox', { name: 'Manual local media path' })).toHaveAttribute('dir', 'ltr');
     await fireEvent.input(screen.getByRole('textbox', { name: 'Manual local media path' }), { target: { value: '/home/media/movie.mp4' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Queue path' }));
     await waitFor(() => expect(onEnqueueLocal).toHaveBeenCalledWith('/home/media/movie.mp4'));

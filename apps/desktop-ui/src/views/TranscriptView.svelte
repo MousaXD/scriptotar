@@ -279,7 +279,7 @@
             <summary class="button secondary export-summary">{$translator('transcript.export')}</summary>
             <div class="export-popover">
               <button on:click={() => downloadFile('txt', selected?.text || '')}>TXT</button>
-              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('timestamps.txt', timestampedText(selected?.segments || []))}>Timestamp TXT</button>
+              <button disabled={selected.segments.length === 0} on:click={() => downloadFile('timestamps.txt', timestampedText(selected?.segments || []))}>{$translator('transcript.timestampText')}</button>
               <button disabled={selected.segments.length === 0} on:click={() => downloadFile('srt', srt(selected?.segments || []))}>SRT</button>
               <button disabled={selected.segments.length === 0} on:click={() => downloadFile('vtt', vtt(selected?.segments || []), 'text/vtt;charset=utf-8')}>VTT</button>
               <button on:click={() => downloadFile('json', JSON.stringify(selected, null, 2), 'application/json;charset=utf-8')}>JSON</button>

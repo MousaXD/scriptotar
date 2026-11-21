@@ -264,7 +264,7 @@
     <section class="source-block" aria-label={$translator('queue.supportedUrl')}>
       <form class="url-form" on:submit|preventDefault={enqueueUrl}>
         <label for="queue-url">{$translator('queue.supportedUrl')}</label>
-        <input id="queue-url" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
+        <input id="queue-url" dir="ltr" aria-label={$translator('queue.mediaUrl')} aria-invalid={urlRejected ? 'true' : undefined} aria-describedby={urlRejected ? 'queue-action-error' : undefined} bind:value={sourceUrl} on:input={() => { urlRejected = false; actionError = ''; }} placeholder="https://youtube.com/…" inputmode="url" autocomplete="off" disabled={busy} />
         <div class="capture-actions">
           <button type="button" class="button secondary" disabled={busy} on:click={enqueueFromClipboard} title={$translator('queue.clipboardUrls')}>{$translator('queue.clipboardUrls')}</button>
           <button type="submit" class="button primary" disabled={busy || !sourceUrl.trim()}>{$translator('queue.queueUrl')}</button>
@@ -275,7 +275,7 @@
   <details class="advanced-path">
     <summary>{$translator('queue.advancedPath')}</summary>
     <form on:submit|preventDefault={enqueueManualPath}>
-      <input aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" disabled={busy} />
+      <input dir="ltr" aria-label={$translator('queue.manualPath')} bind:value={manualPath} placeholder="/home/me/video.mp4" disabled={busy} />
       <button class="button secondary" type="submit" disabled={busy || !manualPath.trim()}>{$translator('queue.queuePath')}</button>
     </form>
   </details>
