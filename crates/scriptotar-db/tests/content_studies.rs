@@ -887,6 +887,36 @@ fn deleting_project_cascades_study_history_without_orphans() {
     }
 }
 
+// This test module reconstructs old databases from a current schema. New
+// additive migrations must be physically removed, not merely hidden with
+// PRAGMA user_version, or the version ledger correctly rejects the fixture.
+fn remove_v13_from_legacy_fixture(conn: &Connection) {
+    let mut statement = conn
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='trigger'
+             AND name LIKE 'provider_dispatch_barrier_%'",
+        )
+        .unwrap();
+    let names = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(statement);
+    for name in names {
+        assert!(name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+        conn.execute_batch(&format!("DROP TRIGGER {name};"))
+            .unwrap();
+    }
+    conn.execute_batch(
+        "DROP TABLE provider_dispatch_barrier;
+         DELETE FROM schema_migrations WHERE version=13;",
+    )
+    .unwrap();
+}
+
 #[test]
 fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
     let (temp, store, project, _) = fixture();
@@ -898,6 +928,7 @@ fn scriptotar_141_core_v5_database_upgrades_without_losing_projects_or_jobs() {
     // A fake v5 user_version over an existing v6 schema is not a valid fixture.
     let path = temp.path().join("scriptotar.sqlite");
     let conn = Connection::open(&path).unwrap();
+    remove_v13_from_legacy_fixture(&conn);
     let mut stmt = conn
         .prepare(
             "SELECT name FROM sqlite_master WHERE type='trigger'
@@ -1080,6 +1111,7 @@ fn writing_v10_upgrade_and_schema_collision_rollback_preserve_existing_studies()
     drop(store);
 
     let conn = Connection::open(&path).unwrap();
+    remove_v13_from_legacy_fixture(&conn);
     conn.execute_batch(
         "PRAGMA foreign_keys=ON;
          DROP TRIGGER external_provider_identity_on_insert;

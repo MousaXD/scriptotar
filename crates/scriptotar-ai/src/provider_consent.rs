@@ -78,6 +78,21 @@ pub trait ScopeAuthority: Send + Sync {
     ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
         Err(ConsentError::EffectFenceUnavailable)
     }
+
+    /// A real paid attempt must bind the DB-wide freeze to its exact durable
+    /// reservation and wire digest. The default exists only for unbound
+    /// deterministic policy/negative fixtures. A production host MUST
+    /// override it, rejecting a missing or invalid effect identity.
+    fn lock_effect_dispatch_scope(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        if attempt.is_some() {
+            return Err(ConsentError::EffectFenceUnavailable);
+        }
+        self.lock_dispatch_scope(scope)
+    }
 }
 
 /// This is an explicit run intent; the server must prepare the prompt and confirm its scope.
@@ -134,6 +149,9 @@ pub struct ConsentPreview {
     pub max_total_tokens: u64,
     /// None means billing is unknown and paid approval is blocked.
     pub worst_case_cost_microusd: Option<u64>,
+    /// Reviewed host pricing revision used to calculate the maximum estimate.
+    /// None means that pricing is unknown and positive approval is disabled.
+    pub trusted_pricing_revision: Option<String>,
     pub limits: RunBudget,
     pub expires_at_ms: u64,
     pub egress_disclosure: String,
@@ -165,11 +183,33 @@ pub struct ConsentBoundary {
     records: Mutex<HashMap<String, Arc<Mutex<SavedConsent>>>>,
 }
 
+/// Immutable join between one authorized provider send and the reserved
+/// v10/v12 effect attempt. Its wire digest is the pre-approved exact body SHA.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderDispatchAttempt {
+    pub run_id: String,
+    pub step_id: String,
+    pub idempotency_key: String,
+    pub attempt: i64,
+    pub provider: String,
+    pub wire_sha256: String,
+}
+
 /// The fence must atomically claim a never-before-dispatched provider effect in the
 /// durable ledger, then durably settle its receipt. Missing/ambiguous claim is NEVER
 /// permission to send a second paid request. Agent 02 must supply this implementation.
 pub trait PaidEffectFence: Send + Sync {
     fn reserve_once(&self, effect_id: &str) -> Result<(), ConsentError>;
+
+    /// Return the effect identity ONLY after the durable reservation is
+    /// committed and authenticated. Test fences have no production binding;
+    /// the host's sealed dispatch authority rejects missing identities.
+    fn dispatch_attempt(
+        &self,
+        _effect_id: &str,
+    ) -> Result<Option<ProviderDispatchAttempt>, ConsentError> {
+        Ok(None)
+    }
 
     /// Commit the one-winner pre-send DISPATCHED CAS in the durable effect
     /// ledger, after acquiring the authoritative scope/consent gate and before
@@ -428,6 +468,9 @@ impl ConsentBoundary {
             max_output_tokens: intent.max_output_tokens,
             max_total_tokens: total,
             worst_case_cost_microusd,
+            trusted_pricing_revision: ceiling.as_ref().and_then(|price| {
+                (!price.catalog_revision.is_empty()).then(|| price.catalog_revision.clone())
+            }),
             limits: intent.limits,
             expires_at_ms: now_ms
                 .saturating_add(intent.limits.max_elapsed_ms.min(CONSENT_TTL_MS)),
@@ -524,8 +567,14 @@ impl ConsentBoundary {
             return Ok(());
         }
         validate_context(&record.intent.scope, authority)?;
-        if record.preview.worst_case_cost_microusd.is_none() {
+        if record.preview.worst_case_cost_microusd.is_none()
+            || record.preview.trusted_pricing_revision.is_none()
+        {
             return Err(ConsentError::UnknownPricing);
+        }
+        // No priced approval may authorize a body that was never sealed.
+        if record.sealed_wire_sha256.is_none() {
+            return Err(ConsentError::ChangedContext);
         }
         record.decision = Decision::Approved;
         Ok(())
@@ -599,25 +648,33 @@ impl ConsentBoundary {
         if record.intent != *intent {
             return Err(ConsentError::ChangedContext);
         }
-        if let Some(expected_wire) = record.sealed_wire_sha256.as_deref() {
-            if runner
-                .prepared_request_sha256(
-                    &intent.provider,
-                    &AiRequest {
-                        prompt: intent.prompt.clone(),
-                    },
-                    intent.max_output_tokens,
-                )
-                .as_deref()
-                != Some(expected_wire)
-            {
-                return Err(ConsentError::ChangedContext);
-            }
+        // A direct policy caller cannot bypass exact outbound-byte approval.
+        let expected_wire = record
+            .sealed_wire_sha256
+            .clone()
+            .ok_or(ConsentError::ChangedContext)?;
+        if runner
+            .prepared_request_sha256(
+                &intent.provider,
+                &AiRequest {
+                    prompt: intent.prompt.clone(),
+                },
+                intent.max_output_tokens,
+            )
+            .as_deref()
+            != Some(expected_wire.as_str())
+        {
+            return Err(ConsentError::ChangedContext);
         }
         validate_context(&record.intent.scope, authority)?;
         let trusted_price = pricing
             .ceiling(&record.intent.provider)
             .ok_or(ConsentError::UnknownPricing)?;
+        if record.preview.trusted_pricing_revision.as_deref()
+            != Some(trusted_price.catalog_revision.as_str())
+        {
+            return Err(ConsentError::ChangedContext);
+        }
         let mut expected_fingerprint = hash_intent(&record.intent, &Some(trusted_price.clone()));
         if let Some(wire_sha256) = record.sealed_wire_sha256.as_deref() {
             expected_fingerprint =
@@ -681,20 +738,38 @@ impl ConsentBoundary {
             return Err(error);
         }
 
-        // All project/Study/source mutations and revocations must acquire this
-        // SAME gate. Do not hold a SQLite write transaction during HTTP I/O.
-        let scope_guard = match authority.lock_dispatch_scope(&intent.scope) {
-            Ok(guard) => guard,
+        // Authenticate the reserved v10/v12 attempt before admission. The
+        // host atomically joins it to the committed SQLite scope freeze;
+        // policy-only fixtures keep the backward-compatible unbound guard.
+        let bound_attempt = match fence.dispatch_attempt(&effect_id) {
+            Ok(value) => value,
             Err(_) => {
                 fence.mark_uncertain(&effect_id);
-                if let Ok(mut pending) = consent.lock() {
-                    if pending.decision == Decision::Reserving {
-                        pending.decision = Decision::Uncertain;
-                    }
-                }
                 return Err(ConsentError::UncertainEffect);
             }
         };
+        if bound_attempt.as_ref().is_some_and(|attempt| {
+            attempt.run_id != intent.run_id || attempt.wire_sha256 != expected_wire
+        }) {
+            fence.mark_uncertain(&effect_id);
+            return Err(ConsentError::ChangedContext);
+        }
+
+        // All project/Study/source mutations and revocations must acquire this
+        // SAME gate. Do not hold a SQLite write transaction during HTTP I/O.
+        let scope_guard =
+            match authority.lock_effect_dispatch_scope(&intent.scope, bound_attempt.as_ref()) {
+                Ok(guard) => guard,
+                Err(_) => {
+                    fence.mark_uncertain(&effect_id);
+                    if let Ok(mut pending) = consent.lock() {
+                        if pending.decision == Decision::Reserving {
+                            pending.decision = Decision::Uncertain;
+                        }
+                    }
+                    return Err(ConsentError::UncertainEffect);
+                }
+            };
 
         // Reacquire consent only after the authoritative guard. A cancel that
         // won while the gate was blocked must prevent both the pre-send CAS
@@ -713,21 +788,17 @@ impl ConsentBoundary {
         record.decision = Decision::Uncertain;
         if scope_guard.scope() != &record.intent.scope
             || pricing.ceiling(&record.intent.provider) != Some(trusted_price.clone())
-            || record
-                .sealed_wire_sha256
+            || record.sealed_wire_sha256.as_deref() != Some(expected_wire.as_str())
+            || runner
+                .prepared_request_sha256(
+                    &intent.provider,
+                    &AiRequest {
+                        prompt: intent.prompt.clone(),
+                    },
+                    intent.max_output_tokens,
+                )
                 .as_deref()
-                .is_some_and(|expected| {
-                    runner
-                        .prepared_request_sha256(
-                            &intent.provider,
-                            &AiRequest {
-                                prompt: intent.prompt.clone(),
-                            },
-                            intent.max_output_tokens,
-                        )
-                        .as_deref()
-                        != Some(expected)
-                })
+                != Some(expected_wire.as_str())
         {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::ChangedContext);
@@ -778,7 +849,9 @@ impl ConsentBoundary {
             intent.max_output_tokens,
             deadline_ms,
         );
-        drop(scope_guard);
+        // Release this run's mutex, but retain the authoritative scope
+        // barrier through authenticated receipt settlement. A source change
+        // must not race a successful paid receipt before it is durable.
         drop(record);
         let mut generated = match generated {
             Ok(response) => response,
@@ -834,6 +907,7 @@ impl ConsentBoundary {
             fence.mark_uncertain(&effect_id);
             return Err(ConsentError::UncertainEffect);
         }
+        drop(scope_guard);
         let mut record = consent.lock().map_err(|_| ConsentError::UncertainEffect)?;
         record.decision = Decision::Complete;
         Ok(generated)
@@ -845,6 +919,45 @@ mod tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     use super::*;
+
+    // Test-only deterministic request bytes; production seals the actual HTTP payload.
+    fn mock_wire_sha(
+        config: &ProviderConfig,
+        request: &AiRequest,
+        max_output_tokens: u64,
+    ) -> String {
+        sha256_hex(
+            format!(
+                "{:?}\0{}\0{}\0{}\0{}",
+                config.provider,
+                config.model,
+                config.base_url.as_deref().unwrap_or(""),
+                request.prompt,
+                max_output_tokens
+            )
+            .as_bytes(),
+        )
+    }
+
+    fn seal_test_preview(
+        boundary: &ConsentBoundary,
+        intent: &ProviderIntent,
+        preview: &ConsentPreview,
+    ) -> ConsentPreview {
+        boundary
+            .bind_exact_wire_request(
+                &intent.run_id,
+                &preview.fingerprint,
+                &mock_wire_sha(
+                    &intent.provider,
+                    &AiRequest {
+                        prompt: intent.prompt.clone(),
+                    },
+                    intent.max_output_tokens,
+                ),
+            )
+            .expect("test request must be sealed")
+    }
 
     // Static authority is immutable by construction; no writer can race the
     // returned guard. Mutable authorities below use a real exclusive mutex.
@@ -942,6 +1055,15 @@ mod tests {
         over_budget: bool,
     }
     impl BoundedProvider for Runner {
+        fn prepared_request_sha256(
+            &self,
+            config: &ProviderConfig,
+            request: &AiRequest,
+            max_output_tokens: u64,
+        ) -> Option<String> {
+            Some(mock_wire_sha(config, request, max_output_tokens))
+        }
+
         fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
             true
         }
@@ -1014,10 +1136,100 @@ mod tests {
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
         assert!(preview.egress_disclosure.contains("api.openai.com"));
+        assert_eq!(preview.trusted_pricing_revision.as_deref(), Some("fixture"));
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
         (boundary, intent, authority)
+    }
+
+    #[test]
+    fn priced_unsealed_approval_cannot_dispatch() {
+        let (intent, authority) = fixture();
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        let provider = Runner::default();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.decide(&intent.run_id, &preview.fingerprint, true, &authority, 101),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &provider, "key", 102),
+            Err(ConsentError::NoApproval)
+        ));
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert!(fence.claims.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn mismatched_sealed_wire_digest_never_claims_effect() {
+        struct WrongWire;
+        impl BoundedProvider for WrongWire {
+            fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
+                true
+            }
+            fn prepared_request_sha256(
+                &self,
+                _: &ProviderConfig,
+                _: &AiRequest,
+                _: u64,
+            ) -> Option<String> {
+                Some("0".repeat(64))
+            }
+            fn generate_once(
+                &self,
+                _: &ProviderConfig,
+                _: &str,
+                _: &AiRequest,
+                _: u64,
+                _: u64,
+            ) -> Result<MeteredReply, ConsentError> {
+                panic!("unapproved bytes reached the provider");
+            }
+        }
+        let (boundary, intent, authority) = approved();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.dispatch(&intent, &authority, &Prices, &fence, &WrongWire, "key", 102),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert!(fence.claims.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn price_catalog_revision_changed_after_approval_blocks_send() {
+        struct SupersededPrices;
+        impl TrustedPricing for SupersededPrices {
+            fn ceiling(&self, _config: &ProviderConfig) -> Option<PriceCeiling> {
+                Some(PriceCeiling {
+                    input_microusd_per_million: 100_000,
+                    output_microusd_per_million: 200_000,
+                    catalog_revision: "fixture-superseded".into(),
+                })
+            }
+        }
+
+        let (boundary, intent, authority) = approved();
+        let runner = Runner::default();
+        let fence = Fence::default();
+        assert!(matches!(
+            boundary.dispatch(
+                &intent,
+                &authority,
+                &SupersededPrices,
+                &fence,
+                &runner,
+                "key",
+                102
+            ),
+            Err(ConsentError::ChangedContext)
+        ));
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 0);
+        assert!(fence.claims.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1136,6 +1348,7 @@ mod tests {
             .prepare(intent.clone(), &authority, &NoTrustedPricing, 10)
             .unwrap();
         assert_eq!(preview.worst_case_cost_microusd, None);
+        assert_eq!(preview.trusted_pricing_revision, None);
         assert!(matches!(
             boundary.decide(&intent.run_id, &preview.fingerprint, true, &authority, 11),
             Err(ConsentError::UnknownPricing)
@@ -1335,6 +1548,15 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for ReceiptProvider {
+            fn prepared_request_sha256(
+                &self,
+                config: &ProviderConfig,
+                request: &AiRequest,
+                max_output_tokens: u64,
+            ) -> Option<String> {
+                Some(mock_wire_sha(config, request, max_output_tokens))
+            }
+
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
             }
@@ -1424,6 +1646,76 @@ mod tests {
     }
 
     #[test]
+    fn shared_scope_stays_frozen_until_authenticated_receipt_is_settled() {
+        use std::{sync::mpsc, time::Duration};
+
+        struct PausedSettlement {
+            entered: mpsc::Sender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+            committed: AtomicUsize,
+        }
+        impl PaidEffectFence for PausedSettlement {
+            fn reserve_once(&self, _: &str) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn mark_dispatched_once(&self, _: &str) -> Result<(), ConsentError> {
+                Ok(())
+            }
+            fn settle(&self, _: &str, _: &str, _: &ActualUsage) -> Result<(), ConsentError> {
+                self.entered.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+                self.committed.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn mark_uncertain(&self, _: &str) {}
+        }
+
+        let (intent, _) = fixture();
+        let authority = LockedAuthority(Mutex::new(intent.scope.clone()));
+        let boundary = ConsentBoundary::default();
+        let preview = boundary
+            .prepare(intent.clone(), &authority, &Prices, 100)
+            .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
+        boundary
+            .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (resume_tx, resume_rx) = mpsc::channel();
+        let (mutated_tx, mutated_rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let fence = PausedSettlement {
+            entered: entered_tx,
+            resume: Mutex::new(resume_rx),
+            committed: AtomicUsize::new(0),
+        };
+        let runner = Runner::default();
+
+        std::thread::scope(|threads| {
+            let dispatch = threads.spawn(|| {
+                boundary.dispatch(&intent, &authority, &Prices, &fence, &runner, "key", 102)
+            });
+            entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            // The provider has replied, but the durable receipt still waits.
+            threads.spawn(|| {
+                started_tx.send(()).unwrap();
+                authority.0.lock().unwrap().material_digest = "b".repeat(64);
+                mutated_tx.send(()).unwrap();
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(
+                mutated_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+                "source mutation completed while receipt settlement was pending"
+            );
+            resume_tx.send(()).unwrap();
+            assert!(dispatch.join().unwrap().is_ok());
+            mutated_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        assert_eq!(runner.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(fence.committed.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn revocation_while_reservation_is_paused_never_starts_provider_send() {
         use std::sync::mpsc;
 
@@ -1457,6 +1749,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1497,6 +1790,15 @@ mod tests {
             calls: AtomicUsize,
         }
         impl BoundedProvider for PausedProvider {
+            fn prepared_request_sha256(
+                &self,
+                config: &ProviderConfig,
+                request: &AiRequest,
+                max_output_tokens: u64,
+            ) -> Option<String> {
+                Some(mock_wire_sha(config, request, max_output_tokens))
+            }
+
             fn supports_hard_bounds(&self, _: &ProviderConfig) -> bool {
                 true
             }
@@ -1534,6 +1836,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1596,6 +1899,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1736,6 +2040,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();
@@ -1830,6 +2135,7 @@ mod tests {
         let preview = boundary
             .prepare(intent.clone(), &authority, &Prices, 100)
             .unwrap();
+        let preview = seal_test_preview(&boundary, &intent, &preview);
         boundary
             .decide(&intent.run_id, &preview.fingerprint, true, &authority, 101)
             .unwrap();

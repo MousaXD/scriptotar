@@ -426,6 +426,29 @@ impl SqliteStore {
         let tx=db.transaction_with_behavior(TransactionBehavior::Immediate).map_err(db_error)?;
         may_execute(&tx,key)?;
         let previous=checked(&tx,key)?;
+        // Recheck the original v8 claim under the SAME write transaction as
+        // DISPATCHED CAS. A cross-process recovery/cancel may have changed the
+        // legacy fence before v13 barrier admission; no caller may send when
+        // that authoritative claim is already UNKNOWN or terminal.
+        let legacy_status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM agent_effects
+                 WHERE idempotency_key=?1 AND project_id=?2 AND study_id=?3
+                   AND run_id=?4 AND step_id=?5",
+                params![
+                    key.idempotency_key,
+                    key.project.to_string(),
+                    key.study.to_string(),
+                    key.run_id,
+                    key.step_id
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        if legacy_status.as_deref() != Some("reserved") {
+            return Err(conflict("external dispatch requires exact reserved v8 claim"));
+        }
         if previous.status != ExternalEffectStatus::Reserved || previous.revision != expected_revision
             || previous.attempt != attempt || previous.cancel_requested {
             return Err(conflict("external effect cannot be dispatched again"));
@@ -748,6 +771,33 @@ mod tests {
         checkpoints.compare_and_swap(0,snap.clone()).unwrap();
         (dir,db,project.id,study,snap)
     }
+    // Legacy upgrade fixtures deliberately reconstruct pre-v12 databases.
+    // First remove the independently additive v13 barrier and its triggers;
+    // do not alter how the production v12 identity migration is tested.
+    fn remove_v13_from_legacy_fixture(conn: &rusqlite::Connection) {
+        let mut statement = conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='trigger'
+                 AND name LIKE 'provider_dispatch_barrier_%'",
+            )
+            .unwrap();
+        let names = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        drop(statement);
+        for name in names {
+            assert!(name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'));
+            conn.execute_batch(&format!("DROP TRIGGER {name};")).unwrap();
+        }
+        conn.execute_batch(
+            "DROP TABLE provider_dispatch_barrier;
+             DELETE FROM schema_migrations WHERE version = 13;",
+        )
+        .unwrap();
+    }
+
     fn identity(snap:&RunSnapshot,project:Uuid,study:Uuid)->ExternalEffectKey<'_> {
         ExternalEffectKey {project,study,run_id:&snap.plan.id,step_id:"draft",
             idempotency_key:&snap.steps[0].idempotency_key}
@@ -763,6 +813,494 @@ mod tests {
         match db.reserve_external_effect(identity(snap,project,study),fp(),"openai",limits()).unwrap() {
             ExternalReservation::Fresh(v)=>v,ExternalReservation::Existing(_)=>panic!("duplicate")
         }
+    }
+
+    #[test]
+    fn v13_first_attempt_aborted_before_send_is_atomically_cancelled_at_guard_release() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: reserved.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        let external = rusqlite::Connection::open(db.path()).unwrap();
+        assert!(external
+            .execute(
+                "UPDATE agent_external_effects SET cancel_requested=1
+                 WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .is_err());
+        // The host rejects the request before the durable DISPATCHED CAS.
+        // A token-owned guard drop must settle both ledgers and release the
+        // gate in one IMMEDIATE transaction, not leave an orphan reservation.
+        drop(guard);
+        let effect = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Cancelled);
+        assert!(effect.cancel_requested);
+        assert_eq!(effect.revision, reserved.revision + 1);
+        let legacy: String = external
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy, "not_applied");
+        let still_frozen: i64 = external
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_frozen, 0);
+        assert!(db
+            .mark_external_dispatched(key, effect.revision, effect.attempt)
+            .is_err());
+        assert!(matches!(
+            db.reserve_external_effect(key, fp(), "openai", limits()).unwrap(),
+            ExternalReservation::Existing(_)
+        ));
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE content_studies SET goal='safe after no-send' WHERE id=?1",
+                    params![study.to_string()],
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn v13_admission_and_v10_cas_reject_changed_v8_single_send_claim() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        // A separate process can resolve the old effect BEFORE the v13 gate
+        // commits. A still-RESERVED v10 row is not independent authorization
+        // to send once the canonical v8 fence has become UNKNOWN.
+        assert_eq!(
+            other
+                .execute(
+                    "UPDATE agent_effects SET status='unknown',
+                     revision=revision+1 WHERE idempotency_key=?1
+                     AND status='reserved'",
+                    params![key.idempotency_key],
+                )
+                .unwrap(),
+            1
+        );
+        let result = db.acquire_provider_dispatch_barrier_for_effect(
+            project,
+            study,
+            &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id,
+                step_id: key.step_id,
+                idempotency_key: key.idempotency_key,
+                attempt: reserved.attempt,
+                provider: "openai",
+                wire_sha256: fp(),
+            },
+        );
+        assert!(result.is_err(), "v13 admitted a no-longer-reserved v8 claim");
+        assert!(
+            db.mark_external_dispatched(key, reserved.revision, reserved.attempt)
+                .is_err(),
+            "v10 CAS ignored changed v8 single-send state"
+        );
+        let effect = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(effect.status, ExternalEffectStatus::Reserved);
+        assert_eq!(effect.revision, reserved.revision);
+        let barrier_count: i64 = other
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(barrier_count, 0);
+    }
+
+    #[test]
+    fn v13_pre_send_cleanup_v8_write_failure_rolls_back_v10_and_preserves_barrier() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let original = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: original.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+
+        // Even status-only and DELETE bypasses against the v8 single-send
+        // ledger must be rejected from a separate SQLite connection.
+        let bypassed = other
+            .execute(
+                "UPDATE agent_effects
+                 SET status='unknown',revision=revision+1
+                 WHERE idempotency_key=?1 AND status='reserved'",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            bypassed
+                .to_string()
+                .contains("provider dispatch v8 fence is frozen"),
+            "v8 mutation failed for unrelated reason: {bypassed}"
+        );
+        let deleted = other
+            .execute(
+                "DELETE FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            deleted
+                .to_string()
+                .contains("provider dispatch v8 fence cannot be deleted"),
+            "v8 deletion failed for unrelated reason: {deleted}"
+        );
+
+        // Inject a deterministic v8 write fault at the exact second half
+        // of the owned two-ledger cleanup. A transaction must restore both
+        // the v10 RESERVED row AND the already-deleted barrier on rollback.
+        other
+            .execute_batch(
+                "CREATE TRIGGER test_block_v8_pre_send_close
+                 BEFORE UPDATE OF status ON agent_effects
+                 WHEN NEW.status='not_applied'
+                 BEGIN SELECT RAISE(ABORT, 'injected v8 close fault'); END;",
+            )
+            .unwrap();
+
+        drop(guard); // Release must fail closed: no half-cancelled claim.
+        let after = db.get_external_effect(key).unwrap().unwrap();
+        assert_eq!(after.status, ExternalEffectStatus::Reserved);
+        assert!(!after.cancel_requested);
+        assert_eq!(after.revision, original.revision);
+        let v8_status: String = other
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(v8_status, "reserved");
+        let retained: i64 = other
+            .query_row(
+                "SELECT COUNT(*) FROM provider_dispatch_barrier
+                 WHERE effect_idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, 1, "failed release erased the original lock");
+        assert!(other
+            .execute(
+                "UPDATE content_studies SET goal='not authorized' WHERE id=?1",
+                params![study.to_string()],
+            )
+            .is_err());
+        assert!(db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: original.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn v13_cancellation_committed_before_barrier_admission_denies_paid_send() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let other = rusqlite::Connection::open(db.path()).unwrap();
+        assert_eq!(
+            other
+                .execute(
+                    "UPDATE agent_external_effects
+                     SET cancel_requested=1 WHERE idempotency_key=?1",
+                    params![key.idempotency_key],
+                )
+                .unwrap(),
+            1
+        );
+        let refused = db.acquire_provider_dispatch_barrier_for_effect(
+            project,
+            study,
+            &"a".repeat(64),
+            crate::ProviderDispatchEffect {
+                run_id: key.run_id,
+                step_id: key.step_id,
+                idempotency_key: key.idempotency_key,
+                attempt: reserved.attempt,
+                provider: "openai",
+                wire_sha256: fp(),
+            },
+        );
+        assert!(refused.is_err());
+        let freeze_count: i64 = other
+            .query_row("SELECT COUNT(*) FROM provider_dispatch_barrier", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(freeze_count, 0, "failed consent cannot strand an unowned scope lock");
+        assert!(db
+            .mark_external_dispatched(key, reserved.revision, reserved.attempt)
+            .is_err());
+    }
+
+    #[test]
+    fn v13_dispatch_freeze_blocks_external_cancel_but_allows_v10_cas_and_receipt() {
+        let (_dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let mut identity = crate::ProviderDispatchEffect {
+            run_id: key.run_id,
+            step_id: key.step_id,
+            idempotency_key: key.idempotency_key,
+            attempt: reserved.attempt,
+            provider: "openai",
+            wire_sha256: fp(),
+        };
+        // A forged or changed serialized payload cannot acquire this freeze
+        // even if the Study and all unrelated run fields are correct.
+        identity.wire_sha256 =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        assert!(db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                identity,
+            )
+            .is_err());
+        identity.wire_sha256 = fp();
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                identity,
+            )
+            .unwrap();
+        // Prove the recovery record is joined to this exact reserved attempt.
+        let inspect = rusqlite::Connection::open(db.path()).unwrap();
+        let recorded: (String, String, String, i64, String, String) = inspect
+            .query_row(
+                "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
+                        effect_attempt,effect_provider,effect_wire_sha256
+                 FROM provider_dispatch_barrier WHERE singleton=1",
+                [],
+                |row| Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                )),
+            )
+            .unwrap();
+        assert_eq!(recorded, (
+            key.run_id.to_owned(),
+            key.step_id.to_owned(),
+            key.idempotency_key.to_owned(),
+            reserved.attempt,
+            "openai".to_owned(),
+            fp().to_owned(),
+        ));
+        // Effect CAS must commit before the network send even with the
+        // committed cross-connection canonical-scope barrier in place.
+        let dispatched = db
+            .mark_external_dispatched(key, reserved.revision, 1)
+            .unwrap();
+        assert_eq!(dispatched.status, ExternalEffectStatus::Dispatched);
+        let external = rusqlite::Connection::open(db.path()).unwrap();
+        let cancelled = external
+            .execute(
+                "UPDATE agent_external_effects
+                 SET cancel_requested=1 WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+            )
+            .unwrap_err();
+        assert!(
+            cancelled
+                .to_string()
+                .contains("provider dispatch cancellation is frozen"),
+            "external cancellation was rejected for unrelated reason: {cancelled}"
+        );
+        for terminal in ["cancelled", "not_executed"] {
+            let forbidden = external
+                .execute(
+                    "UPDATE agent_external_effects SET status=?1
+                     WHERE idempotency_key=?2",
+                    params![terminal, key.idempotency_key],
+                )
+                .unwrap_err();
+            assert!(
+                forbidden
+                    .to_string()
+                    .contains("provider dispatch cancellation status is frozen"),
+                "status-only bypass should be rejected by the gate: {forbidden}"
+            );
+        }
+        // v10/v12 receipt reconciliation is independent of protected
+        // canonical context writes and must remain operable.
+        let settled = db
+            .reconcile_external_effect(
+                key,
+                1,
+                ExternalResolution::Completed {
+                    provider_request_id: Some("request_under_gate_v13"),
+                    receipt_id: "receipt_under_gate_v13",
+                    tokens: 42,
+                    cost_microusd: 100,
+                },
+            )
+            .unwrap();
+        assert_eq!(settled.status, ExternalEffectStatus::Completed);
+        // The new v13 v8 mutation fence must not block the legitimate
+        // receipt's v10-terminal -> v8-APPLIED transaction.
+        let legacy_status: String = external
+            .query_row(
+                "SELECT status FROM agent_effects WHERE idempotency_key=?1",
+                params![key.idempotency_key],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_status, "applied");
+        guard.verify().unwrap();
+        drop(guard);
+        // A committed, authenticated terminal receipt permits ordinary
+        // scoped edits again; it did not authorize a second network send.
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE content_studies SET goal='after receipt' WHERE id=?1",
+                    params![study.to_string()],
+                )
+                .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn v13_ambiguous_sent_attempt_keeps_freeze_after_guard_drop_and_restart() {
+        let (dir, db, project, study, snapshot) = setup();
+        let key = identity(&snapshot, project, study);
+        let reserved = reserve(&db, &snapshot, project, study);
+        let guard = db
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: reserved.attempt,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .unwrap();
+        db.mark_external_dispatched(key, reserved.revision, 1)
+            .unwrap();
+        // Sending may have charged a provider. Dropping the normal RAII
+        // guard is NOT permission to erase its ownership record.
+        drop(guard);
+        drop(db);
+        let reopened = SqliteStore::open(dir.path().join("external.sqlite3")).unwrap();
+        let independent = rusqlite::Connection::open(reopened.path()).unwrap();
+        let persisted: (String, String, String, i64) = independent
+            .query_row(
+                "SELECT effect_run_id,effect_step_id,effect_idempotency_key,
+                        effect_attempt FROM provider_dispatch_barrier WHERE singleton=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(persisted, (
+            key.run_id.to_owned(),
+            key.step_id.to_owned(),
+            key.idempotency_key.to_owned(),
+            1,
+        ));
+        assert!(independent
+            .execute(
+                "UPDATE content_studies SET goal='unapproved restart edit' WHERE id=?1",
+                params![study.to_string()],
+            )
+            .is_err());
+        assert!(reopened
+            .acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &"a".repeat(64),
+                crate::ProviderDispatchEffect {
+                    run_id: key.run_id,
+                    step_id: key.step_id,
+                    idempotency_key: key.idempotency_key,
+                    attempt: 1,
+                    provider: "openai",
+                    wire_sha256: fp(),
+                },
+            )
+            .is_err());
+        // Even if a late authenticated terminal receipt is persisted, a
+        // crashed token is not silently unlocked on DB reopen. Agent 02
+        // owns the future independently reviewed identity-bound release.
+        reopened
+            .reconcile_external_effect(
+                key,
+                1,
+                ExternalResolution::Completed {
+                    provider_request_id: Some("request_after_crash_v13"),
+                    receipt_id: "receipt_after_crash_v13",
+                    tokens: 42,
+                    cost_microusd: 100,
+                },
+            )
+            .unwrap();
+        let still_locked: i64 = independent
+            .query_row("SELECT COUNT(*) FROM provider_dispatch_barrier", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(still_locked, 1);
     }
 
     #[test]
@@ -1030,6 +1568,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
+            remove_v13_from_legacy_fixture(&conn);
             conn.execute_batch(
                 "DROP TRIGGER external_provider_identity_on_insert;
                  DROP TRIGGER external_provider_identity_on_update;
@@ -1079,6 +1618,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         {
             let conn = rusqlite::Connection::open(&path).unwrap();
+            remove_v13_from_legacy_fixture(&conn);
             conn.execute_batch(
                 "DROP TRIGGER external_provider_identity_on_insert;
                  DROP TRIGGER external_provider_identity_on_update;
@@ -1316,6 +1856,7 @@ mod tests {
         // Construct a valid legacy v11 file with duplicate final receipt IDs.
         // Only the v12 infrastructure is removed; historical v10/v11 migrations stay intact.
         let connection = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&connection);
         connection.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;
@@ -1445,6 +1986,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         drop(db);
         let conn = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&conn);
         conn.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;
@@ -1548,6 +2090,7 @@ mod tests {
         let path = dir.path().join("external.sqlite3");
         drop(db);
         let conn = rusqlite::Connection::open(&path).unwrap();
+        remove_v13_from_legacy_fixture(&conn);
         conn.execute_batch(
             "DROP TRIGGER external_provider_identity_on_insert;
              DROP TRIGGER external_provider_identity_on_update;

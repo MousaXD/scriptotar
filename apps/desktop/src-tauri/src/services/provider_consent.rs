@@ -9,14 +9,15 @@ use scriptotar_ai::{
     provider_consent::{
         sha256_hex, ActualUsage, ConsentBoundary, ConsentError, ConsentPreview,
         DisabledPaidEffectFence, ExistingAiServiceAdapter, NoTrustedPricing, PaidEffectFence,
-        ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard, StudyScope,
+        ProviderDispatchAttempt, ProviderIntent, RunBudget, ScopeAuthority, ScopeDispatchGuard,
+        StudyScope,
     },
     ProviderConfig,
 };
 use scriptotar_core::{RepositoryError, RepositoryResult};
 use scriptotar_db::{
     ExternalEffectKey, ExternalEffectLimits, ExternalEffectStatus, ExternalReservation,
-    ExternalResolution, SqliteStore,
+    ExternalResolution, ProviderDispatchBarrier, ProviderDispatchEffect, SqliteStore,
 };
 use std::{
     collections::HashMap,
@@ -45,13 +46,17 @@ fn consent_error(error: ConsentError) -> RepositoryError {
     RepositoryError::Validation(format!("AI provider consent: {error:?}"))
 }
 
-/// Existing Studio writes and project switching already serialize on
-/// AppServices::active_project. Holding that SAME lock across dispatch admission
-/// ensures those mutations cannot slip between the authoritative scope read
-/// and the provider send. This is a process-local guard, not a distributed lock:
-/// paid network transport remains disabled until all origin writers and external
-/// mutation paths have been audited against this boundary.
+/// Scope authorization uses both AppServices' project-selection mutex and a
+/// durable SQLite-wide writer barrier. The latter is committed before the
+/// canonical Study snapshot is rebuilt; v13 triggers reject external connection
+/// mutations of protected source/Study inputs until the send guard is dropped.
+/// This is not protection against an attacker executing arbitrary DDL on the DB.
 struct HostScopeDispatchGuard<'a> {
+    // Rust drops fields in declaration order. Release the committed SQLite
+    // freeze while STILL holding active_project, then release the mutex.
+    // The reverse order exposes a window where waiting Studio writers
+    // acquire the mutex but are rejected by the not-yet-released DB trigger.
+    db_barrier: ProviderDispatchBarrier,
     _project_lock: MutexGuard<'a, Uuid>,
     scope: StudyScope,
 }
@@ -62,6 +67,10 @@ impl ScopeDispatchGuard for HostScopeDispatchGuard<'_> {
     }
 
     fn now_ms(&self) -> Result<u64, ConsentError> {
+        // A removed or replaced persisted barrier is never authority to send.
+        self.db_barrier
+            .verify()
+            .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| ConsentError::Expired)?
@@ -139,6 +148,27 @@ impl ScopeAuthority for AppServices {
         &self,
         scope: &StudyScope,
     ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        // Legacy unbound guard is retained only for offline scope/race tests.
+        // ConsentBoundary uses lock_effect_dispatch_scope for every send.
+        self.lock_scope_barrier(scope, None)
+    }
+
+    fn lock_effect_dispatch_scope(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
+        let attempt = attempt.ok_or(ConsentError::EffectFenceUnavailable)?;
+        self.lock_scope_barrier(scope, Some(attempt))
+    }
+}
+
+impl AppServices {
+    fn lock_scope_barrier(
+        &self,
+        scope: &StudyScope,
+        attempt: Option<&ProviderDispatchAttempt>,
+    ) -> Result<Box<dyn ScopeDispatchGuard + '_>, ConsentError> {
         let project =
             Uuid::parse_str(&scope.project_id).map_err(|_| ConsentError::WrongProjectOrStudy)?;
         let study =
@@ -150,11 +180,34 @@ impl ScopeAuthority for AppServices {
         if *project_lock != project {
             return Err(ConsentError::WrongProjectOrStudy);
         }
+        // Commit an exclusive DB-wide freeze after acquiring the host mutex.
+        // A paid call additionally binds the exact reserved v10/v12 effect
+        // in that same IMMEDIATE transaction, before fresh scope reread.
+        let db_barrier = if let Some(effect) = attempt {
+            self.store.acquire_provider_dispatch_barrier_for_effect(
+                project,
+                study,
+                &scope.material_digest,
+                ProviderDispatchEffect {
+                    run_id: &effect.run_id,
+                    step_id: &effect.step_id,
+                    idempotency_key: &effect.idempotency_key,
+                    attempt: effect.attempt,
+                    provider: &effect.provider,
+                    wire_sha256: &effect.wire_sha256,
+                },
+            )
+        } else {
+            self.store
+                .acquire_provider_dispatch_barrier(project, study, &scope.material_digest)
+        }
+        .map_err(|_| ConsentError::EffectFenceUnavailable)?;
         let fresh = self.consent_scope_locked(project, study)?;
         if fresh != *scope {
             return Err(ConsentError::ChangedContext);
         }
         Ok(Box::new(HostScopeDispatchGuard {
+            db_barrier,
             _project_lock: project_lock,
             scope: fresh,
         }))
@@ -262,6 +315,36 @@ impl PaidEffectFence for SqlitePaidEffectFence {
             // second authorization even if its status is still RESERVED.
             ExternalReservation::Existing(_) => Err(ConsentError::UncertainEffect),
         }
+    }
+
+    fn dispatch_attempt(
+        &self,
+        effect_id: &str,
+    ) -> Result<Option<ProviderDispatchAttempt>, ConsentError> {
+        self.check_effect_id(effect_id)?;
+        let existing = self
+            .store
+            .get_external_effect(self.key())
+            .map_err(|_| ConsentError::UncertainEffect)?
+            .ok_or(ConsentError::UncertainEffect)?;
+        if existing.status != ExternalEffectStatus::Reserved
+            || existing.attempt != 1
+            || existing.cancel_requested
+            || existing.fingerprint != self.wire_sha256
+            || existing.provider != self.provider
+            || existing.token_limit != self.limits.tokens
+            || existing.cost_limit_microusd != self.limits.cost_microusd
+        {
+            return Err(ConsentError::UncertainEffect);
+        }
+        Ok(Some(ProviderDispatchAttempt {
+            run_id: self.run_id.clone(),
+            step_id: self.step_id.clone(),
+            idempotency_key: self.idempotency_key.clone(),
+            attempt: existing.attempt,
+            provider: self.provider.clone(),
+            wire_sha256: self.wire_sha256.clone(),
+        }))
     }
 
     fn mark_dispatched_once(&self, effect_id: &str) -> Result<(), ConsentError> {
@@ -1086,6 +1169,12 @@ mod tests {
         let scope = services
             .current_scope(&project.to_string(), &study_id.to_string())
             .unwrap();
+        // Production paid dispatch must not downgrade to a test-only unbound
+        // SQLite writer freeze when there is no exact v10 reservation.
+        assert!(matches!(
+            services.lock_effect_dispatch_scope(&scope, None),
+            Err(ConsentError::EffectFenceUnavailable)
+        ));
         let stale = StudyScope {
             material_digest: "f".repeat(64),
             ..scope.clone()
@@ -1115,6 +1204,236 @@ mod tests {
             services.current_scope(&project.to_string(), &study_id.to_string()),
             Err(ConsentError::WrongProjectOrStudy)
         ));
+    }
+
+    #[test]
+    fn dispatch_guard_blocks_real_studio_brief_edit_until_provider_scope_releases() {
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let brief = UiStudioBrief {
+            title: "Original consent brief".into(),
+            goal: "Prepare grounded scripts".into(),
+            audience: "Creators".into(),
+            platform: "Reels".into(),
+            language: "English".into(),
+            style: "Clear".into(),
+            duration: "30".into(),
+        };
+        let study = services
+            .create_studio_study(project, brief.clone())
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+        let approved = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        let dispatch_guard = services.lock_dispatch_scope(&approved).unwrap();
+
+        let writer = services.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut changed_brief = brief;
+            changed_brief.goal = "Different source-grounded objective".into();
+            started_tx.send(()).unwrap();
+            let result = writer.save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                crate::dto::UiStudioStudyPatch {
+                    brief: Some(changed_brief),
+                    sources: None,
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            );
+            completed_tx
+                .send(result.map(|value| value.revision))
+                .unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // The real Studio adapter must use the SAME gate as paid dispatch.
+        assert!(
+            completed_rx
+                .recv_timeout(Duration::from_millis(75))
+                .is_err(),
+            "Study change completed while a provider dispatch guard was held"
+        );
+        assert_eq!(dispatch_guard.scope(), &approved);
+        drop(dispatch_guard);
+        let new_revision = completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert!(new_revision > 0);
+        assert!(matches!(
+            services.lock_dispatch_scope(&approved),
+            Err(ConsentError::ChangedContext)
+        ));
+    }
+
+    #[test]
+    fn dispatch_guard_blocks_real_transcript_revocation_and_invalidates_scope() {
+        use crate::dto::{UiStudioSourceRef, UiStudioStudyPatch};
+        use std::{sync::mpsc, thread, time::Duration};
+
+        let directory = TempDir::new().unwrap();
+        let services = AppServices::new(directory.path()).unwrap();
+        let project = services.active_project_id().unwrap();
+        let study = services
+            .create_studio_study(
+                project,
+                UiStudioBrief {
+                    title: "Revocable consent source".into(),
+                    goal: "Compare source-backed scripts".into(),
+                    audience: "Creators".into(),
+                    platform: "Reels".into(),
+                    language: "English".into(),
+                    style: "Clear".into(),
+                    duration: "30".into(),
+                },
+            )
+            .unwrap();
+        let study_id = Uuid::parse_str(&study.id).unwrap();
+
+        // Populate an actual canonical, project-owned transcript origin.
+        // No external AI network access or synthetic approval is involved.
+        let source_id = Uuid::new_v4();
+        let media_id = Uuid::new_v4();
+        let transcript_id = Uuid::new_v4();
+        let db = rusqlite::Connection::open(services.store.path()).unwrap();
+        db.execute(
+            "INSERT INTO sources(id,project_id,creator_id,source_type,locator,created_at)
+             VALUES(?1,?2,NULL,'url','https://example.org/revocable','2026-11-21T00:00:00Z')",
+            rusqlite::params![source_id.to_string(), project.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO media(id,source_id,local_path,created_at)
+             VALUES(?1,?2,'/tmp/scriptotar-revocable.mp4','2026-11-21T00:00:00Z')",
+            rusqlite::params![media_id.to_string(), source_id.to_string()],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO transcripts(id,media_id,text,created_at,updated_at)
+             VALUES(?1,?2,'Canonical revocable source content',
+                    '2026-11-21T00:00:00Z','2026-11-21T00:00:00Z')",
+            rusqlite::params![transcript_id.to_string(), media_id.to_string()],
+        )
+        .unwrap();
+        drop(db);
+
+        let selected = services
+            .save_studio_study(
+                project,
+                study_id,
+                study.revision,
+                UiStudioStudyPatch {
+                    brief: None,
+                    sources: Some(vec![UiStudioSourceRef {
+                        kind: "transcript".into(),
+                        id: transcript_id.to_string(),
+                    }]),
+                    draft: None,
+                    draft_id: None,
+                    draft_revision: None,
+                },
+            )
+            .unwrap();
+
+        // An independent SQLite connection can mutate the transcript without
+        // taking AppServices::active_project. A subsequent scope recheck MUST
+        // reject the stale approval even though this does NOT establish a
+        // cross-process lock during an in-flight provider send.
+        let stale_before_external_edit = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        let external = rusqlite::Connection::open(services.store.path()).unwrap();
+        assert_eq!(
+            external
+                .execute(
+                    "UPDATE transcripts SET text = ?1, updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![
+                        "Externally modified canonical transcript content",
+                        "2026-11-21T00:01:00Z",
+                        transcript_id.to_string()
+                    ],
+                )
+                .unwrap(),
+            1
+        );
+        drop(external);
+        assert!(matches!(
+            services.lock_dispatch_scope(&stale_before_external_edit),
+            Err(ConsentError::ChangedContext)
+        ));
+
+        let approved = services
+            .current_scope(&project.to_string(), &study_id.to_string())
+            .unwrap();
+        assert_eq!(approved.selected_source_ids.len(), 1);
+        let dispatch_guard = services.lock_dispatch_scope(&approved).unwrap();
+
+        // Agent 10's independent challenge: a separate SQLite connection
+        // must be denied WHILE the dispatch guard is alive (rather than only
+        // discovering the mutation on a later scope recheck).
+        let external = rusqlite::Connection::open(services.store.path()).unwrap();
+        let rejected = external
+            .execute(
+                "UPDATE transcripts SET text=?1, updated_at=?2 WHERE id=?3",
+                rusqlite::params![
+                    "Unauthorized mid-send transcript mutation",
+                    "2026-11-21T00:02:00Z",
+                    transcript_id.to_string()
+                ],
+            )
+            .unwrap_err();
+        assert!(
+            rejected
+                .to_string()
+                .contains("provider dispatch scope is frozen"),
+            "external writer was rejected for an unrelated reason: {rejected}"
+        );
+        assert_eq!(dispatch_guard.scope(), &approved);
+
+        let writer = services.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (completed_tx, completed_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = writer.revoke_studio_source_access(
+                project,
+                study_id,
+                selected.revision,
+                "transcript",
+                transcript_id,
+            );
+            completed_tx
+                .send(result.map(|value| value.revision))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(
+            completed_rx
+                .recv_timeout(Duration::from_millis(75))
+                .is_err(),
+            "source revocation linearized before the provider guard released"
+        );
+        drop(dispatch_guard);
+        completed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+        assert!(
+            services.lock_dispatch_scope(&approved).is_err(),
+            "revoked source must invalidate the consent snapshot"
+        );
     }
 
     /// Executes actual AppServices -> ConsentBoundary -> v10 reservation/CAS

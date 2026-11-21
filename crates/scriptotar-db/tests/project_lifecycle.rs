@@ -420,6 +420,36 @@ fn historical_v4_to_v6_upgrade_preserves_project_jobs_and_settings() {
     // then v5 triggers/ledger. Existing project/job data remains untouched.
     let connection = Connection::open(&path).unwrap();
 
+    // Remove the later additive v13 provider barrier in full before modeling
+    // the historical v4 shape; merely lowering user_version would create a
+    // deliberately corrupt migration ledger, not a valid upgrade fixture.
+    let mut barrier_names_statement = connection
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type='trigger'
+             AND name LIKE 'provider_dispatch_barrier_%'",
+        )
+        .unwrap();
+    let barrier_names = barrier_names_statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    drop(barrier_names_statement);
+    for name in barrier_names {
+        assert!(name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_'));
+        connection
+            .execute_batch(&format!("DROP TRIGGER {name};"))
+            .unwrap();
+    }
+    connection
+        .execute_batch(
+            "DROP TABLE provider_dispatch_barrier;
+             DELETE FROM schema_migrations WHERE version=13;",
+        )
+        .unwrap();
+
     // An open v6 store already contains v6 tables and triggers. Removing
     // only its version number would fabricate an inconsistent legacy fixture.
     let mut triggers = connection
