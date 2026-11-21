@@ -91,7 +91,7 @@ describe('Study research is a local, explicitly authorized workflow', () => {
     expect(approve).toBeEnabled();
     await fireEvent.click(approve);
     await waitFor(() => expect(screen.getByText(/Completed/)).toBeInTheDocument());
-    expect(screen.getByLabelText('Study research report')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Study research report')).toBeInTheDocument();
     await view.rerender({ api, projectId, studyId, pendingEdits: true });
     expect(screen.queryByLabelText('Study research report')).not.toBeInTheDocument();
   });
