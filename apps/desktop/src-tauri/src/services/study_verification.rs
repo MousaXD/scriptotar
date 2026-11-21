@@ -473,7 +473,10 @@ fn bind_saved_claims_to_visible_script(
     claims: &mut [verification::ClaimProposal],
 ) {
     for (proposal, declared) in claims.iter_mut().zip(&draft.claims) {
-        let mut matching_beats = draft.beats.iter().filter(|beat| beat.id == declared.beat_id);
+        let mut matching_beats = draft
+            .beats
+            .iter()
+            .filter(|beat| beat.id == declared.beat_id);
         let beat = matching_beats.next();
         let exactly_one = matching_beats.next().is_none();
         let statement = declared.assertion.trim();
@@ -2191,7 +2194,9 @@ mod authenticity_tests {
 
     #[test]
     fn fabricated_or_unanchored_claims_never_describe_saved_beat_as_fact_checked() {
-        use scriptotar_ai::writing::{BeatRole, ClaimStatus, FactualClaim, ScriptBeat, ScriptDraft};
+        use scriptotar_ai::writing::{
+            BeatRole, ClaimStatus, FactualClaim, ScriptBeat, ScriptDraft,
+        };
         let mut draft = ScriptDraft {
             id: Uuid::new_v4().to_string(),
             angle_id: "first-angle".into(),
@@ -2222,7 +2227,10 @@ mod authenticity_tests {
         draft.claims[0].assertion = "Visible on-screen source citation!".into();
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
-        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
+        assert_eq!(
+            proposed[0].kind,
+            verification::ClaimKind::UnsupportedStatement
+        );
         draft.claims[0].assertion = "Visible on-screen source citation".into();
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
@@ -2230,13 +2238,19 @@ mod authenticity_tests {
         draft.claims[0].assertion = "Invented claim not in script".into();
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
-        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
+        assert_eq!(
+            proposed[0].kind,
+            verification::ClaimKind::UnsupportedStatement
+        );
         assert!(!proposed[0].model_claims_verified);
         draft.beats.push(draft.beats[0].clone());
         draft.claims[0].assertion = "bounded observation".into();
         let mut proposed = verification::extract_draft_claims(&draft);
         bind_saved_claims_to_visible_script(&draft, &mut proposed);
-        assert_eq!(proposed[0].kind, verification::ClaimKind::UnsupportedStatement);
+        assert_eq!(
+            proposed[0].kind,
+            verification::ClaimKind::UnsupportedStatement
+        );
     }
 
     #[test]
