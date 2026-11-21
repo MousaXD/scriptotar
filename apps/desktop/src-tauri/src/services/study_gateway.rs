@@ -577,7 +577,8 @@ impl AppServices {
                 &self,
                 project: Uuid,
                 study: Uuid,
-            ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext> {
+            ) -> super::study_writing::WriteResult<super::study_writing::StudyWritingContext>
+            {
                 super::study_writing::CurrentStudy::load(self.0, project, study)
             }
         }
@@ -586,9 +587,7 @@ impl AppServices {
             store: &self.store,
             current: &fixture,
         };
-        super::study_writing::generate_three(
-            plan, &fixture, boundary, provider, stop, &mut sink,
-        )
+        super::study_writing::generate_three(plan, &fixture, boundary, provider, stop, &mut sink)
     }
 
     /// Private production v11 sink: three new drafts, immutable versions,
@@ -1649,7 +1648,11 @@ mod tests {
         assert_eq!(seal.artifact_id, artifact);
         assert_eq!(seal.run_id, waiting.plan.id);
         assert_eq!(seal.sources.len(), 3);
-        assert_eq!(plan.context.sources.len(), 3, "writing excludes the fourth unapproved origin");
+        assert_eq!(
+            plan.context.sources.len(),
+            3,
+            "writing excludes the fourth unapproved origin"
+        );
         assert!(seal.sources.iter().all(|source| {
             source.origin_sha256.len() == 64 && origins.contains(&source.origin_id)
         }));
