@@ -1133,7 +1133,9 @@ mod tests {
             style: "Clear".into(),
             duration: "30".into(),
         };
-        let study = services.create_studio_study(project, brief.clone()).unwrap();
+        let study = services
+            .create_studio_study(project, brief.clone())
+            .unwrap();
         let study_id = Uuid::parse_str(&study.id).unwrap();
         let approved = services
             .current_scope(&project.to_string(), &study_id.to_string())
@@ -1159,13 +1161,17 @@ mod tests {
                     draft_revision: None,
                 },
             );
-            completed_tx.send(result.map(|value| value.revision)).unwrap();
+            completed_tx
+                .send(result.map(|value| value.revision))
+                .unwrap();
         });
 
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         // The real Studio adapter must use the SAME gate as paid dispatch.
         assert!(
-            completed_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            completed_rx
+                .recv_timeout(Duration::from_millis(75))
+                .is_err(),
             "Study change completed while a provider dispatch guard was held"
         );
         assert_eq!(dispatch_guard.scope(), &approved);
@@ -1268,11 +1274,15 @@ mod tests {
                 "transcript",
                 transcript_id,
             );
-            completed_tx.send(result.map(|value| value.revision)).unwrap();
+            completed_tx
+                .send(result.map(|value| value.revision))
+                .unwrap();
         });
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(
-            completed_rx.recv_timeout(Duration::from_millis(75)).is_err(),
+            completed_rx
+                .recv_timeout(Duration::from_millis(75))
+                .is_err(),
             "source revocation linearized before the provider guard released"
         );
         drop(dispatch_guard);
