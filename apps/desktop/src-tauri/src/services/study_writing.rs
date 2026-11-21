@@ -530,8 +530,11 @@ fn execute_step<B: DurablePermissionBoundary, P: WritingTextProvider, S: StopSig
                     Ok(response.text)
                 }
                 Err(()) => {
+                    // Once transport was attempted, an error does not prove
+                    // non-billing or lossless response delivery. Keep the
+                    // original effect uncertain; never retry automatically.
                     gate.mark_uncertain(&effect_key)?;
-                    Err(WritingWorkflowError::ProviderFailed)
+                    Err(WritingWorkflowError::UncertainEffect)
                 }
             }
         }
