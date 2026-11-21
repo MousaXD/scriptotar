@@ -1020,12 +1020,17 @@ mod tests {
         let completed=receipt.join().unwrap();
         // A cancellation before receipt is only an intent; after a final
         // receipt it must be rejected, never erase the recorded charge.
-        if let Ok(requested)=cancel_outcome {
-            assert!(requested.cancel_requested);
-            assert!(matches!(
-                requested.status,
-                ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
-            ));
+        match cancel_outcome {
+            Ok(requested) => {
+                assert!(requested.cancel_requested);
+                assert!(matches!(
+                    requested.status,
+                    ExternalEffectStatus::Dispatched | ExternalEffectStatus::Uncertain
+                ));
+            }
+            // The verified terminal receipt won the write race.
+            Err(RepositoryError::Conflict(_)) => {}
+            Err(other) => panic!("unexpected cancellation failure: {other:?}"),
         }
         assert_eq!(completed.status,ExternalEffectStatus::Completed);
         assert_eq!(completed.actual_cost_microusd,125);
