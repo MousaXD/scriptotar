@@ -35,9 +35,10 @@ export function matchesResearchReportScope(
       // never just a caller-supplied report with matching source labels.
       step.requires_approval !== true ||
       step.estimate?.tokens !== 0 || step.estimate?.cost_microusd !== 0 ||
-      savedStep?.approved !== true ||
+      savedStep?.state !== 'completed' || savedStep?.approved !== true ||
       typeof savedStep?.output?.artifact_id !== 'string' ||
       !savedStep?.output?.artifact_id ||
+      savedStep.output.tokens !== 0 || savedStep.output.cost_microusd !== 0 ||
       !Array.isArray(requested) || requested.length < 1 || requested.length > 8 ||
       requested.some((id) => typeof id !== 'string' || !id) ||
       new Set(requested).size !== requested.length ||
